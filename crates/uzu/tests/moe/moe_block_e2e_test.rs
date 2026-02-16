@@ -6,7 +6,7 @@ use uzu::{
     backends::{
         common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         metal::{
-            MTLContext,
+            MetalContext,
             kernel::{
                 MoeBlockBasesArguments, MoeScatterKernels, MoeScatterWithMapArguments,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
@@ -169,7 +169,7 @@ fn moe_cpu_reference(
 
 // Main entry point - automatically tests both modes for T>1
 fn run_moe_parity_test(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     e: usize,
     k: usize,
@@ -233,7 +233,7 @@ fn run_moe_parity_test(
 }
 
 fn run_moe_parity_test_internal(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     e: usize,
     k: usize,

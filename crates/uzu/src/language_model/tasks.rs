@@ -1,11 +1,11 @@
 use std::mem::size_of;
 
+use metal::{BufferExt, MTLBuffer};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::LanguageModelGeneratorContext;
 use crate::{
-    backends::{
-        common::Context,
-        metal::{BufferExt, MTLBuffer, Metal, ProtocolObject, Retained},
-    },
+    backends::{common::Context, metal::Metal},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::ForwardPassState,
 };

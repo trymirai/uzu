@@ -1,11 +1,12 @@
-use objc2::Message;
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
+use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     DataType,
     backends::{
         common::kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
+            MetalContext, MetalError,
             kernel::dsl::{MoeGatherXPerm1DMetalKernel, MoeGatherXPerm2DMetalKernel},
         },
     },
@@ -29,7 +30,7 @@ pub struct MoeGatherKernels {
 }
 
 impl MoeGatherKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         Ok(Self {
             bf16: MoeGatherXPerm2DMetalKernel::new(ctx, DataType::BF16)?,
             f16: MoeGatherXPerm1DMetalKernel::new(ctx, DataType::F16)?,

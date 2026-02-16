@@ -1,15 +1,19 @@
 use std::rc::Rc;
 
-use objc2::rc::autoreleasepool;
-
-use super::{Attention, EncodableBlock, Normalization, QKNorm, TensorAddSwap, TensorCopy, transformer_layer};
 #[cfg(not(feature = "tracing"))]
-use crate::backends::metal::MTLCommandEncoder;
+use metal::MTLCommandEncoder;
+use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
+use objc2::{
+    rc::{Retained, autoreleasepool},
+    runtime::ProtocolObject,
+};
+
+use super::{Attention, transformer_layer};
 use crate::{
     DataType,
-    backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained},
+    backends::metal::{Metal, MetalContext},
     config::TransformerLayerConfig,
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -35,7 +39,7 @@ pub struct ClassifierLayer {
 
 impl ClassifierLayer {
     pub fn new(
-        mtl_context: Rc<MTLContext>,
+        mtl_context: Rc<MetalContext>,
         layer_config: &TransformerLayerConfig,
         layer_index: usize,
         model_dim: usize,
@@ -44,11 +48,11 @@ impl ClassifierLayer {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        layer_loader: &ParameterTree<MTLContext>,
+        layer_loader: &ParameterTree<MetalContext>,
         rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
+            let ctx = mtl_context.as_ref(); // Reference for functions expecting &MetalContext
             let attention_config =
                 layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
             let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();

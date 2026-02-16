@@ -2,6 +2,7 @@
 use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, path::Path, time::Instant};
 
+use metal::MTLCommandBuffer;
 use objc2::rc::autoreleasepool;
 
 #[cfg(feature = "tracing")]
@@ -9,7 +10,7 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    backends::metal::{MTLCommandBuffer, Metal},
+    backends::metal::Metal,
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,

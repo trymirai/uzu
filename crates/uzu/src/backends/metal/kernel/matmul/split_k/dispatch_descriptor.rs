@@ -1,8 +1,10 @@
+use metal::MTLSize;
+
 use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::select_tile_configuration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError, MTLSize,
+        MetalContext, MetalError,
         kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
     },
 };
@@ -22,12 +24,12 @@ pub(crate) struct DispatchDescriptor {
 
 impl DispatchDescriptor {
     pub(crate) fn try_new(
-        _context: &MTLContext,
+        _context: &MetalContext,
         data_type: DataType,
         arguments: &MatmulArguments,
-    ) -> Result<Option<Self>, MTLError> {
+    ) -> Result<Option<Self>, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
+            return Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
         }
 
         if arguments.c.is_some() {

@@ -1,4 +1,5 @@
-use crate::backends::metal::{MTLBuffer, ProtocolObject, Retained};
+use metal::MTLBuffer;
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 #[derive(Debug, Clone)]
 pub struct MatmulArguments<'a> {

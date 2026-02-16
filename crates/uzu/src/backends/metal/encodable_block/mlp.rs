@@ -1,12 +1,11 @@
 //! MLP block encodable.
 
-use super::{EncodableBlock, Metal};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
-    backends::metal::{
-        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained,
-        kernel::mlp::MlpGateActMulEncodable,
-    },
-    encodable_block::EncodingParameters,
+    backends::metal::{Metal, kernel::mlp::MlpGateActMulEncodable},
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
 };
 

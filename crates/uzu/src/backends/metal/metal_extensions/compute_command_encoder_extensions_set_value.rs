@@ -1,6 +1,7 @@
 use std::{ffi::c_void, mem::size_of, ptr::NonNull};
 
-use crate::backends::metal::{MTLComputeCommandEncoder, ProtocolObject};
+use metal::MTLComputeCommandEncoder;
+use objc2::runtime::ProtocolObject;
 
 /// Extension trait providing ergonomic `set_value` methods for compute command encoders.
 pub trait ComputeEncoderSetValue {

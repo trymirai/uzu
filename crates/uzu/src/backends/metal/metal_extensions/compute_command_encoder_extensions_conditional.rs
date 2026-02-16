@@ -1,6 +1,5 @@
-use objc2::msg_send;
-
-use crate::backends::metal::{MTLBuffer, MTLCompareFunction, MTLComputeCommandEncoder, ProtocolObject, Retained};
+use metal::{MTLBuffer, MTLCompareFunction, MTLComputeCommandEncoder};
+use objc2::{msg_send, rc::Retained, runtime::ProtocolObject};
 
 /// Low-level, unsafe conditional control of Metal encoders.
 /// This is internal; users should prefer the safe `ComputeEncoderConditional::condition`.

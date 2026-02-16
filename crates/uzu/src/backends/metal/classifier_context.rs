@@ -1,9 +1,12 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
+use metal::MTLCommandBuffer;
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{
-    MTLCommandBuffer, MTLContext, ProtocolObject, Retained,
+    MetalContext,
     encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
+        ClassifierLayer, ClassifierPredictionHead,
         transformer_layer::{embed_block, linear_block},
     },
     kernel::dsl::SigmoidMetalKernel,
@@ -15,7 +18,7 @@ use crate::{
         metal::{Metal, error::ClassifierError},
     },
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::EncodableBlock,
+    encodable_block::{Activation, EncodableBlock, Normalization, Pooling, Rope},
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
@@ -26,7 +29,7 @@ use crate::{
 };
 
 pub struct ClassifierContext {
-    pub mtl_context: Rc<MTLContext>,
+    pub mtl_context: Rc<MetalContext>,
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
@@ -36,9 +39,9 @@ pub struct ClassifierContext {
     pub model_shape: ModelShape,
 
     pub embed: Box<dyn EncodableBlock<Metal>>,
-    pub embedding_norm: Normalization,
+    pub embedding_norm: Normalization<Metal>,
     pub layers: Box<[ClassifierLayer]>,
-    pub output_norm: Normalization,
+    pub output_norm: Normalization<Metal>,
     pub global_rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
 
@@ -50,7 +53,7 @@ pub struct ClassifierContext {
 
 impl ClassifierContext {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = MetalContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let command_buffer = context.create_command_buffer().map_err(|_| Error::UnableToCreateMetalContext)?;
 
@@ -164,7 +167,7 @@ impl ClassifierContext {
             .subtree("output_norm")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("output_norm".to_string())))?;
         let output_norm = Normalization::new(
-            &context,
+            context.as_ref(),
             data_type,
             classifier_model_config.model_config.transformer_config.output_norm_config.clone(),
             ArrayId::Main,
@@ -181,7 +184,7 @@ impl ClassifierContext {
             .subtree("embedding_norm")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("embedding_norm".to_string())))?;
         let embedding_norm = Normalization::new(
-            &context,
+            context.as_ref(),
             data_type,
             classifier_model_config.model_config.embedding_norm_config.clone(),
             ArrayId::Main,
@@ -230,7 +233,7 @@ impl ClassifierContext {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.norm".to_string()))
         })?;
         let prediction_head_norm = Normalization::new(
-            &context,
+            context.as_ref(),
             prediction_head_data_type,
             prediction_head_config.normalization_config.clone(),
             ArrayId::ClassifierPredictionHeadDense,
@@ -306,7 +309,7 @@ impl ClassifierContext {
     }
 
     fn create_rope_block(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         rope_type: RopeType,
     ) -> Result<Rc<Box<dyn EncodableBlock<Metal>>>, ClassifierError> {

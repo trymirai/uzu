@@ -9,14 +9,14 @@ use uzu::{
     backends::{
         common::Context,
         metal::{
-            MTLContext,
+            MetalContext,
             kernel::{MatmulArguments, MatmulKernel},
         },
     },
 };
 
 fn run_metal_matmul(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     a_data: &[bf16],
     b_data: &[bf16],
     m: usize,
@@ -265,7 +265,7 @@ fn compare_results(
 #[test]
 #[ignore]
 fn matmul_correctness_comprehensive() {
-    let Some(ctx) = MTLContext::new().ok() else {
+    let Some(ctx) = MetalContext::new().ok() else {
         eprintln!("No Metal device available, skipping test");
         return;
     };

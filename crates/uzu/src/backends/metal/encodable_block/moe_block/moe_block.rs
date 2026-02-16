@@ -2,17 +2,16 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use super::{
-    super::{EncodableBlock, Metal},
-    SharedMoeWeights,
-};
+use metal::{MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::SharedMoeWeights;
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
     backends::{
         common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         metal::{
-            MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-            MTLContext, MetalArray, ProtocolObject, Retained,
+            Metal, MetalArray, MetalContext,
             kernel::{
                 MoeGatherKernels,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
@@ -24,7 +23,7 @@ use crate::{
             },
         },
     },
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -56,12 +55,12 @@ pub struct MoeBlock {
 
 impl MoeBlock {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
         hidden_dim: usize,
-        parameter_tree: &ParameterTree<MTLContext>,
-    ) -> Result<Self, crate::backends::metal::MTLError> {
+        parameter_tree: &ParameterTree<MetalContext>,
+    ) -> Result<Self, crate::backends::metal::MetalError> {
         let data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
 
         let router_data_type: DataType = moe_config.router_config.activation_precision().into();
@@ -70,7 +69,7 @@ impl MoeBlock {
 
         let router_tree = parameter_tree
             .subtree("router")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Router subtree error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Router subtree error: {:?}", e)))?;
 
         let router = match &moe_config.router_config {
             LinearConfig::Quantized(_) => {
@@ -82,14 +81,14 @@ impl MoeBlock {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let weights_arr = router_tree
-                    .leaf("weights")
-                    .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Router weights error: {:?}", e)))?;
+                let weights_arr = router_tree.leaf("weights").map_err(|e| {
+                    crate::backends::metal::MetalError::Generic(format!("Router weights error: {:?}", e))
+                })?;
                 let weights_buf = weights_arr.buffer();
 
-                let biases_arr = router_tree
-                    .leaf("biases")
-                    .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Router biases error: {:?}", e)))?;
+                let biases_arr = router_tree.leaf("biases").map_err(|e| {
+                    crate::backends::metal::MetalError::Generic(format!("Router biases error: {:?}", e))
+                })?;
                 let biases_buf = biases_arr.buffer();
 
                 RouterBlock::Metal {
@@ -105,53 +104,54 @@ impl MoeBlock {
         };
 
         let router_topk_kernel = MoeRouterTopKKernel::new(context).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("RouterTopK fused kernel error: {:?}", e))
+            crate::backends::metal::MetalError::Generic(format!("RouterTopK fused kernel error: {:?}", e))
         })?;
-        let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context)
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Counts+offsets kernel error: {:?}", e)))?;
+        let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context).map_err(|e| {
+            crate::backends::metal::MetalError::Generic(format!("Counts+offsets kernel error: {:?}", e))
+        })?;
         let scatter_kernels = MoeScatterKernels::new(context)
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Scatter kernels error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Scatter kernels error: {:?}", e)))?;
         let gather_kernel = MoeGatherKernels::new(context)
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Gather kernel error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Gather kernel error: {:?}", e)))?;
         let experts_two_pass_decode_kernel = MoeExpertsTwoPassDecodeKernels::new(context).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("Experts two-pass decode kernel error: {:?}", e))
+            crate::backends::metal::MetalError::Generic(format!("Experts two-pass decode kernel error: {:?}", e))
         })?;
         let experts_two_pass_prefill_kernel = MoeExpertsTwoPassPrefillKernel::new(context).map_err(|e| {
-            crate::backends::metal::MTLError::Generic(format!("Experts two-pass prefill kernel error: {:?}", e))
+            crate::backends::metal::MetalError::Generic(format!("Experts two-pass prefill kernel error: {:?}", e))
         })?;
         let finalize_kernel = MoeFinalizeMetalKernel::new(context, data_type)
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("Finalize kernel error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Finalize kernel error: {:?}", e)))?;
 
         let experts_tree = parameter_tree
             .subtree("experts")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("experts subtree error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("experts subtree error: {:?}", e)))?;
 
         let w13_arr = experts_tree
             .subtree("up_projection")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("up_projection error: {:?}", e)))?
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("up_projection error: {:?}", e)))?
             .leaf("weights")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("up weights error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("up weights error: {:?}", e)))?;
         let w13_buf = w13_arr.buffer().clone();
 
         let w2_arr = experts_tree
             .subtree("down_projection")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("down_projection error: {:?}", e)))?
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("down_projection error: {:?}", e)))?
             .leaf("weights")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("down weights error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("down weights error: {:?}", e)))?;
         let w2_buf = w2_arr.buffer().clone();
 
         let up_biases_arr = experts_tree
             .subtree("up_projection")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("up_projection biases error: {:?}", e)))?
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("up_projection biases error: {:?}", e)))?
             .leaf("biases")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("up biases error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("up biases error: {:?}", e)))?;
         let up_biases_buf = up_biases_arr.buffer().clone();
 
         let down_biases_arr = experts_tree
             .subtree("down_projection")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("down_projection biases error: {:?}", e)))?
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("down_projection biases error: {:?}", e)))?
             .leaf("biases")
-            .map_err(|e| crate::backends::metal::MTLError::Generic(format!("down biases error: {:?}", e)))?;
+            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("down biases error: {:?}", e)))?;
         let down_biases_buf = down_biases_arr.buffer().clone();
 
         let shared_weights = SharedMoeWeights {

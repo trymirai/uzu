@@ -1,12 +1,16 @@
 use std::{mem::size_of, ptr::NonNull};
 
+use metal::{
+    MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLFunctionConstantValues, MTLSize,
+};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{dtype_index, dtype_suffix};
 use crate::{
     DataType,
     backends::metal::{
-        FunctionConstantValuesSetValue, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder,
-        MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues, MTLSize,
-        ProtocolObject, Retained,
+        FunctionConstantValuesSetValue, MetalContext, MetalError,
         kernel::moe::tiles_map::{
             MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
             MoeTileScanArguments,
@@ -17,12 +21,12 @@ use crate::{
 #[derive(Debug, thiserror::Error)]
 pub enum MoeScatterError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
 }
 #[derive(Debug, thiserror::Error)]
 pub enum MoeExpertsError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("{0}")]
     Generic(String),
 }
@@ -93,7 +97,7 @@ pub struct MoeExpertsTwoPassArguments<'a> {
 }
 
 impl MoeExpertsTwoPassPrefillKernel {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MoeExpertsError> {
         let dtypes = [DataType::F16, DataType::BF16, DataType::F32];
         let mut pass_a_indirect = vec![Vec::with_capacity(dtypes.len()); 4];
         for gate in 0u32..4u32 {

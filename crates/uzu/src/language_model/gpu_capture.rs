@@ -3,10 +3,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    backends::metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt, MTLContext},
-    utils::env_utils::MetalEnvVar,
-};
+use metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt};
+
+use crate::{backends::metal::MetalContext, utils::env_utils::MetalEnvVar};
 
 pub struct GpuCaptureManager {
     capture_prefill_enabled: bool,
@@ -51,7 +50,7 @@ impl GpuCaptureManager {
 
     pub fn start_capture(
         &self,
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         capture_type: &str,
     ) -> Result<PathBuf, String> {
         let timestamp =

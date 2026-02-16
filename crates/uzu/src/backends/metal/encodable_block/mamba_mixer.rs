@@ -2,16 +2,16 @@
 
 use std::env;
 
-use objc2::Message;
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
-use super::{EncodableBlock, Metal, transformer_layer};
+use super::transformer_layer;
 use crate::{
     Activation, DataType,
     backends::{
         common::kernel::{Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel},
         metal::{
-            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
-            Retained,
+            Metal, MetalArray, MetalContext,
             kernel::{
                 dsl::{
                     Conv1dDecodeMetalKernel, Conv1dPackMetalKernel, Conv1dScanMetalKernel, SSDUpdateMetalKernel,
@@ -22,7 +22,7 @@ use crate::{
         },
     },
     config::{DecoderLayerType, Mamba2Config},
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -48,7 +48,7 @@ pub(crate) struct MambaMixer {
 impl MambaMixer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
         layer_index: usize,
@@ -56,7 +56,7 @@ impl MambaMixer {
         num_heads: usize,
         head_dim: usize,
         num_groups: usize,
-        decoder_layer_loader: &ParameterTree<MTLContext>,
+        decoder_layer_loader: &ParameterTree<MetalContext>,
     ) -> Self {
         let _ = (num_heads, head_dim, num_groups);
         if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
@@ -530,9 +530,9 @@ impl EncodableBlock<Metal> for MambaMixer {
 }
 
 fn resolve_subtree<'tree>(
-    loader: &'tree ParameterTree<MTLContext>,
+    loader: &'tree ParameterTree<MetalContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, MTLContext> {
+) -> ParameterTree<'tree, MetalContext> {
     for candidate in candidates {
         if let Ok(tree) = loader.subtree(candidate) {
             return tree;

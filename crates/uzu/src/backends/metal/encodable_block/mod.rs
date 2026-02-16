@@ -6,9 +6,6 @@
 //! Encodables implement `EncodableBlock` and orchestrate one or more
 //! kernels to perform operations on `ForwardPassState`.
 
-pub use super::Metal;
-pub use crate::encodable_block::{Activation, EncodableBlock, Pooling, Rope, TensorAddSwap, TensorCopy};
-
 mod attention;
 mod classifier_layer;
 mod decoder;
@@ -18,7 +15,6 @@ mod linear;
 mod mamba_mixer;
 mod mlp;
 mod moe_block;
-mod normalization;
 mod prediction_head;
 mod short_conv_mixer;
 pub mod transformer_layer;
@@ -35,6 +31,5 @@ pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::MlpBlock;
 pub use moe_block::{MoeBlock, SharedMoeWeights};
-pub use normalization::{LayerNorm, Normalization, QKNorm, RMSNorm};
 pub use prediction_head::ClassifierPredictionHead;
 pub(crate) use short_conv_mixer::ShortConvMixer;

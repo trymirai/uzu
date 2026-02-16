@@ -1,11 +1,12 @@
 use super::{
-    EncodableBlock, FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, Metal, MlpBlock,
-    MoeBlock, QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
+    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock, MoeBlock,
+    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError, kernel::mlp::MlpGateActMulEncodable},
+    backends::metal::{Metal, MetalContext, MetalError, kernel::mlp::MlpGateActMulEncodable},
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
+    encodable_block::EncodableBlock,
     forward_pass::state::ArrayId,
     parameters::ParameterTree,
 };
@@ -15,11 +16,11 @@ pub fn linear_block<const N: usize>(
     _has_biases: bool,
     input_dimension: usize,
     output_dimensions: [usize; N],
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<MTLContext>,
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
+) -> Result<Box<dyn EncodableBlock<Metal>>, MetalError> {
     let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
         LinearConfig::Quantized(quantization_config) | LinearConfig::MLXQuantized(quantization_config) => {
@@ -32,7 +33,7 @@ pub fn linear_block<const N: usize>(
                 input_array_id,
                 output_array_id,
             )
-            .map_err(|error| MTLError::Generic(format!("{:?}", error)))?;
+            .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {
@@ -47,12 +48,12 @@ pub fn linear_block<const N: usize>(
                 input_array_id,
                 output_array_id,
             )
-            .map_err(|error| MTLError::Generic(format!("{:?}", error)))?;
+            .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
             Ok(Box::new(block))
         },
         LinearConfig::QLoRA {
             ..
-        } => Err(MTLError::Generic("QLoRA linear layer not supported".to_string())),
+        } => Err(MetalError::Generic("QLoRA linear layer not supported".to_string())),
     }
 }
 
@@ -61,9 +62,9 @@ pub fn mlp_block(
     config: &MLPConfig,
     model_dimension: usize,
     hidden_dimension: usize,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<MTLContext>,
-) -> Result<Box<dyn EncodableBlock<Metal>>, MTLError> {
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
+) -> Result<Box<dyn EncodableBlock<Metal>>, MetalError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         let data_type: DataType = dense_config.linear_config.activation_precision().into();
 
@@ -74,7 +75,7 @@ pub fn mlp_block(
             model_dimension,
             [2 * hidden_dimension],
             context,
-            &parameter_tree.subtree("up_projection").map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
+            &parameter_tree.subtree("up_projection").map_err(|error| MetalError::Generic(format!("{:?}", error)))?,
             ArrayId::Main,
             ArrayId::MlpFusedUp,
         )?;
@@ -90,7 +91,7 @@ pub fn mlp_block(
             hidden_dimension,
             [model_dimension],
             context,
-            &parameter_tree.subtree("down_projection").map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
+            &parameter_tree.subtree("down_projection").map_err(|error| MetalError::Generic(format!("{:?}", error)))?,
             ArrayId::MlpHidden,
             ArrayId::Main,
         )?;
@@ -109,8 +110,8 @@ pub fn mlp_block(
 
 pub fn embed_block(
     config: &DecoderConfig,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<MTLContext>,
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
 ) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
@@ -249,8 +250,8 @@ pub fn embed_block(
 
 pub fn readout_block(
     config: &DecoderConfig,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<MTLContext>,
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
 ) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {

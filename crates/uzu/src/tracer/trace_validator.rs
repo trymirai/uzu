@@ -12,12 +12,16 @@ use std::{
 };
 
 use half::{bf16, f16};
+use metal::{MTLCommandBuffer, MTLCommandQueue};
 use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
-    backends::metal::{KVCacheUpdate, MTLCommandBuffer, MTLCommandQueue, MTLContext, Metal, MetalArray},
+    backends::{
+        common::kernel::kv_cache_update::KVCacheUpdate,
+        metal::{Metal, MetalArray, MetalContext},
+    },
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{EncodableBlock, EncodingParameters, Sampling},
@@ -420,7 +424,7 @@ impl TraceValidator {
         })
     }
 
-    fn handle_missing_tokens(traces_view: &ParameterTree<MTLContext>) -> TracerValidationResults {
+    fn handle_missing_tokens(traces_view: &ParameterTree<MetalContext>) -> TracerValidationResults {
         if let Ok(expected_logits) = traces_view.leaf("logits") {
             let reference_shape = expected_logits.shape().to_vec();
             let metrics = TracerValidationMetrics {
@@ -466,7 +470,7 @@ impl TraceValidator {
 
     fn validate_layer_traces(
         traces: &Rc<RefCell<ActivationTrace<Metal>>>,
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -535,7 +539,7 @@ impl TraceValidator {
 
     fn validate_classifier_traces(
         traces: &Rc<RefCell<ActivationTrace<Metal>>>,
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -593,7 +597,7 @@ impl TraceValidator {
 
     fn validate_array_with_name(
         data_type: DataType,
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         expected_array_path: &str,
         produced_array: &Ref<MetalArray>,
     ) -> TracerValidationMetrics {
@@ -773,7 +777,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn load_array_as_vec<SourcePrecision: ArrayElement, TargetPrecision: NumCast>(
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         name: &str,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name).unwrap();

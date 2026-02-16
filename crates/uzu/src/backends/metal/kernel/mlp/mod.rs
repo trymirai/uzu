@@ -1,11 +1,11 @@
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLFunctionConstantValues};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
     DataType,
     backends::{
         common::kernel::MlpGateActMulKernel,
-        metal::{
-            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError,
-            MTLFunctionConstantValues, ProtocolObject, Retained, kernel::dsl::MlpGateActMulMetalKernel,
-        },
+        metal::{FunctionConstantValuesSetValue, MetalContext, MetalError, kernel::dsl::MlpGateActMulMetalKernel},
     },
     config::Activation,
 };
@@ -81,11 +81,11 @@ pub struct MlpGateActMulEncodable {
 
 impl MlpGateActMulEncodable {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         activation: Activation,
         hidden_dim: usize,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         let kernel = MlpGateActMulMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
@@ -100,7 +100,7 @@ impl MlpGateActMulEncodable {
         fused_up: &Retained<ProtocolObject<dyn MTLBuffer>>,
         hidden: &Retained<ProtocolObject<dyn MTLBuffer>>,
         m: i32,
-    ) -> Result<(), MTLError> {
+    ) -> Result<(), MetalError> {
         let act_type = match self.activation {
             Activation::SiLU {
                 ..

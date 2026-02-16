@@ -6,7 +6,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::metal::{
-        MTLContext,
+        MetalContext,
         kernel::moe::{
             MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
             MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernel,
@@ -35,7 +35,7 @@ fn build_offsets(
 }
 
 fn run_decode_case(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     name: &str,
     t: usize,
     d_model: usize,
@@ -174,7 +174,7 @@ fn test_two_pass_decode_speed() {
 }
 
 fn run_two_pass_prefill_case(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     name: &str,
     t: usize,
     d_model: usize,
@@ -310,7 +310,7 @@ fn test_two_pass_prefill_speed() {
 }
 
 fn run_fused_single_token_case(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     name: &str,
     d_model: usize,
     d_ff: usize,
@@ -450,7 +450,7 @@ fn test_single_token_indirect_vs_fused() {
 }
 
 fn run_indirect_decode_timed(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     d_model: usize,
     d_ff: usize,
@@ -557,7 +557,7 @@ fn run_indirect_decode_timed(
 }
 
 fn run_fused_decode_timed(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     d_model: usize,
     d_ff: usize,
     e: usize,

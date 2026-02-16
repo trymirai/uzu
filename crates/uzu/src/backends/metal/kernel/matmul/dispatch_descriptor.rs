@@ -1,7 +1,7 @@
 use super::{common::MatmulArguments, gemm, gemv, split_k};
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{MetalContext, MetalError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,10 +39,10 @@ impl MatmulDispatchDescriptor {
 }
 
 pub(crate) fn choose_dispatch_descriptor(
-    context: &MTLContext,
+    context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments,
-) -> Result<MatmulDispatchDescriptor, MTLError> {
+) -> Result<MatmulDispatchDescriptor, MetalError> {
     if let Some(descriptor) = gemv::DispatchDescriptor::try_new(context, data_type, arguments)? {
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
@@ -55,9 +55,9 @@ pub(crate) fn choose_dispatch_descriptor(
 }
 
 pub fn determine_kernel_variant(
-    context: &MTLContext,
+    context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments,
-) -> Result<MatmulKernelVariant, MTLError> {
+) -> Result<MatmulKernelVariant, MetalError> {
     choose_dispatch_descriptor(context, data_type, arguments).map(|d| d.variant())
 }

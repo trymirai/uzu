@@ -1,9 +1,9 @@
+use metal::{MTLCommandEncoderExt, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize};
+use objc2::runtime::ProtocolObject;
+
 use super::{
     compute_pipeline_state_extensions_threads::ComputePipelineStateThreads,
     device_extensions_features::{DeviceFeatures, Feature},
-};
-use crate::backends::metal::{
-    MTLCommandEncoderExt, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize, ProtocolObject,
 };
 
 /// Extensions for MTLComputeCommandEncoder to simplify dispatch operations
