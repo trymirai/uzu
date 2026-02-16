@@ -18,9 +18,10 @@ use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
+    array::Array,
     backends::{
         common::kernel::kv_cache_update::KVCacheUpdate,
-        metal::{Metal, MetalArray, MetalContext},
+        metal::{Metal, MetalContext},
     },
     classifier::Classifier,
     config::ModelMetadata,
@@ -475,7 +476,7 @@ impl TraceValidator {
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        let validate = |path: &str, array: &Ref<MetalArray>| -> Option<TracerValidationResult> {
+        let validate = |path: &str, array: &Ref<Array<Metal>>| -> Option<TracerValidationResult> {
             if traces_view.leaf(path).is_ok() {
                 Some(TracerValidationResult {
                     name: path.to_string(),
@@ -583,8 +584,8 @@ impl TraceValidator {
 
     fn validate_array(
         data_type: DataType,
-        expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
+        expected_array: &Array<Metal>,
+        produced_array: &Ref<Array<Metal>>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         match data_type {
@@ -599,15 +600,15 @@ impl TraceValidator {
         data_type: DataType,
         traces_view: &ParameterTree<MetalContext>,
         expected_array_path: &str,
-        produced_array: &Ref<MetalArray>,
+        produced_array: &Ref<Array<Metal>>,
     ) -> TracerValidationMetrics {
         let expected_array = traces_view.leaf(expected_array_path).unwrap();
         Self::validate_array(data_type, &expected_array, produced_array, None)
     }
 
     fn validate_array_of_type<Precision: ArrayElement>(
-        expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
+        expected_array: &Array<Metal>,
+        produced_array: &Ref<Array<Metal>>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
@@ -846,7 +847,7 @@ impl TraceValidator {
         .expect("Failed to create sampling kernel");
     }
 
-    fn get_tokens_from_logits(logits: &MetalArray) -> Vec<u64> {
+    fn get_tokens_from_logits(logits: &Array<Metal>) -> Vec<u64> {
         let data_type = logits.data_type();
         match data_type {
             DataType::F16 => Self::get_tokens_from_logits_of_type::<f16>(logits),
@@ -856,7 +857,7 @@ impl TraceValidator {
         }
     }
 
-    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &MetalArray) -> Vec<u64> {
+    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<Metal>) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
         sampler.sample(logits.as_view::<Precision>())
     }

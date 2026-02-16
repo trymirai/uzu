@@ -8,10 +8,11 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use super::SharedMoeWeights;
 use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
+    array::Array,
     backends::{
         common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
         metal::{
-            Metal, MetalArray, MetalContext,
+            Metal, MetalContext,
             kernel::{
                 MoeGatherKernels,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
@@ -224,7 +225,7 @@ impl EncodableBlock<Metal> for MoeBlock {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<MetalArray>| -> Retained<ProtocolObject<dyn MTLBuffer>> {
+        let clone_buffer = |array: &RefCell<Array<Metal>>| -> Retained<ProtocolObject<dyn MTLBuffer>> {
             array.borrow().buffer().to_owned().into()
         };
 

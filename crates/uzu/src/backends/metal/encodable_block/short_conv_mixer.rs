@@ -4,13 +4,14 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use super::transformer_layer;
 use crate::{
     DataType,
+    array::Array,
     backends::{
         common::{
             Context,
             kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
         },
         metal::{
-            Metal, MetalArray, MetalContext,
+            Metal, MetalContext,
             kernel::dsl::{
                 ShortConvDecodeMetalKernel, ShortConvPackMetalKernel, ShortConvPrefillMetalKernel,
                 ShortConvTrieMetalKernel,
@@ -33,8 +34,8 @@ pub(crate) struct ShortConvMixer {
     short_conv_prefill: ShortConvPrefillMetalKernel,
     short_conv_decode: ShortConvDecodeMetalKernel,
     short_conv_trie: ShortConvTrieMetalKernel,
-    conv_weight: MetalArray,
-    conv_bias: Option<MetalArray>,
+    conv_weight: Array<Metal>,
+    conv_bias: Option<Array<Metal>>,
 }
 
 fn resolve_subtree<'tree>(

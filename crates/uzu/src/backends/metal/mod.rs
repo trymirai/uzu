@@ -1,5 +1,3 @@
-mod allocator;
-mod array;
 mod backend;
 mod classifier_context;
 mod command_buffer;
@@ -11,8 +9,8 @@ pub mod error;
 pub mod kernel;
 mod language_model_generator_context;
 pub mod metal_extensions;
+mod native_buffer;
 
-pub use array::MetalArray;
 pub use backend::Metal;
 pub use classifier_context::ClassifierContext;
 pub use context::{DeviceArchitecture, DeviceClass, DeviceGeneration, MetalContext};
