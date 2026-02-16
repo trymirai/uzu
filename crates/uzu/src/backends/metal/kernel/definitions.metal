@@ -489,6 +489,12 @@ static T threadgroup_cooperative_reduce_min(
 #define GROUPS(EXPR) DSL_META("dsl.groups", DSL_XSTR(EXPR))
 #define THREADS(EXPR) DSL_META("dsl.threads", DSL_XSTR(EXPR))
 
+struct Simd {
+  uint lane_idx;
+  uint group_idx;
+  uint group_size;
+};
+
 // MARK: - Generate Template Kernels
 
 #define generateKernel(                                                        \
