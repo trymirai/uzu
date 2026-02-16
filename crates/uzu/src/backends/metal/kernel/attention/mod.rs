@@ -1,4 +1,7 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, hash_map::Entry},
+};
 
 use objc2::Message;
 
@@ -76,20 +79,23 @@ impl AttentionGemmBlock {
         };
 
         let mut map = self.cache.borrow_mut();
-        let kernel = map.entry(key).or_insert_with(|| {
-            AttentionGemmMetalKernel::new(
-                context,
-                self.data_type,
-                bk as u32,
-                args.head_dim as u32,
-                align_q,
-                align_k,
-                args.is_causal,
-                has_mask,
-                has_sinks,
-            )
-            .expect("Could not initialize AttentionGemmMetalKernel")
-        });
+        let kernel = match map.entry(key) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let kernel = AttentionGemmMetalKernel::new(
+                    context,
+                    self.data_type,
+                    bk as u32,
+                    args.head_dim as u32,
+                    align_q,
+                    align_k,
+                    args.is_causal,
+                    has_mask,
+                    has_sinks,
+                )?;
+                entry.insert(kernel)
+            },
+        };
 
         // Params (all strides in elements)
         let q_head_stride = (args.suffix_length * args.head_dim) as i64;

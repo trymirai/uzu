@@ -1121,7 +1121,7 @@ fn perf_two_pass_attention() {
         head_dim as u32,
         scale,
         num_heads as u32,
-        seq_len as u32,
+        suffix_length as u32,
         mask_buffer.as_ref().map(|b| b),
         None,
         None,
