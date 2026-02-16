@@ -969,7 +969,7 @@ fn test_two_pass_attention() {
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
     let kernel_pass1 =
-        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, is_causal, false, false, false)
+        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, false, is_causal)
             .expect("Failed to create AttentionTwoPass1MetalKernel");
     let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
         .expect("Failed to create AttentionTwoPass2MetalKernel");
