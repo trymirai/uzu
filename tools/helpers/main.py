@@ -1,6 +1,8 @@
 import base64
 import json
 import os
+import platform
+import subprocess
 from dataclasses import asdict
 from itertools import chain
 from pathlib import Path
@@ -43,7 +45,10 @@ def crc32c_file(path, chunk_size=8 * 1024 * 1024):
     with open(path, "rb") as file:
         for chunk in iter(lambda: file.read(chunk_size), b""):
             checksum.update(chunk)
-    return base64.b64encode(checksum.digest()).decode("ascii")
+    digest_bytes = checksum.digest()
+    crc_value = int.from_bytes(digest_bytes, byteorder="little")
+    big_endian_bytes = crc_value.to_bytes(4, byteorder="big")
+    return base64.b64encode(big_endian_bytes).decode("ascii")
 
 
 def get_uzu_version() -> str:

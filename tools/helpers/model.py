@@ -38,9 +38,13 @@ class Model:
     id: str
     toolchain_version: str
     repod_id: str
+    vendor: str
     name: str
     speculators: List[Speculator]
     files: List[File]
+
+    def identifier(self) -> str:
+        return f"{self.vendor}-{self.name}"
 
     @classmethod
     def from_dict(cls, data: dict) -> "Model":
@@ -48,6 +52,7 @@ class Model:
             id=data["id"],
             toolchain_version=data["toolchainVersion"],
             repod_id=data["repoId"],
+            vendor=data["vendor"],
             name=data["name"],
             speculators=[
                 Speculator.from_dict(speculator) for speculator in data["speculators"]
