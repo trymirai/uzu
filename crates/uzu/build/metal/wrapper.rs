@@ -134,6 +134,12 @@ fn kernel_wrappers(
             wrapper_arguments.push("uint3 __dsl_thread_idx [[thread_position_in_threadgroup]]".into());
         }
 
+        if kernel.has_simd() {
+            wrapper_arguments.push("uint __dsl_simd_lane_idx [[thread_index_in_simdgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_idx [[simdgroup_index_in_threadgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_size [[threads_per_simdgroup]]".into());
+        }
+
         let wrapper_arguments = wrapper_arguments.join(", ");
 
         let shared_definitions = kernel.arguments.iter().filter_map(|a| match a.argument_type() {
@@ -167,6 +173,7 @@ fn kernel_wrappers(
                     MetalArgumentType::Threads(_) => {
                         format!("__dsl_thread_idx.{}", thread_axis_letters.next().unwrap())
                     },
+                    MetalArgumentType::Simd => "Simd { .lane_idx = __dsl_simd_lane_idx, .group_idx = __dsl_simd_group_idx, .group_size = __dsl_simd_group_size }".into(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
