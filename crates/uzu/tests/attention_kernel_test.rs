@@ -1135,7 +1135,7 @@ fn perf_two_pass_attention() {
         &maxs_buffer,
         &output_buffer,
         num_heads as u32,
-        seq_len as u32,
+        suffix_length as u32,
         &compute_encoder,
     );
     compute_encoder.end_encoding();

@@ -77,18 +77,21 @@ impl Attention {
                 };
                 let float_mask = has_mask;
 
-                let sp_kernel = AttentionSinglePassMetalKernel::new(
+                if let Ok(sp_kernel) = AttentionSinglePassMetalKernel::new(
                     context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
-                )?;
-                single_pass_kernels.insert(key, sp_kernel);
+                ) {
+                    single_pass_kernels.insert(key, sp_kernel);
+                }
 
-                let tp1_kernel = AttentionTwoPass1MetalKernel::new(
+                if let Ok(tp1_kernel) = AttentionTwoPass1MetalKernel::new(
                     context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
-                )?;
-                two_pass_1_kernels.insert(key, tp1_kernel);
+                ) {
+                    two_pass_1_kernels.insert(key, tp1_kernel);
+                }
 
-                let tp2_kernel = AttentionTwoPass2MetalKernel::new(context, data_type, head_dim)?;
-                two_pass_2_kernels.insert(head_dim, tp2_kernel);
+                if let Ok(tp2_kernel) = AttentionTwoPass2MetalKernel::new(context, data_type, head_dim) {
+                    two_pass_2_kernels.insert(head_dim, tp2_kernel);
+                }
             }
         }
 
@@ -374,71 +377,87 @@ impl EncodableBlock<Metal> for Attention {
                 let _ = self.gemm_block.encode(state.mtl_context(), compute_encoder, &args);
             },
             KernelVariant::SinglePass => {
-                if let Some(kernel) = self.single_pass_kernels.get(&kernel_key) {
-                    let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
-                    let sinks_buffer_opt = sinks_buffer.as_ref().map(|b| b);
-                    kernel.encode(
-                        queries_buffer,
-                        &key_cache_buffer,
-                        &value_cache_buffer,
-                        attention_output_buffer,
-                        gqa_factor as u32,
-                        sequence_length as u32,
-                        k_head_stride as u32,
-                        k_seq_stride as u32,
-                        v_head_stride as u32,
-                        v_seq_stride as u32,
-                        scale,
-                        mask_buffer_opt,
-                        mask_kv_seq_stride_opt,
-                        mask_q_seq_stride_opt,
-                        mask_head_stride_opt,
-                        sinks_buffer_opt,
-                        num_heads as u32,
-                        suffix_length as u32,
-                        &compute_encoder,
-                    )
-                }
+                let kernel = match self.single_pass_kernels.get(&kernel_key) {
+                    Some(k) => k,
+                    None => {
+                        eprintln!("Can not find AttentionSinglePassMetalKernel for key {:?}", kernel_key);
+                        return;
+                    },
+                };
+                let mask_buffer_opt = attention_bias_buffer.as_ref();
+                let sinks_buffer_opt = sinks_buffer.as_ref();
+                kernel.encode(
+                    queries_buffer,
+                    &key_cache_buffer,
+                    &value_cache_buffer,
+                    attention_output_buffer,
+                    gqa_factor as u32,
+                    sequence_length as u32,
+                    k_head_stride as u32,
+                    k_seq_stride as u32,
+                    v_head_stride as u32,
+                    v_seq_stride as u32,
+                    scale,
+                    mask_buffer_opt,
+                    mask_kv_seq_stride_opt,
+                    mask_q_seq_stride_opt,
+                    mask_head_stride_opt,
+                    sinks_buffer_opt,
+                    num_heads as u32,
+                    suffix_length as u32,
+                    &compute_encoder,
+                )
             },
             KernelVariant::TwoPass => {
-                if let Some(kernel_pass1) = self.two_pass_1_kernels.get(&kernel_key)
-                    && let Some(kernel_pass2) = self.two_pass_2_kernels.get(&(head_dim as u32))
-                {
-                    let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
-                    let sinks_buffer_opt = sinks_buffer.as_ref().map(|b| b);
-                    kernel_pass1.encode(
-                        queries_buffer,
-                        &key_cache_buffer,
-                        &value_cache_buffer,
-                        partials_buffer,
-                        sums_buffer,
-                        maxs_buffer,
-                        gqa_factor as u32,
-                        sequence_length as u32,
-                        k_head_stride as u32,
-                        k_seq_stride as u32,
-                        v_head_stride as u32,
-                        v_seq_stride as u32,
-                        scale,
-                        num_heads as u32,
-                        suffix_length as u32,
-                        mask_buffer_opt,
-                        mask_kv_seq_stride_opt,
-                        mask_q_seq_stride_opt,
-                        mask_head_stride_opt,
-                        sinks_buffer_opt,
-                        &compute_encoder,
-                    );
-                    kernel_pass2.encode(
-                        partials_buffer,
-                        sums_buffer,
-                        maxs_buffer,
-                        attention_output_buffer,
-                        num_heads as u32,
-                        suffix_length as u32,
-                        &compute_encoder,
-                    );
-                }
+                let kernel_pass1 = match self.two_pass_1_kernels.get(&kernel_key) {
+                    Some(k) => k,
+                    None => {
+                        eprintln!("Can not find AttentionTwoPass1MetalKernel for key {:?}", kernel_key);
+                        return;
+                    },
+                };
+                let kernel_pass2 = match self.two_pass_2_kernels.get(&(head_dim as u32)) {
+                    Some(k) => k,
+                    None => {
+                        eprintln!("Can not find AttentionTwoPass2MetalKernel for key {:?}", kernel_key);
+                        return;
+                    },
+                };
+
+                let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
+                let sinks_buffer_opt = sinks_buffer.as_ref().map(|b| b);
+                kernel_pass1.encode(
+                    queries_buffer,
+                    &key_cache_buffer,
+                    &value_cache_buffer,
+                    partials_buffer,
+                    sums_buffer,
+                    maxs_buffer,
+                    gqa_factor as u32,
+                    sequence_length as u32,
+                    k_head_stride as u32,
+                    k_seq_stride as u32,
+                    v_head_stride as u32,
+                    v_seq_stride as u32,
+                    scale,
+                    num_heads as u32,
+                    suffix_length as u32,
+                    mask_buffer_opt,
+                    mask_kv_seq_stride_opt,
+                    mask_q_seq_stride_opt,
+                    mask_head_stride_opt,
+                    sinks_buffer_opt,
+                    &compute_encoder,
+                );
+                kernel_pass2.encode(
+                    partials_buffer,
+                    sums_buffer,
+                    maxs_buffer,
+                    attention_output_buffer,
+                    num_heads as u32,
+                    suffix_length as u32,
+                    &compute_encoder,
+                );
             },
         }
     }
@@ -450,7 +469,7 @@ enum KernelVariant {
     TwoPass,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 struct KernelKey {
     pub head_dim: u32,
     pub has_mask: bool,
