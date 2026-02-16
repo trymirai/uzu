@@ -1,42 +1,44 @@
 {
   "file_types": {
-    "Metal": ["h", "H"]
+    "Metal": ["h", "H"],
   },
   "languages": {
     "Metal": {
       "formatter": "language_server",
-      "format_on_save": "on"
-    }
+      "format_on_save": "on",
+    },
   },
   "lsp": {
     "metal-analyzer": {
       "initialization_options": {
         "metal-analyzer": {
+          "formatting": {
+            "enable": true,
+          },
           "diagnostics": {
             "onType": true,
             "onSave": true,
             "debounceMs": 300,
-            "scope": "workspace"
+            "scope": "workspace",
           },
           "indexing": {
-            "enabled": true,
+            "enable": true,
             "concurrency": 8,
             "maxFileSizeKb": 1024,
-            "excludePaths": [
-              "external/uzu-plus"
-            ]
-          },
-          "formatting": {
-            "enabled": true,
-            "command": "clang-format",
-            "args": []
+            "projectGraphDepth": 3,
+            "projectGraphMaxNodes": 256,
+            "excludePaths": ["external/uzu-plus"],
           },
           "compiler": {
             "includePaths": [],
-            "extraFlags": []
-          }
-        }
-      }
-    }
-  }
+            "extraFlags": [],
+            "platform": "macos",
+          },
+          "logging": {
+            "level": "info",
+          },
+        },
+      },
+    },
+  },
 }

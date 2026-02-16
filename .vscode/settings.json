@@ -1,26 +1,22 @@
 {
+  "metal-analyzer.formatting.enable": true,
   "metal-analyzer.diagnostics.onType": true,
   "metal-analyzer.diagnostics.onSave": true,
   "metal-analyzer.diagnostics.debounceMs": 300,
-  "metal-analyzer.indexing.enabled": true,
-  "metal-analyzer.indexing.concurrency": 8,
-  "metal-analyzer.indexing.maxFileSizeKb": 1024,
-  "metal-analyzer.formatting.enabled": true,
-  "metal-analyzer.formatting.command": "clang-format",
-  "metal-analyzer.formatting.args": [],
   "metal-analyzer.diagnostics.scope": "workspace",
-  "metal-analyzer.indexing.excludePaths": [
-    "external/uzu-plus"
-  ],
-  "metal-analyzer.compiler.includePaths": [],
-  "metal-analyzer.compiler.extraFlags": [],
+  "metal-analyzer.indexing.enable": true,
+  "metal-analyzer.indexing.concurrency": 4,
+  "metal-analyzer.indexing.maxFileSizeKb": 1024,
+  "metal-analyzer.indexing.projectGraphDepth": 3,
+  "metal-analyzer.indexing.projectGraphMaxNodes": 256,
+  "metal-analyzer.indexing.excludePaths": ["external/uzu-plus"],
+  "metal-analyzer.compiler.platform": "macos",
+  "metal-analyzer.logging.level": "info",
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit",
   },
-  "rust-analyzer.rustfmt.extraArgs": [
-    "+nightly"
-  ],
+  "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
   "rust-analyzer.check.workspace": false,
   "rust-analyzer.cargo.allTargets": false,
   "rust-analyzer.check.noDefaultFeatures": true,
