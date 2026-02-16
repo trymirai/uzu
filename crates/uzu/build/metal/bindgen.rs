@@ -15,6 +15,79 @@ use crate::{
     metal::ast::{MetalGroupsType, MetalTemplateParameterType},
 };
 
+#[derive(Default)]
+struct SpecializeTokens {
+    args: Vec<TokenStream>,
+    setup: Vec<TokenStream>,
+    arg_names: Vec<Ident>,
+}
+
+impl SpecializeTokens {
+    fn collect(
+        kernel: &MetalKernelInfo,
+        base_index: Option<usize>,
+    ) -> Self {
+        let mut tokens = Self::default();
+        for (i, argument) in kernel
+            .arguments
+            .iter()
+            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+            .enumerate()
+        {
+            let arg_name = format_ident!("{}", argument.name.as_ref());
+            let rust_type = match argument.argument_type().unwrap() {
+                MetalArgumentType::Specialize(t) => format_ident!("{t}"),
+                _ => unreachable!(),
+            };
+            let idx = base_index.unwrap_or(0) + i;
+            tokens.args.push(quote! { #arg_name: #rust_type });
+            tokens.setup.push(quote! {
+                function_constants.set_value(&#arg_name, #idx);
+            });
+            tokens.arg_names.push(arg_name);
+        }
+        tokens
+    }
+
+    fn is_empty(&self) -> bool {
+        self.args.is_empty()
+    }
+
+    fn function_constants_init(&self) -> TokenStream {
+        if self.is_empty() {
+            return quote! {};
+        }
+        let setup = &self.setup;
+        quote! {
+            let function_constants = MTLFunctionConstantValues::new();
+            #(#setup)*
+        }
+    }
+
+    fn function_constants_arg(&self) -> TokenStream {
+        if self.is_empty() {
+            quote! { None }
+        } else {
+            quote! { Some(&function_constants) }
+        }
+    }
+
+    fn cache_key_setup(&self) -> TokenStream {
+        if self.is_empty() {
+            return quote! {
+                let cache_key = entry_name.clone();
+            };
+        }
+        let arg_names = &self.arg_names;
+        quote! {
+            let mut cache_key = entry_name.clone();
+            #(
+                cache_key.push_str(&format!("|{}={:?}", stringify!(#arg_names), #arg_names));
+            )*
+        }
+    }
+}
+
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
@@ -52,40 +125,10 @@ pub fn bindgen(
     let entry_name = dynamic_mangle(kernel.name.as_ref(), variants_kernel_format);
 
     let base_index = specialize_indices.get(&kernel.name).copied();
-    let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
-        .arguments
-        .iter()
-        .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
-        .enumerate()
-        .map(|(i, a)| {
-            let arg_name = format_ident!("{}", a.name.as_ref());
-            let rust_type = match a.argument_type().unwrap() {
-                MetalArgumentType::Specialize(t) => format_ident!("{t}"),
-                _ => unreachable!(),
-            };
-            let idx = base_index.unwrap_or(0) + i;
-            let arg_def = quote! { #arg_name: #rust_type };
-            let setup = quote! {
-                function_constants.set_value(&#arg_name, #idx);
-            };
-            (arg_def, setup)
-        })
-        .unzip();
-
-    let has_specialize = !specialize_args.is_empty();
-    let function_constants_init = if has_specialize {
-        quote! {
-            let function_constants = MTLFunctionConstantValues::new();
-            #(#specialize_setup)*
-        }
-    } else {
-        quote! {}
-    };
-    let function_constants_arg = if has_specialize {
-        quote! { Some(&function_constants) }
-    } else {
-        quote! { None }
-    };
+    let specialize_tokens = SpecializeTokens::collect(kernel, base_index);
+    let specialize_args = &specialize_tokens.args;
+    let function_constants_init = specialize_tokens.function_constants_init();
+    let function_constants_arg = specialize_tokens.function_constants_arg();
 
     let mut arg_count: usize = 0;
     let mut indirect_flag = false;
@@ -295,6 +338,8 @@ pub fn bindgen(
         quote! {}
     };
 
+    let cache_key_setup = specialize_tokens.cache_key_setup();
+
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -306,7 +351,9 @@ pub fn bindgen(
 
             fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
                 #function_constants_init
-                let pipeline = context.compute_pipeline_state(&#entry_name, #function_constants_arg)?;
+                let entry_name = #entry_name;
+                #cache_key_setup
+                let pipeline = context.compute_pipeline_state_cached(&cache_key, &entry_name, #function_constants_arg)?;
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 
