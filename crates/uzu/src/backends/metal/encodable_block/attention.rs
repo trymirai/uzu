@@ -374,15 +374,14 @@ impl EncodableBlock<Metal> for Attention {
                     is_causal: self.is_causal,
                     scale,
                 };
-                let _ = self.gemm_block.encode(state.mtl_context(), compute_encoder, &args);
+                self.gemm_block
+                    .encode(state.mtl_context(), compute_encoder, &args)
+                    .unwrap_or_else(|e| panic!("Can not encode AttentionGemmBlock: {e}"));
             },
             KernelVariant::SinglePass => {
                 let kernel = match self.single_pass_kernels.get(&kernel_key) {
                     Some(k) => k,
-                    None => {
-                        eprintln!("Can not find AttentionSinglePassMetalKernel for key {:?}", kernel_key);
-                        return;
-                    },
+                    None => panic!("Can not find AttentionSinglePassMetalKernel for key {:?}", kernel_key),
                 };
                 let mask_buffer_opt = attention_bias_buffer.as_ref();
                 let sinks_buffer_opt = sinks_buffer.as_ref();
@@ -411,17 +410,11 @@ impl EncodableBlock<Metal> for Attention {
             KernelVariant::TwoPass => {
                 let kernel_pass1 = match self.two_pass_1_kernels.get(&kernel_key) {
                     Some(k) => k,
-                    None => {
-                        eprintln!("Can not find AttentionTwoPass1MetalKernel for key {:?}", kernel_key);
-                        return;
-                    },
+                    None => panic!("Can not find AttentionTwoPass1MetalKernel for key {:?}", kernel_key),
                 };
                 let kernel_pass2 = match self.two_pass_2_kernels.get(&(head_dim as u32)) {
                     Some(k) => k,
-                    None => {
-                        eprintln!("Can not find AttentionTwoPass2MetalKernel for key {:?}", kernel_key);
-                        return;
-                    },
+                    None => panic!("Can not find AttentionTwoPass2MetalKernel for key {:?}", kernel_key),
                 };
 
                 let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
