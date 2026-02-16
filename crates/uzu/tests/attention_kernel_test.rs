@@ -17,7 +17,7 @@ use uzu::{
         metal::{
             MTLContext, ProtocolObject, Retained,
             kernel::{
-                attention::{AttentionGemmArguments, AttentionKernel},
+                attention::{AttentionGemmArguments, AttentionGemmBlock},
                 dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
             },
             metal_extensions::CommandBufferTimingExt,
@@ -438,7 +438,7 @@ fn run_single_pass_attention_with_is_causal(
 }
 
 fn run_gemm_attention(
-    kernel: &AttentionKernel,
+    kernel: &AttentionGemmBlock,
     context: &MTLContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
@@ -484,7 +484,7 @@ fn run_gemm_attention(
         scale,
     };
 
-    let encode_result = kernel.encode_gemm(context, &compute_encoder, args);
+    let encode_result = kernel.encode(context, &compute_encoder, &args);
     compute_encoder.end_encoding();
     encode_result?;
 
@@ -588,7 +588,6 @@ fn test_single_pass_attention_basic() {
 }
 
 #[test]
-#[ignore]
 fn test_gemm_attention_basic() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -601,7 +600,7 @@ fn test_gemm_attention_basic() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
-    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionGemmBlock::new(DataType::F32);
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
@@ -616,7 +615,6 @@ fn test_gemm_attention_basic() {
 }
 
 #[test]
-#[ignore]
 fn test_gemm_attention_f32_head_dim_128() {
     let context = MTLContext::new().expect("Failed to create MTLContext");
 
@@ -629,7 +627,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
 
-    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionGemmBlock::new(DataType::F32);
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
@@ -678,7 +676,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     .expect("run vector attention");
 
     // matrix attention path (gemm)
-    let gemm_kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
+    let gemm_kernel = AttentionGemmBlock::new(DataType::F32);
     let matrix_output =
         run_gemm_attention(&gemm_kernel, &context, &queries, &keys, &values, Some(&mask), None, scale, is_causal)
             .expect("run matrix attention");

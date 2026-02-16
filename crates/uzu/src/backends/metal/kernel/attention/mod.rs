@@ -1,47 +1,18 @@
-use std::{collections::HashMap, mem::size_of, ptr::NonNull};
-
-use objc2::rc::Retained;
-use thiserror::Error;
+use objc2::Message;
 
 use crate::{
     DataType,
     backends::{
-        common::gpu_types::{AttnMaskParams, AttnParams},
+        common::{
+            gpu_types::{AttnMaskParams, AttnParams},
+            kernel::AttentionGemmKernel,
+        },
         metal::{
-            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-            MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, data_type::MetalDataTypeExt,
-            kernel::moe::dtype_suffix,
+            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            kernel::dsl::AttentionGemmMetalKernel,
         },
     },
 };
-
-#[derive(Debug, Clone, Copy)]
-pub enum AttentionKernelVariant {
-    SinglePass,
-    TwoPass,
-}
-
-type PipelineKey = (usize, bool, bool, bool); // (head_dim, has_sinks, is_causal, has_mask)
-
-pub struct AttentionKernelPipelines {
-    two_pass_1: HashMap<PipelineKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-    two_pass_2: HashMap<usize, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
-}
-
-pub struct AttentionKernel {
-    data_type: DataType,
-    pipelines: AttentionKernelPipelines,
-}
-
-#[derive(Debug, Error)]
-pub enum AttentionError {
-    #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
-    #[error("Function not found: {0}")]
-    FunctionNotFound(String),
-    #[error("Unsupported head dimension: {0}")]
-    UnsupportedHeadDim(usize),
-}
 
 pub struct AttentionGemmArguments<'a> {
     pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
@@ -61,152 +32,43 @@ pub struct AttentionGemmArguments<'a> {
     pub scale: f32,
 }
 
-fn make_function_constants(
-    has_mask_value: bool,
-    has_sinks_value: bool,
-    is_causal_value: bool,
-) -> Retained<MTLFunctionConstantValues> {
-    let function_constants = MTLFunctionConstantValues::new();
-
-    let query_transposed_value = false;
-    let bool_mask_value = false;
-    let float_mask_value = has_mask_value;
-
-    function_constants.set_value(&has_mask_value, 20); // has_mask
-    function_constants.set_value(&query_transposed_value, 21); // query_transposed
-    function_constants.set_value(&bool_mask_value, 23); // bool_mask
-    function_constants.set_value(&float_mask_value, 24); // float_mask
-    function_constants.set_value(&is_causal_value, 22); // do_causal
-    function_constants.set_value(&has_sinks_value, 25); // has_sinks
-
-    function_constants
+pub struct AttentionGemmBlock {
+    data_type: DataType,
 }
 
-impl AttentionKernel {
-    pub fn new(
-        context: &MTLContext,
-        data_type: DataType,
-    ) -> Result<Self, AttentionError> {
-        let data_suffix = data_type.metal_type();
-
-        let supported_head_dims = [64, 128, 256];
-        let mut two_pass_1 = HashMap::new();
-        let mut two_pass_2 = HashMap::new();
-
-        // Pre-generate all supported variants for sinks and causal configurations
-        for &has_sinks_value in &[false, true] {
-            for &is_causal_value in &[false, true] {
-                for &has_mask_value in &[false, true] {
-                    let function_constants = make_function_constants(has_mask_value, has_sinks_value, is_causal_value);
-
-                    for &head_dim in &supported_head_dims {
-                        if let Ok(pipeline) = context.compute_pipeline_state(
-                            &format!("attention_2pass_1_{}_{}", data_suffix, head_dim),
-                            Some(&function_constants),
-                        ) {
-                            two_pass_1.insert((head_dim, has_sinks_value, is_causal_value, has_mask_value), pipeline);
-                        }
-
-                        if !two_pass_2.contains_key(&head_dim) {
-                            if let Ok(pipeline) = context.compute_pipeline_state(
-                                &format!("attention_2pass_2_{}_{}", data_suffix, head_dim),
-                                Some(&function_constants),
-                            ) {
-                                two_pass_2.insert(head_dim, pipeline);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(Self {
+impl AttentionGemmBlock {
+    pub fn new(data_type: DataType) -> Self {
+        Self {
             data_type,
-            pipelines: AttentionKernelPipelines {
-                two_pass_1,
-                two_pass_2,
-            },
-        })
-    }
-
-    pub fn supports_two_pass(
-        &self,
-        head_dim: usize,
-        is_causal: bool,
-        has_mask: bool,
-    ) -> bool {
-        self.pipelines.two_pass_1.contains_key(&(head_dim, false, is_causal, has_mask))
-            && self.pipelines.two_pass_2.contains_key(&head_dim)
-    }
-
-    pub fn choose_variant(
-        &self,
-        sequence_length: usize,
-        head_dim: usize,
-        is_causal: bool,
-        has_mask: bool,
-    ) -> AttentionKernelVariant {
-        if self.supports_two_pass(head_dim, is_causal, has_mask) && sequence_length > 1024 {
-            AttentionKernelVariant::TwoPass
-        } else {
-            AttentionKernelVariant::SinglePass
         }
     }
 
-    pub fn encode_gemm(
+    pub fn encode(
         &self,
         context: &MTLContext,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        args: AttentionGemmArguments,
-    ) -> Result<(), AttentionError> {
+        args: &AttentionGemmArguments,
+    ) -> Result<(), MTLError> {
         const BQ: usize = 32;
-        const WM: u64 = 4;
-        const WN: u64 = 1;
-
-        if !matches!(args.head_dim, 64 | 128 | 256) {
-            return Err(AttentionError::UnsupportedHeadDim(args.head_dim));
-        }
-
         let bk: usize = if args.head_dim < 128 {
             32
         } else {
             16
         };
-
         let align_q = (args.suffix_length % BQ) == 0;
         let align_k = (args.sequence_length % bk) == 0;
-        let has_mask = args.mask_buffer.is_some();
-        let has_sinks = args.sinks_buffer.is_some();
 
-        let fcv = MTLFunctionConstantValues::new();
-        fcv.set_value(&align_q, 200);
-        fcv.set_value(&align_k, 201);
-        fcv.set_value(&has_mask, 300);
-        fcv.set_value(&args.is_causal, 301);
-        fcv.set_value(&has_sinks, 302);
-
-        // Kernel name matches gemm_attention.metal instantiations:
-        // attention_gemm_{f16|bf16|f32}_{head_dim}_bk{bk}
-        let type_name = dtype_suffix(self.data_type);
-
-        let function_name = format!("attention_gemm_{}_{}_bk{}", type_name, args.head_dim, bk);
-
-        let cache_key = format!(
-            "{}_aq{}_ak{}_m{}_c{}_s{}",
-            function_name, align_q as u8, align_k as u8, has_mask as u8, args.is_causal as u8, has_sinks as u8
-        );
-
-        let pipeline = context
-            .compute_pipeline_state_cached(&cache_key, &function_name, Some(&fcv))
-            .map_err(AttentionError::MetalError)?;
-
-        MTLComputeCommandEncoder::set_compute_pipeline_state(compute_encoder, &pipeline);
-
-        // Buffers
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.queries_buffer), 0, 0);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.keys_buffer), 0, 1);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.values_buffer), 0, 2);
-        MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(args.output_buffer), 0, 3);
+        let kernel = AttentionGemmMetalKernel::new(
+            context,
+            self.data_type,
+            bk as u32,
+            args.head_dim as u32,
+            align_q,
+            align_k,
+            args.is_causal,
+            args.mask_buffer.is_some(),
+            args.sinks_buffer.is_some(),
+        )?;
 
         // Params (all strides in elements)
         let q_head_stride = (args.suffix_length * args.head_dim) as i64;
@@ -218,7 +80,6 @@ impl AttentionKernel {
         let o_head_stride = args.head_dim as i64;
         let o_seq_stride = (args.num_heads * args.head_dim) as i64;
 
-        let nq = (args.suffix_length + BQ - 1) / BQ;
         let nk = (args.sequence_length + bk - 1) / bk;
         let nq_aligned = args.suffix_length / BQ;
         let nk_aligned = args.sequence_length / bk;
@@ -240,44 +101,30 @@ impl AttentionKernel {
             k_rem: (args.sequence_length - nk_aligned * bk) as i32,
         };
 
-        unsafe {
-            MTLComputeCommandEncoder::set_bytes(
-                compute_encoder,
-                NonNull::new_unchecked(&params as *const AttnParams as *mut _),
-                size_of::<AttnParams>(),
-                4,
-            );
-        }
-
-        if let Some(mask_buffer) = args.mask_buffer {
-            let mask_params = AttnMaskParams {
-                // We use a shared bias matrix for all heads/batches.
-                m_strides: [0, 0, args.sequence_length as i64],
-            };
-            unsafe {
-                MTLComputeCommandEncoder::set_bytes(
-                    compute_encoder,
-                    NonNull::new_unchecked(&mask_params as *const AttnMaskParams as *mut _),
-                    size_of::<AttnMaskParams>(),
-                    5,
-                );
-            }
-            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(mask_buffer), 0, 6);
-        }
-
-        if let Some(sinks_buffer) = args.sinks_buffer {
-            MTLComputeCommandEncoder::set_buffer(compute_encoder, Some(sinks_buffer), 0, 16);
-        }
-
-        // Dispatch
-        let threadgroups_per_grid = MTLSize::new(nq as usize, args.num_heads, 1);
-        let threads_per_threadgroup = MTLSize {
-            width: 32,
-            height: WM as usize,
-            depth: WN as usize,
+        let attn_mask_params = AttnMaskParams {
+            // We use a shared bias matrix for all heads/batches.
+            m_strides: [0, 0, args.sequence_length as i64],
         };
+        let attn_mask_params_opt = args.mask_buffer.map(|_| std::slice::from_ref(&attn_mask_params));
 
-        compute_encoder.dispatch_threadgroups(threadgroups_per_grid, threads_per_threadgroup);
+        let mask_buffer_retain = args.mask_buffer.map(|b| b.retain());
+        let mask_buffer_opt = mask_buffer_retain.as_ref().map(|b| b);
+        let sinks_buffer_retain = args.sinks_buffer.map(|b| b.retain());
+        let sinks_buffer_opt = sinks_buffer_retain.as_ref().map(|b| b);
+
+        kernel.encode(
+            &args.queries_buffer.retain(),
+            &args.keys_buffer.retain(),
+            &args.values_buffer.retain(),
+            &args.output_buffer.retain(),
+            std::slice::from_ref(&params),
+            attn_mask_params_opt,
+            mask_buffer_opt,
+            sinks_buffer_opt,
+            args.num_heads as u32,
+            args.suffix_length as u32,
+            &compute_encoder,
+        );
 
         Ok(())
     }

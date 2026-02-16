@@ -1,36 +1,17 @@
 #include <metal_stdlib>
-
+#include "../definitions.metal"
 #include "../matmul/common/loader.h"
 #include "../matmul/common/mma.h"
-#include "../definitions.metal"
 #include "attention.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
 
-///////////////////////////////////////////////////////////////////////////////
-// Function constants for compile-time specialization
-///////////////////////////////////////////////////////////////////////////////
-
-// Alignment flags (match Gemm convention / our matmul indices)
-constant bool align_Q [[function_constant(200)]];
-constant bool align_K [[function_constant(201)]];
-
-// Feature flags
-constant bool has_mask [[function_constant(300)]];
-constant bool do_causal [[function_constant(301)]];
-constant bool has_sinks [[function_constant(302)]];
-
-///////////////////////////////////////////////////////////////////////////////
-// Helpers
-///////////////////////////////////////////////////////////////////////////////
-
 template <typename T>
 struct TransformScale {
   T scale;
   METAL_FUNC TransformScale(T scale_) : scale(scale_) {}
-
   METAL_FUNC T apply(T x) const { return scale * x; }
 };
 
@@ -50,55 +31,63 @@ METAL_FUNC T row_reduce_sum(T v) {
   return v;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Gemm attention kernel
-///////////////////////////////////////////////////////////////////////////////
+#define BQ 32
+#define SIMD_WIDTH 32
+#define WM 4
+#define WN 1
 
-// clang-format off
-template <
-    typename T,
-    int BQ,
-    int BK,
-    int BD,
-    int WM,
-    int WN,
-    typename AccumType = float>
-[[kernel, max_total_threads_per_threadgroup(WM * WN * 32)]] void attention_gemm(
-    const device T* Q [[buffer(0)]],
-    const device T* K [[buffer(1)]],
-    const device T* V [[buffer(2)]],
-    device T* O [[buffer(3)]],
-    const constant AttnParams* params [[buffer(4)]],
-    const constant AttnMaskParams* mask_params [[buffer(5), function_constant(has_mask)]],
-    const device T* mask [[buffer(6), function_constant(has_mask)]],
-    const device float* sinks [[buffer(7), function_constant(has_sinks)]],
-    uint simd_lane_id [[thread_index_in_simdgroup]],
-    uint simd_group_id [[simdgroup_index_in_threadgroup]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]]) { // clang-format on
+template <typename T, uint BK, uint BD>
+VARIANTS(T, float, half, bfloat)
+VARIANTS(BK, 16, 32)
+VARIANTS(BD, 64, 128, 256)
+KERNEL(AttentionGemm)(
+    const device T* q,
+    const device T* k,
+    const device T* v,
+    device T* o,
+    const constant AttnParams* params,
+    const constant AttnMaskParams* mask_params OPTIONAL(has_mask),
+    const device T* mask OPTIONAL(has_mask),
+    const device float* sinks OPTIONAL(has_sinks),
+    const constant uint& num_heads,
+    const constant uint& suffix_length,
+    const bool align_q SPECIALIZE,
+    const bool align_k SPECIALIZE,
+    const bool do_causal SPECIALIZE,
+    const bool has_mask SPECIALIZE,
+    const bool has_sinks SPECIALIZE,
+    threadgroup T q_smem[BQ * (BD + 16 / sizeof(T))],
+    threadgroup T kv_smem[BK * (BD + 16 / sizeof(T))],
+    const uint tgid_x GROUPS(suffix_length.div_ceil(BQ)),
+    const uint tgid_y GROUPS(num_heads),
+    const uint tgid_z GROUPS(1),
+    const uint lid THREADS(128)
+) {
+  const uint simd_group_id = lid / SIMD_WIDTH;
+  const uint simd_lane_id = lid % SIMD_WIDTH;
 
   // Pacifying compiler
   (void)lid;
 
   // -------------------------------------------------------------------------
   // Pointer setup (all strides are in elements)
-  // tid.x: query tile index (BQ rows)
-  // tid.y: query head index
-  // tid.z: batch index (currently 1 in uzu, but kept for completeness)
-  const int64_t batch_idx = int64_t(tid.z);
-  const int64_t head_idx = int64_t(tid.y);
-  const int64_t q_tile_idx = int64_t(tid.x);
+  // tgid_x: query tile index (BQ rows)
+  // tgid_y: query head index
+  // tgid_z: batch index (currently 1 in uzu, but kept for completeness)
+  const uint batch_idx = tgid_z;
+  const uint head_idx = tgid_y;
+  const uint q_tile_idx = tgid_x;
 
-  Q += batch_idx * params->q_strides[0] + head_idx * params->q_strides[1] +
+  q += batch_idx * params->q_strides[0] + head_idx * params->q_strides[1] +
        q_tile_idx * int64_t(BQ) * params->q_strides[2];
 
-  const int kv_head_idx = int(tid.y) / params->gqa_factor;
-  K += batch_idx * params->k_strides[0] +
+  const int kv_head_idx = int(tgid_y) / params->gqa_factor;
+  k += batch_idx * params->k_strides[0] +
        int64_t(kv_head_idx) * params->k_strides[1];
-  V += batch_idx * params->v_strides[0] +
+  v += batch_idx * params->v_strides[0] +
        int64_t(kv_head_idx) * params->v_strides[1];
 
-  O += batch_idx * params->o_strides[0] + head_idx * params->o_strides[1] +
+  o += batch_idx * params->o_strides[0] + head_idx * params->o_strides[1] +
        q_tile_idx * int64_t(BQ) * params->o_strides[2];
 
   if (has_mask) {
@@ -120,13 +109,11 @@ template <
   constexpr short tgp_mem_v = BK * (BD + padV);
   constexpr short tgp_mem_s = tgp_mem_k > tgp_mem_v ? tgp_mem_k : tgp_mem_v;
 
-  threadgroup T Q_smem[BQ * (BD + padQ)];
-  threadgroup T KV_smem[tgp_mem_s];
+  threadgroup T* Qs = q_smem;
+  threadgroup T* Ks = kv_smem;
+  threadgroup T* Vs = kv_smem;
 
-  threadgroup T* Qs = Q_smem;
-  threadgroup T* Ks = KV_smem;
-  threadgroup T* Vs = KV_smem;
-
+  //
   // -------------------------------------------------------------------------
   // Block loaders
   using QBlockLoader = BlockLoader<
@@ -157,15 +144,16 @@ template <
   const int k_src_ld = int(params->k_strides[2]);
   const int v_src_ld = int(params->v_strides[2]);
 
-  thread QBlockLoader loader_q(Q, q_src_ld, Qs, simd_group_id, simd_lane_id);
-  thread KBlockLoader loader_k(K, k_src_ld, Ks, simd_group_id, simd_lane_id);
-  thread VBlockLoader loader_v(V, v_src_ld, Vs, simd_group_id, simd_lane_id);
+  thread QBlockLoader loader_q(q, q_src_ld, Qs, simd_group_id, simd_lane_id);
+  thread KBlockLoader loader_k(k, k_src_ld, Ks, simd_group_id, simd_lane_id);
+  thread VBlockLoader loader_v(v, v_src_ld, Vs, simd_group_id, simd_lane_id);
 
   TransformScale<T> ts(static_cast<T>(params->scale * M_LOG2E_F));
 
   // -------------------------------------------------------------------------
   // MMA tiles
   constexpr short kFragSize = 8;
+  using AccumType = float;
   using MMAFrag_acc_t = BaseMMAFrag<AccumType, kFragSize, kFragSize>;
 
   constexpr int kNWarps = WM * WN;
@@ -216,7 +204,7 @@ template <
   // Load Q block once (and apply scaling)
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  if (!align_Q && int(tid.x) == params->nq_aligned) {
+  if (!align_q && int(tgid_x) == params->nq_aligned) {
     loader_q.load_safe(short2(BD, params->q_rem));
   } else {
     loader_q.load_unsafe();
@@ -230,26 +218,26 @@ template <
   AccumType sum_score = AccumType(0);
 
   if (has_sinks) {
-    max_score = M_LOG2E_F * static_cast<AccumType>(sinks[tid.y]);
+    max_score = M_LOG2E_F * static_cast<AccumType>(sinks[tgid_y]);
     sum_score = AccumType(1);
   }
 
   // Determine K block loop limit (causal can early-stop)
   int kb_lim = params->nk;
   if (do_causal) {
-    const int q_max = (int(tid.x) + 1) * BQ + params->q_off;
+    const int q_max = (int(tgid_x) + 1) * BQ + params->q_off;
     kb_lim = (q_max + BK - 1) / BK;
     kb_lim = min(params->nk, kb_lim);
   }
 
-  const int q_rel = int(tid.x) * BQ + int(tm) + int(sm); // [0, q_len)
-  const int q_abs = q_rel + params->q_off;               // [0, k_len)
+  const int q_rel = int(tgid_x) * BQ + int(tm) + int(sm); // [0, q_len)
+  const int q_abs = q_rel + params->q_off;                // [0, k_len)
 
   // Loop over KV blocks
   for (int kb = 0; kb < kb_lim; kb++) {
     // Load K block
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!align_K && kb == params->nk_aligned) {
+    if (!align_k && kb == params->nk_aligned) {
       loader_k.load_safe(short2(BD, params->k_rem));
     } else {
       loader_k.load_unsafe();
@@ -276,7 +264,7 @@ template <
     }
 
     // Mask out tail keys for the last (unaligned) K block
-    if (!align_K && kb == params->nk_aligned) {
+    if (!align_k && kb == params->nk_aligned) {
       const int k_rem = params->k_rem;
       UZU_PRAGMA_UNROLL
       for (short j = 0; j < TK; j++) {
@@ -293,7 +281,7 @@ template <
 
     // Causal mask (only needed for the last few blocks near the diagonal)
     if (do_causal) {
-      const int tail_blocks = (BQ + BK - 1) / BK + int(!align_K);
+      const int tail_blocks = (BQ + BK - 1) / BK + int(!align_k);
       const int tail_start = kb_lim - tail_blocks;
       if (kb >= tail_start) {
         UZU_PRAGMA_UNROLL
@@ -338,7 +326,7 @@ template <
 
     // Load V block (overwriting K in shared memory)
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!align_K && kb == params->nk_aligned) {
+    if (!align_k && kb == params->nk_aligned) {
       loader_v.load_safe(short2(BD, params->k_rem));
     } else {
       loader_v.load_unsafe();
@@ -428,9 +416,9 @@ template <
   threadgroup_barrier(mem_flags::mem_none);
 
   // Store results (O is row-major with row-stride params->o_strides[2])
-  O += int64_t(tm + sm) * params->o_strides[2] + int64_t(sn);
+  o += int64_t(tm + sm) * params->o_strides[2] + int64_t(sn);
 
-  if (!align_Q && int(tid.x) == params->nq_aligned) {
+  if (!align_q && int(tgid_x) == params->nq_aligned) {
     const short2 dst_tile_dims = short2(BD - sn, params->q_rem - (tm + sm));
 
     if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0) {
@@ -438,64 +426,11 @@ template <
     }
 
     Otile.template store_safe<T, 1, 1>(
-        O,
+        o,
         int(params->o_strides[2]),
         dst_tile_dims
     );
   } else {
-    Otile.template store<T, 1, 1>(O, int(params->o_strides[2]));
+    Otile.template store<T, 1, 1>(o, int(params->o_strides[2]));
   }
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// Kernel instantiations (BQ=32, BK in {32,16}, WM=2, WN=2)
-///////////////////////////////////////////////////////////////////////////////
-
-#define instantiate_attention_gemm(                                            \
-    type_name,                                                                 \
-    element_type,                                                              \
-    head_dim_value,                                                            \
-    bk_value                                                                   \
-)                                                                              \
-  template [[host_name(                                                        \
-      "attention_gemm_" #type_name "_" #head_dim_value "_bk" #bk_value         \
-  )]] [[kernel]] void                                                          \
-  attention_gemm<element_type, 32, bk_value, head_dim_value, 4, 1, float>(     \
-      const device element_type* Q [[buffer(0)]],                              \
-      const device element_type* K [[buffer(1)]],                              \
-      const device element_type* V [[buffer(2)]],                              \
-      device element_type* O [[buffer(3)]],                                    \
-      const constant AttnParams* params [[buffer(4)]],                         \
-      const constant AttnMaskParams* mask_params                               \
-      [[buffer(5), function_constant(has_mask)]],                              \
-      const device element_type* mask                                          \
-      [[buffer(6), function_constant(has_mask)]],                              \
-      const device float* sinks [[buffer(7), function_constant(has_sinks)]],   \
-      uint simd_lane_id [[thread_index_in_simdgroup]],                         \
-      uint simd_group_id [[simdgroup_index_in_threadgroup]],                   \
-      uint3 tid [[threadgroup_position_in_grid]],                              \
-      uint3 lid [[thread_position_in_threadgroup]]                             \
-  );
-
-instantiate_attention_gemm(f16, half, 64, 32) instantiate_attention_gemm(
-    f16,
-    half,
-    128,
-    16
-) instantiate_attention_gemm(f16, half, 256, 16)
-
-    instantiate_attention_gemm(bf16, bfloat, 64, 32) instantiate_attention_gemm(
-        bf16,
-        bfloat,
-        128,
-        16
-    ) instantiate_attention_gemm(bf16, bfloat, 256, 16)
-
-        instantiate_attention_gemm(f32, float, 64, 32) instantiate_attention_gemm(
-            f32,
-            float,
-            128,
-            16
-        ) instantiate_attention_gemm(f32, float, 256, 16)
-
-#undef instantiate_attention_gemm
