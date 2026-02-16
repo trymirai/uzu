@@ -33,7 +33,7 @@ pub use embedding::{
 pub use layer::LayerExecutables;
 pub use linear::{FullPrecisionLinear, QuantizedLinear};
 pub(crate) use mamba_mixer::MambaMixer;
-pub use mlp::{MlpBlock, MlpFusedBlock, MlpFusedUpKernel};
+pub use mlp::MlpBlock;
 pub use moe_block::{MoeBlock, SharedMoeWeights};
 pub use normalization::{LayerNorm, Normalization, QKNorm, RMSNorm};
 pub use prediction_head::ClassifierPredictionHead;
