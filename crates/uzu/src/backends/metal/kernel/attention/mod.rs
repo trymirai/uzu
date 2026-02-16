@@ -1,3 +1,5 @@
+use std::{cell::RefCell, collections::HashMap};
+
 use objc2::Message;
 
 use crate::{
@@ -13,6 +15,8 @@ use crate::{
         },
     },
 };
+
+const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a> {
     pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
@@ -34,12 +38,15 @@ pub struct AttentionGemmArguments<'a> {
 
 pub struct AttentionGemmBlock {
     data_type: DataType,
+    cache: RefCell<HashMap<KernelKey, AttentionGemmMetalKernel>>,
 }
 
 impl AttentionGemmBlock {
     pub fn new(data_type: DataType) -> Self {
+        let cache = RefCell::new(HashMap::new());
         Self {
             data_type,
+            cache,
         }
     }
 
@@ -49,7 +56,6 @@ impl AttentionGemmBlock {
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &AttentionGemmArguments,
     ) -> Result<(), MTLError> {
-        const BQ: usize = 32;
         let bk: usize = if args.head_dim < 128 {
             32
         } else {
@@ -57,18 +63,29 @@ impl AttentionGemmBlock {
         };
         let align_q = (args.suffix_length % BQ) == 0;
         let align_k = (args.sequence_length % bk) == 0;
-
-        let kernel = AttentionGemmMetalKernel::new(
-            context,
-            self.data_type,
-            bk as u32,
-            args.head_dim as u32,
+        let key = KernelKey {
+            bk,
+            head_dim: args.head_dim,
             align_q,
             align_k,
-            args.is_causal,
-            args.mask_buffer.is_some(),
-            args.sinks_buffer.is_some(),
-        )?;
+            is_causal: args.is_causal,
+        };
+
+        let mut map = self.cache.borrow_mut();
+        let kernel = map.entry(key).or_insert_with(|| {
+            AttentionGemmMetalKernel::new(
+                context,
+                self.data_type,
+                bk as u32,
+                args.head_dim as u32,
+                align_q,
+                align_k,
+                args.is_causal,
+                args.mask_buffer.is_some(),
+                args.sinks_buffer.is_some(),
+            )
+            .expect("Could not initialize AttentionGemmMetalKernel")
+        });
 
         // Params (all strides in elements)
         let q_head_stride = (args.suffix_length * args.head_dim) as i64;
@@ -128,4 +145,13 @@ impl AttentionGemmBlock {
 
         Ok(())
     }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+struct KernelKey {
+    bk: usize,
+    head_dim: usize,
+    align_q: bool,
+    align_k: bool,
+    is_causal: bool,
 }

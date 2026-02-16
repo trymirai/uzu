@@ -75,14 +75,15 @@ impl Attention {
                     head_dim,
                     has_mask,
                 };
+                let float_mask = has_mask;
 
                 let sp_kernel = AttentionSinglePassMetalKernel::new(
-                    context, data_type, head_dim, has_mask, has_mask, has_sinks, is_causal,
+                    context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
                 )?;
                 single_pass_kernels.insert(key, sp_kernel);
 
                 let tp1_kernel = AttentionTwoPass1MetalKernel::new(
-                    context, data_type, head_dim, has_mask, has_mask, has_sinks, is_causal,
+                    context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
                 )?;
                 two_pass_1_kernels.insert(key, tp1_kernel);
 
