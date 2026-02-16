@@ -374,8 +374,8 @@ impl EncodableBlock<Metal> for Attention {
             },
             KernelVariant::SinglePass => {
                 if let Some(kernel) = self.single_pass_kernels.get(&kernel_key) {
-                    let mask_buffer = attention_bias_buffer.as_ref().map(|buffer| buffer);
-                    let sinks_buffer = sinks_buffer.as_ref().map(|buffer| buffer);
+                    let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
+                    let sinks_buffer_opt = sinks_buffer.as_ref().map(|b| b);
                     kernel.encode(
                         queries_buffer,
                         &key_cache_buffer,
@@ -388,11 +388,11 @@ impl EncodableBlock<Metal> for Attention {
                         v_head_stride as u32,
                         v_seq_stride as u32,
                         scale,
-                        mask_buffer,
+                        mask_buffer_opt,
                         mask_kv_seq_stride_opt,
                         mask_q_seq_stride_opt,
                         mask_head_stride_opt,
-                        sinks_buffer,
+                        sinks_buffer_opt,
                         num_heads as u32,
                         suffix_length as u32,
                         &compute_encoder,
@@ -403,8 +403,8 @@ impl EncodableBlock<Metal> for Attention {
                 if let Some(kernel_pass1) = self.two_pass_1_kernels.get(&kernel_key)
                     && let Some(kernel_pass2) = self.two_pass_2_kernels.get(&(head_dim as u32))
                 {
-                    let mask_buffer = attention_bias_buffer.as_ref().map(|buffer| buffer);
-                    let sinks_buffer = sinks_buffer.as_ref().map(|buffer| buffer);
+                    let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
+                    let sinks_buffer_opt = sinks_buffer.as_ref().map(|b| b);
                     kernel_pass1.encode(
                         queries_buffer,
                         &key_cache_buffer,
@@ -421,11 +421,11 @@ impl EncodableBlock<Metal> for Attention {
                         scale,
                         num_heads as u32,
                         suffix_length as u32,
-                        mask_buffer,
+                        mask_buffer_opt,
                         mask_kv_seq_stride_opt,
                         mask_q_seq_stride_opt,
                         mask_head_stride_opt,
-                        sinks_buffer,
+                        sinks_buffer_opt,
                         &compute_encoder,
                     );
                     kernel_pass2.encode(
