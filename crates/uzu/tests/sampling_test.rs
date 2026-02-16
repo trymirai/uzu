@@ -14,7 +14,7 @@ use uzu::{
             },
         },
         metal::{
-            KernelDataType, MTLContext, Metal,
+            Metal, MetalContext,
             kernel::dsl::{
                 GumbelMetalKernel, MinPMetalKernel, TemperatureMetalKernel, TopKMetalKernel, TopPMetalKernel,
             },
@@ -81,7 +81,7 @@ fn cpu_reference_min_p(
 }
 
 fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping argmax test: {}", e);
@@ -172,7 +172,7 @@ fn test_topp_sampling_from_prob_exact_match(
 
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("Skipping topP exact match test: {}", e);
@@ -311,7 +311,7 @@ fn test_topp_sampling_statistical_large() {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ===== 1. Create Metal context =====
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping large statistical test: {}", e);
@@ -428,7 +428,7 @@ fn perf_topp_128k_vocab() {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping perf test: {}", e);
@@ -533,7 +533,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping argmax perf test: {}", e);
@@ -648,7 +648,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
 
 #[test]
 fn test_categorical_sampling() {
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping categorical test: {}", e);
@@ -770,7 +770,7 @@ fn test_categorical_sampling() {
 fn test_categorical_sampling_statistical() {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping categorical statistical test: {}", e);
@@ -901,7 +901,7 @@ fn perf_categorical_128k_vocab() {
 
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping categorical perf test: {}", e);
@@ -998,7 +998,7 @@ fn perf_categorical_128k_vocab() {
 
 #[test]
 fn test_temperature_gpu_cpu_match() {
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping temperature gpu cpu match test: {}", e);
@@ -1012,8 +1012,7 @@ fn test_temperature_gpu_cpu_match() {
     const RTOL: f32 = 1e-6;
     const ATOL: f32 = 1e-6;
 
-    let kernel = TemperatureMetalKernel::new(&context, KernelDataType::Float32.into())
-        .expect("Failed to create temperature kernel");
+    let kernel = TemperatureMetalKernel::new(&context, DataType::F32).expect("Failed to create temperature kernel");
 
     let logits: Vec<f32> = (0..BATCH * VOCAB).map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01).collect();
 
@@ -1062,7 +1061,7 @@ fn test_temperature_gpu_cpu_match() {
 fn test_topk_gpu_cpu_match() {
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping topk gpu cpu match test: {}", e);
@@ -1074,7 +1073,7 @@ fn test_topk_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPK: u32 = 16;
 
-    let kernel = TopKMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create topk kernel");
+    let kernel = TopKMetalKernel::new(&context, DataType::F32).expect("Failed to create topk kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1126,7 +1125,7 @@ fn test_topk_gpu_cpu_match() {
 fn test_topp_gpu_cpu_match() {
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping topp gpu cpu match test: {}", e);
@@ -1138,7 +1137,7 @@ fn test_topp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPP: f32 = 0.9;
 
-    let kernel = TopPMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create topp kernel");
+    let kernel = TopPMetalKernel::new(&context, DataType::F32).expect("Failed to create topp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1195,7 +1194,7 @@ fn test_topp_gpu_cpu_match() {
 fn test_minp_gpu_cpu_match() {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping minp gpu cpu match test: {}", e);
@@ -1207,7 +1206,7 @@ fn test_minp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const MINP: f32 = 0.1;
 
-    let kernel = MinPMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create minp kernel");
+    let kernel = MinPMetalKernel::new(&context, DataType::F32).expect("Failed to create minp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
     let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -1259,7 +1258,7 @@ fn test_minp_sampling_exact_match(
 
     use rand::{SeedableRng, rngs::StdRng};
 
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("Skipping minp exact match test: {}", e);
@@ -1378,7 +1377,7 @@ fn test_minp_sampling_match_large() {
 
 #[test]
 fn test_gumbel_gpu_cpu_match() {
-    let context = match MTLContext::new() {
+    let context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping gumbel gpu cpu match test: {}", e);
@@ -1391,8 +1390,7 @@ fn test_gumbel_gpu_cpu_match() {
     const RTOL: f32 = 0.01;
     const ATOL: f32 = 1e-6;
 
-    let kernel =
-        GumbelMetalKernel::new(&context, KernelDataType::Float32.into()).expect("Failed to create gumbel kernel");
+    let kernel = GumbelMetalKernel::new(&context, DataType::F32).expect("Failed to create gumbel kernel");
 
     let logits = vec![0.0f32; BATCH * VOCAB];
     let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();

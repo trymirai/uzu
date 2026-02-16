@@ -1,14 +1,19 @@
 use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 
-use objc2::rc::Retained;
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use thiserror::Error;
 
-use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLDataType, MTLError,
-    MTLFunctionConstantValues, MTLSize, ProtocolObject,
+use crate::{
+    DataType,
+    backends::{
+        common::gpu_types::{AttnMaskParams, AttnParams},
+        metal::{
+            FunctionConstantValuesSetValue, MetalContext, MetalError, data_type::MetalDataTypeExt,
+            kernel::moe::dtype_suffix,
+        },
+    },
 };
-
-use crate::backends::common::gpu_types::{AttnMaskParams, AttnParams};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionKernelVariant {
@@ -26,14 +31,14 @@ pub struct AttentionKernelPipelines {
 }
 
 pub struct AttentionKernel {
-    data_type: KernelDataType,
+    data_type: DataType,
     pipelines: AttentionKernelPipelines,
 }
 
 #[derive(Debug, Error)]
 pub enum AttentionError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
     #[error("Unsupported head dimension: {0}")]
@@ -131,26 +136,22 @@ fn make_function_constants(
     let bool_mask_value = false;
     let float_mask_value = has_mask_value;
 
-    function_constants.set_constant_value_type_at_index(NonNull::from(&has_mask_value).cast(), MTLDataType::Bool, 20); // has_mask
-    function_constants.set_constant_value_type_at_index(
-        NonNull::from(&query_transposed_value).cast(),
-        MTLDataType::Bool,
-        21,
-    ); // query_transposed
-    function_constants.set_constant_value_type_at_index(NonNull::from(&bool_mask_value).cast(), MTLDataType::Bool, 23); // bool_mask
-    function_constants.set_constant_value_type_at_index(NonNull::from(&float_mask_value).cast(), MTLDataType::Bool, 24); // float_mask
-    function_constants.set_constant_value_type_at_index(NonNull::from(&is_causal_value).cast(), MTLDataType::Bool, 22); // do_causal
-    function_constants.set_constant_value_type_at_index(NonNull::from(&has_sinks_value).cast(), MTLDataType::Bool, 25); // has_sinks
+    function_constants.set_value(&has_mask_value, 20); // has_mask
+    function_constants.set_value(&query_transposed_value, 21); // query_transposed
+    function_constants.set_value(&bool_mask_value, 23); // bool_mask
+    function_constants.set_value(&float_mask_value, 24); // float_mask
+    function_constants.set_value(&is_causal_value, 22); // do_causal
+    function_constants.set_value(&has_sinks_value, 25); // has_sinks
 
     function_constants
 }
 
 impl AttentionKernel {
     pub fn new(
-        context: &MTLContext,
-        data_type: KernelDataType,
+        context: &MetalContext,
+        data_type: DataType,
     ) -> Result<Self, AttentionError> {
-        let data_suffix = data_type.function_name_suffix();
+        let data_suffix = data_type.metal_type();
 
         let supported_head_dims = [64, 128, 256];
         let mut single_pass = HashMap::new();
@@ -550,7 +551,7 @@ impl AttentionKernel {
 
     pub fn encode_gemm(
         &self,
-        context: &MTLContext,
+        context: &MetalContext,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: AttentionGemmArguments,
     ) -> Result<(), AttentionError> {
@@ -574,19 +575,15 @@ impl AttentionKernel {
         let has_sinks = args.sinks_buffer.is_some();
 
         let fcv = MTLFunctionConstantValues::new();
-        fcv.set_constant_value_type_at_index(NonNull::from(&align_q).cast(), MTLDataType::Bool, 200);
-        fcv.set_constant_value_type_at_index(NonNull::from(&align_k).cast(), MTLDataType::Bool, 201);
-        fcv.set_constant_value_type_at_index(NonNull::from(&has_mask).cast(), MTLDataType::Bool, 300);
-        fcv.set_constant_value_type_at_index(NonNull::from(&args.is_causal).cast(), MTLDataType::Bool, 301);
-        fcv.set_constant_value_type_at_index(NonNull::from(&has_sinks).cast(), MTLDataType::Bool, 302);
+        fcv.set_value(&align_q, 200);
+        fcv.set_value(&align_k, 201);
+        fcv.set_value(&has_mask, 300);
+        fcv.set_value(&args.is_causal, 301);
+        fcv.set_value(&has_sinks, 302);
 
         // Kernel name matches gemm_attention.metal instantiations:
         // attention_gemm_{f16|bf16|f32}_{head_dim}_bk{bk}
-        let type_name = match self.data_type {
-            KernelDataType::Float16 => "f16",
-            KernelDataType::BFloat16 => "bf16",
-            KernelDataType::Float32 => "f32",
-        };
+        let type_name = dtype_suffix(self.data_type);
 
         let function_name = format!("attention_gemm_{}_{}_bk{}", type_name, args.head_dim, bk);
 

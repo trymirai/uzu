@@ -6,7 +6,7 @@ use crate::common::kernel::{Kernel, KernelArgument, KernelArgumentType, KernelPa
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ParmVarDeclType {
+pub struct MetalAstType {
     #[serde(rename = "qualType")]
     qual_type: Box<str>,
     #[serde(rename = "desugaredQualType")]
@@ -20,6 +20,11 @@ pub enum MetalAstKind {
     TemplateTypeParmDecl {
         name: Option<Box<str>>,
     },
+    NonTypeTemplateParmDecl {
+        name: Option<Box<str>>,
+        #[serde(rename = "type")]
+        ty: MetalAstType,
+    },
     FunctionDecl {
         name: Box<str>,
     },
@@ -27,7 +32,7 @@ pub enum MetalAstKind {
         name: Option<Box<str>>,
         range: clang_ast::SourceRange,
         #[serde(rename = "type")]
-        ty: ParmVarDeclType,
+        ty: MetalAstType,
     },
     AnnotateAttr,
     ConstantExpr,
@@ -106,6 +111,7 @@ pub enum MetalArgumentType {
     Axis(Box<str>, Box<str>),
     Groups(MetalGroupsType),
     Threads(Box<str>),
+    Simd,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,7 +147,7 @@ impl MetalArgument {
         let MetalAstKind::ParmVarDecl {
             name,
             range,
-            ty: ParmVarDeclType {
+            ty: MetalAstType {
                 qual_type,
                 desugared_qual_type,
             },
@@ -177,8 +183,27 @@ impl MetalArgument {
         })
     }
 
+    pub fn argument_condition(&self) -> anyhow::Result<Option<&str>> {
+        if let Some(annotation) = self.annotation.as_ref()
+            && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
+        {
+            assert!(
+                matches!(self.argument_type().unwrap(), MetalArgumentType::Buffer | MetalArgumentType::Constant(_)),
+                "Only a buffer or a constant can be optional"
+            );
+            if annotation.len() != 2 {
+                bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
+            }
+            Ok(Some(annotation[1].as_ref()))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn argument_type(&self) -> anyhow::Result<MetalArgumentType> {
-        if let Some(annotation) = self.annotation.as_ref() {
+        if let Some(annotation) = self.annotation.as_ref()
+            && annotation.first().map(|s| s.as_ref()) != Some("dsl.optional")
+        {
             let mut annotation = annotation.to_vec();
 
             if annotation.is_empty() {
@@ -218,6 +243,8 @@ impl MetalArgument {
                 },
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
+        } else if self.c_type.as_ref() == "Simd" || self.c_type.as_ref() == "const Simd" {
+            Ok(MetalArgumentType::Simd)
         } else if self.c_type.contains("device") && self.c_type.contains('*') && !self.c_type.contains('&') {
             Ok(MetalArgumentType::Buffer)
         } else if let ["const", "constant", c_type_scalar, "&"] =
@@ -247,10 +274,10 @@ impl MetalArgument {
     }
 
     fn to_parameter(&self) -> Option<KernelParameter> {
-        match self.argument_type() {
-            Ok(MetalArgumentType::Specialize(ty)) => Some(KernelParameter {
+        match self.argument_type().unwrap() {
+            MetalArgumentType::Specialize(ty) => Some(KernelParameter {
                 name: self.name.clone(),
-                ty: KernelParameterType::Specialization(ty),
+                ty: KernelParameterType::Value(ty),
             }),
             _ => None,
         }
@@ -258,16 +285,26 @@ impl MetalArgument {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MetalTypeParameter {
+pub enum MetalTemplateParameterType {
+    Type,
+    Value(Box<str>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MetalTemplateParameter {
     pub name: Box<str>,
+    pub ty: MetalTemplateParameterType,
     pub variants: Box<[Box<str>]>,
 }
 
-impl MetalTypeParameter {
+impl MetalTemplateParameter {
     fn to_parameter(&self) -> KernelParameter {
         KernelParameter {
             name: self.name.clone(),
-            ty: KernelParameterType::DType,
+            ty: match &self.ty {
+                MetalTemplateParameterType::Type => KernelParameterType::Type,
+                MetalTemplateParameterType::Value(ty) => KernelParameterType::Value(ty.clone()),
+            },
         }
     }
 }
@@ -276,7 +313,7 @@ impl MetalTypeParameter {
 pub struct MetalKernelInfo {
     pub name: Box<str>,
     pub arguments: Box<[MetalArgument]>,
-    pub variants: Option<Box<[MetalTypeParameter]>>,
+    pub variants: Option<Box<[MetalTemplateParameter]>>,
 }
 
 impl MetalKernelInfo {
@@ -304,6 +341,10 @@ impl MetalKernelInfo {
         self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_))))
     }
 
+    pub fn has_simd(&self) -> bool {
+        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Simd)))
+    }
+
     pub fn to_kernel(&self) -> Kernel {
         let mut indirect_flag = false;
 
@@ -323,21 +364,25 @@ impl MetalKernelInfo {
                 .filter_map(|a| match a.argument_type() {
                     Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
                         name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Buffer,
                     }),
                     Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)) if !indirect_flag => {
                         indirect_flag = true;
                         Some(KernelArgument {
                             name: "__dsl_indirect_dispatch_buffer".into(),
+                            conditional: false,
                             ty: KernelArgumentType::Buffer,
                         })
                     },
                     Ok(MetalArgumentType::Constant((ty, MetalConstantType::Scalar))) => Some(KernelArgument {
                         name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Scalar(ty),
                     }),
                     Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => Some(KernelArgument {
                         name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Constant(ty),
                     }),
                     _ => None,
@@ -362,7 +407,14 @@ impl MetalKernelInfo {
                         name,
                     } => {
                         let name = name.context("template parameter missing name")?;
-                        template_parameters.push(name);
+                        template_parameters.push((name, None));
+                    },
+                    MetalAstKind::NonTypeTemplateParmDecl {
+                        name,
+                        ty,
+                    } => {
+                        let name = name.context("template parameter missing name")?;
+                        template_parameters.push((name, Some(ty)));
                     },
                     MetalAstKind::FunctionDecl {
                         name: _,
@@ -420,20 +472,17 @@ impl MetalKernelInfo {
             return Ok(None);
         }
 
-        let variants: Box<[MetalTypeParameter]> = annotations
+        let variants: Box<[_]> = annotations
             .iter()
             .filter(|(k, _)| k.as_ref() == "dsl.variants")
             .map(|(_, v)| {
-                let [typename, variant_values] = v.as_ref() else {
+                let [variant_name, variant_values] = v.as_ref() else {
                     bail!("malformed dsl.variants annotation");
                 };
 
-                let variants = variant_values.split(',').map(|v| v.trim().into()).collect::<Box<[Box<str>]>>();
+                let variant_values = variant_values.split(',').map(|v| v.trim().into()).collect::<Box<[Box<str>]>>();
 
-                Ok(MetalTypeParameter {
-                    name: typename.clone(),
-                    variants,
-                })
+                Ok((variant_name.clone(), variant_values))
             })
             .collect::<anyhow::Result<_>>()?;
 
@@ -441,18 +490,35 @@ impl MetalKernelInfo {
             bail!("mismatch between AST nodes and variants annotation");
         }
 
-        if is_template {
-            let template_names = template_parameters.iter().map(|name| name.as_ref()).collect::<Vec<_>>();
-            let variant_names = variants.iter().map(|variant| variant.name.as_ref()).collect::<Vec<_>>();
+        let variants = if is_template {
+            let template_names = template_parameters.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
+            let variant_names = variants.iter().map(|(name, _)| name.as_ref()).collect::<Vec<_>>();
             if template_names != variant_names {
                 bail!("template parameters {:?} do not match dsl.variants order {:?}", template_names, variant_names);
             }
-        }
 
-        let variants = if variants.is_empty() {
-            None
+            Some(
+                template_parameters
+                    .into_iter()
+                    .zip(variants.into_iter())
+                    .map(|((name, ty), (v_name, variants))| {
+                        assert_eq!(name, v_name);
+
+                        Ok(MetalTemplateParameter {
+                            name,
+                            ty: match ty {
+                                None => MetalTemplateParameterType::Type,
+                                Some(ntt) => MetalTemplateParameterType::Value(MetalArgument::scalar_type_to_rust(
+                                    ntt.desugared_qual_type.unwrap_or(ntt.qual_type).as_ref(),
+                                )?),
+                            },
+                            variants,
+                        })
+                    })
+                    .collect::<anyhow::Result<_>>()?,
+            )
         } else {
-            Some(variants)
+            None
         };
 
         let arguments = arg_nodes

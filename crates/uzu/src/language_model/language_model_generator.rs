@@ -1,6 +1,7 @@
 use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
 
 use itertools::{Either, Itertools, izip};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder};
 
 use super::{
     LanguageModelGeneratorContext,
@@ -12,11 +13,11 @@ use super::{
 };
 use crate::{
     backends::{
-        common::kernel::MaskUpdateKernel,
-        metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder,
-            MTLCommandQueue, Metal,
+        common::{
+            Context,
+            kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
         },
+        metal::Metal,
     },
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::{
@@ -463,15 +464,15 @@ impl LanguageModelGenerator {
 
         self.context.executables.encode(
             &mut state,
-            &root_command_buffer,
             &EncodingParameters::new(false, false, false),
+            &root_command_buffer,
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
-            &root_command_buffer,
             &EncodingParameters::new(false, false, false),
+            &root_command_buffer,
         );
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -482,8 +483,9 @@ impl LanguageModelGenerator {
 
         let encoder =
             root_command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.context.token_copy.encode_to_token_ids(&sampling_output_buffer, &token_ids_buffer, &encoder);
-        self.context.token_copy.encode_to_results(&sampling_output_buffer, &results_buffer, slot, &encoder);
+        self.context.token_copy_sampled.encode(&sampling_output_buffer, &token_ids_buffer, &encoder);
+        let results_offset = slot * std::mem::size_of::<u32>();
+        self.context.token_copy_results.encode(&sampling_output_buffer, (&results_buffer, results_offset), &encoder);
         encoder.end_encoding();
 
         // Scatter + register for all transformer layers
@@ -642,8 +644,8 @@ impl LanguageModelGenerator {
                 if !task.is_prefilling {
                     self.context.gpu_sampler.encode(
                         &mut state,
-                        &self.context.command_buffer,
                         &EncodingParameters::new(warmup, true, false),
+                        &self.context.command_buffer,
                     );
                 }
             }
@@ -701,13 +703,7 @@ impl LanguageModelGenerator {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
-        let command_buffer = self
-            .context
-            .mtl_context
-            .command_queue
-            .command_buffer()
-            .expect("Failed to create command buffer")
-            .to_owned();
+        let command_buffer = self.context.mtl_context.create_command_buffer().expect("Failed to create command buffer");
         let root_command_buffer = command_buffer.to_owned();
 
         {

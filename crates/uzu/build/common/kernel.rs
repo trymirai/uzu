@@ -8,13 +8,14 @@ pub enum KernelArgumentType {
 #[derive(PartialEq, Debug)]
 pub struct KernelArgument {
     pub name: Box<str>,
+    pub conditional: bool,
     pub ty: KernelArgumentType,
 }
 
 #[derive(PartialEq, Debug)]
 pub enum KernelParameterType {
-    DType,
-    Specialization(Box<str>),
+    Type,
+    Value(Box<str>),
 }
 
 #[derive(PartialEq, Debug)]

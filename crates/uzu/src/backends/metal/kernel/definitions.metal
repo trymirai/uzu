@@ -483,10 +483,17 @@ static T threadgroup_cooperative_reduce_min(
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
 
 #define SPECIALIZE DSL_META("dsl.specialize")
+#define OPTIONAL(EXPR) DSL_META("dsl.optional", DSL_XSTR(EXPR))
 
 #define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))
 #define GROUPS(EXPR) DSL_META("dsl.groups", DSL_XSTR(EXPR))
 #define THREADS(EXPR) DSL_META("dsl.threads", DSL_XSTR(EXPR))
+
+struct Simd {
+  uint lane_idx;
+  uint group_idx;
+  uint group_size;
+};
 
 // MARK: - Generate Template Kernels
 

@@ -1,18 +1,24 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::common::kernel::MoeCountsOffsetsFusedKernel;
-use uzu::backends::metal::{
-    MTLContext, ProtocolObject, Retained,
-    kernel::{
-        KernelDataType,
-        dsl::MoeCountsOffsetsFusedMetalKernel,
-        moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+use uzu::{
+    DataType,
+    backends::{
+        common::kernel::MoeCountsOffsetsFusedKernel,
+        metal::{
+            MetalContext,
+            kernel::{
+                dsl::MoeCountsOffsetsFusedMetalKernel,
+                moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+            },
+        },
     },
 };
+
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_bucket_counts(
     topk_ids: &[i32],
@@ -47,7 +53,7 @@ fn cpu_offsets_from_counts(counts: &[u32]) -> (Vec<u32>, u32) {
 }
 
 fn gen_topk_ids_from_logits(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     e: usize,
     k: usize,
@@ -86,7 +92,7 @@ fn gen_topk_ids_from_logits(
         k,
         renorm: true,
     };
-    router_topk.encode(&cb, KernelDataType::BFloat16, args).expect("encode router_topk");
+    router_topk.encode(&cb, DataType::BF16, args).expect("encode router_topk");
     cb.commit();
     cb.wait_until_completed();
 

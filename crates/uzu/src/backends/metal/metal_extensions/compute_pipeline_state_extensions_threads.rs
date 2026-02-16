@@ -1,4 +1,5 @@
-use crate::backends::metal::{MTLComputePipelineState, MTLSize, ProtocolObject};
+use metal::{MTLComputePipelineState, MTLSize};
+use objc2::runtime::ProtocolObject;
 
 /// Extensions for ComputePipelineState to provide optimized threadgroup sizes
 pub trait ComputePipelineStateThreads {

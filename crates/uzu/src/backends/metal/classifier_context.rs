@@ -1,20 +1,24 @@
-use crate::backends::metal::Metal;
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
+use metal::MTLCommandBuffer;
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{
-    KernelDataType, MTLCommandBuffer, MTLCommandQueue, MTLContext, ProtocolObject, Retained,
-    compilation_parameters::CompilationConfig,
+    MetalContext,
     encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Normalization, Pooling, Rope,
+        ClassifierLayer, ClassifierPredictionHead,
         transformer_layer::{embed_block, linear_block},
     },
     kernel::dsl::SigmoidMetalKernel,
 };
 use crate::{
     DataType,
-    backends::{common::Context, common::kernel::SigmoidKernel, metal::error::ClassifierError},
+    backends::{
+        common::{Context, kernel::SigmoidKernel},
+        metal::{Metal, error::ClassifierError},
+    },
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::EncodableBlock,
+    encodable_block::{Activation, EncodableBlock, Normalization, Pooling, Rope},
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
@@ -25,7 +29,7 @@ use crate::{
 };
 
 pub struct ClassifierContext {
-    pub mtl_context: Rc<MTLContext>,
+    pub mtl_context: Rc<MetalContext>,
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
@@ -35,9 +39,9 @@ pub struct ClassifierContext {
     pub model_shape: ModelShape,
 
     pub embed: Box<dyn EncodableBlock<Metal>>,
-    pub embedding_norm: Normalization,
+    pub embedding_norm: Normalization<Metal>,
     pub layers: Box<[ClassifierLayer]>,
-    pub output_norm: Normalization,
+    pub output_norm: Normalization<Metal>,
     pub global_rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
 
@@ -49,7 +53,7 @@ pub struct ClassifierContext {
 
 impl ClassifierContext {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = MetalContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let command_buffer = context.create_command_buffer().map_err(|_| Error::UnableToCreateMetalContext)?;
 
@@ -67,7 +71,6 @@ impl ClassifierContext {
             Rc::new(classifier_model_config.model_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
@@ -145,7 +148,6 @@ impl ClassifierContext {
                 Ok(ClassifierLayer::new(
                     context.clone(),
                     layer_config,
-                    compilation_config.clone(),
                     layer_index,
                     classifier_model_config.model_config.model_dim,
                     classifier_model_config.model_config.transformer_config.hidden_dim,
@@ -165,7 +167,7 @@ impl ClassifierContext {
             .subtree("output_norm")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("output_norm".to_string())))?;
         let output_norm = Normalization::new(
-            &context,
+            context.as_ref(),
             data_type,
             classifier_model_config.model_config.transformer_config.output_norm_config.clone(),
             ArrayId::Main,
@@ -182,7 +184,7 @@ impl ClassifierContext {
             .subtree("embedding_norm")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("embedding_norm".to_string())))?;
         let embedding_norm = Normalization::new(
-            &context,
+            context.as_ref(),
             data_type,
             classifier_model_config.model_config.embedding_norm_config.clone(),
             ArrayId::Main,
@@ -215,7 +217,7 @@ impl ClassifierContext {
         );
 
         let prediction_head_activation = Box::new(
-            Activation::new(
+            Activation::<Metal>::new(
                 &context,
                 prediction_head_data_type,
                 prediction_head_config.activation.clone(),
@@ -231,7 +233,7 @@ impl ClassifierContext {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.norm".to_string()))
         })?;
         let prediction_head_norm = Normalization::new(
-            &context,
+            context.as_ref(),
             prediction_head_data_type,
             prediction_head_config.normalization_config.clone(),
             ArrayId::ClassifierPredictionHeadDense,
@@ -265,9 +267,9 @@ impl ClassifierContext {
         })?;
 
         let pooling = Box::new(
-            Pooling::new(
-                &context,
-                data_type.into(),
+            Pooling::<Metal>::new(
+                context.as_ref(),
+                data_type,
                 classifier_model_config.model_config.classifier_pooling.clone(),
                 model_dim,
             )
@@ -307,21 +309,18 @@ impl ClassifierContext {
     }
 
     fn create_rope_block(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         rope_type: RopeType,
     ) -> Result<Rc<Box<dyn EncodableBlock<Metal>>>, ClassifierError> {
-        let kernel_data_type: KernelDataType = data_type.into();
-
         let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
-            Rope::new(mtl_context, kernel_data_type, rope_type)
+            Rope::<Metal>::new(mtl_context, data_type, rope_type)
                 .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?,
         );
         Ok(Rc::new(rotation))
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        self.command_buffer = self.mtl_context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

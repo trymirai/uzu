@@ -2,8 +2,7 @@
 
 use std::rc::Rc;
 
-use super::super::EncodableBlock;
-use crate::backends::metal::Metal;
+use crate::{backends::metal::Metal, encodable_block::EncodableBlock};
 
 /// Mixer component - either attention, state space, or short conv.
 pub(crate) enum MixerExecutables {

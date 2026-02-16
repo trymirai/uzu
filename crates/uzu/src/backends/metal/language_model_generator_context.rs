@@ -6,18 +6,20 @@ use std::{
     rc::Rc,
 };
 
-use super::{
-    Decoder, KVCacheUpdate, KernelDataType, MTLContext, Metal, compilation_parameters::CompilationConfig,
-    kernel::TokenCopyKernel,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLDeviceExt, MTLEvent};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::{Decoder, Metal, MetalContext};
 use crate::{
     DataType,
     backends::{
-        common::{Context, kernel::MaskUpdateKernel},
-        metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLEvent, ProtocolObject, Retained,
-            kernel::dsl::MaskUpdateMetalKernel,
+        common::{
+            Context,
+            kernel::{
+                MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate,
+            },
         },
+        metal::kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::Sampling,
@@ -57,7 +59,7 @@ pub struct AsyncBuffers {
 
 impl AsyncBuffers {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
@@ -128,7 +130,7 @@ impl AsyncBuffers {
 }
 
 pub struct LanguageModelGeneratorContext {
-    pub mtl_context: Rc<MTLContext>,
+    pub mtl_context: Rc<MetalContext>,
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<Metal>>>,
@@ -143,8 +145,9 @@ pub struct LanguageModelGeneratorContext {
     pub gpu_sampler: Sampling<Metal>,
     pub seed: PRng,
 
-    /// Kernel for copying sampled tokens in async pipeline
-    pub token_copy: TokenCopyKernel,
+    /// Kernels for copying sampled tokens in async pipeline
+    pub token_copy_sampled: TokenCopySampledMetalKernel,
+    pub token_copy_results: TokenCopyToResultsMetalKernel,
     /// Kernel for updating attention mask between async passes
     pub mask_update: Option<MaskUpdateMetalKernel>,
     /// Pre-allocated buffers for async generation
@@ -156,7 +159,7 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let context = MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = MetalContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let command_buffer = context.create_command_buffer().expect("Failed to create command buffer").to_owned();
 
@@ -179,7 +182,6 @@ impl LanguageModelGeneratorContext {
         let max_prefix_length: usize = decoding_config.context_length.resolve(language_model_config);
         let max_suffix_length: usize = std::cmp::max(prefill_step_size, generate_suffix_length);
 
-        let compilation_config = Rc::new(CompilationConfig::default());
         let weights_path = model_path.join("model.safetensors");
         if !weights_path.exists() {
             return Err(Error::UnableToLoadWeights);
@@ -194,8 +196,7 @@ impl LanguageModelGeneratorContext {
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
 
-        let executables =
-            Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view, compilation_config.clone());
+        let executables = Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view);
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -205,7 +206,6 @@ impl LanguageModelGeneratorContext {
         )));
 
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
-        let kernel_data_type: KernelDataType = intermediate_data_type.into();
         let kv_cache_update = Box::new(
             KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
                 .map_err(|_| Error::UnableToCreateMetalContext)?,
@@ -215,12 +215,15 @@ impl LanguageModelGeneratorContext {
             Sampling::<Metal>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
                 .map_err(|_| Error::UnableToCreateMetalContext)?;
 
-        let token_copy = TokenCopyKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
+        let token_copy_sampled =
+            TokenCopySampledMetalKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
+        let token_copy_results =
+            TokenCopyToResultsMetalKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateMetalKernel::new(&context, kernel_data_type.into())
+                MaskUpdateMetalKernel::new(&context, intermediate_data_type)
                     .map_err(|_| Error::UnableToCreateMetalContext)?,
             )
         } else {
@@ -245,16 +248,16 @@ impl LanguageModelGeneratorContext {
             kv_cache_update,
             gpu_sampler,
             seed,
-            token_copy,
+            token_copy_sampled,
+            token_copy_results,
             mask_update,
             async_buffers,
         };
 
-        return Ok(context);
+        Ok(context)
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            self.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+        self.command_buffer = self.mtl_context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

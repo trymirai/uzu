@@ -6,12 +6,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Lifetime, Type};
 
+use super::kernel::Kernel;
 use crate::common::{
     codegen::write_tokens,
     kernel::{KernelArgumentType, KernelParameterType},
 };
-
-use super::kernel::Kernel;
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let kernel_name = kernel.name.as_ref();
@@ -20,8 +19,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let params = kernel.parameters.iter().map(|p| {
         let name = format_ident!("{}", p.name.as_ref());
         let ty = match &p.ty {
-            KernelParameterType::DType => quote! { DataType },
-            KernelParameterType::Specialization(ty) => {
+            KernelParameterType::Type => quote! { DataType },
+            KernelParameterType::Value(ty) => {
                 let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                 quote! { #ty }
             },
@@ -36,23 +35,29 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         .map(|a| {
             let name = format_ident!("{}", a.name.as_ref());
 
-            match &a.ty {
+            let (generic, mut ty) = match &a.ty {
                 KernelArgumentType::Buffer => {
                     let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
                     (
                         Some(quote! { #buffer_lifetime }),
-                        quote! { #name: impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> },
+                        quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> },
                     )
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    (None, quote! { #name: &[#ty] })
+                    (None, quote! { &[#ty] })
                 },
                 KernelArgumentType::Scalar(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    (None, quote! { #name: #ty })
+                    (None, quote! { #ty })
                 },
+            };
+
+            if a.conditional {
+                ty = quote! { Option<#ty> };
             }
+
+            (generic, quote! { #name: #ty })
         })
         .collect::<(Vec<_>, Vec<_>)>();
 

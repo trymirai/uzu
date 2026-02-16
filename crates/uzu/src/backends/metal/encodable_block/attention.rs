@@ -1,16 +1,20 @@
 //! Attention kernel encodable.
 
-use super::{EncodableBlock, Metal};
-use crate::backends::metal::{
-    KernelDataType, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject,
-    Retained,
-    kernel::attention::{
-        AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
-        AttentionTwoPassArguments, KVCacheUpdateArguments,
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use crate::{
+    DataType,
+    backends::metal::{
+        Metal, MetalContext,
+        kernel::attention::{
+            AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
+            AttentionSinglePassArguments, AttentionTwoPassArguments, KVCacheUpdateArguments,
+        },
     },
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::{ArrayId, ForwardPassState, HashMapId},
 };
-use crate::encodable_block::EncodingParameters;
-use crate::forward_pass::state::{ArrayId, ForwardPassState, HashMapId};
 
 fn env_gemm_attention_enabled() -> bool {
     static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -39,8 +43,8 @@ pub struct Attention {
 
 impl Attention {
     pub fn new(
-        context: &MTLContext,
-        data_type: KernelDataType,
+        context: &MetalContext,
+        data_type: DataType,
         layer_index: usize,
         attention_scale: Option<f32>,
         has_sinks: bool,
@@ -63,12 +67,12 @@ impl EncodableBlock<Metal> for Attention {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let compute_encoder =
             command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, &compute_encoder, parameters);
+        self.encode_with_shared_encoder(state, parameters, &compute_encoder);
         compute_encoder.end_encoding();
 
         if parameters.wait_until_completed {
@@ -84,8 +88,8 @@ impl EncodableBlock<Metal> for Attention {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);

@@ -1,10 +1,18 @@
-use std::{collections::HashMap, ptr::NonNull};
+use std::collections::HashMap;
+
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError, MTLFunctionConstantValues,
-        MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+    backends::{
+        common::kernel::matmul::{
+            QuantizedMatmulArguments as GenericQuantizedMatmulArguments, QuantizedMatmulConfiguration,
+            QuantizedMatmulKernel as QuantizedMatmulKernelTrait, QuantizedMatmulType,
+        },
+        metal::{
+            FunctionConstantValuesSetValue, Metal, MetalContext, MetalError, metal_extensions::ComputeEncoderSetValue,
+        },
     },
     config::QuantizationMode,
 };
@@ -20,7 +28,7 @@ pub enum QuantizationType {
 #[derive(Debug, thiserror::Error)]
 pub enum QuantizedMatmulError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
     #[error("Unsupported group size: {0}")]
@@ -114,7 +122,7 @@ fn base_qmm_kernel_name(
 
 impl QuantizedMatmulKernel {
     pub fn new(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         group_size: usize,
         input_dim: usize,
@@ -129,11 +137,7 @@ impl QuantizedMatmulKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_type_at_index(
-            NonNull::from(&use_mlx_quant).cast(),
-            metal::MTLDataType::Bool,
-            40,
-        );
+        function_constants.set_value(&use_mlx_quant, 40);
 
         let mut pipelines = HashMap::new();
 
@@ -309,6 +313,58 @@ impl QuantizedMatmulKernel {
     }
 }
 
+impl QuantizedMatmulKernelTrait for QuantizedMatmulKernel {
+    type Backend = Metal;
+
+    fn new(
+        context: &MetalContext,
+        configuration: QuantizedMatmulConfiguration,
+    ) -> Result<Self, MetalError> {
+        let quantization_type = match configuration.quantization_type {
+            QuantizedMatmulType::ZeroPoint => QuantizationType::ZeroPoint,
+            QuantizedMatmulType::Mlx => QuantizationType::Mlx,
+        };
+
+        QuantizedMatmulKernel::new(
+            context,
+            configuration.data_type,
+            configuration.group_size,
+            configuration.input_dim,
+            configuration.output_dim,
+            configuration.mode,
+            quantization_type,
+            configuration.weights_transposed,
+        )
+        .map_err(|error| MetalError::Generic(format!("{:?}", error)))
+    }
+
+    fn encode(
+        &self,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        arguments: GenericQuantizedMatmulArguments<Metal>,
+    ) {
+        let quantization_type = match arguments.quantization_type {
+            QuantizedMatmulType::ZeroPoint => QuantizationType::ZeroPoint,
+            QuantizedMatmulType::Mlx => QuantizationType::Mlx,
+        };
+
+        let backend_arguments = QuantizedMatmulArguments {
+            a_buffer: arguments.a_buffer,
+            a_offset: arguments.a_offset as u64,
+            b_buffer: arguments.b_buffer,
+            scales_buffer: arguments.scales_buffer,
+            zero_points_or_biases_buffer: arguments.zero_points_or_biases_buffer,
+            output_buffer: arguments.output_buffer,
+            batch: arguments.batch as i32,
+            input_dim: arguments.input_dim as i32,
+            output_dim: arguments.output_dim as i32,
+            quantization_type,
+        };
+
+        QuantizedMatmulKernel::encode(self, encoder, backend_arguments).expect("Failed to encode quantized matmul");
+    }
+}
+
 fn select_matrix_vector_kernel_name(
     data_type: DataType,
     group_size: usize,
@@ -437,7 +493,7 @@ pub struct MlpFusedQmvKernel {
 
 impl MlpFusedQmvKernel {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         group_size: usize,
         mode: QuantizationMode,
@@ -458,11 +514,7 @@ impl MlpFusedQmvKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_type_at_index(
-            NonNull::from(&use_mlx_quant).cast(),
-            metal::MTLDataType::Bool,
-            40,
-        );
+        function_constants.set_value(&use_mlx_quant, 40);
 
         let pipeline = context
             .compute_pipeline_state(&kernel_name, Some(&function_constants))
@@ -531,7 +583,7 @@ pub struct MlpFusedQmmKernel {
 
 impl MlpFusedQmmKernel {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         group_size: usize,
         mode: QuantizationMode,
@@ -552,11 +604,7 @@ impl MlpFusedQmmKernel {
 
         let function_constants = MTLFunctionConstantValues::new();
         let use_mlx_quant = matches!(quantization_type, QuantizationType::Mlx);
-        function_constants.set_constant_value_type_at_index(
-            NonNull::from(&use_mlx_quant).cast(),
-            metal::MTLDataType::Bool,
-            40,
-        );
+        function_constants.set_value(&use_mlx_quant, 40);
 
         let pipeline = context
             .compute_pipeline_state(&kernel_name, Some(&function_constants))

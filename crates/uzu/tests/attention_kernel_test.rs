@@ -7,15 +7,19 @@ use std::mem::size_of;
 use bytemuck;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array3, Array4, s};
-use uzu::backends::{
-    common::Context,
-    metal::{
-        KernelDataType, MTLContext, ProtocolObject, Retained,
-        kernel::attention::{
-            AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
-            AttentionTwoPassArguments,
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use uzu::{
+    DataType,
+    backends::{
+        common::Context,
+        metal::{
+            MetalContext,
+            kernel::attention::{
+                AttentionGemmArguments, AttentionKernel, AttentionKernelVariant, AttentionSinglePassArguments,
+                AttentionTwoPassArguments,
+            },
+            metal_extensions::CommandBufferTimingExt,
         },
-        metal_extensions::CommandBufferTimingExt,
     },
 };
 
@@ -142,7 +146,7 @@ fn create_test_data(
 /// Convert ndarray to Metal buffer layout expected by our kernel
 fn create_query_buffer(
     queries: &Array4<f32>,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_heads, seq_len, head_dim) = queries.dim();
 
@@ -167,7 +171,7 @@ fn create_query_buffer(
 fn create_key_cache_buffer(
     keys: &Array4<f32>,
     max_seq_len: usize,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
@@ -192,7 +196,7 @@ fn create_key_cache_buffer(
 fn create_value_cache_buffer(
     values: &Array4<f32>,
     max_seq_len: usize,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
@@ -217,7 +221,7 @@ fn create_value_cache_buffer(
 fn create_mask_buffer(
     mask: &Array3<f32>,
     num_heads: usize,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
@@ -240,7 +244,7 @@ fn create_mask_buffer(
 
 fn create_mask_2d_buffer(
     mask: &Array3<f32>,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
@@ -259,7 +263,7 @@ fn create_mask_2d_buffer(
 
 fn create_sinks_buffer(
     sinks: &[f32],
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     context
         .device
@@ -290,7 +294,7 @@ fn convert_kernel_output(
 
 fn run_single_pass_attention(
     kernel: &AttentionKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -356,7 +360,7 @@ fn run_single_pass_attention(
 
 fn run_single_pass_attention_with_is_causal(
     kernel: &AttentionKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -423,7 +427,7 @@ fn run_single_pass_attention_with_is_causal(
 
 fn run_gemm_attention(
     kernel: &AttentionKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -534,7 +538,7 @@ fn compare_results(
 #[test]
 #[ignore]
 fn test_single_pass_attention_basic() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -553,7 +557,7 @@ fn test_single_pass_attention_basic() {
     println!("Reference output range (no mask): [{}, {}]", ref_min, ref_max);
     println!("Reference sample values: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -591,7 +595,7 @@ fn test_single_pass_attention_basic() {
 #[test]
 #[ignore]
 fn test_gemm_attention_basic() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -602,7 +606,7 @@ fn test_gemm_attention_basic() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
@@ -619,7 +623,7 @@ fn test_gemm_attention_basic() {
 #[test]
 #[ignore]
 fn test_gemm_attention_f32_head_dim_128() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -630,7 +634,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
@@ -647,7 +651,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 #[test]
 #[ignore]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -659,7 +663,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 2026);
 
-    let kernel = AttentionKernel::new(&context, KernelDataType::Float32).expect("Failed to create AttentionKernel");
+    let kernel = AttentionKernel::new(&context, DataType::F32).expect("Failed to create AttentionKernel");
 
     // CPU reference (uses the same additive mask)
     let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
@@ -703,7 +707,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_with_mask() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -714,7 +718,7 @@ fn test_single_pass_attention_with_mask() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -752,7 +756,7 @@ fn test_single_pass_attention_with_mask() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_with_sinks() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -766,7 +770,7 @@ fn test_single_pass_attention_with_sinks() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25).collect();
     println!("Using sinks: {:?}", sinks);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -796,7 +800,7 @@ fn test_single_pass_attention_with_sinks() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_with_sinks_long_sequence() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -810,7 +814,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
     println!("Long sequence sinks: {:?}", sinks);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -845,7 +849,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
 #[test]
 #[ignore]
 fn test_single_pass_attention_gqa() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -856,7 +860,7 @@ fn test_single_pass_attention_gqa() {
 
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -889,7 +893,7 @@ fn test_single_pass_attention_gqa() {
 
 fn run_two_pass_attention(
     kernel: &AttentionKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -980,9 +984,9 @@ fn run_two_pass_attention(
 #[test]
 #[ignore]
 fn test_two_pass_attention() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -1026,9 +1030,9 @@ fn test_two_pass_attention() {
 #[test]
 #[ignore]
 fn test_two_pass_attention_gqa() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);
@@ -1074,9 +1078,9 @@ fn test_two_pass_attention_gqa() {
 fn perf_two_pass_attention() {
     use std::time::Instant;
 
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
-    let kernel = match AttentionKernel::new(&context, KernelDataType::Float32) {
+    let kernel = match AttentionKernel::new(&context, DataType::F32) {
         Ok(k) => k,
         Err(e) => {
             panic!("Failed to create AttentionKernel: {:?}", e);

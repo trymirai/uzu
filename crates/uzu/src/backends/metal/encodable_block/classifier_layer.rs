@@ -1,18 +1,20 @@
-use crate::backends::metal::Metal;
 use std::rc::Rc;
 
 #[cfg(not(feature = "tracing"))]
-use crate::backends::metal::MTLCommandEncoder;
-use crate::backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained};
-use objc2::rc::autoreleasepool;
+use metal::MTLCommandEncoder;
+use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
+use objc2::{
+    rc::{Retained, autoreleasepool},
+    runtime::ProtocolObject,
+};
 
-use super::{Attention, EncodableBlock, Normalization, QKNorm, TensorAddSwap, TensorCopy, transformer_layer};
-use crate::forward_pass::state::{ArrayId, ForwardPassState};
+use super::{Attention, transformer_layer};
 use crate::{
     DataType,
-    backends::metal::{MTLContext, compilation_parameters::CompilationConfig, kernel::KernelDataType},
+    backends::metal::{Metal, MetalContext},
     config::TransformerLayerConfig,
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy},
+    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -37,9 +39,8 @@ pub struct ClassifierLayer {
 
 impl ClassifierLayer {
     pub fn new(
-        mtl_context: Rc<MTLContext>,
+        mtl_context: Rc<MetalContext>,
         layer_config: &TransformerLayerConfig,
-        _compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -47,19 +48,22 @@ impl ClassifierLayer {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        layer_loader: &ParameterTree<MTLContext>,
+        layer_loader: &ParameterTree<MetalContext>,
         rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
+            let ctx = mtl_context.as_ref(); // Reference for functions expecting &MetalContext
             let attention_config =
                 layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
             let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
-            let kernel_data_type: KernelDataType = intermediate_data_type.into();
 
             let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_attention_norm: Option<Box<dyn EncodableBlock<Metal>>> =
@@ -145,13 +149,21 @@ impl ClassifierLayer {
                 };
 
             let mixer_residual_add: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
@@ -195,7 +207,7 @@ impl ClassifierLayer {
             let attention: Box<dyn EncodableBlock<Metal>> = Box::new(
                 Attention::new(
                     ctx,
-                    kernel_data_type,
+                    intermediate_data_type,
                     layer_index,
                     attention_scale,
                     attention_config.has_sinks,
@@ -206,8 +218,12 @@ impl ClassifierLayer {
             );
 
             let mlp_residual_add: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             Self {
@@ -235,15 +251,15 @@ impl EncodableBlock<Metal> for ClassifierLayer {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
                 let encoder =
                     command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-                self.encode_with_shared_encoder(state, &encoder, parameters);
+                self.encode_with_shared_encoder(state, parameters, &encoder);
                 encoder.end_encoding();
                 return;
             }
@@ -257,10 +273,10 @@ impl EncodableBlock<Metal> for ClassifierLayer {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut_mixer.encode(state, command_buffer, parameters);
+        self.copy_main_to_shortcut_mixer.encode(state, parameters, command_buffer);
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
-            pre_attn_norm.encode(state, command_buffer, parameters);
+            pre_attn_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
@@ -280,20 +296,20 @@ impl EncodableBlock<Metal> for ClassifierLayer {
             }
         }
 
-        self.qkv_projection.encode(state, command_buffer, parameters);
+        self.qkv_projection.encode(state, parameters, command_buffer);
         if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode(state, command_buffer, parameters);
+            qk_norm.encode(state, parameters, command_buffer);
         }
-        self.rope.encode(state, command_buffer, parameters);
-        self.attention.encode(state, command_buffer, parameters);
-        self.out_projection.encode(state, command_buffer, parameters);
+        self.rope.encode(state, parameters, command_buffer);
+        self.attention.encode(state, parameters, command_buffer);
+        self.out_projection.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
-            post_attn_norm.encode(state, command_buffer, parameters);
+            post_attn_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
@@ -304,35 +320,35 @@ impl EncodableBlock<Metal> for ClassifierLayer {
             }
         }
 
-        self.mixer_residual_add.encode(state, command_buffer, parameters);
+        self.mixer_residual_add.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
 
-        self.copy_main_to_shortcut_mlp.encode(state, command_buffer, parameters);
+        self.copy_main_to_shortcut_mlp.encode(state, parameters, command_buffer);
 
-        self.pre_mlp_norm.encode(state, command_buffer, parameters);
+        self.pre_mlp_norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer, parameters);
+        self.mlp.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer, parameters);
+            post_mlp_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
         }
 
-        self.mlp_residual_add.encode(state, command_buffer, parameters);
+        self.mlp_residual_add.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
@@ -369,43 +385,43 @@ impl EncodableBlock<Metal> for ClassifierLayer {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),
             "encode_with_shared_encoder called on unsupported ClassifierLayer"
         );
 
-        self.copy_main_to_shortcut_mixer.encode_with_shared_encoder(state, encoder, parameters);
+        self.copy_main_to_shortcut_mixer.encode_with_shared_encoder(state, parameters, encoder);
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
-            pre_attn_norm.encode_with_shared_encoder(state, encoder, parameters);
+            pre_attn_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.qkv_projection.encode_with_shared_encoder(state, encoder, parameters);
+        self.qkv_projection.encode_with_shared_encoder(state, parameters, encoder);
         if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode_with_shared_encoder(state, encoder, parameters);
+            qk_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
-        self.rope.encode_with_shared_encoder(state, encoder, parameters);
-        self.attention.encode_with_shared_encoder(state, encoder, parameters);
-        self.out_projection.encode_with_shared_encoder(state, encoder, parameters);
+        self.rope.encode_with_shared_encoder(state, parameters, encoder);
+        self.attention.encode_with_shared_encoder(state, parameters, encoder);
+        self.out_projection.encode_with_shared_encoder(state, parameters, encoder);
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
-            post_attn_norm.encode_with_shared_encoder(state, encoder, parameters);
+            post_attn_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.mixer_residual_add.encode_with_shared_encoder(state, encoder, parameters);
+        self.mixer_residual_add.encode_with_shared_encoder(state, parameters, encoder);
 
-        self.copy_main_to_shortcut_mlp.encode_with_shared_encoder(state, encoder, parameters);
+        self.copy_main_to_shortcut_mlp.encode_with_shared_encoder(state, parameters, encoder);
 
-        self.pre_mlp_norm.encode_with_shared_encoder(state, encoder, parameters);
-        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
+        self.pre_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
+        self.mlp.encode_with_shared_encoder(state, parameters, encoder);
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
-            post_mlp_norm.encode_with_shared_encoder(state, encoder, parameters);
+            post_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.mlp_residual_add.encode_with_shared_encoder(state, encoder, parameters);
+        self.mlp_residual_add.encode_with_shared_encoder(state, parameters, encoder);
     }
 }

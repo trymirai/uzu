@@ -1,13 +1,11 @@
-use std::ptr::NonNull;
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLFunctionConstantValues};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     DataType,
     backends::{
         common::kernel::MlpGateActMulKernel,
-        metal::{
-            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues,
-            ProtocolObject, Retained, kernel::dsl::MlpGateActMulMetalKernel,
-        },
+        metal::{FunctionConstantValuesSetValue, MetalContext, MetalError, kernel::dsl::MlpGateActMulMetalKernel},
     },
     config::Activation,
 };
@@ -61,23 +59,9 @@ impl MlpFusedConfig {
     /// Create function constants for MLP fused matmul
     pub fn make_function_constants(&self) -> Retained<MTLFunctionConstantValues> {
         let fcv = MTLFunctionConstantValues::new();
-        let fused = true;
-        fcv.set_constant_value_type_at_index(
-            NonNull::from(&fused).cast(),
-            MTLDataType::Bool,
-            MLP_FUSED_FC_INDEX as usize,
-        );
-        fcv.set_constant_value_type_at_index(
-            NonNull::from(&self.hidden_dim).cast(),
-            MTLDataType::UInt,
-            MLP_HIDDEN_DIM_FC_INDEX as usize,
-        );
-        let act_val = self.activation as u32;
-        fcv.set_constant_value_type_at_index(
-            NonNull::from(&act_val).cast(),
-            MTLDataType::UInt,
-            MLP_ACTIVATION_FC_INDEX as usize,
-        );
+        fcv.set_value(&true, MLP_FUSED_FC_INDEX as usize);
+        fcv.set_value(&self.hidden_dim, MLP_HIDDEN_DIM_FC_INDEX as usize);
+        fcv.set_value(&(self.activation as u32), MLP_ACTIVATION_FC_INDEX as usize);
         fcv
     }
 }
@@ -85,8 +69,7 @@ impl MlpFusedConfig {
 /// Create function constants for non-fused (standard) matmul
 pub fn make_non_fused_function_constants() -> Retained<MTLFunctionConstantValues> {
     let fcv = MTLFunctionConstantValues::new();
-    let fused = false;
-    fcv.set_constant_value_type_at_index(NonNull::from(&fused).cast(), MTLDataType::Bool, MLP_FUSED_FC_INDEX as usize);
+    fcv.set_value(&false, MLP_FUSED_FC_INDEX as usize);
     fcv
 }
 
@@ -98,11 +81,11 @@ pub struct MlpGateActMulEncodable {
 
 impl MlpGateActMulEncodable {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         activation: Activation,
         hidden_dim: usize,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         let kernel = MlpGateActMulMetalKernel::new(context, data_type.into())?;
         Ok(Self {
             kernel,
@@ -117,7 +100,7 @@ impl MlpGateActMulEncodable {
         fused_up: &Retained<ProtocolObject<dyn MTLBuffer>>,
         hidden: &Retained<ProtocolObject<dyn MTLBuffer>>,
         m: i32,
-    ) -> Result<(), MTLError> {
+    ) -> Result<(), MetalError> {
         let act_type = match self.activation {
             Activation::SiLU {
                 ..

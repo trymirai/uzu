@@ -1,9 +1,8 @@
 use metal::{MTLCommandBuffer, MTLCommandEncoder};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::backends::common::CommandBuffer;
-
 use super::Metal;
+use crate::backends::common::CommandBuffer;
 
 impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     type Backend = Metal;

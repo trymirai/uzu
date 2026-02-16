@@ -1,18 +1,19 @@
 //! Decoder executables - combines embedding, layers, normalization, and readout.
 
-use crate::backends::metal::Metal;
 use std::rc::Rc;
 
-use super::{EncodableBlock, LayerExecutables, RMSNorm, Rope};
+use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::LayerExecutables;
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        KernelDataType, MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
-        compilation_parameters::CompilationConfig,
+        Metal, MetalContext,
         encodable_block::transformer_layer::{embed_block, readout_block},
     },
     config::{DecoderLayerType, MixerConfig},
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters, RMSNorm, Rope},
     forward_pass::{
         model_shape::ModelShape,
         state::{ArrayId, ForwardPassState, RopeType},
@@ -32,10 +33,9 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(
-        mtl_context: Rc<MTLContext>,
+        mtl_context: Rc<MetalContext>,
         decoder_config: Rc<DecoderConfig>,
-        root_weight_loader: &ParameterTree<MTLContext>,
-        compilation_config: Rc<CompilationConfig>,
+        root_weight_loader: &ParameterTree<MetalContext>,
     ) -> Self {
         let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
 
@@ -59,7 +59,7 @@ impl Decoder {
         let global_rope = if decoder_config.global_rope_config.is_some() {
             attention_data_type
                 .as_ref()
-                .map(|data_type| Self::create_rope_block(&mtl_context, (*data_type).into(), RopeType::Global))
+                .map(|data_type| Self::create_rope_block(&mtl_context, *data_type, RopeType::Global))
         } else {
             None
         };
@@ -67,7 +67,7 @@ impl Decoder {
         let local_rope = if decoder_config.local_rope_config.is_some() {
             attention_data_type
                 .as_ref()
-                .map(|data_type| Self::create_rope_block(&mtl_context, (*data_type).into(), RopeType::Local))
+                .map(|data_type| Self::create_rope_block(&mtl_context, *data_type, RopeType::Local))
         } else {
             None
         };
@@ -107,7 +107,6 @@ impl Decoder {
                     mtl_context.clone(),
                     layer_config,
                     layer_type,
-                    compilation_config.clone(),
                     layer_index,
                     decoder_config.model_dim,
                     decoder_config.hidden_dim,
@@ -123,7 +122,7 @@ impl Decoder {
 
         let norm_block: Box<dyn EncodableBlock<Metal>> = Box::new(
             RMSNorm::new(
-                &mtl_context,
+                mtl_context.as_ref(),
                 norm_data_type,
                 decoder_config.output_norm_config.clone(),
                 ArrayId::Main,
@@ -145,12 +144,12 @@ impl Decoder {
     }
 
     fn create_rope_block(
-        mtl_context: &MTLContext,
-        kernel_data_type: KernelDataType,
+        mtl_context: &MetalContext,
+        data_type: DataType,
         rope_type: RopeType,
     ) -> Rc<Box<dyn EncodableBlock<Metal>>> {
         let rotation: Box<dyn EncodableBlock<Metal>> =
-            Box::new(Rope::new(mtl_context, kernel_data_type, rope_type).expect("Failed to create Rope"));
+            Box::new(Rope::<Metal>::new(mtl_context, data_type, rope_type).expect("Failed to create Rope"));
         Rc::new(rotation)
     }
 
@@ -172,8 +171,8 @@ impl EncodableBlock<Metal> for Decoder {
     fn encode_with_shared_encoder(
         &self,
         _state: &mut ForwardPassState<Metal>,
-        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         unimplemented!("Decoder does not support shared encoder")
     }
@@ -181,27 +180,27 @@ impl EncodableBlock<Metal> for Decoder {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
-        self.embed.encode(state, command_buffer, parameters);
+        self.embed.encode(state, parameters, command_buffer);
 
         for layer in self.layers.iter() {
-            layer.encode(state, command_buffer, parameters);
+            layer.encode(state, parameters, command_buffer);
         }
 
         if state.is_prefilling() {
             return;
         }
 
-        self.norm.encode(state, command_buffer, parameters);
+        self.norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
             state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.readout.encode(state, command_buffer, parameters);
+        self.readout.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();

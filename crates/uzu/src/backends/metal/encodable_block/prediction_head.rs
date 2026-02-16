@@ -1,13 +1,17 @@
 //! Prediction head encodable for classification output.
 
-use super::{EncodableBlock, Metal};
 #[cfg(feature = "tracing")]
-use crate::backends::metal::MTLBlitCommandEncoder;
-use crate::backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained};
-use crate::encodable_block::EncodingParameters;
+use metal::MTLBlitCommandEncoder;
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 #[cfg(feature = "tracing")]
 use crate::forward_pass::state::ArrayId;
-use crate::forward_pass::state::ForwardPassState;
+use crate::{
+    backends::metal::Metal,
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::ForwardPassState,
+};
 
 pub struct ClassifierPredictionHead {
     dense: Box<dyn EncodableBlock<Metal>>,
@@ -40,19 +44,19 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         if self.supports_shared_encoder() {
             let encoder =
                 command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-            self.encode_with_shared_encoder(state, &encoder, parameters);
+            self.encode_with_shared_encoder(state, parameters, &encoder);
             encoder.end_encoding();
         } else {
-            self.dense.encode(state, command_buffer, parameters);
-            self.activation.encode(state, command_buffer, parameters);
-            self.norm.encode(state, command_buffer, parameters);
-            self.readout.encode(state, command_buffer, parameters);
+            self.dense.encode(state, parameters, command_buffer);
+            self.activation.encode(state, parameters, command_buffer);
+            self.norm.encode(state, parameters, command_buffer);
+            self.readout.encode(state, parameters, command_buffer);
         }
 
         #[cfg(feature = "tracing")]
@@ -91,12 +95,12 @@ impl EncodableBlock<Metal> for ClassifierPredictionHead {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
-        self.dense.encode_with_shared_encoder(state, encoder, parameters);
-        self.activation.encode_with_shared_encoder(state, encoder, parameters);
-        self.norm.encode_with_shared_encoder(state, encoder, parameters);
-        self.readout.encode_with_shared_encoder(state, encoder, parameters);
+        self.dense.encode_with_shared_encoder(state, parameters, encoder);
+        self.activation.encode_with_shared_encoder(state, parameters, encoder);
+        self.norm.encode_with_shared_encoder(state, parameters, encoder);
+        self.readout.encode_with_shared_encoder(state, parameters, encoder);
     }
 }

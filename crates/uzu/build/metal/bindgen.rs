@@ -4,13 +4,15 @@ use anyhow::Context;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Lifetime, LitInt, Type};
-
-use crate::metal::ast::MetalGroupsType;
+use syn::{Ident, Lifetime, LitInt, Type};
 
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
     wrapper::SpecializeBaseIndices,
+};
+use crate::{
+    common::mangling::dynamic_mangle,
+    metal::ast::{MetalGroupsType, MetalTemplateParameterType},
 };
 
 pub fn bindgen(
@@ -21,24 +23,33 @@ pub fn bindgen(
     let trait_name = format_ident!("{kernel_name}Kernel");
     let struct_name = format_ident!("{kernel_name}MetalKernel");
 
-    let parse_expr = |expr: &Box<str>| -> anyhow::Result<TokenStream> {
+    let parse_expr = |expr: &str| -> anyhow::Result<TokenStream> {
         syn::parse_str(expr.as_ref())
             .with_context(|| format!("cannot parse rust expression `{}` in kernel `{}`", expr, kernel_name))
     };
 
     let (variants_extra_arguments, variants_kernel_format) = if let Some(variants) = &kernel.variants {
-        let variant_names =
-            variants.iter().map(|type_parameter| format_ident!("{}", type_parameter.name.as_ref())).collect::<Vec<_>>();
+        variants
+            .iter()
+            .map(|variant| {
+                let name = Ident::new(variant.name.as_ref(), Span::call_site());
 
-        let kernel_format = repeat_n("{}", variant_names.len() + 1).join("_");
-
-        (
-            variant_names.iter().map(|name| quote! { #[allow(non_snake_case)] #name: crate::DataType }).collect(),
-            quote! { &format!(#kernel_format, #kernel_name #(, KernelDataType::from(#variant_names).function_name_suffix())*) },
-        )
+                match &variant.ty {
+                    MetalTemplateParameterType::Type => {
+                        Ok((quote! { #[allow(non_snake_case)] #name: crate::DataType }, quote! { #name.metal_type() }))
+                    },
+                    MetalTemplateParameterType::Value(ty) => {
+                        let ty: Type = syn::parse_str(ty.as_ref())?;
+                        Ok((quote! { #[allow(non_snake_case)] #name: #ty }, quote! { #name.to_string() }))
+                    },
+                }
+            })
+            .collect::<anyhow::Result<_>>()?
     } else {
-        (Vec::new(), quote! { #kernel_name })
+        (Vec::new(), Vec::new())
     };
+
+    let entry_name = dynamic_mangle(kernel.name.as_ref(), variants_kernel_format);
 
     let base_index = specialize_indices.get(&kernel.name).copied();
     let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
@@ -52,24 +63,10 @@ pub fn bindgen(
                 MetalArgumentType::Specialize(t) => format_ident!("{t}"),
                 _ => unreachable!(),
             };
-            let mtl_type = match a.argument_type().unwrap() {
-                MetalArgumentType::Specialize(ref t) => match t.as_ref() {
-                    "bool" => quote! { Bool },
-                    "u32" => quote! { UInt },
-                    "i32" => quote! { Int },
-                    "f32" => quote! { Float },
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            };
             let idx = base_index.unwrap_or(0) + i;
             let arg_def = quote! { #arg_name: #rust_type };
             let setup = quote! {
-                function_constants.set_constant_value_type_at_index(
-                    std::ptr::NonNull::from(&#arg_name).cast(),
-                    MTLDataType::#mtl_type,
-                    #idx,
-                );
+                function_constants.set_value(&#arg_name, #idx);
             };
             (arg_def, setup)
         })
@@ -93,7 +90,9 @@ pub fn bindgen(
     let mut arg_count: usize = 0;
     let mut indirect_flag = false;
 
-    let (encode_generics, encode_args_defs, encode_args_sets, encode_args_names): (
+    let (conditional_buffer_fields,conditional_buffer_sets, encode_generics, encode_args_defs, encode_args_sets, encode_args_names): (
+        Vec<Option<TokenStream>>,
+        Vec<Option<TokenStream>>,
         Vec<Option<TokenStream>>,
         Vec<TokenStream>,
         Vec<TokenStream>,
@@ -105,47 +104,81 @@ pub fn bindgen(
             let arg_name = format_ident!("{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
-                MetalArgumentType::Buffer => {
-                    let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
-
-                    let def = quote! { #arg_name: impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> };
-                    let set = quote! {
-                        let (__dsl_buffer, __dsl_offset) = #arg_name.into_parts();
-                        compute_encoder.set_buffer(Some(__dsl_buffer), __dsl_offset, #arg_count);
+                arg_type @ (MetalArgumentType::Buffer | MetalArgumentType::Constant(_)) => {
+                    let (mut ty, mut set, generic) = match arg_type {
+                        MetalArgumentType::Buffer => {
+                            let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
+                            (
+                                quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                quote! {
+                                    let (__dsl_buffer, __dsl_offset) = #arg_name.into_parts();
+                                    compute_encoder.set_buffer(Some(__dsl_buffer), __dsl_offset, #arg_count);
+                                },
+                                Some(quote! { #buffer_lifetime }),
+                            )
+                        },
+                        MetalArgumentType::Constant((r_type, constant_type)) => {
+                            let arg_dtype: Type = syn::parse_str(&r_type).unwrap();
+                            match constant_type {
+                                MetalConstantType::Scalar => (
+                                    quote! { #arg_dtype },
+                                    quote! { compute_encoder.set_value(&#arg_name, #arg_count); },
+                                    None,
+                                ),
+                                MetalConstantType::Array => (
+                                    quote! { &[#arg_dtype] },
+                                    quote! { compute_encoder.set_slice(#arg_name, #arg_count); },
+                                    None,
+                                ),
+                            }
+                        },
+                        _ => unreachable!(),
                     };
+
+                    let (conditional_buffer_field, conditional_buffer_set) =
+                        if let Some(condition) = ka.argument_condition().unwrap() {
+                            let conditional_field_name = format_ident!("has_{}", ka.name.as_ref());
+                            let condition = parse_expr(condition.as_ref()).unwrap();
+
+                            ty = quote! { Option<#ty> };
+                            set = quote! {
+                                assert!(#arg_name.is_some() == (self.#conditional_field_name));
+                                if let Some(#arg_name) = #arg_name {
+                                    #set
+                                }
+                            };
+
+                            (
+                                Some(quote! { #conditional_field_name: bool }),
+                                Some(quote! { #conditional_field_name: #condition }),
+                            )
+                        } else {
+                            (None, None)
+                        };
 
                     arg_count += 1;
 
-                    Some((Some(quote! { #buffer_lifetime }), def, set, quote! { #arg_name }))
-                }
-                MetalArgumentType::Constant((r_type, constant_type)) => {
-                    let arg_dtype: Type = syn::parse_str(&r_type).unwrap();
-
-                    let (def, set) = match constant_type {
-                        MetalConstantType::Scalar => (
-                            quote! { #arg_name: #arg_dtype },
-                            quote! { compute_encoder.set_value(&#arg_name, #arg_count); },
-                        ),
-                        MetalConstantType::Array => (
-                            quote! { #arg_name: &[#arg_dtype] },
-                            quote! { compute_encoder.set_slice(#arg_name, #arg_count); },
-                        ),
-                    };
-
-                    arg_count += 1;
-
-                    Some((None, def, set, quote! { #arg_name }))
+                    Some((
+                        conditional_buffer_field,
+                        conditional_buffer_set,
+                        generic,
+                        quote! { #arg_name: #ty },
+                        set,
+                        quote! { #arg_name },
+                    ))
                 }
                 MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_flag => {
                     indirect_flag = true;
 
-                    Some((Some(quote! { '__dsl_indirect_dispatch_buffer }), quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> }, quote! {}, quote! { __dsl_indirect_dispatch_buffer }))
+                    Some((None, None, Some(quote! { '__dsl_indirect_dispatch_buffer }), quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> }, quote! {}, quote! { __dsl_indirect_dispatch_buffer }))
                 }
                 _ => None,
             }
         })
         .multiunzip();
 
+    let conditional_buffer_fields = conditional_buffer_fields.into_iter().flatten().collect::<Vec<_>>();
+    let conditional_buffer_sets = conditional_buffer_sets.into_iter().flatten().collect::<Vec<_>>();
     let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
 
     let (dispatch, elements) = if kernel.has_axis() {
@@ -265,15 +298,16 @@ pub fn bindgen(
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+            #(#conditional_buffer_fields,)*
         }
 
         impl crate::backends::common::kernel::#trait_name for #struct_name {
             type Backend = crate::backends::metal::Metal;
 
-            fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
+            fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
                 #function_constants_init
-                let pipeline = context.library.compute_pipeline_state(#variants_kernel_format, #function_constants_arg)?;
-                Ok(Self { pipeline })
+                let pipeline = context.compute_pipeline_state(&#entry_name, #function_constants_arg)?;
+                Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 
             fn encode<#(#encode_generics, )* 'encoder>(&self, #(#encode_args_defs, )* compute_encoder: &'encoder ProtocolObject<dyn MTLComputeCommandEncoder>) {

@@ -1,3 +1,6 @@
+use metal::{MTLBuffer, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{
     common::MatmulArguments,
     dispatch_descriptor::{MatmulDispatchDescriptor, choose_dispatch_descriptor},
@@ -9,10 +12,7 @@ use crate::{
     DataType,
     backends::{
         common::kernel::TensorAddBiasKernel,
-        metal::{
-            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject, Retained,
-            kernel::dsl::TensorAddBiasMetalKernel,
-        },
+        metal::{MetalContext, MetalError, kernel::dsl::TensorAddBiasMetalKernel},
     },
 };
 
@@ -25,9 +25,9 @@ pub struct MatmulKernel {
 }
 
 impl MatmulKernel {
-    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
+    pub fn new(data_type: DataType) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported dtype for MatmulKernel: {data_type:?}")));
+            return Err(MetalError::Generic(format!("Unsupported dtype for MatmulKernel: {data_type:?}")));
         }
 
         Ok(Self {
@@ -41,8 +41,8 @@ impl MatmulKernel {
 
     pub fn precompile(
         &mut self,
-        context: &MTLContext,
-    ) -> Result<(), MTLError> {
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
         let gemm = self.get_or_create_gemm()?;
         gemm.precompile(context)?;
 
@@ -55,21 +55,21 @@ impl MatmulKernel {
         Ok(())
     }
 
-    fn get_or_create_gemm(&mut self) -> Result<&mut gemm::GemmKernel, MTLError> {
+    fn get_or_create_gemm(&mut self) -> Result<&mut gemm::GemmKernel, MetalError> {
         if self.gemm.is_none() {
             self.gemm = Some(gemm::GemmKernel::new(self.data_type)?);
         }
         Ok(self.gemm.as_mut().unwrap())
     }
 
-    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel, MTLError> {
+    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel, MetalError> {
         if self.gemv.is_none() {
             self.gemv = Some(GemvKernel::new(self.data_type)?);
         }
         Ok(self.gemv.as_mut().unwrap())
     }
 
-    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKGemm, MTLError> {
+    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKGemm, MetalError> {
         if self.splitk.is_none() {
             self.splitk = Some(SplitKGemm::new(self.data_type)?);
         }
@@ -78,11 +78,11 @@ impl MatmulKernel {
 
     fn encode_dispatch_descriptor(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &MatmulDispatchDescriptor,
-    ) -> Result<bool, MTLError> {
+    ) -> Result<bool, MetalError> {
         match descriptor {
             MatmulDispatchDescriptor::Gemv(descriptor) => {
                 let gemv = self.get_or_create_gemv()?;
@@ -101,10 +101,10 @@ impl MatmulKernel {
 
     pub fn encode(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         mut arguments: MatmulArguments,
-    ) -> Result<(), MTLError> {
+    ) -> Result<(), MetalError> {
         Self::apply_batch_collapse(&mut arguments);
 
         let descriptor = choose_dispatch_descriptor(context, self.data_type, &arguments)?;
@@ -122,11 +122,11 @@ impl MatmulKernel {
 
     fn apply_bias_add(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         bias: &Retained<ProtocolObject<dyn MTLBuffer>>,
-    ) -> Result<(), MTLError> {
+    ) -> Result<(), MetalError> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
         let batch_count = arguments.batch_count as usize;

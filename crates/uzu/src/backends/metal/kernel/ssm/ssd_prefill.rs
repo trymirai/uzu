@@ -1,11 +1,16 @@
-use crate::backends::{
-    common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
-    metal::{
-        KernelDataType, MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-        kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
+use metal::{MTLBuffer, MTLComputeCommandEncoder};
+use objc2::{Message, runtime::ProtocolObject};
+
+use crate::{
+    DataType,
+    backends::{
+        common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
+        metal::{
+            MetalContext, MetalError,
+            kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
+        },
     },
 };
-use objc2::Message;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SSDPrefillMode {
@@ -41,12 +46,12 @@ pub struct SSDPrefillKernels {
 
 impl SSDPrefillKernels {
     pub fn new(
-        context: &MTLContext,
-        data_type: KernelDataType,
-    ) -> Result<Self, MTLError> {
-        let single = SSDPrefillMetalKernel::new(context, data_type.into())?;
-        let single_64 = SSDPrefill64MetalKernel::new(context, data_type.into())?;
-        let sequential = SSDPrefillSequentialMetalKernel::new(context, data_type.into())?;
+        context: &MetalContext,
+        data_type: DataType,
+    ) -> Result<Self, MetalError> {
+        let single = SSDPrefillMetalKernel::new(context, data_type)?;
+        let single_64 = SSDPrefill64MetalKernel::new(context, data_type)?;
+        let sequential = SSDPrefillSequentialMetalKernel::new(context, data_type)?;
         Ok(Self {
             single,
             single_64,

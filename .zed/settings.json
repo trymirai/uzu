@@ -1,0 +1,42 @@
+{
+  "file_types": {
+    "Metal": ["h", "H"]
+  },
+  "languages": {
+    "Metal": {
+      "formatter": "language_server",
+      "format_on_save": "on"
+    }
+  },
+  "lsp": {
+    "metal-analyzer": {
+      "initialization_options": {
+        "metal-analyzer": {
+          "diagnostics": {
+            "onType": true,
+            "onSave": true,
+            "debounceMs": 300,
+            "scope": "workspace"
+          },
+          "indexing": {
+            "enabled": true,
+            "concurrency": 8,
+            "maxFileSizeKb": 1024,
+            "excludePaths": [
+              "external/uzu-plus"
+            ]
+          },
+          "formatting": {
+            "enabled": true,
+            "command": "clang-format",
+            "args": []
+          },
+          "compiler": {
+            "includePaths": [],
+            "extraFlags": []
+          }
+        }
+      }
+    }
+  }
+}

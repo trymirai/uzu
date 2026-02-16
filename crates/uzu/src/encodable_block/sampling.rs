@@ -1,5 +1,6 @@
 //! Sampling kernel encodable.
 
+use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -8,8 +9,6 @@ use crate::{
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
-
-use super::{EncodableBlock, EncodingParameters};
 
 pub struct Sampling<B: Backend> {
     kernel: SamplingKernel<B>,
@@ -47,8 +46,8 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
         _parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     ) {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 

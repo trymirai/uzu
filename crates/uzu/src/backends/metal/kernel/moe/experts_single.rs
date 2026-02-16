@@ -1,14 +1,18 @@
-use crate::backends::common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _};
-use crate::backends::metal::kernel::dsl::{
-    MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel,
-};
-use crate::backends::metal::{KernelDataType, MTLContext, MTLError};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
-use objc2::__framework_prelude::ProtocolObject;
-use objc2::Message;
-use objc2::rc::Retained;
+use objc2::{__framework_prelude::ProtocolObject, Message, rc::Retained};
 
-static DTYPES: [KernelDataType; 3] = [KernelDataType::Float16, KernelDataType::BFloat16, KernelDataType::Float32];
+use crate::{
+    DataType,
+    backends::{
+        common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _},
+        metal::{
+            MetalContext, MetalError,
+            kernel::dsl::{MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel},
+        },
+    },
+};
+
+static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 
 /// Arguments for single-token MoE decode (T=1 optimized path)
 #[derive(Debug)]
@@ -50,7 +54,7 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
     /// Up clipping max
     pub up_clip_max: f32,
     /// Data type
-    pub data_type: KernelDataType,
+    pub data_type: DataType,
 }
 
 pub struct MoeExpertsSingleDecodeKernels {
@@ -59,7 +63,7 @@ pub struct MoeExpertsSingleDecodeKernels {
 }
 
 impl MoeExpertsSingleDecodeKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         let mut pass_a = vec![];
         for gate in 0..4 {
             let mut kernels = vec![];

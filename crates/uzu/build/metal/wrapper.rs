@@ -4,6 +4,7 @@ use anyhow::bail;
 use itertools::Itertools;
 
 use super::ast::{MetalArgumentType, MetalKernelInfo};
+use crate::common::mangling::static_mangle;
 
 pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
 
@@ -73,11 +74,11 @@ fn kernel_wrappers(
     } {
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
-                format!("{}_{}", kernel.name, type_variant.iter().map(|(_k, v)| v).join("_")),
+                static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),
                 format!("{}<{}>", kernel.name, type_variant.iter().map(|(_k, v)| v).join(", ")),
             )
         } else {
-            (kernel.name.to_string(), kernel.name.to_string())
+            (static_mangle(kernel.name.as_ref(), [] as [&str; 0]), kernel.name.to_string())
         };
 
         let max_total_threads_per_threadgroup = kernel
@@ -95,23 +96,6 @@ fn kernel_wrappers(
             "1".to_string()
         };
 
-        let wrapper_argument_replace = type_variant.as_ref().map(|tv| tv.iter().cloned().collect::<HashMap<_, _>>());
-
-        let apply_replace = |s: &str| {
-            s.split_whitespace()
-                .map(|token| {
-                    if let Some(wrapper_argument_replace) = &wrapper_argument_replace
-                        && let Some(replacement) = wrapper_argument_replace.get(token)
-                    {
-                        replacement
-                    } else {
-                        token
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
-
         let mut wrapper_arguments = kernel
             .arguments
             .iter()
@@ -119,7 +103,16 @@ fn kernel_wrappers(
             .enumerate()
             .map(|(i, a)| match a.argument_type() {
                 Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_)) => {
-                    format!("{} {} [[buffer({})]]", apply_replace(&a.c_type), a.name, i)
+                    let condition = a.argument_condition().unwrap();
+
+                    if let Some(condition) = condition {
+                        format!(
+                            "{} {} [[buffer({}), function_constant(__dsl_specialize_{}_{})]]",
+                            &a.c_type, a.name, i, kernel.name, condition
+                        )
+                    } else {
+                        format!("{} {} [[buffer({})]]", &a.c_type, a.name, i)
+                    }
                 },
                 _ => unreachable!(),
             })
@@ -141,15 +134,19 @@ fn kernel_wrappers(
             wrapper_arguments.push("uint3 __dsl_thread_idx [[thread_position_in_threadgroup]]".into());
         }
 
+        if kernel.has_simd() {
+            wrapper_arguments.push("uint __dsl_simd_lane_idx [[thread_index_in_simdgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_idx [[simdgroup_index_in_threadgroup]]".into());
+            wrapper_arguments.push("uint __dsl_simd_group_size [[threads_per_simdgroup]]".into());
+        }
+
         let wrapper_arguments = wrapper_arguments.join(", ");
 
         let shared_definitions = kernel.arguments.iter().filter_map(|a| match a.argument_type() {
             Ok(MetalArgumentType::Shared(Some(len))) => {
-                Some(format!("{} {}[{}]", apply_replace(&a.c_type.replace('*', "")), a.name, len.as_ref(),))
+                Some(format!("{} {}[{}]", &a.c_type.replace('*', ""), a.name, len.as_ref(),))
             },
-            Ok(MetalArgumentType::Shared(None)) => {
-                Some(format!("{} {}", apply_replace(&a.c_type.replace('&', "")), a.name))
-            },
+            Ok(MetalArgumentType::Shared(None)) => Some(format!("{} {}", &a.c_type.replace('&', ""), a.name)),
             _ => None,
         });
 
@@ -176,6 +173,7 @@ fn kernel_wrappers(
                     MetalArgumentType::Threads(_) => {
                         format!("__dsl_thread_idx.{}", thread_axis_letters.next().unwrap())
                     },
+                    MetalArgumentType::Simd => "Simd { .lane_idx = __dsl_simd_lane_idx, .group_idx = __dsl_simd_group_idx, .group_size = __dsl_simd_group_size }".into(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -186,9 +184,18 @@ fn kernel_wrappers(
         let wrapper_body =
             shared_definitions.chain(once(underlying_call)).map(|l| format!("  {l};\n")).collect::<Vec<_>>().join("");
 
+        let (defs, undefs) = type_variant
+            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| (format!("\n#define {k} {v}"), format!("#undef {k}\n")))
+            .collect::<(Vec<_>, Vec<_>)>();
+
+        let defs = defs.join("");
+        let undefs = undefs.join("");
+
         kernel_wrappers.push(
             format!(
-                "\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n"
+                "{defs}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
             )
             .into(),
         );

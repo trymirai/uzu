@@ -1,6 +1,11 @@
-use crate::backends::metal::{
-    KernelDataType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState,
-    MTLContext, MTLError, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use crate::{
+    DataType,
+    backends::metal::{MetalContext, MetalError, metal_extensions::ComputeEncoderSetValue},
 };
 
 const THREADS_PER_THREADGROUP: usize = 256;
@@ -10,7 +15,7 @@ const MAX_TOPK: usize = 128;
 #[derive(Debug, thiserror::Error)]
 pub enum MoeRouterTopKError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("Invalid configuration: T={t}, d_model={d_model}, E={e}, K={k}")]
     InvalidConfig {
         t: usize,
@@ -41,7 +46,7 @@ pub struct MoeRouterTopKArguments<'a> {
 }
 
 impl MoeRouterTopKKernel {
-    pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeRouterTopKError> {
+    pub fn new(mtl_context: &MetalContext) -> Result<Self, MoeRouterTopKError> {
         let pipeline_f16 = mtl_context.compute_pipeline_state("moe_router_topk_f16", None)?;
         let pipeline_f32 = mtl_context.compute_pipeline_state("moe_router_topk_f32", None)?;
         let pipeline_bf16 = mtl_context.compute_pipeline_state("moe_router_topk_bf16", None)?;
@@ -55,7 +60,7 @@ impl MoeRouterTopKKernel {
     pub fn encode(
         &self,
         command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        dtype: KernelDataType,
+        dtype: DataType,
         args: MoeRouterTopKArguments,
     ) -> Result<(), MoeRouterTopKError> {
         if args.t == 0 || args.e == 0 || args.k == 0 {
@@ -81,9 +86,10 @@ impl MoeRouterTopKKernel {
         let compute_encoder =
             command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         match dtype {
-            KernelDataType::Float16 => compute_encoder.set_compute_pipeline_state(&self.pipeline_f16),
-            KernelDataType::Float32 => compute_encoder.set_compute_pipeline_state(&self.pipeline_f32),
-            KernelDataType::BFloat16 => compute_encoder.set_compute_pipeline_state(&self.pipeline_bf16),
+            DataType::F16 => compute_encoder.set_compute_pipeline_state(&self.pipeline_f16),
+            DataType::F32 => compute_encoder.set_compute_pipeline_state(&self.pipeline_f32),
+            DataType::BF16 => compute_encoder.set_compute_pipeline_state(&self.pipeline_bf16),
+            _ => panic!("Unsupported data type: {:?}", dtype),
         }
 
         compute_encoder.set_buffer(Some(args.input_buffer), 0, 0);

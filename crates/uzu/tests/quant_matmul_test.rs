@@ -3,12 +3,13 @@ use std::time::Instant;
 use bytemuck;
 use half::{bf16, f16};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{
     DataType,
     backends::{
         common::Context,
         metal::{
-            MTLContext, ProtocolObject, Retained,
+            MetalContext,
             kernel::quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
         },
     },
@@ -388,7 +389,7 @@ fn generate_test_quant_params(
 }
 
 fn buffer_from_f32_slice(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     dtype: DataType,
     values: &[f32],
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
@@ -416,7 +417,7 @@ fn buffer_from_f32_slice(
 }
 
 fn execute_quantized_matmul(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     batch: usize,
     input_dim: usize,
     output_dim: usize,
@@ -634,7 +635,7 @@ const QVM_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QMM_DIMS: &[(usize, usize, usize)] = &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
 
 fn run_kernel_test(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     batch: usize,
     output_dim: usize,
     input_dim: usize,
@@ -663,7 +664,7 @@ fn run_kernel_test(
 
 #[test]
 fn test_quant_gmv() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QMV test");
@@ -707,7 +708,7 @@ fn test_quant_gmv() {
 
 #[test]
 fn test_quant_qvm() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QVM test");
@@ -751,7 +752,7 @@ fn test_quant_qvm() {
 
 #[test]
 fn test_quant_gmm() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QMM test");
@@ -795,7 +796,7 @@ fn test_quant_gmm() {
 
 #[test]
 fn test_quant_gmm_transposed() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QMM transposed test");
@@ -936,7 +937,7 @@ fn test_quant_qmv_bf16_suffix1_correctness() {
 #[test]
 #[ignore]
 fn test_quant_matmul_perf() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping Perf test");

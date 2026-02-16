@@ -1,9 +1,11 @@
 use std::sync::OnceLock;
 
+use metal::MTLSize;
+
 use super::pipeline_configuration::{PipelineConfiguration, select_configuration};
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError, MTLSize, kernel::matmul::common::MatmulArguments},
+    backends::metal::{MetalContext, MetalError, kernel::matmul::common::MatmulArguments},
 };
 
 const DEFAULT_GEMV_MAX_BATCH: i32 = 8;
@@ -51,12 +53,12 @@ pub(crate) struct DispatchDescriptor {
 
 impl DispatchDescriptor {
     pub(crate) fn try_new(
-        _context: &MTLContext,
+        _context: &MetalContext,
         data_type: DataType,
         arguments: &MatmulArguments,
-    ) -> Result<Option<Self>, MTLError> {
+    ) -> Result<Option<Self>, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported data type for GEMV: {data_type:?}")));
+            return Err(MetalError::Generic(format!("Unsupported data type for GEMV: {data_type:?}")));
         }
 
         if arguments.transpose_a || !arguments.transpose_b {

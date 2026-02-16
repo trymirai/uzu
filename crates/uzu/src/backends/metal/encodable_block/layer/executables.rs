@@ -1,25 +1,24 @@
 //! Layer executables - a single decoder layer with mixer, norms, and MLP.
 
-use crate::backends::metal::Metal;
 use std::rc::Rc;
 
 #[cfg(not(feature = "tracing"))]
-use crate::backends::metal::MTLCommandEncoder;
-use crate::backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, ProtocolObject, Retained};
-use objc2::rc::autoreleasepool;
+use metal::MTLCommandEncoder;
+use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
+use objc2::{
+    rc::{Retained, autoreleasepool},
+    runtime::ProtocolObject,
+};
 
 use super::{
-    super::{
-        Attention, EncodableBlock, MambaMixer, QKNorm, RMSNorm, ShortConvMixer, TensorAddSwap, TensorCopy,
-        transformer_layer,
-    },
+    super::{Attention, MambaMixer, ShortConvMixer, transformer_layer},
     MixerExecutables,
 };
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::metal::{MTLContext, compilation_parameters::CompilationConfig, kernel::KernelDataType},
+    backends::metal::{Metal, MetalContext},
     config::{DecoderLayerType, MixerConfig},
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters, QKNorm, RMSNorm, TensorAddSwap, TensorCopy},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -40,10 +39,9 @@ pub struct LayerExecutables {
 impl LayerExecutables {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        mtl_context: Rc<MTLContext>,
+        mtl_context: Rc<MetalContext>,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
-        compilation_config: Rc<CompilationConfig>,
         layer_index: usize,
         model_dim: usize,
         hidden_dim: usize,
@@ -51,21 +49,23 @@ impl LayerExecutables {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        decoder_layer_loader: &ParameterTree<MTLContext>,
+        decoder_layer_loader: &ParameterTree<MetalContext>,
         rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
+            let ctx = mtl_context.as_ref(); // Reference for functions expecting &MetalContext
             let intermediate_data_type: DataType = match &layer_config.mixer_config {
                 MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
                 MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
                 MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
             };
-            let kernel_data_type: KernelDataType = intermediate_data_type.into();
-
             let copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::new(ctx, kernel_data_type, vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice())
-                    .unwrap(),
+                TensorCopy::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_attention_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
@@ -131,7 +131,7 @@ impl LayerExecutables {
                     let attention = Box::new(
                         Attention::new(
                             ctx,
-                            kernel_data_type,
+                            intermediate_data_type,
                             layer_index,
                             attention_scale,
                             attention_config.has_sinks,
@@ -154,7 +154,6 @@ impl LayerExecutables {
                         ctx,
                         layer_type.clone(),
                         mamba_config.clone(),
-                        compilation_config.clone(),
                         layer_index,
                         model_dim,
                         num_heads,
@@ -171,7 +170,6 @@ impl LayerExecutables {
                         ctx,
                         layer_type.clone(),
                         short_conv_config.clone(),
-                        compilation_config.clone(),
                         layer_index,
                         model_dim,
                         decoder_layer_loader,
@@ -200,8 +198,12 @@ impl LayerExecutables {
                 };
 
             let main_shortcut_add_swap: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::new(ctx, kernel_data_type, vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice())
-                    .unwrap(),
+                TensorAddSwap::<Metal>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
             );
 
             let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
@@ -261,8 +263,8 @@ impl EncodableBlock<Metal> for LayerExecutables {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.
@@ -271,7 +273,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
             if self.supports_shared_encoder() {
                 let encoder =
                     command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-                self.encode_with_shared_encoder(state, &encoder, parameters);
+                self.encode_with_shared_encoder(state, parameters, &encoder);
                 encoder.end_encoding();
                 return;
             }
@@ -285,10 +287,10 @@ impl EncodableBlock<Metal> for LayerExecutables {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut.encode(state, command_buffer, parameters);
+        self.copy_main_to_shortcut.encode(state, parameters, command_buffer);
         // shortcut = input
 
-        self.pre_attention_norm.encode(state, command_buffer, parameters);
+        self.pre_attention_norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
@@ -302,13 +304,13 @@ impl EncodableBlock<Metal> for LayerExecutables {
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode(state, command_buffer, parameters);
+                qkv_projection.encode(state, parameters, command_buffer);
                 if let Some(norm) = qk_norm {
-                    norm.encode(state, command_buffer, parameters);
+                    norm.encode(state, parameters, command_buffer);
                 }
-                rope.encode(state, command_buffer, parameters);
-                attention.encode(state, command_buffer, parameters);
-                out_projection.encode(state, command_buffer, parameters);
+                rope.encode(state, parameters, command_buffer);
+                attention.encode(state, parameters, command_buffer);
+                out_projection.encode(state, parameters, command_buffer);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
                     state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
@@ -317,7 +319,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer, parameters);
+                mixer.encode(state, parameters, command_buffer);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
                     state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
@@ -326,7 +328,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer, parameters);
+                mixer.encode(state, parameters, command_buffer);
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
                     state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
@@ -335,7 +337,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode(state, command_buffer, parameters);
+            post_attention_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
@@ -347,7 +349,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
         }
         //main = attention_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
+        self.main_shortcut_add_swap.encode(state, parameters, command_buffer);
         // shortcut = input + attention_result
         // main = input + attention_result
         #[cfg(feature = "tracing")]
@@ -355,20 +357,20 @@ impl EncodableBlock<Metal> for LayerExecutables {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
 
-        self.pre_mlp_norm.encode(state, command_buffer, parameters);
+        self.pre_mlp_norm.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer, parameters);
+        self.mlp.encode(state, parameters, command_buffer);
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer, parameters);
+            post_mlp_norm.encode(state, parameters, command_buffer);
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
@@ -376,7 +378,7 @@ impl EncodableBlock<Metal> for LayerExecutables {
         }
         // main = mlp_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer, parameters);
+        self.main_shortcut_add_swap.encode(state, parameters, command_buffer);
         // shortcut = input + attention_result + mlp_result
         // main = input + attention_result + mlp_result
         #[cfg(feature = "tracing")]
@@ -431,16 +433,16 @@ impl EncodableBlock<Metal> for LayerExecutables {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),
             "encode_with_shared_encoder called on unsupported LayerExecutables"
         );
 
-        self.copy_main_to_shortcut.encode_with_shared_encoder(state, encoder, parameters);
-        self.pre_attention_norm.encode_with_shared_encoder(state, encoder, parameters);
+        self.copy_main_to_shortcut.encode_with_shared_encoder(state, parameters, encoder);
+        self.pre_attention_norm.encode_with_shared_encoder(state, parameters, encoder);
 
         match &self.mixer {
             MixerExecutables::Attention {
@@ -450,39 +452,39 @@ impl EncodableBlock<Metal> for LayerExecutables {
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode_with_shared_encoder(state, encoder, parameters);
+                qkv_projection.encode_with_shared_encoder(state, parameters, encoder);
                 if let Some(norm) = qk_norm {
-                    norm.encode_with_shared_encoder(state, encoder, parameters);
+                    norm.encode_with_shared_encoder(state, parameters, encoder);
                 }
-                rope.encode_with_shared_encoder(state, encoder, parameters);
-                attention.encode_with_shared_encoder(state, encoder, parameters);
-                out_projection.encode_with_shared_encoder(state, encoder, parameters);
+                rope.encode_with_shared_encoder(state, parameters, encoder);
+                attention.encode_with_shared_encoder(state, parameters, encoder);
+                out_projection.encode_with_shared_encoder(state, parameters, encoder);
             },
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode_with_shared_encoder(state, encoder, parameters);
+                mixer.encode_with_shared_encoder(state, parameters, encoder);
             },
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                mixer.encode_with_shared_encoder(state, encoder, parameters);
+                mixer.encode_with_shared_encoder(state, parameters, encoder);
             },
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode_with_shared_encoder(state, encoder, parameters);
+            post_attention_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.main_shortcut_add_swap.encode_with_shared_encoder(state, encoder, parameters);
+        self.main_shortcut_add_swap.encode_with_shared_encoder(state, parameters, encoder);
 
-        self.pre_mlp_norm.encode_with_shared_encoder(state, encoder, parameters);
-        self.mlp.encode_with_shared_encoder(state, encoder, parameters);
+        self.pre_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
+        self.mlp.encode_with_shared_encoder(state, parameters, encoder);
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode_with_shared_encoder(state, encoder, parameters);
+            post_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
         }
 
-        self.main_shortcut_add_swap.encode_with_shared_encoder(state, encoder, parameters);
+        self.main_shortcut_add_swap.encode_with_shared_encoder(state, parameters, encoder);
     }
 }

@@ -4,4 +4,5 @@ pub mod compiler;
 pub mod envs;
 pub mod kernel;
 pub mod logging;
+pub mod mangling;
 pub mod traitgen;

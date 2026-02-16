@@ -11,9 +11,9 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    KernelDataType,
-    kernel::moe::{
+use uzu::{
+    DataType,
+    backends::metal::kernel::moe::{
         MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
         MoeExpertsTwoPassPrefillKernel,
     },
@@ -446,7 +446,7 @@ fn test_two_pass_decode_correctness() {
             up_clip_min: f32::NEG_INFINITY,
             up_clip_max: f32::INFINITY,
             silu_alpha,
-            data_type: KernelDataType::BFloat16,
+            data_type: DataType::BF16,
         },
     );
 
@@ -586,7 +586,7 @@ fn test_two_pass_decode_multi_token() {
             up_clip_min: f32::NEG_INFINITY,
             up_clip_max: f32::INFINITY,
             silu_alpha,
-            data_type: KernelDataType::BFloat16,
+            data_type: DataType::BF16,
         },
     );
     cb.commit();
@@ -689,7 +689,7 @@ fn test_two_pass_prefill_correctness() {
                 up_clip_min: f32::NEG_INFINITY,
                 up_clip_max: f32::INFINITY,
                 silu_alpha,
-                data_type: KernelDataType::BFloat16,
+                data_type: DataType::BF16,
             },
         )
         .expect("encode");
@@ -815,7 +815,7 @@ fn test_fused_single_token_decode() {
             gate_clip_max: f32::INFINITY,
             up_clip_min: f32::NEG_INFINITY,
             up_clip_max: f32::INFINITY,
-            data_type: KernelDataType::BFloat16,
+            data_type: DataType::BF16,
         },
     );
 
@@ -938,7 +938,7 @@ fn test_fused_single_token_k4() {
             gate_clip_max: f32::INFINITY,
             up_clip_min: f32::NEG_INFINITY,
             up_clip_max: f32::INFINITY,
-            data_type: KernelDataType::BFloat16,
+            data_type: DataType::BF16,
         },
     );
     cb.commit();

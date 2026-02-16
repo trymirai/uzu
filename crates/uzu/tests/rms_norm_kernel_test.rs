@@ -7,10 +7,13 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTL
 use uzu::{
     DataType,
     backends::{
-        common::Context,
+        common::{
+            Context,
+            kernel::{QKNormKernel, RMSNormKernel},
+        },
         metal::{
-            MTLContext,
-            kernel::rms_norm::{QKNormArguments, QKNormTarget, RMSNormArguments, RMSNormKernel, RMSNormKernelType},
+            MetalContext,
+            kernel::dsl::{QKNormMetalKernel, RMSNormMetalKernel},
             metal_extensions::CommandBufferTimingExt,
         },
     },
@@ -245,7 +248,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     OutputT: TestFloat,
 {
     // Create Metal context
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm test: {}", e);
@@ -301,34 +304,23 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         .expect("Failed to create buffer");
 
     // Create RMS norm kernel
-    let kernel = RMSNormKernel::new(
-        &mtl_context,
-        input_type,
-        scale_type,
-        output_type,
-        accumulation_type,
-        RMSNormKernelType::Standard,
-    )
-    .expect("Failed to create RMS norm kernel");
-
+    let kernel = RMSNormMetalKernel::new(&mtl_context, input_type, scale_type, output_type, accumulation_type)
+        .expect("Failed to create RMS norm kernel");
     // Create command buffer and encode
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let _ = kernel.encode(
+    kernel.encode(
+        &input_buffer,
+        &scale_buffer,
+        &output_buffer,
+        batch_size as u32,
+        model_dim as u32,
+        epsilon,
+        0.0,
+        false,
         &compute_encoder,
-        RMSNormArguments {
-            input_buffer: &input_buffer,
-            input_offset: 0,
-            scales_buffer: &scale_buffer,
-            output_buffer: &output_buffer,
-            output_offset: 0,
-            batch_size,
-            model_dim,
-            epsilon,
-            scale_offset: 0.0,
-        },
     );
 
     compute_encoder.end_encoding();
@@ -389,7 +381,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     ScaleT: TestFloat,
     OutputT: TestFloat,
 {
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm edge case test: {}", e);
@@ -423,33 +415,23 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
         .new_buffer(4 * OutputT::size_of(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let kernel = RMSNormKernel::new(
-        &mtl_context,
-        input_type,
-        scale_type,
-        output_type,
-        accumulation_type,
-        RMSNormKernelType::Standard,
-    )
-    .expect("Failed to create RMS norm kernel");
+    let kernel = RMSNormMetalKernel::new(&mtl_context, input_type, scale_type, output_type, accumulation_type)
+        .expect("Failed to create RMS norm kernel");
 
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let _ = kernel.encode(
+    kernel.encode(
+        &input_buffer,
+        &scale_buffer,
+        &output_buffer,
+        batch_size as u32,
+        model_dim as u32,
+        epsilon,
+        0.0,
+        false,
         &compute_encoder,
-        RMSNormArguments {
-            input_buffer: &input_buffer,
-            input_offset: 0,
-            scales_buffer: &scale_buffer,
-            output_buffer: &output_buffer,
-            output_offset: 0,
-            batch_size,
-            model_dim,
-            epsilon,
-            scale_offset: 0.0,
-        },
     );
 
     compute_encoder.end_encoding();
@@ -591,7 +573,7 @@ fn perf_rms_norm_with_size(
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm perf test: {}", e);
@@ -602,15 +584,8 @@ fn perf_rms_norm_with_size(
     const EPSILON: f32 = 1e-6;
 
     // ---- Create kernel ----
-    let kernel = RMSNormKernel::new(
-        &mtl_context,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        RMSNormKernelType::Standard,
-    )
-    .expect("Failed to create RMS norm kernel");
+    let kernel = RMSNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
+        .expect("Failed to create RMS norm kernel");
 
     // ---- Generate random data ----
     let mut rng = StdRng::seed_from_u64(42);
@@ -648,19 +623,16 @@ fn perf_rms_norm_with_size(
     let command_buffer = command_buffer_ref.to_owned();
     let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-    let _ = kernel.encode(
+    kernel.encode(
+        &input_buffer,
+        &scale_buffer,
+        &output_buffer,
+        batch_size as u32,
+        model_dim as u32,
+        EPSILON,
+        0.0,
+        false,
         &compute_encoder,
-        RMSNormArguments {
-            input_buffer: &input_buffer,
-            input_offset: 0,
-            scales_buffer: &scale_buffer,
-            output_buffer: &output_buffer,
-            output_offset: 0,
-            batch_size,
-            model_dim,
-            epsilon: EPSILON,
-            scale_offset: 0.0,
-        },
     );
 
     compute_encoder.end_encoding();
@@ -727,7 +699,7 @@ fn perf_rms_norm_16k() {
 #[test]
 fn qk_norm_test() {
     // Test to verify that the QK norm kernel now accesses the correct data ranges
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping QK norm buffer addressing test: {}", e);
@@ -795,47 +767,31 @@ fn qk_norm_test() {
         .expect("Failed to create buffer");
 
     // Create QK norm kernels
-    let q_kernel = RMSNormKernel::new_with_mode(
-        &mtl_context,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        RMSNormKernelType::QueryKey,
-        false,
-    )
-    .expect("Failed to create Q norm kernel");
+    let q_kernel = QKNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
+        .expect("Failed to create Q norm kernel");
 
-    let k_kernel = RMSNormKernel::new_with_mode(
-        &mtl_context,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        DataType::F32,
-        RMSNormKernelType::QueryKey,
-        false,
-    )
-    .expect("Failed to create K norm kernel");
+    let k_kernel = QKNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
+        .expect("Failed to create K norm kernel");
 
     // Test Q head normalization
     {
         let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
         let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-        let _ = q_kernel.encode_qk_norm(
+        q_kernel.encode(
+            &qkv_buffer,
+            &q_scales_buffer,
+            &qkv_buffer,
+            batch_size as u32,
+            num_q_heads as u32,
+            num_kv_heads as u32,
+            head_dim as u32,
+            epsilon,
+            0.0,
+            0,
+            num_q_heads as u32,
+            false,
             &compute_encoder,
-            QKNormArguments {
-                qkv_input_buffer: &qkv_buffer,
-                scales_buffer: &q_scales_buffer,
-                qkv_output_buffer: &qkv_buffer,
-                batch_size,
-                num_q_heads,  // Now correctly passes actual head count
-                num_kv_heads, // Now correctly passes actual head count
-                head_dim,
-                epsilon,
-                scale_offset: 0.0,
-                target: QKNormTarget::QueryHeads, // Only process Q heads
-            },
         );
 
         compute_encoder.end_encoding();
@@ -884,20 +840,20 @@ fn qk_norm_test() {
         let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
         let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
-        let _ = k_kernel.encode_qk_norm(
+        k_kernel.encode(
+            &qkv_buffer,
+            &k_scales_buffer,
+            &qkv_buffer,
+            batch_size as u32,
+            num_q_heads as u32,
+            num_kv_heads as u32,
+            head_dim as u32,
+            epsilon,
+            0.0,
+            num_q_heads as u32,
+            num_kv_heads as u32,
+            false,
             &compute_encoder,
-            QKNormArguments {
-                qkv_input_buffer: &qkv_buffer,
-                scales_buffer: &k_scales_buffer,
-                qkv_output_buffer: &qkv_buffer,
-                batch_size,
-                num_q_heads,  // Now correctly passes actual head count
-                num_kv_heads, // Now correctly passes actual head count
-                head_dim,
-                epsilon,
-                scale_offset: 0.0,
-                target: QKNormTarget::KeyHeads, // Only process K heads
-            },
         );
 
         compute_encoder.end_encoding();

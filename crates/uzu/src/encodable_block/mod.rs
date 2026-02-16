@@ -3,9 +3,37 @@ use crate::{
     forward_pass::state::ForwardPassState,
 };
 
+mod activation;
+mod full_precision_embedding_lookup;
+mod full_precision_embedding_readout;
+mod full_precision_linear;
+mod layer_norm;
+mod normalization;
+mod pooling;
+mod qk_norm;
+mod quantized_embedding_lookup;
+mod quantized_linear;
+mod rms_norm;
+mod rope;
 mod sampling;
+mod tensor_add_swap;
+mod tensor_copy;
 
+pub use activation::Activation;
+pub use full_precision_embedding_lookup::{FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingLookupError};
+pub use full_precision_embedding_readout::{FullPrecisionEmbeddingReadout, FullPrecisionEmbeddingReadoutError};
+pub use full_precision_linear::{FullPrecisionLinear, FullPrecisionLinearError};
+pub use layer_norm::{LayerNorm, LayerNormError};
+pub use normalization::{Normalization, NormalizationError};
+pub use pooling::Pooling;
+pub use qk_norm::{QKNorm, QKNormError};
+pub use quantized_embedding_lookup::{QuantizedEmbeddingLookup, QuantizedEmbeddingLookupError};
+pub use quantized_linear::{QuantizedLinear, QuantizedLinearError};
+pub use rms_norm::{RMSNorm, RMSNormError};
+pub use rope::Rope;
 pub use sampling::Sampling;
+pub use tensor_add_swap::TensorAddSwap;
+pub use tensor_copy::TensorCopy;
 
 #[derive(Clone)]
 pub struct EncodingParameters<'a, B: Backend> {
@@ -56,8 +84,8 @@ pub trait EncodableBlock<B: Backend> {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
         parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     );
 
     fn supports_shared_encoder(&self) -> bool {
@@ -67,9 +95,9 @@ pub trait EncodableBlock<B: Backend> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &B::CommandBuffer,
         parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
-        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, encoder, parameters));
+        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
     }
 }

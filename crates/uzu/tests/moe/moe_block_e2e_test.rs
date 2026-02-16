@@ -1,16 +1,19 @@
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::{
-    common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
-    metal::{
-        MTLContext,
-        kernel::{
-            KernelDataType, MoeBlockBasesArguments, MoeScatterKernels, MoeScatterWithMapArguments,
-            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
-            moe::{
-                MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
-                MoeRouterTopKArguments, MoeRouterTopKKernel,
+use uzu::{
+    DataType,
+    backends::{
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        metal::{
+            MetalContext,
+            kernel::{
+                MoeBlockBasesArguments, MoeScatterKernels, MoeScatterWithMapArguments,
+                dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+                moe::{
+                    MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
+                    MoeRouterTopKArguments, MoeRouterTopKKernel,
+                },
             },
         },
     },
@@ -166,7 +169,7 @@ fn moe_cpu_reference(
 
 // Main entry point - automatically tests both modes for T>1
 fn run_moe_parity_test(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     e: usize,
     k: usize,
@@ -230,7 +233,7 @@ fn run_moe_parity_test(
 }
 
 fn run_moe_parity_test_internal(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     e: usize,
     k: usize,
@@ -351,7 +354,7 @@ fn run_moe_parity_test_internal(
     router_topk
         .encode(
             &cb,
-            KernelDataType::BFloat16,
+            DataType::BF16,
             MoeRouterTopKArguments {
                 input_buffer: &x_buf,
                 weight_buffer: &router_w_buf,
@@ -407,14 +410,14 @@ fn run_moe_parity_test_internal(
                 },
                 tok2row_buffer: &tok2row_buf,
             },
-            KernelDataType::BFloat16,
+            DataType::BF16,
         )
         .expect("scatter");
 
     let gather = MoeGatherKernels::new(&ctx).expect("gather");
     gather.encode(
         &cb,
-        KernelDataType::BFloat16,
+        DataType::BF16,
         &MoeGatherArguments {
             x_buffer: &x_buf,
             bucketed_ids_buffer: &bucketed_ids_buf,
@@ -462,12 +465,12 @@ fn run_moe_parity_test_internal(
                 up_clip_min: up_clip.0,
                 up_clip_max: up_clip.1,
                 silu_alpha,
-                data_type: KernelDataType::BFloat16,
+                data_type: DataType::BF16,
             },
         )
         .expect("experts encode");
 
-    let finalize = MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into()).expect("finalize");
+    let finalize = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
     finalize.encode(
         &tok2row_buf,

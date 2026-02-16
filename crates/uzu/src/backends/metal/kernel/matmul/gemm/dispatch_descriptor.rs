@@ -1,8 +1,10 @@
+use metal::MTLSize;
+
 use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::TileConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        DeviceClass, MTLContext, MTLError, MTLSize,
+        DeviceClass, MetalContext, MetalError,
         kernel::matmul::common::{GEMMAddMMParams, GEMMParams, MatmulArguments},
     },
 };
@@ -18,12 +20,12 @@ pub(crate) struct DispatchDescriptor {
 
 impl DispatchDescriptor {
     pub(crate) fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         arguments: &MatmulArguments,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
+            return Err(MetalError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
         }
 
         let tile = select_tile(context, data_type, arguments);
@@ -108,7 +110,7 @@ impl DispatchDescriptor {
 }
 
 fn select_tile(
-    context: &MTLContext,
+    context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments,
 ) -> TileConfiguration {
@@ -131,7 +133,7 @@ fn select_tile(
         };
     }
 
-    match context.architecture.device_class {
+    match context.device_class() {
         DeviceClass::Integrated | DeviceClass::Phone | DeviceClass::Unknown(_) => {
             if prefer_half_or_tf32 {
                 if !arguments.transpose_a && arguments.transpose_b {

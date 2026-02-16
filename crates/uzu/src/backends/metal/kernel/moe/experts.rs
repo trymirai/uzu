@@ -1,25 +1,32 @@
 use std::{mem::size_of, ptr::NonNull};
 
+use metal::{
+    MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLFunctionConstantValues, MTLSize,
+};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{dtype_index, dtype_suffix};
-use crate::backends::metal::{
-    KernelDataType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLContext, MTLDataType, MTLError, MTLFunctionConstantValues, MTLSize, NSRange,
-    ProtocolObject, Retained,
-    kernel::moe::tiles_map::{
-        MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
-        MoeTileScanArguments,
+use crate::{
+    DataType,
+    backends::metal::{
+        FunctionConstantValuesSetValue, MetalContext, MetalError,
+        kernel::moe::tiles_map::{
+            MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
+            MoeTileScanArguments,
+        },
     },
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum MoeScatterError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
 }
 #[derive(Debug, thiserror::Error)]
 pub enum MoeExpertsError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("{0}")]
     Generic(String),
 }
@@ -50,7 +57,7 @@ pub struct MoeExpertsArguments<'a> {
     pub up_clip_min: f32,
     pub up_clip_max: f32,
     pub silu_alpha: f32,
-    pub data_type: KernelDataType,
+    pub data_type: DataType,
 }
 
 pub struct MoeExpertsTwoPassPrefillKernel {
@@ -86,18 +93,18 @@ pub struct MoeExpertsTwoPassArguments<'a> {
     pub up_clip_min: f32,
     pub up_clip_max: f32,
     pub silu_alpha: f32,
-    pub data_type: KernelDataType,
+    pub data_type: DataType,
 }
 
 impl MoeExpertsTwoPassPrefillKernel {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MoeExpertsError> {
-        let dtypes = [KernelDataType::Float16, KernelDataType::BFloat16, KernelDataType::Float32];
+    pub fn new(ctx: &MetalContext) -> Result<Self, MoeExpertsError> {
+        let dtypes = [DataType::F16, DataType::BF16, DataType::F32];
         let mut pass_a_indirect = vec![Vec::with_capacity(dtypes.len()); 4];
         for gate in 0u32..4u32 {
             for dtype in &dtypes {
                 let dtype_suffix = dtype_suffix(*dtype);
                 let fcv = MTLFunctionConstantValues::new();
-                fcv.set_constant_value_type_at_index(NonNull::from(&gate).cast(), MTLDataType::UInt, 30);
+                fcv.set_value(&gate, 30);
                 let kernel_name = format!("moe_two_pass_prefill_pass_a_indirect_{}", dtype_suffix);
                 let cache_key = format!("{}_gate_{}", kernel_name, gate);
                 pass_a_indirect[gate as usize].push(ctx.compute_pipeline_state_cached(
@@ -130,13 +137,9 @@ impl MoeExpertsTwoPassPrefillKernel {
         }
         let gate_idx = (args.gating_code.min(3)) as usize;
         let dtype_idx = dtype_index(args.data_type);
-        let dtype_size = match args.data_type {
-            KernelDataType::BFloat16 | KernelDataType::Float16 => 2,
-            KernelDataType::Float32 => 4,
-        };
-        let hidden_bytes = args.total_rows * args.d_ff * dtype_size;
+        let hidden_bytes = args.total_rows * args.d_ff * args.data_type.size_in_bytes();
         let blit_encoder = command_buffer.new_blit_command_encoder().expect("Failed to create blit command encoder");
-        blit_encoder.fill_buffer_range_value(args.hidden_buffer, NSRange::new(0, hidden_bytes), 0);
+        blit_encoder.fill_buffer_range_value(args.hidden_buffer, 0..hidden_bytes, 0);
         blit_encoder.end_encoding();
         self.tile_map.encode_counts(
             command_buffer,

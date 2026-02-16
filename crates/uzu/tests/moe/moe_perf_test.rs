@@ -3,11 +3,11 @@ use std::time::Instant;
 use half::bf16;
 use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::{
-    common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
-    metal::{
-        KernelDataType,
-        kernel::{
+use uzu::{
+    DataType,
+    backends::{
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        metal::kernel::{
             dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels, MoeGatherArguments, MoeGatherKernels,
@@ -123,7 +123,7 @@ fn test_moe_e2e_decode_perf() {
             router_topk
                 .encode(
                     &cb,
-                    KernelDataType::BFloat16,
+                    DataType::BF16,
                     MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
@@ -186,7 +186,7 @@ fn test_moe_e2e_prefill_perf() {
             router_topk
                 .encode(
                     &cb,
-                    KernelDataType::BFloat16,
+                    DataType::BF16,
                     MoeRouterTopKArguments {
                         input_buffer: &x_buf,
                         weight_buffer: &router_w_buf,
@@ -301,7 +301,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(&ctx).expect("experts two-pass decode");
-    let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, KernelDataType::BFloat16.into()).expect("finalize");
+    let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
     let router_topk_fused_kernel = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
@@ -310,7 +310,7 @@ fn test_moe_pipeline_breakdown_decode() {
         router_topk_fused_kernel
             .encode(
                 &cb,
-                KernelDataType::BFloat16,
+                DataType::BF16,
                 MoeRouterTopKArguments {
                     input_buffer: &x_buf,
                     weight_buffer: &router_w_buf,
@@ -382,7 +382,7 @@ fn test_moe_pipeline_breakdown_decode() {
                     },
                     tok2row_buffer: &tok2row_buf,
                 },
-                KernelDataType::BFloat16,
+                DataType::BF16,
             )
             .expect("scatter");
         cb.commit();
@@ -393,7 +393,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         gather_kernel.encode(
             &cb,
-            KernelDataType::BFloat16,
+            DataType::BF16,
             &MoeGatherArguments {
                 x_buffer: &x_buf,
                 bucketed_ids_buffer: &bucketed_ids_buf,
@@ -438,7 +438,7 @@ fn test_moe_pipeline_breakdown_decode() {
                 up_clip_min: -19.0,
                 up_clip_max: 21.0,
                 silu_alpha: 1.702,
-                data_type: KernelDataType::BFloat16,
+                data_type: DataType::BF16,
             },
         );
         cb.commit();

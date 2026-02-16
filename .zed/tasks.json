@@ -1,0 +1,11 @@
+[
+  {
+    "label": "Format Code",
+    "command": "cargo +nightly fmt && ((command -v metal-analyzer >/dev/null 2>&1 && metal-analyzer format) || ./scripts/clang-format.sh)",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never"
+  }
+]

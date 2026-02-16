@@ -12,12 +12,17 @@ use std::{
 };
 
 use half::{bf16, f16};
+use metal::{MTLCommandBuffer, MTLCommandQueue};
 use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
-    backends::metal::{KVCacheUpdate, MTLCommandBuffer, MTLCommandQueue, MTLContext, Metal, MetalArray},
+    array::Array,
+    backends::{
+        common::kernel::kv_cache_update::KVCacheUpdate,
+        metal::{Metal, MetalContext},
+    },
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{EncodableBlock, EncodingParameters, Sampling},
@@ -271,7 +276,7 @@ impl TraceValidator {
 
         let command_buffer = ctx.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
 
-        ctx.executables.encode(&mut state, &command_buffer, &EncodingParameters::new(false, false, false));
+        ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &command_buffer);
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
@@ -420,7 +425,7 @@ impl TraceValidator {
         })
     }
 
-    fn handle_missing_tokens(traces_view: &ParameterTree<MTLContext>) -> TracerValidationResults {
+    fn handle_missing_tokens(traces_view: &ParameterTree<MetalContext>) -> TracerValidationResults {
         if let Ok(expected_logits) = traces_view.leaf("logits") {
             let reference_shape = expected_logits.shape().to_vec();
             let metrics = TracerValidationMetrics {
@@ -466,12 +471,12 @@ impl TraceValidator {
 
     fn validate_layer_traces(
         traces: &Rc<RefCell<ActivationTrace<Metal>>>,
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        let validate = |path: &str, array: &Ref<MetalArray>| -> Option<TracerValidationResult> {
+        let validate = |path: &str, array: &Ref<Array<Metal>>| -> Option<TracerValidationResult> {
             if traces_view.leaf(path).is_ok() {
                 Some(TracerValidationResult {
                     name: path.to_string(),
@@ -535,7 +540,7 @@ impl TraceValidator {
 
     fn validate_classifier_traces(
         traces: &Rc<RefCell<ActivationTrace<Metal>>>,
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -579,8 +584,8 @@ impl TraceValidator {
 
     fn validate_array(
         data_type: DataType,
-        expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
+        expected_array: &Array<Metal>,
+        produced_array: &Ref<Array<Metal>>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         match data_type {
@@ -593,17 +598,17 @@ impl TraceValidator {
 
     fn validate_array_with_name(
         data_type: DataType,
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         expected_array_path: &str,
-        produced_array: &Ref<MetalArray>,
+        produced_array: &Ref<Array<Metal>>,
     ) -> TracerValidationMetrics {
         let expected_array = traces_view.leaf(expected_array_path).unwrap();
         Self::validate_array(data_type, &expected_array, produced_array, None)
     }
 
     fn validate_array_of_type<Precision: ArrayElement>(
-        expected_array: &MetalArray,
-        produced_array: &Ref<MetalArray>,
+        expected_array: &Array<Metal>,
+        produced_array: &Ref<Array<Metal>>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
@@ -773,7 +778,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn load_array_as_vec<SourcePrecision: ArrayElement, TargetPrecision: NumCast>(
-        traces_view: &ParameterTree<MTLContext>,
+        traces_view: &ParameterTree<MetalContext>,
         name: &str,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name).unwrap();
@@ -842,7 +847,7 @@ impl TraceValidator {
         .expect("Failed to create sampling kernel");
     }
 
-    fn get_tokens_from_logits(logits: &MetalArray) -> Vec<u64> {
+    fn get_tokens_from_logits(logits: &Array<Metal>) -> Vec<u64> {
         let data_type = logits.data_type();
         match data_type {
             DataType::F16 => Self::get_tokens_from_logits_of_type::<f16>(logits),
@@ -852,7 +857,7 @@ impl TraceValidator {
         }
     }
 
-    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &MetalArray) -> Vec<u64> {
+    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<Metal>) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
         sampler.sample(logits.as_view::<Precision>())
     }

@@ -1,16 +1,19 @@
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
+use objc2::{
+    __framework_prelude::{ProtocolObject, Retained},
+    Message,
+};
+
 use crate::backends::{
     common::kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
     metal::{
-        MTLContext, MTLError,
+        MetalContext, MetalError,
         kernel::dsl::{
             MoeBuildTileMapMetalKernel, MoeTileCountsMetalKernel, MoeTileScanMetalKernel,
             MoeWriteDispatchArgsMetalKernel,
         },
     },
 };
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
-use objc2::__framework_prelude::Retained;
-use objc2::{__framework_prelude::ProtocolObject, Message};
 
 pub struct MoeTileMapKernels {
     counts: MoeTileCountsMetalKernel,
@@ -20,7 +23,7 @@ pub struct MoeTileMapKernels {
 }
 
 impl MoeTileMapKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         Ok(Self {
             counts: MoeTileCountsMetalKernel::new(ctx)?,
             scan: MoeTileScanMetalKernel::new(ctx)?,

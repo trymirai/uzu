@@ -1,19 +1,18 @@
-use super::{
-    super::{EncodableBlock, Metal},
-    EmbeddingError,
-};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::EmbeddingError;
 use crate::{
     DataType,
     backends::{
         common::Context,
         metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError,
-            ProtocolObject, Retained,
+            Metal, MetalContext, MetalError,
             kernel::quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
         },
     },
     config::QuantizationMode,
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -29,13 +28,13 @@ pub struct QuantizedEmbeddingReadout {
 
 impl QuantizedEmbeddingReadout {
     pub fn new_tied(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         vocab_size: usize,
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
-        parameter_tree: &ParameterTree<MTLContext>,
+        parameter_tree: &ParameterTree<MetalContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -52,13 +51,13 @@ impl QuantizedEmbeddingReadout {
     }
 
     pub fn new_untied_output(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         vocab_size: usize,
         model_dim: usize,
         group_size: usize,
         mode: QuantizationMode,
-        parameter_tree: &ParameterTree<MTLContext>,
+        parameter_tree: &ParameterTree<MetalContext>,
     ) -> Result<Self, EmbeddingError> {
         Self::new_with_names(
             mtl_context,
@@ -75,7 +74,7 @@ impl QuantizedEmbeddingReadout {
     }
 
     fn new_with_names(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         vocab_size: usize,
         model_dim: usize,
@@ -84,17 +83,17 @@ impl QuantizedEmbeddingReadout {
         weights_name: &str,
         scales_name: &str,
         biases_name: &str,
-        parameter_tree: &ParameterTree<MTLContext>,
+        parameter_tree: &ParameterTree<MetalContext>,
     ) -> Result<Self, EmbeddingError> {
         // Load weights [vocab_size, model_dim/2] as U8
         let weights = parameter_tree
             .leaf(weights_name)
-            .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load weights: {:?}", e))))?;
+            .map_err(|e| EmbeddingError::MetalError(MetalError::Generic(format!("Failed to load weights: {:?}", e))))?;
 
         // Load scales [vocab_size, num_groups]
         let scales = parameter_tree
             .leaf(scales_name)
-            .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to load scales: {:?}", e))))?;
+            .map_err(|e| EmbeddingError::MetalError(MetalError::Generic(format!("Failed to load scales: {:?}", e))))?;
 
         // Validate shapes
         let num_groups = (model_dim + group_size - 1) / group_size;
@@ -104,7 +103,7 @@ impl QuantizedEmbeddingReadout {
         let weights_transposed = weights.shape()[0] == vocab_size;
 
         if weights.shape() != [vocab_size, model_dim / packing_divisor] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MetalError::Generic(format!(
                 "Embedding readout weights shape mismatch: got {:?}, expected [{}, {}]",
                 weights.shape(),
                 vocab_size,
@@ -112,7 +111,7 @@ impl QuantizedEmbeddingReadout {
             ))));
         }
         if scales.shape() != [vocab_size, num_groups] {
-            return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+            return Err(EmbeddingError::MetalError(MetalError::Generic(format!(
                 "Embedding readout scales shape mismatch: got {:?}, expected [{}, {}]",
                 scales.shape(),
                 vocab_size,
@@ -127,7 +126,7 @@ impl QuantizedEmbeddingReadout {
         let biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>> = match parameter_tree.leaf(biases_name) {
             Ok(deq_biases) => {
                 if deq_biases.shape() != [vocab_size, num_groups] {
-                    return Err(EmbeddingError::MetalError(MTLError::Generic(format!(
+                    return Err(EmbeddingError::MetalError(MetalError::Generic(format!(
                         "Embedding readout deq_biases shape mismatch: got {:?}, expected [{}, {}]",
                         deq_biases.shape(),
                         vocab_size,
@@ -170,7 +169,7 @@ impl QuantizedEmbeddingReadout {
             QuantizationType::Mlx,
             weights_transposed,
         )
-        .map_err(|e| EmbeddingError::MetalError(MTLError::Generic(format!("Failed to create kernel: {:?}", e))))?;
+        .map_err(|e| EmbeddingError::MetalError(MetalError::Generic(format!("Failed to create kernel: {:?}", e))))?;
 
         Ok(Self {
             kernel,
@@ -187,11 +186,11 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
     fn encode(
         &self,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         parameters: &EncodingParameters<Metal>,
+        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     ) {
         let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, &encoder, parameters);
+        self.encode_with_shared_encoder(state, parameters, &encoder);
         encoder.end_encoding();
 
         if parameters.wait_until_completed {
@@ -207,8 +206,8 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
     fn encode_with_shared_encoder(
         &self,
         state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         _parameters: &EncodingParameters<Metal>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();

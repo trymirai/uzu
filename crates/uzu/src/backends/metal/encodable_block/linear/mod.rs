@@ -1,5 +1,7 @@
-mod full_precision;
-mod quantized;
+use super::super::Metal;
+use crate::encodable_block::{
+    FullPrecisionLinear as GenericFullPrecisionLinear, QuantizedLinear as GenericQuantizedLinear,
+};
 
-pub use full_precision::FullPrecisionLinear;
-pub use quantized::QuantizedLinear;
+pub type FullPrecisionLinear = GenericFullPrecisionLinear<Metal>;
+pub type QuantizedLinear = GenericQuantizedLinear<Metal>;

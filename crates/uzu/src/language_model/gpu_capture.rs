@@ -3,12 +3,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use objc2_foundation::{NSString, NSURL};
+use metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt};
 
-use crate::{
-    backends::metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt, MTLContext},
-    utils::env_utils::MetalEnvVar,
-};
+use crate::{backends::metal::MetalContext, utils::env_utils::MetalEnvVar};
 
 pub struct GpuCaptureManager {
     capture_prefill_enabled: bool,
@@ -53,7 +50,7 @@ impl GpuCaptureManager {
 
     pub fn start_capture(
         &self,
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         capture_type: &str,
     ) -> Result<PathBuf, String> {
         let timestamp =
@@ -66,14 +63,7 @@ impl GpuCaptureManager {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
-
-        // Set output URL using NSURL
-        let url_string = format!("file://{}", trace_path.display());
-        unsafe {
-            if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url_string)) {
-                capture_descriptor.set_output_url(Some(&url));
-            }
-        }
+        capture_descriptor.set_output_path(Some(&trace_path));
 
         mtl_context.command_queue.set_label(Some("uzu_command_queue"));
         use objc2::rc::Retained;
