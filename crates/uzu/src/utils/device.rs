@@ -1,3 +1,5 @@
+use metal::{MTLDevice, MTLDeviceExt};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceClass {
     Ultra,
@@ -10,10 +12,7 @@ pub enum DeviceClass {
 
 impl DeviceClass {
     pub fn detect() -> Self {
-        use metal::MTLDeviceExt as _;
-        let device: crate::backends::metal::Retained<
-            crate::backends::metal::ProtocolObject<dyn crate::backends::metal::MTLDevice>,
-        > = match <dyn metal::MTLDevice>::system_default() {
+        let device = match <dyn MTLDevice>::system_default() {
             Some(dev) => dev,
             None => return DeviceClass::Unknown,
         };

@@ -1,6 +1,7 @@
 use std::{collections::HashMap, mem::size_of, ptr::NonNull};
 
-use objc2::rc::Retained;
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use thiserror::Error;
 
 use crate::{
@@ -8,8 +9,7 @@ use crate::{
     backends::{
         common::gpu_types::{AttnMaskParams, AttnParams},
         metal::{
-            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-            MTLError, MTLFunctionConstantValues, MTLSize, ProtocolObject, data_type::MetalDataTypeExt,
+            FunctionConstantValuesSetValue, MetalContext, MetalError, data_type::MetalDataTypeExt,
             kernel::moe::dtype_suffix,
         },
     },
@@ -38,7 +38,7 @@ pub struct AttentionKernel {
 #[derive(Debug, Error)]
 pub enum AttentionError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
     #[error("Unsupported head dimension: {0}")]
@@ -148,7 +148,7 @@ fn make_function_constants(
 
 impl AttentionKernel {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, AttentionError> {
         let data_suffix = data_type.metal_type();
@@ -551,7 +551,7 @@ impl AttentionKernel {
 
     pub fn encode_gemm(
         &self,
-        context: &MTLContext,
+        context: &MetalContext,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: AttentionGemmArguments,
     ) -> Result<(), AttentionError> {

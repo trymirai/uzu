@@ -12,7 +12,7 @@ use uzu::{
             kernel::{QKNormKernel, RMSNormKernel},
         },
         metal::{
-            MTLContext,
+            MetalContext,
             kernel::dsl::{QKNormMetalKernel, RMSNormMetalKernel},
             metal_extensions::CommandBufferTimingExt,
         },
@@ -248,7 +248,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     OutputT: TestFloat,
 {
     // Create Metal context
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm test: {}", e);
@@ -381,7 +381,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     ScaleT: TestFloat,
     OutputT: TestFloat,
 {
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm edge case test: {}", e);
@@ -573,7 +573,7 @@ fn perf_rms_norm_with_size(
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm perf test: {}", e);
@@ -699,7 +699,7 @@ fn perf_rms_norm_16k() {
 #[test]
 fn qk_norm_test() {
     // Test to verify that the QK norm kernel now accesses the correct data ranges
-    let mtl_context = match MTLContext::new() {
+    let mtl_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping QK norm buffer addressing test: {}", e);

@@ -1,11 +1,12 @@
-use objc2::Message;
+use metal::{MTLBuffer, MTLComputeCommandEncoder};
+use objc2::{Message, runtime::ProtocolObject};
 
 use crate::{
     DataType,
     backends::{
         common::kernel::{SSDPrefill64Kernel as _, SSDPrefillKernel as _, SSDPrefillSequentialKernel as _},
         metal::{
-            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
+            MetalContext, MetalError,
             kernel::dsl::{SSDPrefill64MetalKernel, SSDPrefillMetalKernel, SSDPrefillSequentialMetalKernel},
         },
     },
@@ -45,9 +46,9 @@ pub struct SSDPrefillKernels {
 
 impl SSDPrefillKernels {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         let single = SSDPrefillMetalKernel::new(context, data_type)?;
         let single_64 = SSDPrefill64MetalKernel::new(context, data_type)?;
         let sequential = SSDPrefillSequentialMetalKernel::new(context, data_type)?;

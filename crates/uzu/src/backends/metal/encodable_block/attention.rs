@@ -1,16 +1,18 @@
 //! Attention kernel encodable.
 
-use super::{EncodableBlock, Metal};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
     DataType,
     backends::metal::{
-        MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, ProtocolObject, Retained,
+        Metal, MetalContext,
         kernel::attention::{
             AttentionError, AttentionGemmArguments, AttentionKernel, AttentionKernelVariant,
             AttentionSinglePassArguments, AttentionTwoPassArguments, KVCacheUpdateArguments,
         },
     },
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState, HashMapId},
 };
 
@@ -41,7 +43,7 @@ pub struct Attention {
 
 impl Attention {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         layer_index: usize,
         attention_scale: Option<f32>,

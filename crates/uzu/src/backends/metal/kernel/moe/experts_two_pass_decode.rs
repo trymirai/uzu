@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::kernel::{MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
         metal::{
-            MTLContext, MTLError,
+            MetalContext, MetalError,
             kernel::{
                 MoeExpertsTwoPassArguments,
                 dsl::{MoeExpertsDecodeDownFused2DMetalKernel, MoeExpertsDecodePassAMetalKernel},
@@ -31,7 +31,7 @@ pub struct MoeExpertsTwoPassDecodeKernels {
 }
 
 impl MoeExpertsTwoPassDecodeKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         let mut pass_a_indirect = vec![];
         for gate in 0u32..4u32 {
             let mut kernels = vec![];

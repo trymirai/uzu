@@ -2,22 +2,23 @@
 
 use std::rc::Rc;
 
-use objc2::rc::autoreleasepool;
+#[cfg(not(feature = "tracing"))]
+use metal::MTLCommandEncoder;
+use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
+use objc2::{
+    rc::{Retained, autoreleasepool},
+    runtime::ProtocolObject,
+};
 
 use super::{
-    super::{
-        Attention, EncodableBlock, MambaMixer, QKNorm, RMSNorm, ShortConvMixer, TensorAddSwap, TensorCopy,
-        transformer_layer,
-    },
+    super::{Attention, MambaMixer, ShortConvMixer, transformer_layer},
     MixerExecutables,
 };
-#[cfg(not(feature = "tracing"))]
-use crate::backends::metal::MTLCommandEncoder;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::metal::{MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained},
+    backends::metal::{Metal, MetalContext},
     config::{DecoderLayerType, MixerConfig},
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters, QKNorm, RMSNorm, TensorAddSwap, TensorCopy},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -38,7 +39,7 @@ pub struct LayerExecutables {
 impl LayerExecutables {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        mtl_context: Rc<MTLContext>,
+        mtl_context: Rc<MetalContext>,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
         layer_index: usize,
@@ -48,11 +49,11 @@ impl LayerExecutables {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        decoder_layer_loader: &ParameterTree<MTLContext>,
+        decoder_layer_loader: &ParameterTree<MetalContext>,
         rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let ctx = &*mtl_context; // Reference for functions expecting &MTLContext
+            let ctx = mtl_context.as_ref(); // Reference for functions expecting &MetalContext
             let intermediate_data_type: DataType = match &layer_config.mixer_config {
                 MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
                 MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),

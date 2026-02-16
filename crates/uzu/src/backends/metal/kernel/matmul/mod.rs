@@ -9,6 +9,8 @@ pub use common::MatmulArguments;
 pub use dispatch_descriptor::{MatmulKernelVariant, determine_kernel_variant};
 pub use gemv::GemvKernel;
 pub use kernel::MatmulKernel;
+use metal::MTLComputeCommandEncoder;
+use objc2::runtime::ProtocolObject;
 pub use split_k::SplitKGemm;
 
 use crate::{
@@ -17,7 +19,7 @@ use crate::{
         common::kernel::matmul::{
             FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait,
         },
-        metal::{MTLComputeCommandEncoder, MTLContext, MTLError, Metal, ProtocolObject},
+        metal::{Metal, MetalContext, MetalError},
     },
 };
 
@@ -25,9 +27,9 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel {
     type Backend = Metal;
 
     fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         let mut kernel = MatmulKernel::new(data_type)?;
         kernel.precompile(context)?;
         Ok(kernel)
@@ -35,7 +37,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel {
 
     fn encode(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: FullPrecisionMatmulArguments<Metal>,
     ) {

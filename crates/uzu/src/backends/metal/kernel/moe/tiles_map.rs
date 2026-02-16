@@ -7,7 +7,7 @@ use objc2::{
 use crate::backends::{
     common::kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
     metal::{
-        MTLContext, MTLError,
+        MetalContext, MetalError,
         kernel::dsl::{
             MoeBuildTileMapMetalKernel, MoeTileCountsMetalKernel, MoeTileScanMetalKernel,
             MoeWriteDispatchArgsMetalKernel,
@@ -23,7 +23,7 @@ pub struct MoeTileMapKernels {
 }
 
 impl MoeTileMapKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         Ok(Self {
             counts: MoeTileCountsMetalKernel::new(ctx)?,
             scan: MoeTileScanMetalKernel::new(ctx)?,

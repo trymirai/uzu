@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
     DataType,
     backends::{
@@ -8,9 +11,7 @@ use crate::{
             QuantizedMatmulKernel as QuantizedMatmulKernelTrait, QuantizedMatmulType,
         },
         metal::{
-            FunctionConstantValuesSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-            MTLError, MTLFunctionConstantValues, MTLSize, Metal, ProtocolObject, Retained,
-            metal_extensions::ComputeEncoderSetValue,
+            FunctionConstantValuesSetValue, Metal, MetalContext, MetalError, metal_extensions::ComputeEncoderSetValue,
         },
     },
     config::QuantizationMode,
@@ -27,7 +28,7 @@ pub enum QuantizationType {
 #[derive(Debug, thiserror::Error)]
 pub enum QuantizedMatmulError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
     #[error("Unsupported group size: {0}")]
@@ -101,7 +102,7 @@ fn base_qmm_kernel_name(
 
 impl QuantizedMatmulKernel {
     pub fn new(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         group_size: usize,
         input_dim: usize,
@@ -239,9 +240,9 @@ impl QuantizedMatmulKernelTrait for QuantizedMatmulKernel {
     type Backend = Metal;
 
     fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         configuration: QuantizedMatmulConfiguration,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         let quantization_type = match configuration.quantization_type {
             QuantizedMatmulType::ZeroPoint => QuantizationType::ZeroPoint,
             QuantizedMatmulType::Mlx => QuantizationType::Mlx,
@@ -257,7 +258,7 @@ impl QuantizedMatmulKernelTrait for QuantizedMatmulKernel {
             quantization_type,
             configuration.weights_transposed,
         )
-        .map_err(|error| MTLError::Generic(format!("{:?}", error)))
+        .map_err(|error| MetalError::Generic(format!("{:?}", error)))
     }
 
     fn encode(
@@ -381,7 +382,7 @@ pub struct MlpFusedQmvKernel {
 
 impl MlpFusedQmvKernel {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         group_size: usize,
         mode: QuantizationMode,
@@ -471,7 +472,7 @@ pub struct MlpFusedQmmKernel {
 
 impl MlpFusedQmmKernel {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         group_size: usize,
         mode: QuantizationMode,

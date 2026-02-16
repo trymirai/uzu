@@ -9,20 +9,18 @@ use std::rc::Rc;
 
 use bytemuck;
 use half::bf16;
-use metal::{MTLDeviceExt, MTLResourceOptions};
-use uzu::backends::{
-    common::Context,
-    metal::{MTLBuffer, MTLContext, ProtocolObject, Retained},
-};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use uzu::backends::{common::Context, metal::MetalContext};
 
 /// Create Metal context for testing
-pub fn create_ctx() -> Rc<MTLContext> {
-    MTLContext::new().expect("Failed to create MTLContext")
+pub fn create_ctx() -> Rc<MetalContext> {
+    MetalContext::new().expect("Failed to create MetalContext")
 }
 
 /// Helper to allocate buffer with data
 pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     data: &[T],
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     if data.is_empty() {
@@ -37,7 +35,7 @@ pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
 
 /// Helper to allocate empty buffer
 pub fn alloc_buffer<T>(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     count: usize,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     ctx.create_buffer(count * size_of::<T>()).expect("Failed to create buffer")

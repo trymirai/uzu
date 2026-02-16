@@ -283,19 +283,17 @@ impl MetalCompiler {
             .collect::<anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)>>()?;
 
         let tokens = quote! {
+            use objc2::{runtime::ProtocolObject, rc::Retained};
+            use metal::{MTLFunctionConstantValues, MTLSize, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+
             use crate::backends::metal::{
                 ComputeEncoderSetValue,
                 FunctionConstantValuesSetValue,
                 data_type::MetalDataTypeExt,
-                MTLContext,
-                MTLError,
-                MTLFunctionConstantValues,
-                MTLSize,
-                ProtocolObject,
-                Retained,
+                MetalContext,
+                MetalError,
                 metal_extensions::ComputeEncoderConditional,
             };
-            use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
 
             #(#bindings)*
 

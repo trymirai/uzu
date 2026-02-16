@@ -6,7 +6,7 @@ use crate::{
     backends::{
         common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _},
         metal::{
-            MTLContext, MTLError,
+            MetalContext, MetalError,
             kernel::dsl::{MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel},
         },
     },
@@ -63,7 +63,7 @@ pub struct MoeExpertsSingleDecodeKernels {
 }
 
 impl MoeExpertsSingleDecodeKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         let mut pass_a = vec![];
         for gate in 0..4 {
             let mut kernels = vec![];

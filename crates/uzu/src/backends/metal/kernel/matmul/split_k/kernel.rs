@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
     backends::{
         common::Context,
         metal::{
-            ComputeEncoderSetValue, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-            ProtocolObject, Retained,
+            ComputeEncoderSetValue, MetalContext, MetalError,
             kernel::matmul::common::{MatmulArguments, transpose_configuration},
         },
     },
@@ -22,9 +24,9 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
+    pub fn new(data_type: DataType) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
+            return Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
         }
         Ok(Self {
             data_type,
@@ -37,8 +39,8 @@ impl Kernel {
 
     pub fn precompile(
         &mut self,
-        context: &MTLContext,
-    ) -> Result<(), MTLError> {
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
         use super::tile_configuration::TileConfiguration;
 
         if !matches!(self.data_type, DataType::BF16) {
@@ -94,12 +96,12 @@ impl Kernel {
         Ok(())
     }
 
-    fn steel_type_name(&self) -> Result<&'static str, MTLError> {
+    fn steel_type_name(&self) -> Result<&'static str, MetalError> {
         match self.data_type {
             DataType::F16 => Ok("float16"),
             DataType::BF16 => Ok("bfloat16"),
             DataType::F32 => Ok("float32"),
-            _ => Err(MTLError::Generic(format!("Unsupported dtype for Split-K: {:?}", self.data_type))),
+            _ => Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", self.data_type))),
         }
     }
 
@@ -110,7 +112,7 @@ impl Kernel {
     fn partial_kernel_name(
         &self,
         config: &PipelineConfiguration,
-    ) -> Result<String, MTLError> {
+    ) -> Result<String, MetalError> {
         let in_name = self.steel_type_name()?;
         let out_name = self.splitk_partial_out_name();
         let transpose_suffix = transpose_configuration(config.transpose_a, config.transpose_b).as_str();
@@ -139,16 +141,16 @@ impl Kernel {
         ))
     }
 
-    fn accum_kernel_name(&self) -> Result<String, MTLError> {
+    fn accum_kernel_name(&self) -> Result<String, MetalError> {
         let out_name = self.steel_type_name()?;
         Ok(format!("steel_gemm_splitk_accum_{}_{}", out_name, self.splitk_partial_out_name()))
     }
 
     fn get_partial_pipeline(
         &mut self,
-        mtl: &MTLContext,
+        mtl: &MetalContext,
         config: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if !self.partial_pipelines.contains_key(config) {
             let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -159,8 +161,8 @@ impl Kernel {
 
     fn get_accum_pipeline(
         &mut self,
-        mtl: &MTLContext,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+        mtl: &MetalContext,
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if self.accum_pipeline.is_none() {
             let name = self.accum_kernel_name()?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -189,11 +191,11 @@ impl Kernel {
 
     pub(crate) fn encode_descriptor(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
-    ) -> Result<bool, MTLError> {
+    ) -> Result<bool, MetalError> {
         self.ensure_accumulator_buffer(context, descriptor.accumulator_bytes);
         let accumulator_buffer =
             self.accumulator_buffer.as_ref().cloned().expect("Accumulator buffer must be initialized");
@@ -225,7 +227,7 @@ impl Kernel {
 
     fn ensure_accumulator_buffer(
         &mut self,
-        mtl: &MTLContext,
+        mtl: &MetalContext,
         required_bytes: usize,
     ) {
         if required_bytes <= self.accumulator_buffer_bytes && self.accumulator_buffer.is_some() {

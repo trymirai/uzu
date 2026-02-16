@@ -304,7 +304,7 @@ pub fn bindgen(
         impl crate::backends::common::kernel::#trait_name for #struct_name {
             type Backend = crate::backends::metal::Metal;
 
-            fn new(context: &MTLContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MTLError> {
+            fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
                 #function_constants_init
                 let pipeline = context.compute_pipeline_state(&#entry_name, #function_constants_arg)?;
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })

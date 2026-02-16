@@ -4,14 +4,16 @@ use std::mem::size_of;
 
 use bytemuck;
 use metal::{
-    MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions,
+    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
+    MTLResourceOptions,
 };
+use objc2::runtime::ProtocolObject;
 use uzu::{
     DataType,
     backends::{
         common::{Context, kernel::Conv1dScanKernel},
         metal::{
-            MTLBuffer, MTLContext, ProtocolObject,
+            MetalContext,
             kernel::{
                 dsl::Conv1dScanMetalKernel,
                 ssm::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
@@ -196,7 +198,7 @@ impl SSDPrefillFixture {
 }
 
 fn run_prefill_kernel_mode(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     kernel: &SSDPrefillKernels,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
@@ -259,7 +261,7 @@ fn run_prefill_kernel_mode(
 }
 
 fn run_conv_scan_once(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     kernel: &Conv1dScanMetalKernel,
     suffix_len: usize,
     channels: usize,
@@ -357,7 +359,7 @@ fn run_conv_scan_once(
 }
 
 fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
-    let Some(ctx) = MTLContext::new().ok() else {
+    let Some(ctx) = MetalContext::new().ok() else {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
@@ -372,7 +374,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
 }
 
 fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
-    let Some(ctx) = MTLContext::new().ok() else {
+    let Some(ctx) = MetalContext::new().ok() else {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
@@ -458,7 +460,7 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
 
 #[test]
 fn conv1d_scan_is_deterministic() {
-    let Some(ctx) = MTLContext::new().ok() else {
+    let Some(ctx) = MetalContext::new().ok() else {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };

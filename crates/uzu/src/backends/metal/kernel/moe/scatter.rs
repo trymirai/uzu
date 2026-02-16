@@ -1,9 +1,11 @@
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
-    },
+    backends::metal::{MetalContext, metal_extensions::ComputeEncoderSetValue},
 };
 
 // ---- Scatter Buckets Kernels ----
@@ -11,7 +13,7 @@ use crate::{
 #[derive(Debug, thiserror::Error)]
 pub enum MoeScatterError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] crate::backends::metal::MTLError),
+    MetalError(#[from] crate::backends::metal::MetalError),
 }
 
 pub struct MoeScatterKernels {
@@ -58,7 +60,7 @@ pub struct MoeScatterWithMapArguments<'a> {
 }
 
 impl MoeScatterKernels {
-    pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeScatterError> {
+    pub fn new(mtl_context: &MetalContext) -> Result<Self, MoeScatterError> {
         let pipeline_bases = mtl_context.compute_pipeline_state("moe_block_bases_from_partials", None)?;
         let pipeline_scatter_f16 = mtl_context.compute_pipeline_state("moe_scatter_buckets_f16", None)?;
         let pipeline_scatter_f32 = mtl_context.compute_pipeline_state("moe_scatter_buckets_f32", None)?;

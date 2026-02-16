@@ -1,16 +1,13 @@
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
-use metal::{MTLBuffer, MTLCommandBuffer};
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions,
+};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{Metal, error::MTLError, kernel, metal_extensions::LibraryPipelineExtensions};
-use crate::backends::{
-    common::{Allocator, Context},
-    metal::{
-        MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary,
-        MTLResourceOptions,
-    },
-};
+use super::{Metal, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions};
+use crate::backends::common::{Allocator, Context};
 
 /// Apple GPU architecture generation.
 /// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
@@ -122,7 +119,7 @@ impl DeviceArchitecture {
     }
 }
 
-pub struct MTLContext {
+pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     architecture: DeviceArchitecture,
@@ -131,7 +128,7 @@ pub struct MTLContext {
     allocator: Allocator<Metal>,
 }
 
-impl MTLContext {
+impl MetalContext {
     /// Returns true if NAX kernels are available on this device.
     pub fn is_nax_available(&self) -> bool {
         cfg!(feature = "metal-nax") && self.architecture.is_nax_available()
@@ -161,7 +158,7 @@ impl MTLContext {
         &self,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         // Only cache pipelines without constants
         if constants.is_some() {
             return self.library.compute_pipeline_state(function_name, constants);
@@ -174,7 +171,7 @@ impl MTLContext {
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if let Some(pipeline) = self.pipeline_cache.borrow().get(cache_key) {
             return Ok(pipeline.clone());
         }
@@ -187,20 +184,20 @@ impl MTLContext {
     }
 }
 
-impl Context for MTLContext {
+impl Context for MetalContext {
     type Backend = Metal;
 
-    fn new() -> Result<Rc<Self>, MTLError> {
+    fn new() -> Result<Rc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> = <dyn metal::MTLDevice>::system_default()
-            .ok_or(MTLError::Generic("cannot open system default device".into()))?;
+            .ok_or(MetalError::Generic("cannot open system default device".into()))?;
 
         let command_queue = device
             .new_command_queue_with_max_command_buffer_count(1024)
-            .ok_or(MTLError::Generic("cannot create command queue".into()))?;
+            .ok_or(MetalError::Generic("cannot create command queue".into()))?;
 
         let library = device
             .new_library_with_data(kernel::MTLB)
-            .map_err(|nserror| MTLError::Generic(format!("Failed to create Metal library: {}", nserror)))?;
+            .map_err(|nserror| MetalError::Generic(format!("Failed to create Metal library: {}", nserror)))?;
 
         let architecture = DeviceArchitecture::from_device(&device);
 
@@ -221,13 +218,13 @@ impl Context for MTLContext {
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MTLError> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
         self.device
             .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .ok_or(MTLError::Generic("cannot create buffer".into()))
+            .ok_or(MetalError::Generic("cannot create buffer".into()))
     }
 
-    fn create_command_buffer(&self) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MTLError> {
-        self.command_queue.command_buffer().ok_or(MTLError::Generic("cannot create command buffer".into()))
+    fn create_command_buffer(&self) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MetalError> {
+        self.command_queue.command_buffer().ok_or(MetalError::Generic("cannot create command buffer".into()))
     }
 }

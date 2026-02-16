@@ -2,13 +2,14 @@
 
 use half::bf16;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
         common::kernel::MoeCountsOffsetsFusedKernel,
         metal::{
-            MTLContext, ProtocolObject, Retained,
+            MetalContext,
             kernel::{
                 dsl::MoeCountsOffsetsFusedMetalKernel,
                 moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
@@ -52,7 +53,7 @@ fn cpu_offsets_from_counts(counts: &[u32]) -> (Vec<u32>, u32) {
 }
 
 fn gen_topk_ids_from_logits(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     e: usize,
     k: usize,

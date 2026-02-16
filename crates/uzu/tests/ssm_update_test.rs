@@ -7,7 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::{Context, kernel::SSDUpdateKernel},
-        metal::{MTLContext, kernel::dsl::SSDUpdateMetalKernel},
+        metal::{MetalContext, kernel::dsl::SSDUpdateMetalKernel},
     },
 };
 
@@ -174,7 +174,7 @@ fn ssd_update_ref_bf16(
 
 #[test]
 fn ssd_update_with_z_bf16() {
-    let Some(ctx) = MTLContext::new().ok() else {
+    let Some(ctx) = MetalContext::new().ok() else {
         eprintln!("Skipping: no Metal device");
         return;
     };

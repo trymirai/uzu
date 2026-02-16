@@ -6,18 +6,20 @@ use std::{
     rc::Rc,
 };
 
-use super::{Decoder, KVCacheUpdate, MTLContext, Metal};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLDeviceExt, MTLEvent};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::{Decoder, Metal, MetalContext};
 use crate::{
     DataType,
     backends::{
         common::{
             Context,
-            kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
+            kernel::{
+                MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate,
+            },
         },
-        metal::{
-            MTLBuffer, MTLCommandBuffer, MTLDeviceExt, MTLEvent, ProtocolObject, Retained,
-            kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
-        },
+        metal::kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::Sampling,
@@ -57,7 +59,7 @@ pub struct AsyncBuffers {
 
 impl AsyncBuffers {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
@@ -128,7 +130,7 @@ impl AsyncBuffers {
 }
 
 pub struct LanguageModelGeneratorContext {
-    pub mtl_context: Rc<MTLContext>,
+    pub mtl_context: Rc<MetalContext>,
     pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<Metal>>>,
@@ -157,7 +159,7 @@ impl LanguageModelGeneratorContext {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let context = MTLContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = MetalContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
 
         let command_buffer = context.create_command_buffer().expect("Failed to create command buffer").to_owned();
 

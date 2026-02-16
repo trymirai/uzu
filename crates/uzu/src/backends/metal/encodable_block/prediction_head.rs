@@ -1,13 +1,15 @@
 //! Prediction head encodable for classification output.
 
-use super::{EncodableBlock, Metal};
 #[cfg(feature = "tracing")]
-use crate::backends::metal::MTLBlitCommandEncoder;
+use metal::MTLBlitCommandEncoder;
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 #[cfg(feature = "tracing")]
 use crate::forward_pass::state::ArrayId;
 use crate::{
-    backends::metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, ProtocolObject, Retained},
-    encodable_block::EncodingParameters,
+    backends::metal::Metal,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::ForwardPassState,
 };
 

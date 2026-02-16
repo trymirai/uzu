@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use metal::{MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration, tile_configuration::TileConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MTLComputeCommandEncoder, MTLComputePipelineState,
-        MTLContext, MTLError, MTLFunctionConstantValues, ProtocolObject, Retained,
+        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalContext, MetalError,
         kernel::matmul::common::{MatmulArguments, transpose_configuration},
     },
 };
@@ -16,9 +18,9 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
+    pub fn new(data_type: DataType) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
+            return Err(MetalError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
         }
         Ok(Self {
             data_type,
@@ -29,8 +31,8 @@ impl Kernel {
     #[allow(clippy::type_complexity)]
     pub fn precompile(
         &mut self,
-        context: &MTLContext,
-    ) -> Result<(), MTLError> {
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
         let tiles_and_alignments: &[(TileConfiguration, &[(bool, bool, bool)])] = match self.data_type {
             DataType::BF16 => &[
                 (TileConfiguration::new(64, 32, 32, 2, 2, 0), &[(false, true, true), (true, true, true)]),
@@ -105,9 +107,9 @@ impl Kernel {
 
     fn get_or_compile_pipeline(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if !self.pipelines.contains_key(configuration) {
             let kernel_name = self.kernel_name(configuration);
             let function_constants = MTLFunctionConstantValues::new();
@@ -137,11 +139,11 @@ impl Kernel {
 
     pub(crate) fn encode_descriptor(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
-    ) -> Result<bool, MTLError> {
+    ) -> Result<bool, MetalError> {
         let pipeline_state = self.get_or_compile_pipeline(context, &descriptor.pipeline_configuration)?;
         encoder.set_compute_pipeline_state(pipeline_state);
 
