@@ -96,23 +96,6 @@ fn kernel_wrappers(
             "1".to_string()
         };
 
-        let wrapper_argument_replace = type_variant.as_ref().map(|tv| tv.iter().cloned().collect::<HashMap<_, _>>());
-
-        let apply_replace = |s: &str| {
-            s.split_whitespace()
-                .map(|token| {
-                    if let Some(wrapper_argument_replace) = &wrapper_argument_replace
-                        && let Some(replacement) = wrapper_argument_replace.get(token)
-                    {
-                        replacement
-                    } else {
-                        token
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
-
         let mut wrapper_arguments = kernel
             .arguments
             .iter()
@@ -125,14 +108,10 @@ fn kernel_wrappers(
                     if let Some(condition) = condition {
                         format!(
                             "{} {} [[buffer({}), function_constant(__dsl_specialize_{}_{})]]",
-                            apply_replace(&a.c_type),
-                            a.name,
-                            i,
-                            kernel.name,
-                            condition
+                            &a.c_type, a.name, i, kernel.name, condition
                         )
                     } else {
-                        format!("{} {} [[buffer({})]]", apply_replace(&a.c_type), a.name, i)
+                        format!("{} {} [[buffer({})]]", &a.c_type, a.name, i)
                     }
                 },
                 _ => unreachable!(),
@@ -159,11 +138,9 @@ fn kernel_wrappers(
 
         let shared_definitions = kernel.arguments.iter().filter_map(|a| match a.argument_type() {
             Ok(MetalArgumentType::Shared(Some(len))) => {
-                Some(format!("{} {}[{}]", apply_replace(&a.c_type.replace('*', "")), a.name, len.as_ref(),))
+                Some(format!("{} {}[{}]", &a.c_type.replace('*', ""), a.name, len.as_ref(),))
             },
-            Ok(MetalArgumentType::Shared(None)) => {
-                Some(format!("{} {}", apply_replace(&a.c_type.replace('&', "")), a.name))
-            },
+            Ok(MetalArgumentType::Shared(None)) => Some(format!("{} {}", &a.c_type.replace('&', ""), a.name)),
             _ => None,
         });
 
@@ -200,9 +177,18 @@ fn kernel_wrappers(
         let wrapper_body =
             shared_definitions.chain(once(underlying_call)).map(|l| format!("  {l};\n")).collect::<Vec<_>>().join("");
 
+        let (defs, undefs) = type_variant
+            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| (format!("\n#define {k} {v}"), format!("#undef {k}\n")))
+            .collect::<(Vec<_>, Vec<_>)>();
+
+        let defs = defs.join("");
+        let undefs = undefs.join("");
+
         kernel_wrappers.push(
             format!(
-                "\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n"
+                "{defs}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
             )
             .into(),
         );
