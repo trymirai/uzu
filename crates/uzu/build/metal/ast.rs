@@ -111,6 +111,7 @@ pub enum MetalArgumentType {
     Axis(Box<str>, Box<str>),
     Groups(MetalGroupsType),
     Threads(Box<str>),
+    Simd,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -242,6 +243,8 @@ impl MetalArgument {
                 },
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
+        } else if self.c_type.as_ref() == "Simd" || self.c_type.as_ref() == "const Simd" {
+            Ok(MetalArgumentType::Simd)
         } else if self.c_type.contains("device") && self.c_type.contains('*') && !self.c_type.contains('&') {
             Ok(MetalArgumentType::Buffer)
         } else if let ["const", "constant", c_type_scalar, "&"] =
@@ -336,6 +339,10 @@ impl MetalKernelInfo {
 
     pub fn has_threads(&self) -> bool {
         self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_))))
+    }
+
+    pub fn has_simd(&self) -> bool {
+        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Simd)))
     }
 
     pub fn to_kernel(&self) -> Kernel {
