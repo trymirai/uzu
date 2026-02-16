@@ -8,10 +8,11 @@ use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use super::transformer_layer;
 use crate::{
     Activation, DataType,
+    array::Array,
     backends::{
         common::kernel::{Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel},
         metal::{
-            Metal, MetalArray, MetalContext,
+            Metal, MetalContext,
             kernel::{
                 dsl::{
                     Conv1dDecodeMetalKernel, Conv1dPackMetalKernel, Conv1dScanMetalKernel, SSDUpdateMetalKernel,
@@ -38,10 +39,10 @@ pub(crate) struct MambaMixer {
     conv_scan: Conv1dScanMetalKernel,
     ssd_prefill: SSDPrefillKernels,
     ssd_update: SSDUpdateMetalKernel,
-    conv_weight: MetalArray,
-    conv_bias: Option<MetalArray>,
-    gate_bias: MetalArray,
-    skip_connection_weight: MetalArray,
+    conv_weight: Array<Metal>,
+    conv_bias: Option<Array<Metal>>,
+    gate_bias: Array<Metal>,
+    skip_connection_weight: Array<Metal>,
     prefill_mode: SSDPrefillMode,
 }
 
