@@ -63,12 +63,16 @@ impl AttentionGemmBlock {
         };
         let align_q = (args.suffix_length % BQ) == 0;
         let align_k = (args.sequence_length % bk) == 0;
+        let has_mask = args.mask_buffer.is_some();
+        let has_sinks = args.sinks_buffer.is_some();
         let key = KernelKey {
             bk,
             head_dim: args.head_dim,
             align_q,
             align_k,
             is_causal: args.is_causal,
+            has_mask,
+            has_sinks,
         };
 
         let mut map = self.cache.borrow_mut();
@@ -81,8 +85,8 @@ impl AttentionGemmBlock {
                 align_q,
                 align_k,
                 args.is_causal,
-                args.mask_buffer.is_some(),
-                args.sinks_buffer.is_some(),
+                has_mask,
+                has_sinks,
             )
             .expect("Could not initialize AttentionGemmMetalKernel")
         });
@@ -154,4 +158,6 @@ struct KernelKey {
     align_q: bool,
     align_k: bool,
     is_causal: bool,
+    has_mask: bool,
+    has_sinks: bool,
 }
