@@ -6,11 +6,10 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::MoeCountsOffsetsFusedKernel,
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel},
         metal::kernel::{
             MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
-            dsl::MoeCountsOffsetsFusedMetalKernel,
-            moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeRouterTopKMetalKernel},
         },
     },
 };
@@ -80,26 +79,23 @@ fn test_scatter_buckets_parity() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         // Use fused router+topk kernel
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router_topk");
+        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router_topk");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        router_topk
-            .encode(
-                &cb,
-                DataType::BF16,
-                MoeRouterTopKArguments {
-                    input_buffer: &input_buf,
-                    weight_buffer: &weight_buf,
-                    bias_buffer: &bias_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    d_model,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("encode router_topk");
+        let encoder = cb.new_compute_command_encoder().expect("Failed to create encoder");
+        router_topk.encode(
+            &input_buf,
+            &weight_buf,
+            &bias_buf,
+            &topk_ids_buf,
+            &topk_probs_buf,
+            t as u32,
+            d_model as u32,
+            e as u32,
+            k as u32,
+            true,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 

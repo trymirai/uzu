@@ -493,6 +493,7 @@ struct Simd {
   uint lane_idx;
   uint group_idx;
   uint group_size;
+  uint groups_per_threadgroup;
 };
 
 // MARK: - Generate Template Kernels

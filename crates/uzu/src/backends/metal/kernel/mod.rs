@@ -11,8 +11,7 @@ pub mod quant_matmul;
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
-    MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments,
-    MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeGatherArguments, MoeGatherKernels, MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
 };
 
 impl MatmulKernels for dsl::MetalKernels {

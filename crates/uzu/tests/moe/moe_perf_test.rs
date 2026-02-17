@@ -6,12 +6,12 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel},
         metal::kernel::{
-            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels,
-                MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterKernels, MoeScatterWithMapArguments,
+                MoeScatterKernels, MoeScatterWithMapArguments,
             },
         },
     },
@@ -115,29 +115,26 @@ fn test_moe_e2e_decode_perf() {
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
+        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
             let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            router_topk
-                .encode(
-                    &cb,
-                    DataType::BF16,
-                    MoeRouterTopKArguments {
-                        input_buffer: &x_buf,
-                        weight_buffer: &router_w_buf,
-                        bias_buffer: &router_b_buf,
-                        topk_ids_buffer: &topk_ids_buf,
-                        topk_probs_buffer: &topk_probs_buf,
-                        t,
-                        d_model,
-                        e,
-                        k,
-                        renorm: true,
-                    },
-                )
-                .expect("encode fused router+topk");
+            let encoder = cb.new_compute_command_encoder().expect("encoder");
+            router_topk.encode(
+                &x_buf,
+                &router_w_buf,
+                &router_b_buf,
+                &topk_ids_buf,
+                &topk_probs_buf,
+                t as u32,
+                d_model as u32,
+                e as u32,
+                k as u32,
+                true,
+                &encoder,
+            );
+            encoder.end_encoding();
             cb.commit();
             cb.wait_until_completed();
         });
@@ -178,29 +175,26 @@ fn test_moe_e2e_prefill_perf() {
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused kernel");
+        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
             let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            router_topk
-                .encode(
-                    &cb,
-                    DataType::BF16,
-                    MoeRouterTopKArguments {
-                        input_buffer: &x_buf,
-                        weight_buffer: &router_w_buf,
-                        bias_buffer: &router_b_buf,
-                        topk_ids_buffer: &topk_ids_buf,
-                        topk_probs_buffer: &topk_probs_buf,
-                        t,
-                        d_model,
-                        e,
-                        k,
-                        renorm: true,
-                    },
-                )
-                .expect("encode fused router+topk");
+            let encoder = cb.new_compute_command_encoder().expect("encoder");
+            router_topk.encode(
+                &x_buf,
+                &router_w_buf,
+                &router_b_buf,
+                &topk_ids_buf,
+                &topk_probs_buf,
+                t as u32,
+                d_model as u32,
+                e as u32,
+                k as u32,
+                true,
+                &encoder,
+            );
+            encoder.end_encoding();
             cb.commit();
             cb.wait_until_completed();
         });
@@ -302,29 +296,26 @@ fn test_moe_pipeline_breakdown_decode() {
     let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("experts two-pass decode");
     let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
-    let router_topk_fused_kernel = MoeRouterTopKKernel::new(&ctx).expect("router+topk fused");
+    let router_topk_fused_kernel = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
     let router_topk_fused_perf = time_kernel("Router+TopK (FUSED)", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        router_topk_fused_kernel
-            .encode(
-                &cb,
-                DataType::BF16,
-                MoeRouterTopKArguments {
-                    input_buffer: &x_buf,
-                    weight_buffer: &router_w_buf,
-                    bias_buffer: &router_b_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    d_model,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("router_topk_fused");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        router_topk_fused_kernel.encode(
+            &x_buf,
+            &router_w_buf,
+            &router_b_buf,
+            &topk_ids_buf,
+            &topk_probs_buf,
+            t as u32,
+            d_model as u32,
+            e as u32,
+            k as u32,
+            true,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
     });
