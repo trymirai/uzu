@@ -14,8 +14,8 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::metal::kernel::moe::{
-        MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
-        MoeExpertsTwoPassPrefillKernel,
+        MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
+        MoeExpertsTwoPassPrefillBlock,
     },
 };
 
@@ -412,7 +412,7 @@ fn test_two_pass_decode_correctness() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Execute 2-pass decode kernel
-    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     const K_TILE: usize = 64;
@@ -556,7 +556,7 @@ fn test_two_pass_decode_multi_token() {
     let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
-    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(&ctx).expect("kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     experts_kernel.encode(
         &cb,
@@ -658,41 +658,37 @@ fn test_two_pass_prefill_correctness() {
     let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
-    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillBlock::new(&ctx).expect("kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    experts_kernel
-        .encode(
-            &cb,
-            MoeExpertsTwoPassArguments {
-                x_perm_buffer: &x_perm_buf,
-                expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
-                hidden_buffer: &hidden_buf,
-                output_buffer: &y_partial_buf,
-                w13_all: &w13_buf,
-                w2_all: &w2_buf,
-                up_biases: &up_biases_buf,
-                down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
-                total_rows: sum_k,
-                d_model,
-                d_ff,
-                e,
-                num_tiles_k: ((d_ff + 63) / 64) as u32,
-                gating_code,
-                gate_clip_min: f32::NEG_INFINITY,
-                gate_clip_max: f32::INFINITY,
-                up_clip_min: f32::NEG_INFINITY,
-                up_clip_max: f32::INFINITY,
-                silu_alpha,
-                data_type: DataType::BF16,
-            },
-        )
-        .expect("encode");
+    let args = MoeExpertsTwoPassArguments {
+        x_perm_buffer: &x_perm_buf,
+        expert_offsets: &offsets_buf,
+        row_expert_map: &row_expert_map_buf,
+        hidden_buffer: &hidden_buf,
+        output_buffer: &y_partial_buf,
+        w13_all: &w13_buf,
+        w2_all: &w2_buf,
+        up_biases: &up_biases_buf,
+        down_biases: &down_biases_buf,
+        tile_counts: &tile_counts_buf,
+        tile_offsets: &tile_offsets_buf,
+        tile_map: &tile_map_buf,
+        total_tiles: &total_tiles_buf,
+        dispatch_args: &dispatch_args_buf,
+        total_rows: sum_k,
+        d_model,
+        d_ff,
+        e,
+        num_tiles_k: ((d_ff + 63) / 64) as u32,
+        gating_code,
+        gate_clip_min: f32::NEG_INFINITY,
+        gate_clip_max: f32::INFINITY,
+        up_clip_min: f32::NEG_INFINITY,
+        up_clip_max: f32::INFINITY,
+        silu_alpha,
+        data_type: DataType::BF16,
+    };
+    experts_kernel.encode(&cb, &args);
     cb.commit();
     cb.wait_until_completed();
 

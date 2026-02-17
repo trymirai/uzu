@@ -9,7 +9,7 @@ use uzu::{
         MetalContext,
         kernel::moe::{
             MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
-            MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernel,
+            MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
         },
     },
 };
@@ -76,7 +76,7 @@ fn run_decode_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(ctx).expect("experts decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(ctx).expect("experts decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -213,7 +213,7 @@ fn run_two_pass_prefill_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(ctx).expect("experts prefill kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillBlock::new(ctx).expect("experts prefill kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -266,7 +266,7 @@ fn run_two_pass_prefill_case(
 
     for _ in 0..warmup {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        experts_kernel.encode(&cb, make_two_pass_args()).expect("two-pass prefill encode");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -275,7 +275,7 @@ fn run_two_pass_prefill_case(
     for _ in 0..iters {
         let start = Instant::now();
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        experts_kernel.encode(&cb, make_two_pass_args()).expect("two-pass prefill encode");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -486,7 +486,7 @@ fn run_indirect_decode_timed(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(ctx).expect("decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(ctx).expect("decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(ctx, &offsets);
