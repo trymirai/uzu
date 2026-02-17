@@ -160,10 +160,7 @@ impl QuantizedMatmulKernel {
             RuntimeVariant::MatrixMatrix => self.matrix_matrix_key,
         };
 
-        let kernel = self
-            .kernels
-            .get(&key)
-            .ok_or(QuantizedMatmulError::MissingKernel(kernel_key_name(key)))?;
+        let kernel = self.kernels.get(&key).ok_or(QuantizedMatmulError::MissingKernel(kernel_key_name(key)))?;
         let k = to_i32("input_dim", arguments.input_dim)?;
         let n = to_i32("output_dim", arguments.output_dim)?;
         let m = to_i32("batch", arguments.batch)?;
@@ -364,8 +361,8 @@ fn create_matrix_matrix_kernel(
             use_mlx_quant,
             false,
         )?),
-        MatrixMatrixFamily::QmmTransposedAlignedN => EncodableVariant::QmmTransposed(
-            QuantizedMatmulQmmTransposedMetalKernel::new(
+        MatrixMatrixFamily::QmmTransposedAlignedN => {
+            EncodableVariant::QmmTransposed(QuantizedMatmulQmmTransposedMetalKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -373,10 +370,10 @@ fn create_matrix_matrix_kernel(
                 use_zero_points,
                 use_mlx_quant,
                 true,
-            )?,
-        ),
-        MatrixMatrixFamily::QmmTransposedUnalignedN => EncodableVariant::QmmTransposed(
-            QuantizedMatmulQmmTransposedMetalKernel::new(
+            )?)
+        },
+        MatrixMatrixFamily::QmmTransposedUnalignedN => {
+            EncodableVariant::QmmTransposed(QuantizedMatmulQmmTransposedMetalKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -384,18 +381,18 @@ fn create_matrix_matrix_kernel(
                 use_zero_points,
                 use_mlx_quant,
                 false,
-            )?,
-        ),
-        MatrixMatrixFamily::QmmTransposed64x64 => EncodableVariant::QmmTransposed64x64(
-            QuantizedMatmulQmmTransposed64x64MetalKernel::new(
+            )?)
+        },
+        MatrixMatrixFamily::QmmTransposed64x64 => {
+            EncodableVariant::QmmTransposed64x64(QuantizedMatmulQmmTransposed64x64MetalKernel::new(
                 context,
                 data_type,
                 group_size,
                 bits,
                 use_zero_points,
                 use_mlx_quant,
-            )?,
-        ),
+            )?)
+        },
     };
 
     Ok(kernel)
@@ -475,10 +472,7 @@ fn to_i32(
 fn quant_buffers<'a>(
     buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     quantization_type: QuantizedMatmulType,
-) -> (
-    Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>,
-    Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>,
-) {
+) -> (Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>, Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>) {
     match quantization_type {
         QuantizedMatmulType::ZeroPoint => (Some(buffer), None),
         QuantizedMatmulType::Mlx => (None, Some(buffer)),
@@ -499,4 +493,3 @@ fn kernel_key_name(key: KernelKey) -> &'static str {
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposed64x64) => "matrix_matrix_qmm_transposed_64x64",
     }
 }
-

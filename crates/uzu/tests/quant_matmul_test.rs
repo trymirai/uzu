@@ -11,10 +11,7 @@ use uzu::{
             Context,
             kernel::matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulType},
         },
-        metal::{
-            MetalContext,
-            kernel::quant_matmul::QuantizedMatmulKernel,
-        },
+        metal::{MetalContext, kernel::quant_matmul::QuantizedMatmulKernel},
     },
     config::QuantizationMode,
 };

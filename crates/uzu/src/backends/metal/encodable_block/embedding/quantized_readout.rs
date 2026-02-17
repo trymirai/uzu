@@ -9,10 +9,7 @@ use crate::{
             Context,
             kernel::matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulType},
         },
-        metal::{
-            Metal, MetalContext, MetalError,
-            kernel::quant_matmul::QuantizedMatmulKernel,
-        },
+        metal::{Metal, MetalContext, MetalError, kernel::quant_matmul::QuantizedMatmulKernel},
     },
     config::QuantizationMode,
     encodable_block::{EncodableBlock, EncodingParameters},
