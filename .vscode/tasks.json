@@ -4,7 +4,7 @@
     {
       "label": "Format Code",
       "type": "shell",
-      "command": "cargo +nightly fmt && ((command -v metal-analyzer >/dev/null 2>&1 && metal-analyzer format) || ./scripts/clang-format.sh)",
+      "command": "cargo +nightly fmt && metal-analyzer --version >/dev/null && ./scripts/clang-format.sh",
       "problemMatcher": []
     }
   ]

@@ -17,7 +17,7 @@ KERNEL(MoeCountsOffsetsFused)(
     constant uint& t_input,
     constant uint& e_input,
     constant uint& k_input,
-    threadgroup _atomic<uint> tg_hist[TILE_E],
+    threadgroup atomic_uint tg_hist[TILE_E],
     threadgroup uint scan_shared[BLOCK_SIZE],
     threadgroup uint reduce_shared[BLOCK_SIZE],
     threadgroup uint

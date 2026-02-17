@@ -285,6 +285,7 @@ impl MetalCompiler {
         let tokens = quote! {
             use objc2::{runtime::ProtocolObject, rc::Retained};
             use metal::{MTLFunctionConstantValues, MTLSize, MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+            use crate::backends::common::gpu_types::*;
 
             use crate::backends::metal::{
                 ComputeEncoderSetValue,
