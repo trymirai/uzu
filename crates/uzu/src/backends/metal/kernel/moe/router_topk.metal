@@ -8,13 +8,13 @@ constant uint MAX_EXPERTS = 512;
 constant uint MAX_TOPK = 128;
 constant float NEG_INF = -INFINITY;
 
-template <typename Vec4T, typename ScalarT, typename ProbT>
+template <typename ScalarT>
 inline void moe_router_topk_impl(
-    const device Vec4T* input,  // [T, d_model/4]
-    const device Vec4T* weight, // [E, d_model/4]
-    const device ScalarT* bias, // [E]
-    device int* topk_ids,       // [T, K]
-    device ProbT* topk_probs,   // [T, K]
+    const device ScalarT* input,  // [T, d_model]
+    const device ScalarT* weight, // [E, d_model]
+    const device ScalarT* bias,   // [E]
+    device int* topk_ids,         // [T, K]
+    device ScalarT* topk_probs,   // [T, K]
     uint T,
     uint d_model,
     uint E,
@@ -39,19 +39,29 @@ inline void moe_router_topk_impl(
   }
 
   const uint vecs = d_model / 4u;
-  const device Vec4T* x_vec = input + (ulong)token_idx * (ulong)vecs;
+  const device ScalarT* x_vec = input + (ulong)token_idx * (ulong)vecs * 4;
 
   for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
-    x_cache[c] = float4(x_vec[c]);
+    x_cache[c] = float4(
+        x_vec[c * 4 + 0],
+        x_vec[c * 4 + 1],
+        x_vec[c * 4 + 2],
+        x_vec[c * 4 + 3]
+    );
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   for (uint row = simdgroup_idx; row < E; row += simdgroups_per_tg) {
-    const device Vec4T* w_vec = weight + (ulong)row * (ulong)vecs;
+    const device ScalarT* w_vec = weight + (ulong)row * (ulong)vecs * 4;
 
     float4 accum4 = float4(0.0f);
     for (uint c = simd_lane; c < vecs; c += 32u) {
-      const float4 wv = float4(w_vec[c]);
+      const float4 wv = float4(
+          w_vec[c * 4 + 0],
+          w_vec[c * 4 + 1],
+          w_vec[c * 4 + 2],
+          w_vec[c * 4 + 3]
+      );
       const float4 xv = x_cache[c];
       accum4 = fma(wv, xv, accum4);
     }
@@ -110,16 +120,16 @@ inline void moe_router_topk_impl(
         logits_shared[winner_idx] = NEG_INF;
         idx_shared[winner_idx] = 0xFFFFFFFFu;
         device int* out_ids = topk_ids + token_idx * K;
-        device ProbT* out_probs = topk_probs + token_idx * K;
+        device ScalarT* out_probs = topk_probs + token_idx * K;
         out_ids[sel] = int(winner_idx);
-        out_probs[sel] = ProbT(winner_val);
+        out_probs[sel] = static_cast<ScalarT>(winner_val);
       }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   if (lid == 0 && renorm != 0 && effective_k > 0) {
-    device ProbT* out_probs = topk_probs + token_idx * K;
+    device ScalarT* out_probs = topk_probs + token_idx * K;
     float max_logit = -INFINITY;
     for (uint i = 0; i < effective_k; ++i) {
       max_logit = fmax(max_logit, float(out_probs[i]));
@@ -134,22 +144,22 @@ inline void moe_router_topk_impl(
       float prob = (sum_exp > 0.0f)
                        ? exp(float(out_probs[i]) - max_logit) * inv_sum
                        : default_prob;
-      out_probs[i] = ProbT(prob);
+      out_probs[i] = static_cast<ScalarT>(prob);
     }
     for (uint i = effective_k; i < K; ++i) {
-      out_probs[i] = ProbT(0.0f);
+      out_probs[i] = static_cast<ScalarT>(0.0f);
     }
   }
 }
 
-#define DEFINE_ROUTER_TOPK_KERNEL(SUFFIX, VEC4, SCALAR, PROB)                  \
+#define DEFINE_ROUTER_TOPK_KERNEL(SUFFIX, SCALAR)                              \
   [[max_total_threads_per_threadgroup(256)]]                                   \
   kernel void moe_router_topk_##SUFFIX(                                        \
-      const device VEC4* input [[buffer(0)]],                                  \
-      const device VEC4* weight [[buffer(1)]],                                 \
+      const device SCALAR* input [[buffer(0)]],                                \
+      const device SCALAR* weight [[buffer(1)]],                               \
       const device SCALAR* bias [[buffer(2)]],                                 \
       device int* topk_ids [[buffer(3)]],                                      \
-      device PROB* topk_probs [[buffer(4)]],                                   \
+      device SCALAR* topk_probs [[buffer(4)]],                                 \
       constant uint& T [[buffer(5)]],                                          \
       constant uint& d_model [[buffer(6)]],                                    \
       constant uint& E [[buffer(7)]],                                          \
@@ -168,7 +178,7 @@ inline void moe_router_topk_impl(
     threadgroup uint reduce_tmp_u[THREADS_PER_TG];                             \
     threadgroup uint shared_best_idx_mem;                                      \
     threadgroup float shared_best_val_mem;                                     \
-    moe_router_topk_impl<VEC4, SCALAR, PROB>(                                  \
+    moe_router_topk_impl<SCALAR>(                                              \
         input,                                                                 \
         weight,                                                                \
         bias,                                                                  \
@@ -194,6 +204,6 @@ inline void moe_router_topk_impl(
     );                                                                         \
   }
 
-DEFINE_ROUTER_TOPK_KERNEL(f16, half4, half, half)
-DEFINE_ROUTER_TOPK_KERNEL(bf16, bfloat4, bfloat, bfloat)
-DEFINE_ROUTER_TOPK_KERNEL(f32, float4, float, float)
+DEFINE_ROUTER_TOPK_KERNEL(f16, half)
+DEFINE_ROUTER_TOPK_KERNEL(bf16, bfloat)
+DEFINE_ROUTER_TOPK_KERNEL(f32, float)
