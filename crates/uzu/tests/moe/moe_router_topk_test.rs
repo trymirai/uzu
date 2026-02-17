@@ -6,7 +6,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::metal::{
-        MTLContext,
+        MetalContext,
         kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
     },
 };
@@ -128,7 +128,7 @@ pub fn cpu_topk_select_f32(
 }
 
 fn run_router_topk_once(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     kernel: &MoeRouterTopKKernel,
     t: usize,
     d_model: usize,

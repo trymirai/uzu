@@ -2,7 +2,8 @@
 
 use std::rc::Rc;
 
-use crate::backends::metal::{MTLBuffer, ProtocolObject, Retained};
+use metal::MTLBuffer;
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 #[derive(Clone)]
 pub struct SharedMoeWeights {

@@ -1,4 +1,4 @@
-use crate::backends::metal::MTLSize;
+use metal::MTLSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PipelineConfiguration {

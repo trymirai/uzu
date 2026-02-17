@@ -2,15 +2,18 @@
 
 use std::rc::Rc;
 
-use super::{EncodableBlock, LayerExecutables, RMSNorm, Rope};
+use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::LayerExecutables;
 use crate::{
     DataType, DecoderConfig,
     backends::metal::{
-        MTLCommandBuffer, MTLComputeCommandEncoder, MTLContext, Metal, ProtocolObject, Retained,
+        Metal, MetalContext,
         encodable_block::transformer_layer::{embed_block, readout_block},
     },
     config::{DecoderLayerType, MixerConfig},
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters, RMSNorm, Rope},
     forward_pass::{
         model_shape::ModelShape,
         state::{ArrayId, ForwardPassState, RopeType},
@@ -30,9 +33,9 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(
-        mtl_context: Rc<MTLContext>,
+        mtl_context: Rc<MetalContext>,
         decoder_config: Rc<DecoderConfig>,
-        root_weight_loader: &ParameterTree<MTLContext>,
+        root_weight_loader: &ParameterTree<MetalContext>,
     ) -> Self {
         let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
 
@@ -119,7 +122,7 @@ impl Decoder {
 
         let norm_block: Box<dyn EncodableBlock<Metal>> = Box::new(
             RMSNorm::new(
-                &mtl_context,
+                mtl_context.as_ref(),
                 norm_data_type,
                 decoder_config.output_norm_config.clone(),
                 ArrayId::Main,
@@ -141,7 +144,7 @@ impl Decoder {
     }
 
     fn create_rope_block(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         data_type: DataType,
         rope_type: RopeType,
     ) -> Rc<Box<dyn EncodableBlock<Metal>>> {

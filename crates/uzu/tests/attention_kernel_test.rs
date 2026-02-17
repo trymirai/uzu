@@ -7,6 +7,7 @@ use std::mem::size_of;
 use bytemuck;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array3, Array4, s};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{
     DataType,
     backends::{
@@ -15,7 +16,7 @@ use uzu::{
             kernel::{AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
         },
         metal::{
-            MTLContext, ProtocolObject, Retained,
+            MetalContext,
             kernel::{
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
                 dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
@@ -148,7 +149,7 @@ fn create_test_data(
 /// Convert ndarray to Metal buffer layout expected by our kernel
 fn create_query_buffer(
     queries: &Array4<f32>,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_heads, seq_len, head_dim) = queries.dim();
 
@@ -173,7 +174,7 @@ fn create_query_buffer(
 fn create_key_cache_buffer(
     keys: &Array4<f32>,
     max_seq_len: usize,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
@@ -198,7 +199,7 @@ fn create_key_cache_buffer(
 fn create_value_cache_buffer(
     values: &Array4<f32>,
     max_seq_len: usize,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
@@ -223,7 +224,7 @@ fn create_value_cache_buffer(
 fn create_mask_buffer(
     mask: &Array3<f32>,
     num_heads: usize,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
@@ -246,7 +247,7 @@ fn create_mask_buffer(
 
 fn create_mask_2d_buffer(
     mask: &Array3<f32>,
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
@@ -265,7 +266,7 @@ fn create_mask_2d_buffer(
 
 fn create_sinks_buffer(
     sinks: &[f32],
-    context: &MTLContext,
+    context: &MetalContext,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     context
         .device
@@ -296,7 +297,7 @@ fn convert_kernel_output(
 
 fn run_single_pass_attention(
     kernel: &AttentionSinglePassMetalKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -367,7 +368,7 @@ fn run_single_pass_attention(
 
 fn run_single_pass_attention_with_is_causal(
     kernel: &AttentionSinglePassMetalKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -439,7 +440,7 @@ fn run_single_pass_attention_with_is_causal(
 
 fn run_gemm_attention(
     kernel: &AttentionGemmBlock,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -549,7 +550,7 @@ fn compare_results(
 
 #[test]
 fn test_single_pass_attention_basic() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -589,7 +590,7 @@ fn test_single_pass_attention_basic() {
 
 #[test]
 fn test_gemm_attention_basic() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -616,7 +617,7 @@ fn test_gemm_attention_basic() {
 
 #[test]
 fn test_gemm_attention_f32_head_dim_128() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -643,7 +644,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 
 #[test]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -700,7 +701,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 
 #[test]
 fn test_single_pass_attention_with_mask() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -740,7 +741,7 @@ fn test_single_pass_attention_with_mask() {
 
 #[test]
 fn test_single_pass_attention_with_sinks() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -776,7 +777,7 @@ fn test_single_pass_attention_with_sinks() {
 
 #[test]
 fn test_single_pass_attention_with_sinks_long_sequence() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -817,7 +818,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
 
 #[test]
 fn test_single_pass_attention_gqa() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -852,7 +853,7 @@ fn test_single_pass_attention_gqa() {
 fn run_two_pass_attention(
     kernel_pass1: &AttentionTwoPass1MetalKernel,
     kernel_pass2: &AttentionTwoPass2MetalKernel,
-    context: &MTLContext,
+    context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -954,7 +955,7 @@ fn run_two_pass_attention(
 
 #[test]
 fn test_two_pass_attention() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -998,7 +999,7 @@ fn test_two_pass_attention() {
 
 #[test]
 fn test_two_pass_attention_gqa() {
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -1044,7 +1045,7 @@ fn test_two_pass_attention_gqa() {
 fn perf_two_pass_attention() {
     use std::time::Instant;
 
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
 
     // ---- Problem sizes requiring two-pass ----
     let batch_size = 1;

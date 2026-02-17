@@ -1,9 +1,7 @@
+use metal::{MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary, MTLLibraryExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::backends::metal::{
-    MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary, MTLLibraryExt,
-    error::{LibraryError, MTLError},
-};
+use crate::backends::metal::error::{LibraryError, MetalError};
 
 /// Extensions for Library to create compute pipeline states
 pub trait LibraryPipelineExtensions {
@@ -13,7 +11,7 @@ pub trait LibraryPipelineExtensions {
         &self,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError>;
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError>;
 }
 
 impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
@@ -21,19 +19,19 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
         &self,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         let function = match constants {
             Some(const_values) => {
                 self.new_function_with_name_constant_values_error(function_name, const_values, std::ptr::null_mut())
             },
             None => self.new_function_with_name(function_name),
         }
-        .ok_or(MTLError::Library(LibraryError::FunctionCreationFailed))?;
+        .ok_or(MetalError::Library(LibraryError::FunctionCreationFailed))?;
 
         let device = self.device();
 
         device
             .new_compute_pipeline_state_with_function(&function)
-            .map_err(|e| MTLError::Library(LibraryError::Custom(format!("Pipeline state creation failed: {}", e))))
+            .map_err(|e| MetalError::Library(LibraryError::Custom(format!("Pipeline state creation failed: {}", e))))
     }
 }

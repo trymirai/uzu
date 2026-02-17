@@ -1,4 +1,5 @@
-use objc2::Message;
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
+use objc2::{Message, runtime::ProtocolObject};
 
 use crate::backends::{
     common::kernel::{
@@ -6,7 +7,7 @@ use crate::backends::{
         MoePassAWriteDispatchArgsKernel,
     },
     metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLContext, MTLError, ProtocolObject,
+        MetalContext, MetalError,
         kernel::dsl::{
             MoePassABuildRowMapMetalKernel, MoePassABuildTileMapMetalKernel, MoePassATileCountsMetalKernel,
             MoePassATileScanMetalKernel, MoePassAWriteDispatchArgsMetalKernel,
@@ -64,7 +65,7 @@ pub struct MoePassATileKernels {
 }
 
 impl MoePassATileKernels {
-    pub fn new(ctx: &MTLContext) -> Result<Self, MTLError> {
+    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         Ok(Self {
             counts: MoePassATileCountsMetalKernel::new(ctx)?,
             scan: MoePassATileScanMetalKernel::new(ctx)?,

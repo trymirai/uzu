@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-use crate::backends::metal::{MTLDataType, MTLFunctionConstantValues};
+use metal::{MTLDataType, MTLFunctionConstantValues};
 
 pub trait FunctionConstantValueType {
     const DATA_TYPE: MTLDataType;

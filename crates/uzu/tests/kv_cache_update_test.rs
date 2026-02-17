@@ -6,9 +6,9 @@ use uzu::backends::{
     common::{
         Context,
         gpu_types::Swap,
-        kernel::kv_cache_update::{KVLayerData, create_swaps_direct},
+        kernel::kv_cache_update::{KVCacheUpdate, KVLayerData, create_swaps_direct},
     },
-    metal::{KVCacheUpdate, MTLContext, Metal},
+    metal::{Metal, MetalContext},
 };
 
 fn apply_swaps_3d<T: Clone>(
@@ -31,7 +31,7 @@ fn apply_swaps_3d<T: Clone>(
 
 #[test]
 fn test_kv_cache_update_kernel() {
-    let metal_context = match MTLContext::new() {
+    let metal_context = match MetalContext::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Failed to create MetalContext: {:?}. Skipping test.", e);
@@ -42,7 +42,7 @@ fn test_kv_cache_update_kernel() {
     test_random_pattern(&metal_context);
 }
 
-fn test_random_pattern(context: &MTLContext) {
+fn test_random_pattern(context: &MetalContext) {
     println!("Testing with random pattern...");
 
     let max_sequence_length = 256usize;

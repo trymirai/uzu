@@ -1,27 +1,27 @@
 use std::collections::HashMap;
 
+use metal::{MTLComputeCommandEncoder, MTLComputePipelineState};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use super::{
     dispatch_descriptor::{AxpbySource, DispatchDescriptor},
     pipeline_configuration::PipelineConfiguration,
 };
 use crate::{
     DataType,
-    backends::metal::{
-        ComputeEncoderSetValue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext, MTLError,
-        ProtocolObject, Retained, kernel::matmul::common::MatmulArguments,
-    },
+    backends::metal::{ComputeEncoderSetValue, MetalContext, MetalError, kernel::matmul::common::MatmulArguments},
 };
 
 fn gemv_kernel_name(
     data_type: DataType,
     config: &PipelineConfiguration,
-) -> Result<String, MTLError> {
+) -> Result<String, MetalError> {
     let dtype_name = match data_type {
         DataType::F16 => "float16",
         DataType::BF16 => "bfloat16",
         DataType::F32 => "float32",
         _ => {
-            return Err(MTLError::Generic(format!("Unsupported data type for GEMV: {:?}", data_type)));
+            return Err(MetalError::Generic(format!("Unsupported data type for GEMV: {:?}", data_type)));
         },
     };
 
@@ -58,9 +58,9 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
+    pub fn new(data_type: DataType) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MTLError::Generic(format!("Unsupported data type for GEMV: {:?}", data_type)));
+            return Err(MetalError::Generic(format!("Unsupported data type for GEMV: {:?}", data_type)));
         }
         Ok(Self {
             data_type,
@@ -70,8 +70,8 @@ impl Kernel {
 
     pub fn precompile(
         &mut self,
-        context: &MTLContext,
-    ) -> Result<(), MTLError> {
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
         let configs: &[(u32, bool)] = match self.data_type {
             DataType::BF16 => &[(4, false), (4, true), (8, false), (8, true)],
             DataType::F16 => &[(8, false)],
@@ -102,9 +102,9 @@ impl Kernel {
 
     fn get_pipeline(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         config: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if !self.pipelines.contains_key(config) {
             let kernel_name = gemv_kernel_name(self.data_type, config)?;
             let pipeline = context.compute_pipeline_state(&kernel_name, None)?;
@@ -115,11 +115,11 @@ impl Kernel {
 
     pub(crate) fn encode_descriptor(
         &mut self,
-        context: &MTLContext,
+        context: &MetalContext,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
-    ) -> Result<bool, MTLError> {
+    ) -> Result<bool, MetalError> {
         let pipeline = self.get_pipeline(context, &descriptor.pipeline_configuration)?;
         encoder.set_compute_pipeline_state(pipeline);
 
@@ -140,19 +140,20 @@ impl Kernel {
         if descriptor.pipeline_configuration.do_axpby {
             match descriptor.axpby_source {
                 AxpbySource::None => {
-                    return Err(MTLError::Generic(
+                    return Err(MetalError::Generic(
                         "GEMV descriptor mismatch: do_axpby=true but axpby_source=None".to_owned(),
                     ));
                 },
                 AxpbySource::Bias => {
                     let bias = arguments
                         .bias
-                        .ok_or_else(|| MTLError::Generic("GEMV descriptor requires bias buffer".to_owned()))?;
+                        .ok_or_else(|| MetalError::Generic("GEMV descriptor requires bias buffer".to_owned()))?;
                     encoder.set_buffer(Some(bias), 0, 2);
                 },
                 AxpbySource::C => {
-                    let c_buffer =
-                        arguments.c.ok_or_else(|| MTLError::Generic("GEMV descriptor requires C buffer".to_owned()))?;
+                    let c_buffer = arguments
+                        .c
+                        .ok_or_else(|| MetalError::Generic("GEMV descriptor requires C buffer".to_owned()))?;
                     encoder.set_buffer(Some(c_buffer), 0, 2);
                 },
             }

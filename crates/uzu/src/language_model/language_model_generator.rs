@@ -1,6 +1,7 @@
 use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
 
 use itertools::{Either, Itertools, izip};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder};
 
 use super::{
     LanguageModelGeneratorContext,
@@ -16,7 +17,7 @@ use crate::{
             Context,
             kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
         },
-        metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder, Metal},
+        metal::Metal,
     },
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::{

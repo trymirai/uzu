@@ -3,7 +3,8 @@ use std::{
     collections::{HashMap, hash_map::Entry},
 };
 
-use objc2::Message;
+use metal::{MTLBuffer, MTLComputeCommandEncoder};
+use objc2::{Message, runtime::ProtocolObject};
 
 use crate::{
     DataType,
@@ -12,10 +13,7 @@ use crate::{
             gpu_types::{AttnMaskParams, AttnParams},
             kernel::AttentionGemmKernel,
         },
-        metal::{
-            MTLBuffer, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            kernel::dsl::AttentionGemmMetalKernel,
-        },
+        metal::{MetalContext, MetalError, kernel::dsl::AttentionGemmMetalKernel},
     },
 };
 
@@ -55,10 +53,10 @@ impl AttentionGemmBlock {
 
     pub fn encode(
         &self,
-        context: &MTLContext,
+        context: &MetalContext,
         compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         args: &AttentionGemmArguments,
-    ) -> Result<(), MTLError> {
+    ) -> Result<(), MetalError> {
         let bk: usize = if args.head_dim < 128 {
             32
         } else {

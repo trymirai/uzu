@@ -4,14 +4,14 @@ mod common;
 use half::bf16;
 use is_close::is_close;
 use uzu::{
-    backends::{common::Context, metal::MTLContext},
+    backends::{common::Context, metal::MetalContext},
     parameters::ParameterLoader,
 };
 
 #[test]
 fn test_parameter_loader_basic() {
     let weights_path = crate::common::get_test_weights_path();
-    let context = MTLContext::new().expect("Failed to create MTLContext");
+    let context = MetalContext::new().expect("Failed to create MetalContext");
     let file = std::fs::File::open(&weights_path).expect("Weights file not found; run download script");
 
     let loader = ParameterLoader::new(&file, context.as_ref()).expect("create loader");

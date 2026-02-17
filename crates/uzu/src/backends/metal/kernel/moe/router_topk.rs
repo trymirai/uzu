@@ -1,9 +1,11 @@
+use metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
     DataType,
-    backends::metal::{
-        MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLComputePipelineState, MTLContext,
-        MTLError, MTLSize, ProtocolObject, Retained, metal_extensions::ComputeEncoderSetValue,
-    },
+    backends::metal::{MetalContext, MetalError, metal_extensions::ComputeEncoderSetValue},
 };
 
 const THREADS_PER_THREADGROUP: usize = 256;
@@ -13,7 +15,7 @@ const MAX_TOPK: usize = 128;
 #[derive(Debug, thiserror::Error)]
 pub enum MoeRouterTopKError {
     #[error("Metal error: {0}")]
-    MetalError(#[from] MTLError),
+    MetalError(#[from] MetalError),
     #[error("Invalid configuration: T={t}, d_model={d_model}, E={e}, K={k}")]
     InvalidConfig {
         t: usize,
@@ -44,7 +46,7 @@ pub struct MoeRouterTopKArguments<'a> {
 }
 
 impl MoeRouterTopKKernel {
-    pub fn new(mtl_context: &MTLContext) -> Result<Self, MoeRouterTopKError> {
+    pub fn new(mtl_context: &MetalContext) -> Result<Self, MoeRouterTopKError> {
         let pipeline_f16 = mtl_context.compute_pipeline_state("moe_router_topk_f16", None)?;
         let pipeline_f32 = mtl_context.compute_pipeline_state("moe_router_topk_f32", None)?;
         let pipeline_bf16 = mtl_context.compute_pipeline_state("moe_router_topk_bf16", None)?;

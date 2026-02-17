@@ -1,5 +1,3 @@
-mod allocator;
-mod array;
 mod backend;
 mod classifier_context;
 mod command_buffer;
@@ -11,15 +9,13 @@ pub mod error;
 pub mod kernel;
 mod language_model_generator_context;
 pub mod metal_extensions;
-pub use array::MetalArray;
+mod native_buffer;
+
 pub use backend::Metal;
 pub use classifier_context::ClassifierContext;
-pub use context::{DeviceArchitecture, DeviceClass, DeviceGeneration, MTLContext};
+pub use context::{DeviceArchitecture, DeviceClass, DeviceGeneration, MetalContext};
 pub use encodable_block::Decoder;
-pub use error::MTLError;
+pub use error::MetalError;
 pub use kernel::dsl::MetalKernels;
 pub use language_model_generator_context::LanguageModelGeneratorContext;
-pub use metal::prelude::*;
 pub use metal_extensions::{ComputeEncoderSetValue, FunctionConstantValuesSetValue};
-
-pub use crate::backends::common::kernel::kv_cache_update::KVCacheUpdate;

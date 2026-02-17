@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use super::{EncodableBlock, Metal};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 use crate::{
     DataType,
     backends::{
@@ -10,8 +12,7 @@ use crate::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
         },
         metal::{
-            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MTLError, ProtocolObject,
-            Retained,
+            Metal, MetalContext, MetalError,
             kernel::{
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
                 dsl::{
@@ -21,7 +22,7 @@ use crate::{
             },
         },
     },
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState, HashMapId},
 };
 
@@ -56,14 +57,14 @@ pub struct Attention {
 
 impl Attention {
     pub fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         layer_index: usize,
         attention_scale: Option<f32>,
         has_sinks: bool,
         is_causal: bool,
         sliding_window_size: Option<usize>,
-    ) -> Result<Self, MTLError> {
+    ) -> Result<Self, MetalError> {
         let mut single_pass_kernels = HashMap::new();
         let mut two_pass_1_kernels = HashMap::new();
         let mut two_pass_2_kernels = HashMap::new();

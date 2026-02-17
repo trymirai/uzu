@@ -1,14 +1,17 @@
-use super::{EncodableBlock, Metal, transformer_layer};
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use super::transformer_layer;
 use crate::{
     DataType,
+    array::Array,
     backends::{
         common::{
             Context,
             kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
         },
         metal::{
-            MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLContext, MetalArray, ProtocolObject,
-            Retained,
+            Metal, MetalContext,
             kernel::dsl::{
                 ShortConvDecodeMetalKernel, ShortConvPackMetalKernel, ShortConvPrefillMetalKernel,
                 ShortConvTrieMetalKernel,
@@ -16,7 +19,7 @@ use crate::{
         },
     },
     config::{DecoderLayerType, ShortConvConfig},
-    encodable_block::EncodingParameters,
+    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
@@ -31,14 +34,14 @@ pub(crate) struct ShortConvMixer {
     short_conv_prefill: ShortConvPrefillMetalKernel,
     short_conv_decode: ShortConvDecodeMetalKernel,
     short_conv_trie: ShortConvTrieMetalKernel,
-    conv_weight: MetalArray,
-    conv_bias: Option<MetalArray>,
+    conv_weight: Array<Metal>,
+    conv_bias: Option<Array<Metal>>,
 }
 
 fn resolve_subtree<'tree>(
-    tree: &'tree ParameterTree<MTLContext>,
+    tree: &'tree ParameterTree<MetalContext>,
     candidates: &[&str],
-) -> ParameterTree<'tree, MTLContext> {
+) -> ParameterTree<'tree, MetalContext> {
     for candidate in candidates {
         if let Ok(subtree) = tree.subtree(candidate) {
             return subtree;
@@ -50,12 +53,12 @@ fn resolve_subtree<'tree>(
 impl ShortConvMixer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        mtl_context: &MTLContext,
+        mtl_context: &MetalContext,
         layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
         layer_index: usize,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<MTLContext>,
+        decoder_layer_loader: &ParameterTree<MetalContext>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);

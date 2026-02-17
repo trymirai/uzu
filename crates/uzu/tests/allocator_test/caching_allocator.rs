@@ -2,18 +2,18 @@ use std::rc::Rc;
 
 use uzu::backends::{
     common::{Buffer, BufferLifetime, Context},
-    metal::{MTLContext, Metal},
+    metal::{Metal, MetalContext},
 };
 
 use super::allocator_trait::AllocatorTrait;
 
 pub struct CachingAllocator {
-    pub context: Rc<MTLContext>,
+    pub context: Rc<MetalContext>,
 }
 
 impl CachingAllocator {
     pub fn new() -> Self {
-        let context = MTLContext::new().expect("Failed to create MTLContext");
+        let context = MetalContext::new().expect("Failed to create MetalContext");
         Self {
             context,
         }
