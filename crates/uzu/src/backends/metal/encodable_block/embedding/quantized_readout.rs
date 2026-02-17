@@ -7,9 +7,12 @@ use crate::{
     backends::{
         common::{
             Context,
-            kernel::matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulType},
+            kernel::quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+                QuantizedMatmulType,
+            },
         },
-        metal::{Metal, MetalContext, MetalError, kernel::quant_matmul::QuantizedMatmulKernel},
+        metal::{Metal, MetalContext, MetalError},
     },
     config::QuantizationMode,
     encodable_block::{EncodableBlock, EncodingParameters},
@@ -18,7 +21,7 @@ use crate::{
 };
 
 pub struct QuantizedEmbeddingReadout {
-    kernel: QuantizedMatmulKernel,
+    kernel: QuantizedMatmulKernelEncodable<Metal>,
     weights_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     scales_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     biases_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
@@ -159,7 +162,7 @@ impl QuantizedEmbeddingReadout {
         let weights_buffer = weights.buffer().to_owned().into();
         let scales_buffer = scales.buffer().to_owned().into();
 
-        let kernel = QuantizedMatmulKernel::new(
+        let kernel = QuantizedMatmulKernelEncodable::new(
             mtl_context,
             QuantizedMatmulConfiguration {
                 data_type,

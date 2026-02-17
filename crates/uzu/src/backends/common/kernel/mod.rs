@@ -6,5 +6,6 @@ pub mod attention;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod mlp_gate_act_mul;
+pub mod quant_matmul;
 pub mod sampling;
 pub mod ssd_prefill;

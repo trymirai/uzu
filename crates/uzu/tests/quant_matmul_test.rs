@@ -9,9 +9,12 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulType},
+            kernel::quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+                QuantizedMatmulType,
+            },
         },
-        metal::{MetalContext, kernel::quant_matmul::QuantizedMatmulKernel},
+        metal::{Metal, MetalContext},
     },
     config::QuantizationMode,
 };
@@ -475,7 +478,7 @@ fn execute_quantized_matmul(
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
     let y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
 
-    let kernel = QuantizedMatmulKernel::new(
+    let kernel = QuantizedMatmulKernelEncodable::<Metal>::new(
         &ctx,
         QuantizedMatmulConfiguration {
             data_type,
