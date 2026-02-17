@@ -61,8 +61,6 @@ syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
 cbindgen.workspace = true
-logos = "0.16.1"
-rowan = "0.16.1"
 
 # metal feature requires clang-ast
 clang-ast = { workspace = true, optional = true }

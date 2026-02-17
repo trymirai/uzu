@@ -45,26 +45,7 @@ fn kernel_wrappers(
             .filter(|argument| matches!(argument.argument_type(), Ok(MetalArgumentType::Specialize(_))))
             .enumerate()
             .map(|(specialization_argument_offset, argument)| {
-                use crate::metal::type_parser::TypeParser;
-
-                let specialization_type_name = if let Ok(parsed_type) = TypeParser::parse_type(&argument.c_type) {
-                    match &parsed_type.base {
-                        crate::metal::type_info::BaseType::Bool => "bool".to_string(),
-                        crate::metal::type_info::BaseType::Int => "int32_t".to_string(),
-                        crate::metal::type_info::BaseType::UInt => "uint32_t".to_string(),
-                        crate::metal::type_info::BaseType::Float => "float".to_string(),
-                        crate::metal::type_info::BaseType::Simd => "Simd".to_string(),
-                        crate::metal::type_info::BaseType::Named(name) => {
-                            if let Some(namespace_segments) = &parsed_type.namespace {
-                                format!("{}::{}", namespace_segments.join("::"), name)
-                            } else {
-                                name.clone()
-                            }
-                        },
-                    }
-                } else {
-                    argument.c_type.trim_start_matches("const ").to_string()
-                };
+                let specialization_type_name = argument.type_facts.to_specialization_type_name();
 
                 let function_constant_index = base_function_constant_index + specialization_argument_offset;
                 format!(

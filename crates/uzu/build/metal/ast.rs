@@ -45,6 +45,245 @@ pub enum MetalAstKind {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MetalAddressSpace {
+    Device,
+    Constant,
+    Threadgroup,
+    Thread,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MetalDeclarator {
+    Value,
+    Pointer,
+    Reference,
+    Array(Option<Box<str>>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MetalBaseType {
+    Bool,
+    Int,
+    UInt,
+    Float,
+    Simd,
+    Named(Box<str>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MetalTypeFacts {
+    pub spelling_type: Box<str>,
+    pub canonical_type: Box<str>,
+    pub base: MetalBaseType,
+    pub namespace: Option<Box<[Box<str>]>>,
+    pub is_const: bool,
+    pub is_volatile: bool,
+    pub address_space: Option<MetalAddressSpace>,
+    pub declarator: MetalDeclarator,
+}
+
+impl MetalTypeFacts {
+    pub fn from_clang_types(
+        spelling_type: &str,
+        desugared_type: Option<&str>,
+    ) -> Self {
+        let canonical_type = desugared_type.unwrap_or(spelling_type);
+        let declarator = Self::parse_declarator(canonical_type);
+        let (base, namespace) = Self::parse_base_and_namespace(canonical_type);
+        let words = Self::split_words(canonical_type);
+
+        let is_const = words.iter().any(|word| *word == "const");
+        let is_volatile = words.iter().any(|word| *word == "volatile");
+        let address_space = if words.iter().any(|word| *word == "threadgroup") {
+            Some(MetalAddressSpace::Threadgroup)
+        } else if words.iter().any(|word| *word == "constant") {
+            Some(MetalAddressSpace::Constant)
+        } else if words.iter().any(|word| *word == "device") {
+            Some(MetalAddressSpace::Device)
+        } else if words.iter().any(|word| *word == "thread") {
+            Some(MetalAddressSpace::Thread)
+        } else {
+            None
+        };
+
+        Self {
+            spelling_type: spelling_type.into(),
+            canonical_type: canonical_type.into(),
+            base,
+            namespace,
+            is_const,
+            is_volatile,
+            address_space,
+            declarator,
+        }
+    }
+
+    fn split_words(c_type: &str) -> Vec<&str> {
+        c_type
+            .split(|character: char| {
+                character.is_whitespace() || matches!(character, '*' | '&' | '[' | ']' | '(' | ')' | ',')
+            })
+            .filter(|word| !word.is_empty())
+            .collect()
+    }
+
+    fn parse_declarator(c_type: &str) -> MetalDeclarator {
+        if let Some(array_size) = Self::parse_array_size(c_type) {
+            return MetalDeclarator::Array(array_size);
+        }
+
+        if c_type.contains('&') {
+            return MetalDeclarator::Reference;
+        }
+
+        if c_type.contains('*') {
+            return MetalDeclarator::Pointer;
+        }
+
+        MetalDeclarator::Value
+    }
+
+    fn parse_array_size(c_type: &str) -> Option<Option<Box<str>>> {
+        let left_bracket_index = c_type.rfind('[')?;
+        let right_bracket_index = c_type[left_bracket_index..].find(']')? + left_bracket_index;
+        if right_bracket_index <= left_bracket_index {
+            return Some(None);
+        }
+
+        let size_expression = c_type[left_bracket_index + 1..right_bracket_index].trim();
+        if size_expression.is_empty() {
+            Some(None)
+        } else {
+            Some(Some(size_expression.into()))
+        }
+    }
+
+    fn parse_base_and_namespace(c_type: &str) -> (MetalBaseType, Option<Box<[Box<str>]>>) {
+        let type_without_array = if let Some(left_bracket_index) = c_type.rfind('[') {
+            &c_type[..left_bracket_index]
+        } else {
+            c_type
+        };
+
+        let type_without_declarator = type_without_array
+            .chars()
+            .map(|character| if matches!(character, '*' | '&') { ' ' } else { character })
+            .collect::<String>();
+
+        let filtered_words = type_without_declarator
+            .split_whitespace()
+            .filter(|word| {
+                !matches!(
+                    *word,
+                    "const" | "volatile" | "device" | "threadgroup" | "constant" | "thread" | "static"
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let base_candidate = filtered_words.join(" ");
+
+        match base_candidate.as_str() {
+            "bool" => (MetalBaseType::Bool, None),
+            "int" | "int32_t" => (MetalBaseType::Int, None),
+            "uint" | "uint32_t" | "unsigned" | "unsigned int" => (MetalBaseType::UInt, None),
+            "float" => (MetalBaseType::Float, None),
+            "Simd" => (MetalBaseType::Simd, None),
+            _ => {
+                let segments = base_candidate
+                    .split("::")
+                    .map(str::trim)
+                    .filter(|segment| !segment.is_empty())
+                    .collect::<Vec<_>>();
+
+                if segments.is_empty() {
+                    return (MetalBaseType::Named(base_candidate.into()), None);
+                }
+
+                let namespace = segments
+                    .iter()
+                    .take(segments.len().saturating_sub(1))
+                    .map(|segment| (*segment).to_string().into_boxed_str())
+                    .collect::<Vec<_>>();
+                let type_name = segments.last().unwrap().to_string().into_boxed_str();
+                if namespace.is_empty() {
+                    (MetalBaseType::Named(type_name), None)
+                } else {
+                    (MetalBaseType::Named(type_name), Some(namespace.into_boxed_slice()))
+                }
+            },
+        }
+    }
+
+    pub fn to_rust_scalar_type(&self) -> anyhow::Result<Box<str>> {
+        let rust_type = match &self.base {
+            MetalBaseType::Bool => "bool".into(),
+            MetalBaseType::Int => "i32".into(),
+            MetalBaseType::UInt => "u32".into(),
+            MetalBaseType::Float => "f32".into(),
+            MetalBaseType::Simd => bail!("Simd type cannot be converted to Rust scalar type"),
+            MetalBaseType::Named(name) => {
+                if let Some(namespace_segments) = &self.namespace
+                    && namespace_segments.len() == 1
+                    && namespace_segments[0].as_ref() == "uzu"
+                {
+                    return Ok(format!("crate::backends::common::gpu_types::{}", name).into());
+                }
+                name.clone()
+            },
+        };
+
+        Ok(rust_type)
+    }
+
+    pub fn to_specialization_type_name(&self) -> Box<str> {
+        match &self.base {
+            MetalBaseType::Bool => "bool".into(),
+            MetalBaseType::Int => "int32_t".into(),
+            MetalBaseType::UInt => "uint32_t".into(),
+            MetalBaseType::Float => "float".into(),
+            MetalBaseType::Simd => "Simd".into(),
+            MetalBaseType::Named(name) => {
+                if let Some(namespace_segments) = &self.namespace {
+                    let namespace = namespace_segments.iter().map(|segment| segment.as_ref()).collect::<Vec<_>>();
+                    format!("{}::{}", namespace.join("::"), name).into()
+                } else {
+                    name.clone()
+                }
+            },
+        }
+    }
+
+    pub fn is_simd(&self) -> bool {
+        matches!(self.base, MetalBaseType::Simd)
+    }
+
+    pub fn is_buffer(&self) -> bool {
+        matches!(self.address_space, Some(MetalAddressSpace::Device))
+            && matches!(self.declarator, MetalDeclarator::Pointer)
+    }
+
+    pub fn is_constant_scalar(&self) -> bool {
+        self.is_const
+            && matches!(self.address_space, Some(MetalAddressSpace::Constant))
+            && matches!(self.declarator, MetalDeclarator::Reference)
+    }
+
+    pub fn is_constant_array(&self) -> bool {
+        self.is_const
+            && matches!(self.address_space, Some(MetalAddressSpace::Constant))
+            && matches!(self.declarator, MetalDeclarator::Pointer)
+    }
+
+    pub fn is_threadgroup(&self) -> bool {
+        matches!(self.address_space, Some(MetalAddressSpace::Threadgroup))
+            && matches!(
+                self.declarator,
+                MetalDeclarator::Pointer | MetalDeclarator::Reference | MetalDeclarator::Array(_)
+            )
+    }
+}
+
 fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box<[Box<str>]>> {
     if !matches!(annotation_node.kind, MetalAstKind::AnnotateAttr) {
         bail!(
@@ -118,17 +357,16 @@ pub enum MetalArgumentType {
 pub struct MetalArgument {
     pub name: Box<str>,
     pub c_type: Box<str>,
+    pub type_facts: MetalTypeFacts,
     pub annotation: Option<Box<[Box<str>]>>,
     pub source: Box<str>,
 }
 
 impl MetalArgument {
     fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<Box<str>> {
-        use crate::metal::type_parser::TypeParser;
-
-        let parsed =
-            TypeParser::parse_type(c_type).with_context(|| format!("failed to parse scalar type: {}", c_type))?;
-        parsed.to_rust_type()
+        MetalTypeFacts::from_clang_types(c_type, None)
+            .to_rust_scalar_type()
+            .with_context(|| format!("failed to parse scalar type: {}", c_type))
     }
 
     fn from_ast_node_and_source(
@@ -149,6 +387,7 @@ impl MetalArgument {
 
         let name = name.context("ParmVarDecl has no name")?;
 
+        let type_facts = MetalTypeFacts::from_clang_types(&qual_type, desugared_qual_type.as_deref());
         let c_type = desugared_qual_type.unwrap_or(qual_type);
 
         if argument_node.inner.len() > 1 {
@@ -169,6 +408,7 @@ impl MetalArgument {
         Ok(Self {
             name,
             c_type,
+            type_facts,
             annotation,
             source,
         })
@@ -192,10 +432,7 @@ impl MetalArgument {
     }
 
     pub fn argument_type(&self) -> anyhow::Result<MetalArgumentType> {
-        use crate::metal::{
-            type_info::{Declarator, TypeQualifier},
-            type_parser::TypeParser,
-        };
+        const USE_TYPE_STRING_FALLBACK: bool = true;
 
         if let Some(annotation) = self.annotation.as_ref()
             && annotation.first().map(|annotation_item| annotation_item.as_ref()) != Some("dsl.optional")
@@ -240,52 +477,28 @@ impl MetalArgument {
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
         } else {
-            let parsed_type_result = TypeParser::parse_type(&self.c_type);
-
-            let parsed_type = match parsed_type_result {
-                Ok(parsed) => {
-                    let has_pointer_in_string = self.c_type.contains('*');
-                    let has_pointer_in_parsed = matches!(parsed.declarator, Declarator::Pointer | Declarator::Array(_));
-
-                    if has_pointer_in_string && !has_pointer_in_parsed {
-                        return self.argument_type_fallback();
-                    }
-
-                    parsed
-                },
-                Err(_) => {
-                    return self.argument_type_fallback();
-                },
-            };
-
-            if parsed_type.is_simd() {
+            if self.type_facts.is_simd() {
                 return Ok(MetalArgumentType::Simd);
             }
 
-            if parsed_type.is_buffer() {
+            if self.type_facts.is_buffer() {
                 return Ok(MetalArgumentType::Buffer);
             }
 
-            if parsed_type.qualifiers.contains(&TypeQualifier::Device)
-                && matches!(parsed_type.declarator, Declarator::Pointer)
-            {
-                return Ok(MetalArgumentType::Buffer);
-            }
-
-            if parsed_type.is_constant_scalar() {
-                let rust_type = parsed_type.to_rust_type()?;
+            if self.type_facts.is_constant_scalar() {
+                let rust_type = self.type_facts.to_rust_scalar_type()?;
                 return Ok(MetalArgumentType::Constant((rust_type, MetalConstantType::Scalar)));
             }
 
-            if parsed_type.is_constant_array() {
-                let rust_type = parsed_type.to_rust_type()?;
+            if self.type_facts.is_constant_array() {
+                let rust_type = self.type_facts.to_rust_scalar_type()?;
                 return Ok(MetalArgumentType::Constant((rust_type, MetalConstantType::Array)));
             }
 
-            if parsed_type.is_threadgroup() {
-                let size_expression = match &parsed_type.declarator {
-                    Declarator::Array(Some(size)) => Some(size.clone().into()),
-                    Declarator::Pointer => {
+            if self.type_facts.is_threadgroup() {
+                let size_expression = match &self.type_facts.declarator {
+                    MetalDeclarator::Array(Some(size)) => Some(size.clone()),
+                    MetalDeclarator::Pointer => {
                         if self.source.contains('[') {
                             let left_bracket_index =
                                 self.source.rfind('[').context("threadgroup missing size bracket")? + 1;
@@ -297,18 +510,17 @@ impl MetalArgument {
                             None
                         }
                     },
+                    MetalDeclarator::Reference => None,
                     _ => None,
                 };
                 return Ok(MetalArgumentType::Shared(size_expression));
             }
 
-            bail!(
-                "cannot classify c type: {} (parsed as base={:?}, declarator={:?}, qualifiers={:?})",
-                self.c_type,
-                parsed_type.base,
-                parsed_type.declarator,
-                parsed_type.qualifiers
-            );
+            if USE_TYPE_STRING_FALLBACK {
+                return self.argument_type_fallback();
+            }
+
+            bail!("cannot classify c type: {} (facts={:?})", self.c_type, self.type_facts);
         }
     }
 
