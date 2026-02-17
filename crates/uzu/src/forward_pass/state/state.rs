@@ -448,7 +448,7 @@ impl<B: Backend> ForwardPassState<B> {
     // Accessors
     // ========================================================================
 
-    pub fn mtl_context(&self) -> &B::Context {
+    pub fn context(&self) -> &B::Context {
         self.context.as_ref()
     }
 

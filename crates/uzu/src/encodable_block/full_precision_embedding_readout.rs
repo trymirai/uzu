@@ -122,7 +122,7 @@ where
         let element_size = input_array.data_type().size_in_bytes();
 
         self.kernel.borrow_mut().encode(
-            state.mtl_context(),
+            state.context(),
             encoder,
             FullPrecisionMatmulArguments {
                 a: input_array.buffer(),

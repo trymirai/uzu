@@ -4,34 +4,44 @@ use crate::{
 };
 
 mod activation;
+mod attention;
 mod full_precision_embedding_lookup;
 mod full_precision_embedding_readout;
 mod full_precision_linear;
 mod layer_norm;
+mod mamba_mixer;
+mod mlp;
 mod normalization;
 mod pooling;
+mod prediction_head;
 mod qk_norm;
 mod quantized_embedding_lookup;
 mod quantized_linear;
 mod rms_norm;
 mod rope;
 mod sampling;
+mod short_conv_mixer;
 mod tensor_add_swap;
 mod tensor_copy;
 
 pub use activation::Activation;
+pub use attention::Attention;
 pub use full_precision_embedding_lookup::{FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingLookupError};
 pub use full_precision_embedding_readout::{FullPrecisionEmbeddingReadout, FullPrecisionEmbeddingReadoutError};
 pub use full_precision_linear::{FullPrecisionLinear, FullPrecisionLinearError};
 pub use layer_norm::{LayerNorm, LayerNormError};
+pub(crate) use mamba_mixer::MambaMixer;
+pub use mlp::MlpBlock;
 pub use normalization::{Normalization, NormalizationError};
 pub use pooling::Pooling;
+pub use prediction_head::ClassifierPredictionHead;
 pub use qk_norm::{QKNorm, QKNormError};
 pub use quantized_embedding_lookup::{QuantizedEmbeddingLookup, QuantizedEmbeddingLookupError};
 pub use quantized_linear::{QuantizedLinear, QuantizedLinearError};
 pub use rms_norm::{RMSNorm, RMSNormError};
 pub use rope::Rope;
 pub use sampling::Sampling;
+pub use short_conv_mixer::ShortConvMixer;
 pub use tensor_add_swap::TensorAddSwap;
 pub use tensor_copy::TensorCopy;
 

@@ -2,41 +2,40 @@
 
 use std::rc::Rc;
 
-#[cfg(not(feature = "tracing"))]
-use metal::MTLCommandEncoder;
-use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
-use objc2::{
-    rc::{Retained, autoreleasepool},
-    runtime::ProtocolObject,
-};
+use objc2::rc::autoreleasepool;
 
-use super::{
-    super::{Attention, MambaMixer, ShortConvMixer, transformer_layer},
-    MixerExecutables,
-};
+use super::{super::transformer_layer, MixerExecutables};
+#[cfg(not(feature = "tracing"))]
+use crate::backends::common::CommandBuffer;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::metal::{Metal, MetalContext},
+    backends::{
+        common::Backend,
+        metal::{Metal, MetalContext},
+    },
     config::{DecoderLayerType, MixerConfig},
-    encodable_block::{EncodableBlock, EncodingParameters, QKNorm, RMSNorm, TensorAddSwap, TensorCopy},
+    encodable_block::{
+        Attention, EncodableBlock, EncodingParameters, MambaMixer, QKNorm, RMSNorm, ShortConvMixer, TensorAddSwap,
+        TensorCopy,
+    },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
 /// A single decoder layer with all its components.
-pub struct LayerExecutables {
+pub struct LayerExecutables<B: Backend> {
     pub layer_index: usize,
-    pub copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>>,
-    pub pre_attention_norm: Box<dyn EncodableBlock<Metal>>,
-    pub(crate) mixer: MixerExecutables,
-    pub post_attention_norm: Option<Box<dyn EncodableBlock<Metal>>>,
-    pub main_shortcut_add_swap: Box<dyn EncodableBlock<Metal>>,
-    pub pre_mlp_norm: Box<dyn EncodableBlock<Metal>>,
-    pub mlp: Box<dyn EncodableBlock<Metal>>,
-    pub post_mlp_norm: Option<Box<dyn EncodableBlock<Metal>>>,
+    pub copy_main_to_shortcut: Box<dyn EncodableBlock<B>>,
+    pub pre_attention_norm: Box<dyn EncodableBlock<B>>,
+    pub(crate) mixer: MixerExecutables<B>,
+    pub post_attention_norm: Option<Box<dyn EncodableBlock<B>>>,
+    pub main_shortcut_add_swap: Box<dyn EncodableBlock<B>>,
+    pub pre_mlp_norm: Box<dyn EncodableBlock<B>>,
+    pub mlp: Box<dyn EncodableBlock<B>>,
+    pub post_mlp_norm: Option<Box<dyn EncodableBlock<B>>>,
 }
 
-impl LayerExecutables {
+impl LayerExecutables<Metal> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         mtl_context: Rc<MetalContext>,
@@ -259,22 +258,20 @@ impl LayerExecutables {
     }
 }
 
-impl EncodableBlock<Metal> for LayerExecutables {
+impl<B: Backend> EncodableBlock<B> for LayerExecutables<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
-                let encoder =
-                    command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-                self.encode_with_shared_encoder(state, parameters, &encoder);
-                encoder.end_encoding();
+                command_buffer
+                    .with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
                 return;
             }
         }
@@ -432,9 +429,9 @@ impl EncodableBlock<Metal> for LayerExecutables {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),
