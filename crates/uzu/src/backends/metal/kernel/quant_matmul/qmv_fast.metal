@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
-#include "common.h"
+#include "quant_matmul.metal"
 
 template <typename T, int group_size, int bits>
 VARIANTS(T, float, half, bfloat)
