@@ -5,10 +5,13 @@ use super::EmbeddingError;
 use crate::{
     DataType,
     backends::{
-        common::Context,
+        common::{
+            Context,
+            kernel::matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulType},
+        },
         metal::{
             Metal, MetalContext, MetalError,
-            kernel::quant_matmul::{QuantizationType, QuantizedMatmulArguments, QuantizedMatmulKernel},
+            kernel::quant_matmul::QuantizedMatmulKernel,
         },
     },
     config::QuantizationMode,
@@ -161,13 +164,15 @@ impl QuantizedEmbeddingReadout {
 
         let kernel = QuantizedMatmulKernel::new(
             mtl_context,
-            data_type,
-            group_size,
-            model_dim,
-            vocab_size,
-            mode,
-            QuantizationType::Mlx,
-            weights_transposed,
+            QuantizedMatmulConfiguration {
+                data_type,
+                group_size,
+                input_dim: model_dim,
+                output_dim: vocab_size,
+                mode,
+                quantization_type: QuantizedMatmulType::Mlx,
+                weights_transposed,
+            },
         )
         .map_err(|e| EmbeddingError::MetalError(MetalError::Generic(format!("Failed to create kernel: {:?}", e))))?;
 
@@ -225,15 +230,15 @@ impl EncodableBlock<Metal> for QuantizedEmbeddingReadout {
 
         let args = QuantizedMatmulArguments {
             a_buffer: input_buffer,
-            a_offset,
+            a_offset: a_offset as usize,
             b_buffer: &self.weights_buffer,
             scales_buffer: &self.scales_buffer,
             zero_points_or_biases_buffer: &self.biases_buffer,
             output_buffer,
-            batch: batch_size as i32,
-            input_dim: self.model_dim as i32,
-            output_dim: self.vocab_size as i32,
-            quantization_type: QuantizationType::Mlx,
+            batch: batch_size,
+            input_dim: self.model_dim,
+            output_dim: self.vocab_size,
+            quantization_type: QuantizedMatmulType::Mlx,
         };
 
         self.kernel.encode(encoder, args).expect("Failed to encode quantized embedding readout kernel");
