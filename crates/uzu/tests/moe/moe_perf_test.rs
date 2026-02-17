@@ -10,7 +10,7 @@ use uzu::{
         metal::kernel::{
             dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
             moe::{
-                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels, MoeGatherArguments, MoeGatherKernels,
+                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels,
                 MoeScatterKernels, MoeScatterWithMapArguments,
             },
         },
@@ -294,7 +294,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let counts_offsets_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("counts+offsets fused");
     let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
     let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
-    let experts_kernel = MoeExpertsTwoPassDecodeKernels::new(&ctx).expect("experts two-pass decode");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("experts two-pass decode");
     let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
     let router_topk_fused_kernel = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused");
 

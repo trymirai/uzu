@@ -11,7 +11,7 @@ use uzu::{
                 MoeBlockBasesArguments, MoeScatterKernels, MoeScatterWithMapArguments,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
                 moe::{
-                    MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
+                    MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels,
                 },
             },
         },
@@ -430,41 +430,37 @@ fn run_moe_parity_test_internal(
     let hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
 
-    let experts = MoeExpertsTwoPassPrefillKernel::new(&ctx).expect("experts");
+    let experts = MoeExpertsTwoPassPrefillBlock::new(&ctx).expect("experts");
     let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
-    experts
-        .encode(
-            &cb,
-            MoeExpertsTwoPassArguments {
-                x_perm_buffer: &x_perm_buf,
-                expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
-                hidden_buffer: &hidden_buf,
-                output_buffer: &y_partial_buf,
-                w13_all: &w13_buf,
-                w2_all: &w2_buf,
-                up_biases: &up_biases_buf,
-                down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
-                total_rows,
-                d_model,
-                d_ff,
-                e,
-                num_tiles_k,
-                gating_code,
-                gate_clip_min: gate_clip.0,
-                gate_clip_max: gate_clip.1,
-                up_clip_min: up_clip.0,
-                up_clip_max: up_clip.1,
-                silu_alpha,
-                data_type: DataType::BF16,
-            },
-        )
-        .expect("experts encode");
+    let args = MoeExpertsTwoPassArguments {
+        x_perm_buffer: &x_perm_buf,
+        expert_offsets: &offsets_buf,
+        row_expert_map: &row_expert_map_buf,
+        hidden_buffer: &hidden_buf,
+        output_buffer: &y_partial_buf,
+        w13_all: &w13_buf,
+        w2_all: &w2_buf,
+        up_biases: &up_biases_buf,
+        down_biases: &down_biases_buf,
+        tile_counts: &tile_counts_buf,
+        tile_offsets: &tile_offsets_buf,
+        tile_map: &tile_map_buf,
+        total_tiles: &total_tiles_buf,
+        dispatch_args: &dispatch_args_buf,
+        total_rows,
+        d_model,
+        d_ff,
+        e,
+        num_tiles_k,
+        gating_code,
+        gate_clip_min: gate_clip.0,
+        gate_clip_max: gate_clip.1,
+        up_clip_min: up_clip.0,
+        up_clip_max: up_clip.1,
+        silu_alpha,
+        data_type: DataType::BF16,
+    };
+    experts.encode(&cb, &args);
 
     let finalize = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
     let encoder = cb.new_compute_command_encoder().expect("encoder");

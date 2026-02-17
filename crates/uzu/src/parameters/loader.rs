@@ -193,3 +193,15 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
         self.loader.read_extract_at(&self.join_prefix(name), buf, shape, data_type)
     }
 }
+
+pub fn resolve_subtree<'tree, C: Context>(
+    tree: &'tree ParameterTree<C>,
+    candidates: &[&str],
+) -> ParameterTree<'tree, C> {
+    for candidate in candidates {
+        if let Ok(subtree) = tree.subtree(candidate) {
+            return subtree;
+        }
+    }
+    panic!("Could not find any of {:?} in parameter tree", candidates);
+}

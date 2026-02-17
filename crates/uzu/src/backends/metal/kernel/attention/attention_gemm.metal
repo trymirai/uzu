@@ -45,8 +45,8 @@ KERNEL(AttentionGemm)(
     const device T* k,
     const device T* v,
     device T* o,
-    const constant AttnParams* params,
-    const constant AttnMaskParams* mask_params OPTIONAL(has_mask),
+    const constant AttnParams& params,
+    const constant AttnMaskParams& mask_params OPTIONAL(has_mask),
     const device T* mask OPTIONAL(has_mask),
     const device float* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
@@ -78,21 +78,21 @@ KERNEL(AttentionGemm)(
   const uint head_idx = tgid_y;
   const uint q_tile_idx = tgid_x;
 
-  q += batch_idx * params->q_strides[0] + head_idx * params->q_strides[1] +
-       q_tile_idx * int64_t(BQ) * params->q_strides[2];
+  q += batch_idx * params.q_strides[0] + head_idx * params.q_strides[1] +
+       q_tile_idx * int64_t(BQ) * params.q_strides[2];
 
-  const int kv_head_idx = int(tgid_y) / params->gqa_factor;
-  k += batch_idx * params->k_strides[0] +
-       int64_t(kv_head_idx) * params->k_strides[1];
-  v += batch_idx * params->v_strides[0] +
-       int64_t(kv_head_idx) * params->v_strides[1];
+  const int kv_head_idx = int(tgid_y) / params.gqa_factor;
+  k += batch_idx * params.k_strides[0] +
+       int64_t(kv_head_idx) * params.k_strides[1];
+  v += batch_idx * params.v_strides[0] +
+       int64_t(kv_head_idx) * params.v_strides[1];
 
-  o += batch_idx * params->o_strides[0] + head_idx * params->o_strides[1] +
-       q_tile_idx * int64_t(BQ) * params->o_strides[2];
+  o += batch_idx * params.o_strides[0] + head_idx * params.o_strides[1] +
+       q_tile_idx * int64_t(BQ) * params.o_strides[2];
 
   if (has_mask) {
-    mask += batch_idx * mask_params->m_strides[0] +
-            head_idx * mask_params->m_strides[1];
+    mask += batch_idx * mask_params.m_strides[0] +
+            head_idx * mask_params.m_strides[1];
   }
 
   // -------------------------------------------------------------------------
@@ -104,10 +104,6 @@ KERNEL(AttentionGemm)(
   constexpr short LDQ_tgp = BD + padQ;
   constexpr short LDK_tgp = BD + padK; // K stored as [BK, BD] row-major
   constexpr short LDV_tgp = BD + padV;
-
-  constexpr short tgp_mem_k = BK * (BD + padK);
-  constexpr short tgp_mem_v = BK * (BD + padV);
-  constexpr short tgp_mem_s = tgp_mem_k > tgp_mem_v ? tgp_mem_k : tgp_mem_v;
 
   threadgroup T* Qs = q_smem;
   threadgroup T* Ks = kv_smem;
@@ -140,15 +136,15 @@ KERNEL(AttentionGemm)(
       /*reduction_dim=*/0,
       /*tgp_size=*/WM * WN * 32>;
 
-  const int q_src_ld = int(params->q_strides[2]);
-  const int k_src_ld = int(params->k_strides[2]);
-  const int v_src_ld = int(params->v_strides[2]);
+  const int q_src_ld = int(params.q_strides[2]);
+  const int k_src_ld = int(params.k_strides[2]);
+  const int v_src_ld = int(params.v_strides[2]);
 
   thread QBlockLoader loader_q(q, q_src_ld, Qs, simd_group_id, simd_lane_id);
   thread KBlockLoader loader_k(k, k_src_ld, Ks, simd_group_id, simd_lane_id);
   thread VBlockLoader loader_v(v, v_src_ld, Vs, simd_group_id, simd_lane_id);
 
-  TransformScale<T> ts(static_cast<T>(params->scale * M_LOG2E_F));
+  TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
 
   // -------------------------------------------------------------------------
   // MMA tiles
@@ -204,8 +200,8 @@ KERNEL(AttentionGemm)(
   // Load Q block once (and apply scaling)
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  if (!align_q && int(tgid_x) == params->nq_aligned) {
-    loader_q.load_safe(short2(BD, params->q_rem));
+  if (!align_q && int(tgid_x) == params.nq_aligned) {
+    loader_q.load_safe(short2(BD, params.q_rem));
   } else {
     loader_q.load_unsafe();
   }
@@ -223,22 +219,22 @@ KERNEL(AttentionGemm)(
   }
 
   // Determine K block loop limit (causal can early-stop)
-  int kb_lim = params->nk;
+  int kb_lim = params.nk;
   if (do_causal) {
-    const int q_max = (int(tgid_x) + 1) * BQ + params->q_off;
+    const int q_max = (int(tgid_x) + 1) * BQ + params.q_off;
     kb_lim = (q_max + BK - 1) / BK;
-    kb_lim = min(params->nk, kb_lim);
+    kb_lim = min(params.nk, kb_lim);
   }
 
   const int q_rel = int(tgid_x) * BQ + int(tm) + int(sm); // [0, q_len)
-  const int q_abs = q_rel + params->q_off;                // [0, k_len)
+  const int q_abs = q_rel + params.q_off;                 // [0, k_len)
 
   // Loop over KV blocks
   for (int kb = 0; kb < kb_lim; kb++) {
     // Load K block
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!align_k && kb == params->nk_aligned) {
-      loader_k.load_safe(short2(BD, params->k_rem));
+    if (!align_k && kb == params.nk_aligned) {
+      loader_k.load_safe(short2(BD, params.k_rem));
     } else {
       loader_k.load_unsafe();
     }
@@ -264,8 +260,8 @@ KERNEL(AttentionGemm)(
     }
 
     // Mask out tail keys for the last (unaligned) K block
-    if (!align_k && kb == params->nk_aligned) {
-      const int k_rem = params->k_rem;
+    if (!align_k && kb == params.nk_aligned) {
+      const int k_rem = params.k_rem;
       UZU_PRAGMA_UNROLL
       for (short j = 0; j < TK; j++) {
         thread auto& frag = Stile.frag_at(0, j);
@@ -299,8 +295,8 @@ KERNEL(AttentionGemm)(
     }
 
     // Add external mask (additive bias in natural-log domain; convert to log2)
-    if (has_mask && q_rel < params->q_len) {
-      const int64_t row_stride = mask_params->m_strides[2];
+    if (has_mask && q_rel < params.q_len) {
+      const int64_t row_stride = mask_params.m_strides[2];
       const int64_t row_base = int64_t(q_rel) * row_stride;
 
       UZU_PRAGMA_UNROLL
@@ -311,12 +307,12 @@ KERNEL(AttentionGemm)(
         const int k0 = col_base;
         const int k1 = col_base + 1;
 
-        if (k0 < params->k_len) {
+        if (k0 < params.k_len) {
           AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k0)]);
           mv = metal::max(mv, static_cast<AccumType>(-1e9f));
           frag[0] += M_LOG2E_F * mv;
         }
-        if (k1 < params->k_len) {
+        if (k1 < params.k_len) {
           AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k1)]);
           mv = metal::max(mv, static_cast<AccumType>(-1e9f));
           frag[1] += M_LOG2E_F * mv;
@@ -326,8 +322,8 @@ KERNEL(AttentionGemm)(
 
     // Load V block (overwriting K in shared memory)
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!align_k && kb == params->nk_aligned) {
-      loader_v.load_safe(short2(BD, params->k_rem));
+    if (!align_k && kb == params.nk_aligned) {
+      loader_v.load_safe(short2(BD, params.k_rem));
     } else {
       loader_v.load_unsafe();
     }
@@ -415,11 +411,11 @@ KERNEL(AttentionGemm)(
 
   threadgroup_barrier(mem_flags::mem_none);
 
-  // Store results (O is row-major with row-stride params->o_strides[2])
-  o += int64_t(tm + sm) * params->o_strides[2] + int64_t(sn);
+  // Store results (O is row-major with row-stride params.o_strides[2])
+  o += int64_t(tm + sm) * params.o_strides[2] + int64_t(sn);
 
-  if (!align_q && int(tgid_x) == params->nq_aligned) {
-    const short2 dst_tile_dims = short2(BD - sn, params->q_rem - (tm + sm));
+  if (!align_q && int(tgid_x) == params.nq_aligned) {
+    const short2 dst_tile_dims = short2(BD - sn, params.q_rem - (tm + sm));
 
     if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0) {
       return;
@@ -427,10 +423,10 @@ KERNEL(AttentionGemm)(
 
     Otile.template store_safe<T, 1, 1>(
         o,
-        int(params->o_strides[2]),
+        int(params.o_strides[2]),
         dst_tile_dims
     );
   } else {
-    Otile.template store<T, 1, 1>(o, int(params->o_strides[2]));
+    Otile.template store<T, 1, 1>(o, int(params.o_strides[2]));
   }
 }

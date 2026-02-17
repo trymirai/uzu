@@ -17,8 +17,8 @@ use crate::{
                 MoeGatherKernels,
                 dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
                 moe::{
-                    MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
-                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeScatterArguments, MoeScatterKernels,
+                    MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
+                    MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeScatterArguments, MoeScatterKernels,
                     MoeScatterWithMapArguments,
                 },
             },
@@ -43,8 +43,8 @@ pub struct MoeBlock {
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernels: MoeGatherKernels,
-    experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeKernels,
-    experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillKernel,
+    experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeBlock,
+    experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillBlock,
     finalize_kernel: MoeFinalizeMetalKernel,
     moe_config: MixtureOfExpertsConfig,
     model_dim: usize,
@@ -113,10 +113,10 @@ impl MoeBlock {
             .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Scatter kernels error: {:?}", e)))?;
         let gather_kernel = MoeGatherKernels::new(context)
             .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Gather kernel error: {:?}", e)))?;
-        let experts_two_pass_decode_kernel = MoeExpertsTwoPassDecodeKernels::new(context).map_err(|e| {
+        let experts_two_pass_decode_kernel = MoeExpertsTwoPassDecodeBlock::new(context).map_err(|e| {
             crate::backends::metal::MetalError::Generic(format!("Experts two-pass decode kernel error: {:?}", e))
         })?;
-        let experts_two_pass_prefill_kernel = MoeExpertsTwoPassPrefillKernel::new(context).map_err(|e| {
+        let experts_two_pass_prefill_kernel = MoeExpertsTwoPassPrefillBlock::new(context).map_err(|e| {
             crate::backends::metal::MetalError::Generic(format!("Experts two-pass prefill kernel error: {:?}", e))
         })?;
         let finalize_kernel = MoeFinalizeMetalKernel::new(context, data_type)
@@ -450,39 +450,35 @@ impl EncodableBlock<Metal> for MoeBlock {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
-            self.experts_two_pass_prefill_kernel
-                .encode(
-                    root,
-                    MoeExpertsTwoPassArguments {
-                        x_perm_buffer: &x_perm_buf,
-                        expert_offsets: &offsets_buf,
-                        row_expert_map: &row_expert_map_buf,
-                        hidden_buffer: &hidden_buf,
-                        output_buffer: &y_partial_buf,
-                        w13_all: &self.shared_weights.w13_buf,
-                        w2_all: &self.shared_weights.w2_buf,
-                        up_biases: &self.shared_weights.up_biases_buf,
-                        down_biases: &self.shared_weights.down_biases_buf,
-                        tile_counts: &tile_counts_buf,
-                        tile_offsets: &tile_offsets_buf,
-                        tile_map: &tile_map_buf,
-                        total_tiles: &total_tiles_buf,
-                        dispatch_args: &dispatch_args_buf,
-                        total_rows,
-                        d_model: self.model_dim,
-                        d_ff: self.hidden_dim,
-                        e,
-                        num_tiles_k,
-                        gating_code,
-                        gate_clip_min,
-                        gate_clip_max,
-                        up_clip_min,
-                        up_clip_max,
-                        silu_alpha,
-                        data_type: self.data_type,
-                    },
-                )
-                .expect("MoE experts two-pass prefill failed");
+            let args = MoeExpertsTwoPassArguments {
+                x_perm_buffer: &x_perm_buf,
+                expert_offsets: &offsets_buf,
+                row_expert_map: &row_expert_map_buf,
+                hidden_buffer: &hidden_buf,
+                output_buffer: &y_partial_buf,
+                w13_all: &self.shared_weights.w13_buf,
+                w2_all: &self.shared_weights.w2_buf,
+                up_biases: &self.shared_weights.up_biases_buf,
+                down_biases: &self.shared_weights.down_biases_buf,
+                tile_counts: &tile_counts_buf,
+                tile_offsets: &tile_offsets_buf,
+                tile_map: &tile_map_buf,
+                total_tiles: &total_tiles_buf,
+                dispatch_args: &dispatch_args_buf,
+                total_rows,
+                d_model: self.model_dim,
+                d_ff: self.hidden_dim,
+                e,
+                num_tiles_k,
+                gating_code,
+                gate_clip_min,
+                gate_clip_max,
+                up_clip_min,
+                up_clip_max,
+                silu_alpha,
+                data_type: self.data_type,
+            };
+            self.experts_two_pass_prefill_kernel.encode(root, &args);
         }
 
         {

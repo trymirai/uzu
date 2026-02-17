@@ -11,14 +11,14 @@ use objc2::runtime::ProtocolObject;
 use uzu::{
     DataType,
     backends::{
-        common::{Context, kernel::Conv1dScanKernel},
-        metal::{
-            MetalContext,
+        common::{
+            Context,
             kernel::{
-                dsl::Conv1dScanMetalKernel,
-                ssm::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
+                Conv1dScanKernel,
+                ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
             },
         },
+        metal::{Metal, MetalContext, kernel::dsl::Conv1dScanMetalKernel},
     },
 };
 
@@ -199,7 +199,7 @@ impl SSDPrefillFixture {
 
 fn run_prefill_kernel_mode(
     ctx: &MetalContext,
-    kernel: &SSDPrefillKernels,
+    kernel: &SSDPrefillKernels<Metal>,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
@@ -228,7 +228,7 @@ fn run_prefill_kernel_mode(
     write_buffer(&state_buf, &fixture.state_init);
     zero_buffer(&y_buf);
 
-    let args = SSDPrefillArguments {
+    let args = SSDPrefillArguments::<Metal> {
         x: &x_buf,
         dt: &dt_buf,
         b: &b_buf,
@@ -363,7 +363,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, DataType::F32).unwrap();
+    let kernel = SSDPrefillKernels::<Metal>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_a, state_a, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
@@ -378,7 +378,7 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::new(&ctx, DataType::F32).unwrap();
+    let kernel = SSDPrefillKernels::<Metal>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(

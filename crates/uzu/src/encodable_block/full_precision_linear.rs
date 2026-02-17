@@ -148,7 +148,7 @@ where
         let output_array = arrays[1].borrow_mut();
 
         self.kernel.borrow_mut().encode(
-            state.mtl_context(),
+            state.context(),
             encoder,
             FullPrecisionMatmulArguments {
                 a: input_array.buffer(),

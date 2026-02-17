@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use metal::{MTLCommandBuffer, MTLCommandEncoder};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -31,5 +33,13 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
         encoder.end_encoding();
 
         ret
+    }
+
+    fn submit(&self) {
+        self.commit();
+    }
+
+    fn wait_until_completed(&self) {
+        self.deref().wait_until_completed();
     }
 }

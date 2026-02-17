@@ -15,7 +15,7 @@ use crate::{
                 dsl::{MoeExpertsDecodeDownFused2DMetalKernel, MoeExpertsDecodePassAMetalKernel},
                 moe::{
                     MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
-                    MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments, dtype_index,
+                    MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments,
                 },
             },
         },
@@ -24,13 +24,13 @@ use crate::{
 
 static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 
-pub struct MoeExpertsTwoPassDecodeKernels {
+pub struct MoeExpertsTwoPassDecodeBlock {
     pass_a_tile: MoePassATileKernels,
     pass_a_indirect: Vec<Vec<MoeExpertsDecodePassAMetalKernel>>,
     fused_down: Vec<MoeExpertsDecodeDownFused2DMetalKernel>,
 }
 
-impl MoeExpertsTwoPassDecodeKernels {
+impl MoeExpertsTwoPassDecodeBlock {
     pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
         let mut pass_a_indirect = vec![];
         for gate in 0u32..4u32 {
@@ -116,7 +116,7 @@ impl MoeExpertsTwoPassDecodeKernels {
 
         // pass a
         let gate_idx = args.gating_code.min(3) as usize;
-        let dtype_idx = dtype_index(args.data_type);
+        let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
         let pass_a_encoder =
             command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
         let pass_a_kernel = &self.pass_a_indirect[gate_idx][dtype_idx];
