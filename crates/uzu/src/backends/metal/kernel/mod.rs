@@ -17,9 +17,9 @@ pub mod ssm;
 
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
-    MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments,
-    MoeGatherKernels, MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments, MoeScatterKernels,
-    MoeScatterWithMapArguments,
+    MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
+    MoeGatherArguments, MoeGatherKernels, MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments,
+    MoeScatterKernels, MoeScatterWithMapArguments,
 };
 pub use ssm::{SSDPrefillArguments, SSDPrefillMode};
 
