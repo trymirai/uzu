@@ -3,29 +3,24 @@ use std::{
     collections::{HashMap, hash_map::Entry},
 };
 
-use metal::{MTLBuffer, MTLComputeCommandEncoder};
-use objc2::{Message, runtime::ProtocolObject};
-
 use crate::{
     DataType,
-    backends::{
-        common::{
-            gpu_types::{AttnMaskParams, AttnParams},
-            kernel::AttentionGemmKernel,
-        },
-        metal::{MetalContext, MetalError, kernel::dsl::AttentionGemmMetalKernel},
+    backends::common::{
+        Backend, Kernels,
+        gpu_types::{AttnMaskParams, AttnParams},
+        kernel::AttentionGemmKernel,
     },
 };
 
 const BQ: usize = 32;
 
-pub struct AttentionGemmArguments<'a> {
-    pub queries_buffer: &'a ProtocolObject<dyn MTLBuffer>, // buffer(0)
-    pub keys_buffer: &'a ProtocolObject<dyn MTLBuffer>,    // buffer(1)
-    pub values_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(2)
-    pub output_buffer: &'a ProtocolObject<dyn MTLBuffer>,  // buffer(3)
-    pub mask_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(6)
-    pub sinks_buffer: Option<&'a ProtocolObject<dyn MTLBuffer>>, // buffer(7)
+pub struct AttentionGemmArguments<'a, B: Backend> {
+    pub queries_buffer: &'a B::NativeBuffer,       // buffer(0)
+    pub keys_buffer: &'a B::NativeBuffer,          // buffer(1)
+    pub values_buffer: &'a B::NativeBuffer,        // buffer(2)
+    pub output_buffer: &'a B::NativeBuffer,        // buffer(3)
+    pub mask_buffer: Option<&'a B::NativeBuffer>,  // buffer(6)
+    pub sinks_buffer: Option<&'a B::NativeBuffer>, // buffer(7)
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
@@ -37,12 +32,12 @@ pub struct AttentionGemmArguments<'a> {
     pub scale: f32,
 }
 
-pub struct AttentionGemmBlock {
+pub struct AttentionGemmBlock<B: Backend> {
     data_type: DataType,
-    cache: RefCell<HashMap<KernelKey, AttentionGemmMetalKernel>>,
+    cache: RefCell<HashMap<KernelKey, <B::Kernels as Kernels>::AttentionGemmKernel>>,
 }
 
-impl AttentionGemmBlock {
+impl<B: Backend> AttentionGemmBlock<B> {
     pub fn new(data_type: DataType) -> Self {
         let cache = RefCell::new(HashMap::new());
         Self {
@@ -53,10 +48,10 @@ impl AttentionGemmBlock {
 
     pub fn encode(
         &self,
-        context: &MetalContext,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        args: &AttentionGemmArguments,
-    ) -> Result<(), MetalError> {
+        context: &B::Context,
+        compute_encoder: &B::ComputeEncoder,
+        args: &AttentionGemmArguments<B>,
+    ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
             32
         } else {
@@ -80,7 +75,7 @@ impl AttentionGemmBlock {
         let kernel = match map.entry(key) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let kernel = AttentionGemmMetalKernel::new(
+                let kernel = <B::Kernels as Kernels>::AttentionGemmKernel::new(
                     context,
                     self.data_type,
                     bk as u32,
@@ -130,22 +125,17 @@ impl AttentionGemmBlock {
             // We use a shared bias matrix for all heads/batches.
             m_strides: [0, 0, args.sequence_length as i64],
         };
-        let attn_mask_params_opt = args.mask_buffer.map(|_| std::slice::from_ref(&attn_mask_params));
-
-        let mask_buffer_retain = args.mask_buffer.map(|b| b.retain());
-        let mask_buffer_opt = mask_buffer_retain.as_ref().map(|b| b);
-        let sinks_buffer_retain = args.sinks_buffer.map(|b| b.retain());
-        let sinks_buffer_opt = sinks_buffer_retain.as_ref().map(|b| b);
+        let attn_mask_params_opt = args.mask_buffer.map(|_| attn_mask_params);
 
         kernel.encode(
-            &args.queries_buffer.retain(),
-            &args.keys_buffer.retain(),
-            &args.values_buffer.retain(),
-            &args.output_buffer.retain(),
-            std::slice::from_ref(&params),
+            args.queries_buffer,
+            args.keys_buffer,
+            args.values_buffer,
+            args.output_buffer,
+            params,
             attn_mask_params_opt,
-            mask_buffer_opt,
-            sinks_buffer_opt,
+            args.mask_buffer,
+            args.sinks_buffer,
             args.num_heads as u32,
             args.suffix_length as u32,
             &compute_encoder,

@@ -2,21 +2,21 @@
 
 use std::rc::Rc;
 
-use crate::{backends::metal::Metal, encodable_block::EncodableBlock};
+use crate::{backends::common::Backend, encodable_block::EncodableBlock};
 
 /// Mixer component - either attention, state space, or short conv.
-pub(crate) enum MixerExecutables {
+pub(crate) enum MixerExecutables<B: Backend> {
     Attention {
-        qkv_projection: Box<dyn EncodableBlock<Metal>>,
-        qk_norm: Option<Box<dyn EncodableBlock<Metal>>>,
-        rope: Rc<Box<dyn EncodableBlock<Metal>>>,
-        attention: Box<dyn EncodableBlock<Metal>>,
-        out_projection: Box<dyn EncodableBlock<Metal>>,
+        qkv_projection: Box<dyn EncodableBlock<B>>,
+        qk_norm: Option<Box<dyn EncodableBlock<B>>>,
+        rope: Rc<Box<dyn EncodableBlock<B>>>,
+        attention: Box<dyn EncodableBlock<B>>,
+        out_projection: Box<dyn EncodableBlock<B>>,
     },
     StateSpace {
-        mixer: Box<dyn EncodableBlock<Metal>>,
+        mixer: Box<dyn EncodableBlock<B>>,
     },
     ShortConv {
-        mixer: Box<dyn EncodableBlock<Metal>>,
+        mixer: Box<dyn EncodableBlock<B>>,
     },
 }

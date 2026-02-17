@@ -1,12 +1,15 @@
 use super::{
-    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock, MoeBlock,
+    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, MoeBlock,
     QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
-    backends::metal::{Metal, MetalContext, MetalError, kernel::mlp::MlpGateActMulEncodable},
+    backends::{
+        common::kernel::mlp_gate_act_mul::MlpGateActMulEncodable,
+        metal::{Metal, MetalContext, MetalError},
+    },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
-    encodable_block::EncodableBlock,
+    encodable_block::{EncodableBlock, MlpBlock},
     forward_pass::state::ArrayId,
     parameters::ParameterTree,
 };

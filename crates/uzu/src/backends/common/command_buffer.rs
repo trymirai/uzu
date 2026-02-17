@@ -12,4 +12,7 @@ pub trait CommandBuffer {
         &self,
         callback: impl FnOnce(&<Self::Backend as Backend>::CopyEncoder) -> T,
     ) -> T;
+
+    fn submit(&self);
+    fn wait_until_completed(&self);
 }

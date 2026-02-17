@@ -1,43 +1,44 @@
 use std::rc::Rc;
 
-#[cfg(not(feature = "tracing"))]
-use metal::MTLCommandEncoder;
-use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
-use objc2::{
-    rc::{Retained, autoreleasepool},
-    runtime::ProtocolObject,
-};
+use objc2::rc::autoreleasepool;
 
-use super::{Attention, transformer_layer};
+use super::transformer_layer;
+#[cfg(not(feature = "tracing"))]
+use crate::backends::common::CommandBuffer;
 use crate::{
     DataType,
-    backends::metal::{Metal, MetalContext},
+    backends::{
+        common::Backend,
+        metal::{Metal, MetalContext},
+    },
     config::TransformerLayerConfig,
-    encodable_block::{EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy},
+    encodable_block::{
+        Attention, EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy,
+    },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
-pub struct ClassifierLayer {
+pub struct ClassifierLayer<B: Backend> {
     #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
     layer_index: usize,
-    copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<Metal>>,
-    pre_attention_norm: Option<Box<dyn EncodableBlock<Metal>>>,
-    qkv_projection: Box<dyn EncodableBlock<Metal>>,
-    qk_norm: Option<Box<dyn EncodableBlock<Metal>>>,
-    rope: Rc<Box<dyn EncodableBlock<Metal>>>,
-    attention: Box<dyn EncodableBlock<Metal>>,
-    out_projection: Box<dyn EncodableBlock<Metal>>,
-    post_attention_norm: Option<Box<dyn EncodableBlock<Metal>>>,
-    mixer_residual_add: Box<dyn EncodableBlock<Metal>>,
-    copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<Metal>>,
-    pre_mlp_norm: Box<dyn EncodableBlock<Metal>>,
-    mlp: Box<dyn EncodableBlock<Metal>>,
-    post_mlp_norm: Option<Box<dyn EncodableBlock<Metal>>>,
-    mlp_residual_add: Box<dyn EncodableBlock<Metal>>,
+    copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<B>>,
+    pre_attention_norm: Option<Box<dyn EncodableBlock<B>>>,
+    qkv_projection: Box<dyn EncodableBlock<B>>,
+    qk_norm: Option<Box<dyn EncodableBlock<B>>>,
+    rope: Rc<Box<dyn EncodableBlock<B>>>,
+    attention: Box<dyn EncodableBlock<B>>,
+    out_projection: Box<dyn EncodableBlock<B>>,
+    post_attention_norm: Option<Box<dyn EncodableBlock<B>>>,
+    mixer_residual_add: Box<dyn EncodableBlock<B>>,
+    copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<B>>,
+    pre_mlp_norm: Box<dyn EncodableBlock<B>>,
+    mlp: Box<dyn EncodableBlock<B>>,
+    post_mlp_norm: Option<Box<dyn EncodableBlock<B>>>,
+    mlp_residual_add: Box<dyn EncodableBlock<B>>,
 }
 
-impl ClassifierLayer {
+impl ClassifierLayer<Metal> {
     pub fn new(
         mtl_context: Rc<MetalContext>,
         layer_config: &TransformerLayerConfig,
@@ -247,20 +248,18 @@ impl ClassifierLayer {
     }
 }
 
-impl EncodableBlock<Metal> for ClassifierLayer {
+impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
-                let encoder =
-                    command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-                self.encode_with_shared_encoder(state, parameters, &encoder);
-                encoder.end_encoding();
+                command_buffer
+                    .with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
                 return;
             }
         }
@@ -384,9 +383,9 @@ impl EncodableBlock<Metal> for ClassifierLayer {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),

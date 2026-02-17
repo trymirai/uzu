@@ -2,24 +2,13 @@
 
 use std::collections::HashMap;
 
-use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
 use crate::{
     DataType,
-    backends::{
-        common::kernel::{
+    backends::common::{
+        Backend, CommandBuffer, Kernels,
+        kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
-        },
-        metal::{
-            Metal, MetalContext, MetalError,
-            kernel::{
-                attention::{AttentionGemmArguments, AttentionGemmBlock},
-                dsl::{
-                    AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel,
-                    AttentionUpdateKVCacheMetalKernel,
-                },
-            },
+            attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
     },
     encodable_block::{EncodableBlock, EncodingParameters},
@@ -42,12 +31,12 @@ fn env_gemm_attention_enabled() -> bool {
     })
 }
 
-pub struct Attention {
-    single_pass_kernels: HashMap<KernelKey, AttentionSinglePassMetalKernel>,
-    two_pass_1_kernels: HashMap<KernelKey, AttentionTwoPass1MetalKernel>,
-    two_pass_2_kernels: HashMap<u32, AttentionTwoPass2MetalKernel>,
-    update_kv_cache_kernel: AttentionUpdateKVCacheMetalKernel,
-    gemm_block: AttentionGemmBlock,
+pub struct Attention<B: Backend> {
+    single_pass_kernels: HashMap<KernelKey, <B::Kernels as Kernels>::AttentionSinglePassKernel>,
+    two_pass_1_kernels: HashMap<KernelKey, <B::Kernels as Kernels>::AttentionTwoPass1Kernel>,
+    two_pass_2_kernels: HashMap<u32, <B::Kernels as Kernels>::AttentionTwoPass2Kernel>,
+    update_kv_cache_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
+    gemm_block: AttentionGemmBlock<B>,
     layer_index: usize,
     attention_scale: Option<f32>,
     has_sinks: bool,
@@ -55,16 +44,16 @@ pub struct Attention {
     sliding_window_size: Option<usize>,
 }
 
-impl Attention {
+impl<B: Backend> Attention<B> {
     pub fn new(
-        context: &MetalContext,
+        context: &B::Context,
         data_type: DataType,
         layer_index: usize,
         attention_scale: Option<f32>,
         has_sinks: bool,
         is_causal: bool,
         sliding_window_size: Option<usize>,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, B::Error> {
         let mut single_pass_kernels = HashMap::new();
         let mut two_pass_1_kernels = HashMap::new();
         let mut two_pass_2_kernels = HashMap::new();
@@ -78,22 +67,22 @@ impl Attention {
                 };
                 let float_mask = has_mask;
 
-                let sp_kernel = AttentionSinglePassMetalKernel::new(
+                let sp_kernel = <B::Kernels as Kernels>::AttentionSinglePassKernel::new(
                     context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
                 )?;
                 single_pass_kernels.insert(key, sp_kernel);
 
-                let tp1_kernel = AttentionTwoPass1MetalKernel::new(
+                let tp1_kernel = <B::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
                     context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
                 )?;
                 two_pass_1_kernels.insert(key, tp1_kernel);
 
-                let tp2_kernel = AttentionTwoPass2MetalKernel::new(context, data_type, head_dim)?;
+                let tp2_kernel = <B::Kernels as Kernels>::AttentionTwoPass2Kernel::new(context, data_type, head_dim)?;
                 two_pass_2_kernels.insert(head_dim, tp2_kernel);
             }
         }
 
-        let update_kv_cache_kernel = AttentionUpdateKVCacheMetalKernel::new(context, data_type)?;
+        let update_kv_cache_kernel = <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type)?;
         let gemm_block = AttentionGemmBlock::new(data_type);
 
         Ok(Self {
@@ -138,20 +127,17 @@ impl Attention {
     }
 }
 
-impl EncodableBlock<Metal> for Attention {
+impl<B: Backend> EncodableBlock<B> for Attention<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
-        let compute_encoder =
-            command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.encode_with_shared_encoder(state, parameters, &compute_encoder);
-        compute_encoder.end_encoding();
+        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, &encoder));
 
         if parameters.wait_until_completed {
-            command_buffer.commit();
+            command_buffer.submit();
             command_buffer.wait_until_completed();
         }
     }
@@ -162,9 +148,9 @@ impl EncodableBlock<Metal> for Attention {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        compute_encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        compute_encoder: &B::ComputeEncoder,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -356,12 +342,12 @@ impl EncodableBlock<Metal> for Attention {
         match variant {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
-                    queries_buffer: &queries_buffer,
+                    queries_buffer,
                     keys_buffer: &key_cache_buffer,
                     values_buffer: &value_cache_buffer,
-                    output_buffer: &attention_output_buffer,
-                    mask_buffer: attention_bias_buffer.as_deref(),
-                    sinks_buffer: sinks_buffer.as_deref(),
+                    output_buffer: attention_output_buffer,
+                    mask_buffer: attention_bias_buffer.as_ref(),
+                    sinks_buffer: sinks_buffer.as_ref(),
                     num_heads,
                     num_groups,
                     suffix_length,
@@ -373,13 +359,13 @@ impl EncodableBlock<Metal> for Attention {
                     scale,
                 };
                 self.gemm_block
-                    .encode(state.mtl_context(), compute_encoder, &args)
+                    .encode(state.context(), compute_encoder, &args)
                     .expect("Failed to encode AttentionGemmBlock");
             },
             KernelVariant::SinglePass => {
                 let kernel = match self.single_pass_kernels.get(&kernel_key) {
                     Some(k) => k,
-                    None => panic!("Can not find AttentionSinglePassMetalKernel for key {:?}", kernel_key),
+                    None => panic!("Can not find AttentionSinglePassKernel for key {:?}", kernel_key),
                 };
                 let mask_buffer_opt = attention_bias_buffer.as_ref();
                 let sinks_buffer_opt = sinks_buffer.as_ref();
@@ -408,11 +394,11 @@ impl EncodableBlock<Metal> for Attention {
             KernelVariant::TwoPass => {
                 let kernel_pass1 = match self.two_pass_1_kernels.get(&kernel_key) {
                     Some(k) => k,
-                    None => panic!("Can not find AttentionTwoPass1MetalKernel for key {:?}", kernel_key),
+                    None => panic!("Can not find AttentionTwoPass1Kernel for key {:?}", kernel_key),
                 };
                 let kernel_pass2 = match self.two_pass_2_kernels.get(&(head_dim as u32)) {
                     Some(k) => k,
-                    None => panic!("Can not find AttentionTwoPass2MetalKernel for key {:?}", kernel_key),
+                    None => panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key),
                 };
 
                 let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);

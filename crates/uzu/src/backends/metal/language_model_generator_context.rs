@@ -140,7 +140,7 @@ pub struct LanguageModelGeneratorContext {
     pub model_config: LanguageModelConfig,
     pub decoder_config: Rc<DecoderConfig>,
     pub model_shape: ModelShape,
-    pub executables: Decoder,
+    pub executables: Decoder<Metal>,
     pub kv_cache_update: Box<KVCacheUpdate<Metal>>,
     pub gpu_sampler: Sampling<Metal>,
     pub seed: PRng,

@@ -6,7 +6,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use super::{
     MetalContext,
     encodable_block::{
-        ClassifierLayer, ClassifierPredictionHead,
+        ClassifierLayer,
         transformer_layer::{embed_block, linear_block},
     },
     kernel::dsl::SigmoidMetalKernel,
@@ -18,7 +18,7 @@ use crate::{
         metal::{Metal, error::ClassifierError},
     },
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{Activation, EncodableBlock, Normalization, Pooling, Rope},
+    encodable_block::{Activation, ClassifierPredictionHead, EncodableBlock, Normalization, Pooling, Rope},
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
@@ -40,7 +40,7 @@ pub struct ClassifierContext {
 
     pub embed: Box<dyn EncodableBlock<Metal>>,
     pub embedding_norm: Normalization<Metal>,
-    pub layers: Box<[ClassifierLayer]>,
+    pub layers: Box<[ClassifierLayer<Metal>]>,
     pub output_norm: Normalization<Metal>,
     pub global_rope: Rc<Box<dyn EncodableBlock<Metal>>>,
     pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,

@@ -1,64 +1,41 @@
-use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
-use super::transformer_layer;
 use crate::{
     DataType,
     array::Array,
     backends::{
         common::{
-            Context,
+            Backend, CommandBuffer, Context, Kernels,
             kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
         },
-        metal::{
-            Metal, MetalContext,
-            kernel::dsl::{
-                ShortConvDecodeMetalKernel, ShortConvPackMetalKernel, ShortConvPrefillMetalKernel,
-                ShortConvTrieMetalKernel,
-            },
-        },
+        metal::{Metal, encodable_block::transformer_layer},
     },
     config::{DecoderLayerType, ShortConvConfig},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::ParameterTree,
+    parameters::{ParameterTree, resolve_subtree},
 };
 
-pub(crate) struct ShortConvMixer {
+pub struct ShortConvMixer<B: Backend> {
     layer_index: usize,
     config: ShortConvConfig,
     model_dim: usize,
-    in_projection: Box<dyn EncodableBlock<Metal>>,
-    out_projection: Box<dyn EncodableBlock<Metal>>,
-    short_conv_pack: ShortConvPackMetalKernel,
-    short_conv_prefill: ShortConvPrefillMetalKernel,
-    short_conv_decode: ShortConvDecodeMetalKernel,
-    short_conv_trie: ShortConvTrieMetalKernel,
-    conv_weight: Array<Metal>,
-    conv_bias: Option<Array<Metal>>,
+    in_projection: Box<dyn EncodableBlock<B>>,
+    out_projection: Box<dyn EncodableBlock<B>>,
+    short_conv_pack: <B::Kernels as Kernels>::ShortConvPackKernel,
+    short_conv_prefill: <B::Kernels as Kernels>::ShortConvPrefillKernel,
+    short_conv_decode: <B::Kernels as Kernels>::ShortConvDecodeKernel,
+    short_conv_trie: <B::Kernels as Kernels>::ShortConvTrieKernel,
+    conv_weight: Array<B>,
+    conv_bias: Option<Array<B>>,
 }
 
-fn resolve_subtree<'tree>(
-    tree: &'tree ParameterTree<MetalContext>,
-    candidates: &[&str],
-) -> ParameterTree<'tree, MetalContext> {
-    for candidate in candidates {
-        if let Ok(subtree) = tree.subtree(candidate) {
-            return subtree;
-        }
-    }
-    panic!("Could not find any of {:?} in parameter tree", candidates);
-}
-
-impl ShortConvMixer {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        mtl_context: &MetalContext,
+impl ShortConvMixer<Metal> {
+    pub fn new(
+        context: &<Metal as Backend>::Context,
         layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
         layer_index: usize,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<MetalContext>,
+        decoder_layer_loader: &ParameterTree<<Metal as Backend>::Context>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
@@ -74,7 +51,7 @@ impl ShortConvMixer {
             false,
             model_dim,
             [model_dim * 3],
-            mtl_context,
+            context,
             &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
             ArrayId::Main,
             ArrayId::SsmInProj,
@@ -86,7 +63,7 @@ impl ShortConvMixer {
             false,
             model_dim,
             [model_dim],
-            mtl_context,
+            context,
             &resolve_subtree(&mixer_tree, &["out_projection", "out_proj"]),
             ArrayId::AttentionOutput,
             ArrayId::Main,
@@ -101,14 +78,17 @@ impl ShortConvMixer {
         };
 
         let has_bias = short_conv_config.conv_config.has_biases;
-        let short_conv_pack =
-            ShortConvPackMetalKernel::new(mtl_context, data_type).expect("Failed to create short conv pack kernel");
-        let short_conv_prefill = ShortConvPrefillMetalKernel::new(mtl_context, data_type, has_bias)
-            .expect("Failed to create short conv prefill kernel");
-        let short_conv_decode = ShortConvDecodeMetalKernel::new(mtl_context, data_type, has_bias)
-            .expect("Failed to create short conv decode kernel");
-        let short_conv_trie = ShortConvTrieMetalKernel::new(mtl_context, data_type, has_bias)
-            .expect("Failed to create short conv trie kernel");
+        let short_conv_pack = <<Metal as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(context, data_type)
+            .expect("Failed to create short conv pack kernel");
+        let short_conv_prefill =
+            <<Metal as Backend>::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, has_bias)
+                .expect("Failed to create short conv prefill kernel");
+        let short_conv_decode =
+            <<Metal as Backend>::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias)
+                .expect("Failed to create short conv decode kernel");
+        let short_conv_trie =
+            <<Metal as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
+                .expect("Failed to create short conv trie kernel");
 
         Self {
             layer_index,
@@ -124,12 +104,14 @@ impl ShortConvMixer {
             conv_bias,
         }
     }
+}
 
+impl<B: Backend> ShortConvMixer<B> {
     fn encode_pipeline(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
@@ -138,23 +120,21 @@ impl ShortConvMixer {
 
         self.in_projection.encode(state, parameters, command_buffer);
 
-        let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.run_conv(state, &encoder, active_suffix_length);
-        encoder.end_encoding();
+        command_buffer.with_compute_encoder(|encoder| self.run_conv(state, &encoder, active_suffix_length));
 
         self.out_projection.encode(state, parameters, command_buffer);
 
         if parameters.wait_until_completed {
-            command_buffer.commit();
+            command_buffer.submit();
             command_buffer.wait_until_completed();
         }
     }
 
     fn encode_pipeline_with_encoder(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        parameters: &EncodingParameters<Metal>,
+        state: &mut ForwardPassState<B>,
+        encoder: &B::ComputeEncoder,
+        parameters: &EncodingParameters<B>,
     ) {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
@@ -170,7 +150,7 @@ impl ShortConvMixer {
 
     fn clear_suffix_state_valid_range(
         &self,
-        state: &ForwardPassState<Metal>,
+        state: &ForwardPassState<B>,
     ) {
         let Some(cache_layers) = state.cache_layers() else {
             return;
@@ -182,7 +162,7 @@ impl ShortConvMixer {
 
     fn set_suffix_state_valid_range(
         &self,
-        state: &ForwardPassState<Metal>,
+        state: &ForwardPassState<B>,
         start: usize,
         len: usize,
     ) {
@@ -196,8 +176,8 @@ impl ShortConvMixer {
 
     fn run_conv(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        compute: &B::ComputeEncoder,
         active_suffix_length: usize,
     ) {
         self.clear_suffix_state_valid_range(state);
@@ -235,8 +215,8 @@ impl ShortConvMixer {
 
     fn run_prefill_conv(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        compute: &B::ComputeEncoder,
         suffix_length: usize,
     ) {
         if self.model_dim == 0 || suffix_length == 0 {
@@ -265,7 +245,7 @@ impl ShortConvMixer {
         let element_size = data_type.size_in_bytes();
         let padded_rows = state_stride + suffix_length;
         let padded_size = padded_rows * self.model_dim * element_size;
-        let padded_buf = state.mtl_context().create_buffer(padded_size).expect("Failed to create padded buffer");
+        let padded_buf = state.context().create_buffer(padded_size).expect("Failed to create padded buffer");
         self.short_conv_pack.encode(
             &state_buf,
             &in_proj_buf,
@@ -295,8 +275,8 @@ impl ShortConvMixer {
 
     fn run_trie_conv(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        compute: &B::ComputeEncoder,
         sampling_start: usize,
         trie_len: usize,
     ) {
@@ -360,8 +340,8 @@ impl ShortConvMixer {
 
     fn run_decode_conv(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        compute: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        compute: &B::ComputeEncoder,
         suffix_length: usize,
     ) {
         if self.model_dim == 0 || suffix_length == 0 {
@@ -402,21 +382,19 @@ impl ShortConvMixer {
     }
 }
 
-impl EncodableBlock<Metal> for ShortConvMixer {
+impl<B: Backend> EncodableBlock<B> for ShortConvMixer<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
         if self.supports_shared_encoder() {
-            let encoder =
-                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-            self.encode_pipeline_with_encoder(state, &encoder, parameters);
-            encoder.end_encoding();
+            command_buffer
+                .with_compute_encoder(|encoder| self.encode_pipeline_with_encoder(state, &encoder, parameters));
 
             if parameters.wait_until_completed {
-                command_buffer.commit();
+                command_buffer.submit();
                 command_buffer.wait_until_completed();
             }
         } else {
@@ -430,9 +408,9 @@ impl EncodableBlock<Metal> for ShortConvMixer {
 
     fn encode_with_shared_encoder(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);
     }

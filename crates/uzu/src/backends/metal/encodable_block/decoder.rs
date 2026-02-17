@@ -2,15 +2,15 @@
 
 use std::rc::Rc;
 
-use metal::{MTLCommandBuffer, MTLComputeCommandEncoder};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
 use super::LayerExecutables;
 use crate::{
     DataType, DecoderConfig,
-    backends::metal::{
-        Metal, MetalContext,
-        encodable_block::transformer_layer::{embed_block, readout_block},
+    backends::{
+        common::Backend,
+        metal::{
+            Metal, MetalContext,
+            encodable_block::transformer_layer::{embed_block, readout_block},
+        },
     },
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{EncodableBlock, EncodingParameters, RMSNorm, Rope},
@@ -22,16 +22,16 @@ use crate::{
 };
 
 /// Full decoder executable with all layers and components.
-pub struct Decoder {
-    pub embed: Box<dyn EncodableBlock<Metal>>,
-    pub layers: Box<[LayerExecutables]>,
-    pub norm: Box<dyn EncodableBlock<Metal>>,
-    pub readout: Box<dyn EncodableBlock<Metal>>,
-    pub global_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
-    pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
+pub struct Decoder<B: Backend> {
+    pub embed: Box<dyn EncodableBlock<B>>,
+    pub layers: Box<[LayerExecutables<B>]>,
+    pub norm: Box<dyn EncodableBlock<B>>,
+    pub readout: Box<dyn EncodableBlock<B>>,
+    pub global_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
+    pub local_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
 }
 
-impl Decoder {
+impl Decoder<Metal> {
     pub fn new(
         mtl_context: Rc<MetalContext>,
         decoder_config: Rc<DecoderConfig>,
@@ -167,21 +167,21 @@ impl Decoder {
     }
 }
 
-impl EncodableBlock<Metal> for Decoder {
+impl<B: Backend> EncodableBlock<B> for Decoder<B> {
     fn encode_with_shared_encoder(
         &self,
-        _state: &mut ForwardPassState<Metal>,
-        _parameters: &EncodingParameters<Metal>,
-        _encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        _state: &mut ForwardPassState<B>,
+        _parameters: &EncodingParameters<B>,
+        _encoder: &B::ComputeEncoder,
     ) {
         unimplemented!("Decoder does not support shared encoder")
     }
 
     fn encode(
         &self,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
     ) {
         self.embed.encode(state, parameters, command_buffer);
 

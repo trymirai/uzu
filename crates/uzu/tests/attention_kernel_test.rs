@@ -13,14 +13,14 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::{AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
+            kernel::{
+                AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
+                attention::{AttentionGemmArguments, AttentionGemmBlock},
+            },
         },
         metal::{
-            MetalContext,
-            kernel::{
-                attention::{AttentionGemmArguments, AttentionGemmBlock},
-                dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
-            },
+            Metal, MetalContext,
+            kernel::dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
             metal_extensions::CommandBufferTimingExt,
         },
     },
@@ -439,7 +439,7 @@ fn run_single_pass_attention_with_is_causal(
 }
 
 fn run_gemm_attention(
-    kernel: &AttentionGemmBlock,
+    kernel: &AttentionGemmBlock<Metal>,
     context: &MetalContext,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
@@ -472,8 +472,8 @@ fn run_gemm_attention(
         keys_buffer: &key_cache_buffer,
         values_buffer: &value_cache_buffer,
         output_buffer: &output_buffer,
-        mask_buffer: mask_buffer.as_deref(),
-        sinks_buffer: sinks_buffer.as_deref(),
+        mask_buffer: mask_buffer.as_ref(),
+        sinks_buffer: sinks_buffer.as_ref(),
         num_heads,
         num_groups: num_kv_heads,
         suffix_length: seq_len,
