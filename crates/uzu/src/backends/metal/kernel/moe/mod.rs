@@ -5,7 +5,6 @@ mod experts;
 mod experts_single;
 mod experts_two_pass_decode;
 mod gather;
-mod router_topk;
 mod scatter;
 pub mod tiles_map;
 pub mod tiles_pass_a;
