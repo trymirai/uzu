@@ -19,8 +19,7 @@ pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeBlockBasesArguments, MoeExpertsArguments, MoeExpertsError, MoeExpertsTwoPassArguments,
     MoeExpertsTwoPassDecodeKernels, MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
-    MoeRouterTopKArguments, MoeRouterTopKKernel, MoeScatterArguments, MoeScatterError, MoeScatterKernels,
-    MoeScatterWithMapArguments,
+    MoeScatterArguments, MoeScatterError, MoeScatterKernels, MoeScatterWithMapArguments,
 };
 pub use ssm::{SSDPrefillArguments, SSDPrefillMode};
 

@@ -10,16 +10,16 @@ use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
     array::Array,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel},
         metal::{
             Metal, MetalContext,
             kernel::{
                 MoeGatherKernels,
-                dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+                dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
                 moe::{
                     MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernels,
-                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeRouterTopKArguments, MoeRouterTopKKernel,
-                    MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
+                    MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeScatterArguments, MoeScatterKernels,
+                    MoeScatterWithMapArguments,
                 },
             },
         },
@@ -38,9 +38,8 @@ enum RouterBlock {
 
 pub struct MoeBlock {
     router: RouterBlock,
-    router_data_type: DataType,
     router_renorm: bool,
-    router_topk_kernel: MoeRouterTopKKernel,
+    router_topk_kernel: MoeRouterTopKMetalKernel,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_kernels: MoeScatterKernels,
     gather_kernels: MoeGatherKernels,
@@ -104,7 +103,7 @@ impl MoeBlock {
             },
         };
 
-        let router_topk_kernel = MoeRouterTopKKernel::new(context).map_err(|e| {
+        let router_topk_kernel = MoeRouterTopKMetalKernel::new(context, router_data_type).map_err(|e| {
             crate::backends::metal::MetalError::Generic(format!("RouterTopK fused kernel error: {:?}", e))
         })?;
         let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context).map_err(|e| {
@@ -164,7 +163,6 @@ impl MoeBlock {
 
         Ok(Self {
             router,
-            router_data_type,
             router_renorm,
             router_topk_kernel,
             counts_offsets_kernel,
@@ -301,25 +299,35 @@ impl EncodableBlock<Metal> for MoeBlock {
                 weights_buf,
                 biases_buf,
             } => {
-                // Use the fused router+topk kernel
-                self.router_topk_kernel
-                    .encode(
-                        root,
-                        self.router_data_type,
-                        MoeRouterTopKArguments {
-                            input_buffer: &main_buf,
-                            weight_buffer: weights_buf,
-                            bias_buffer: biases_buf,
-                            topk_ids_buffer: &topk_ids_buf,
-                            topk_probs_buffer: &topk_probs_buf,
-                            t: suffix_length,
-                            d_model: self.model_dim,
-                            e,
-                            k,
-                            renorm: self.router_renorm,
-                        },
-                    )
-                    .expect("MoE fused router+topk failed");
+                if self.model_dim % 4 != 0 {
+                    panic!("MoE fused router+topk failed: {} % 4 != 0", self.model_dim);
+                }
+                if e > 512 {
+                    panic!("MoE fused router+topk failed: {e} > 512");
+                }
+                if k > 128 {
+                    panic!("MoE fused router+bottomk failed: {k} > 128");
+                }
+
+                if suffix_length > 0 && e > 0 && k > 0 {
+                    let encoder =
+                        command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
+                    // Use the fused router+topk kernel
+                    self.router_topk_kernel.encode(
+                        &main_buf,
+                        weights_buf,
+                        biases_buf,
+                        &topk_ids_buf,
+                        &topk_probs_buf,
+                        suffix_length as u32,
+                        self.model_dim as u32,
+                        e as u32,
+                        k as u32,
+                        self.router_renorm,
+                        &encoder,
+                    );
+                    encoder.end_encoding();
+                }
             },
         }
 

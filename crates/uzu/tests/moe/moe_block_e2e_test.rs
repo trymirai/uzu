@@ -4,15 +4,14 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel},
+        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel},
         metal::{
             MetalContext,
             kernel::{
                 MoeBlockBasesArguments, MoeScatterKernels, MoeScatterWithMapArguments,
-                dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel},
+                dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
                 moe::{
                     MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillKernel, MoeGatherArguments, MoeGatherKernels,
-                    MoeRouterTopKArguments, MoeRouterTopKKernel,
                 },
             },
         },
@@ -350,25 +349,22 @@ fn run_moe_parity_test_internal(
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     // Router + TopK (fused kernel)
-    let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router+topk");
-    router_topk
-        .encode(
-            &cb,
-            DataType::BF16,
-            MoeRouterTopKArguments {
-                input_buffer: &x_buf,
-                weight_buffer: &router_w_buf,
-                bias_buffer: &router_b_buf,
-                topk_ids_buffer: &topk_ids_buf,
-                topk_probs_buffer: &topk_probs_buf,
-                t,
-                d_model,
-                e,
-                k,
-                renorm: true,
-            },
-        )
-        .expect("router+topk encode");
+    let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk");
+    let router_topk_encoder = cb.new_compute_command_encoder().expect("router+topk_encoder");
+    router_topk.encode(
+        &x_buf,
+        &router_w_buf,
+        &router_b_buf,
+        &topk_ids_buf,
+        &topk_probs_buf,
+        t as u32,
+        d_model as u32,
+        e as u32,
+        k as u32,
+        true,
+        &router_topk_encoder,
+    );
+    router_topk_encoder.end_encoding();
 
     let fused_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
     let encoder = cb.new_compute_command_encoder().expect("encoder");

@@ -17,7 +17,6 @@ pub use experts::{
 pub use experts_single::{MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels};
 pub use experts_two_pass_decode::MoeExpertsTwoPassDecodeKernels;
 pub use gather::{MoeGatherArguments, MoeGatherKernels};
-pub use router_topk::{MoeRouterTopKArguments, MoeRouterTopKError, MoeRouterTopKKernel};
 pub use scatter::{MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments};
 pub use tiles_pass_a::{
     MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments, MoePassATileDispatchArguments,

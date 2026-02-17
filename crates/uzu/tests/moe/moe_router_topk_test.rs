@@ -1,13 +1,13 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
-    backends::metal::{
-        MetalContext,
-        kernel::moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+    backends::{
+        common::kernel::MoeRouterTopKKernel,
+        metal::{MetalContext, kernel::dsl::MoeRouterTopKMetalKernel},
     },
 };
 
@@ -129,7 +129,7 @@ pub fn cpu_topk_select_f32(
 
 fn run_router_topk_once(
     ctx: &MetalContext,
-    kernel: &MoeRouterTopKKernel,
+    kernel: &MoeRouterTopKMetalKernel,
     t: usize,
     d_model: usize,
     e: usize,
@@ -158,19 +158,21 @@ fn run_router_topk_once(
     let probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let args = MoeRouterTopKArguments {
-        input_buffer: &input_buf,
-        weight_buffer: &weight_buf,
-        bias_buffer: &bias_buf,
-        topk_ids_buffer: &ids_buf,
-        topk_probs_buffer: &probs_buf,
-        t,
-        d_model,
-        e,
-        k,
+    let encoder = cb.new_compute_command_encoder().expect("Failed to create command encoder");
+    kernel.encode(
+        &input_buf,
+        &weight_buf,
+        &bias_buf,
+        &ids_buf,
+        &probs_buf,
+        t as u32,
+        d_model as u32,
+        e as u32,
+        k as u32,
         renorm,
-    };
-    kernel.encode(&cb, DataType::BF16, args).expect("encode fused router+topk");
+        &encoder,
+    );
+    encoder.end_encoding();
     cb.commit();
     cb.wait_until_completed();
 
@@ -221,7 +223,7 @@ fn run_router_topk_once(
 #[test]
 fn test_router_topk_fused_matches_reference() {
     let ctx = create_ctx();
-    let kernel = MoeRouterTopKKernel::new(&ctx).expect("kernel");
+    let kernel = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("kernel");
 
     let configs =
         [(1usize, 64usize, 32usize, 4usize), (2, 128, 64, 8), (4, 256, 128, 16), (8, 256, 256, 32), (1, 512, 512, 64)];

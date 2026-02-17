@@ -20,7 +20,7 @@ KERNEL(MoeRouterTopK)(
     constant uint& d_model,
     constant uint& e,
     constant uint& k,
-    constant uint& renorm,
+    constant bool& renorm,
     threadgroup float4 x_cache[1024],
     threadgroup float logits_shared[MAX_EXPERTS],
     threadgroup uint idx_shared[MAX_EXPERTS],
@@ -131,7 +131,7 @@ KERNEL(MoeRouterTopK)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
-  if (lid == 0 && renorm != 0 && effective_k > 0) {
+  if (lid == 0 && renorm && effective_k > 0) {
     device ScalarT* out_probs = topk_probs + token_idx * k;
     float max_logit = -INFINITY;
     for (uint i = 0; i < effective_k; ++i) {
