@@ -12,7 +12,7 @@ use crate::{
     backends::{
         common::kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
-            MoeScatterBucketsKernel,
+            MoeScatterBucketsKernel, MoeScatterBucketsMapKernel,
         },
         metal::{
             Metal, MetalContext,
@@ -20,7 +20,7 @@ use crate::{
                 MoeGatherKernels,
                 dsl::{
                     MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
-                    MoeRouterTopKMetalKernel, MoeScatterBucketsMetalKernel,
+                    MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel, MoeScatterBucketsMetalKernel,
                 },
                 moe::{
                     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
@@ -47,7 +47,7 @@ pub struct MoeBlock {
     router_topk_kernel: MoeRouterTopKMetalKernel,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
     scatter_bases_kernel: MoeBlockBasesFromPartialsMetalKernel,
-    scatter_kernel: MoeScatterBucketsMetalKernel,
+    scatter_map_kernel: MoeScatterBucketsMapMetalKernel,
     gather_kernels: MoeGatherKernels,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeBlock,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillBlock,
@@ -122,7 +122,7 @@ impl MoeBlock {
                 e
             ))
         })?;
-        let scatter_kernel = MoeScatterBucketsMetalKernel::new(context, data_type).map_err(|e| {
+        let scatter_map_kernel = MoeScatterBucketsMapMetalKernel::new(context, data_type).map_err(|e| {
             crate::backends::metal::MetalError::Generic(format!("MoeScatterBucketsMetalKernel kernel error: {:?}", e))
         })?;
 
@@ -182,7 +182,7 @@ impl MoeBlock {
             router_topk_kernel,
             counts_offsets_kernel,
             scatter_bases_kernel,
-            scatter_kernel,
+            scatter_map_kernel,
             gather_kernels,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
@@ -382,8 +382,8 @@ impl EncodableBlock<Metal> for MoeBlock {
 
         let scatter_encoder = command_buffer
             .new_compute_command_encoder()
-            .expect("Failed to create compute command encoder for scatter kernel");
-        self.scatter_kernel.encode(
+            .expect("Failed to create compute command encoder for scatter map kernel");
+        self.scatter_map_kernel.encode(
             &topk_ids_buf,
             &topk_probs_buf,
             &offsets_buf,
@@ -396,6 +396,7 @@ impl EncodableBlock<Metal> for MoeBlock {
             k as u32,
             num_blocks as u32,
             num_tiles as u32,
+            &tok2row_buf,
             &scatter_encoder,
         );
         scatter_encoder.end_encoding();
