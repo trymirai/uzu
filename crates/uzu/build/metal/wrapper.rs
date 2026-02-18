@@ -17,7 +17,7 @@ pub fn wrappers(kernels: &[MetalKernelInfo]) -> anyhow::Result<(Box<[Box<str>]>,
         let specialize_count = kernel
             .arguments
             .iter()
-            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+            .filter(|argument| matches!(argument.argument_type(), Ok(MetalArgumentType::Specialize(_))))
             .count();
 
         if specialize_count > 0 {
@@ -38,16 +38,20 @@ fn kernel_wrappers(
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
-    let specialize_constants = if let Some(&base) = base_index {
+    let specialize_constants = if let Some(&base_function_constant_index) = base_index {
         kernel
             .arguments
             .iter()
-            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+            .filter(|argument| matches!(argument.argument_type(), Ok(MetalArgumentType::Specialize(_))))
             .enumerate()
-            .map(|(i, a)| {
-                let c_type = a.c_type.trim_start_matches("const ");
-                let idx = base + i;
-                format!("constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n", kernel.name, a.name)
+            .map(|(specialization_argument_offset, argument)| {
+                let specialization_type_name = argument.type_facts.to_specialization_type_name();
+
+                let function_constant_index = base_function_constant_index + specialization_argument_offset;
+                format!(
+                    "constant {specialization_type_name} __dsl_specialize_{}_{} [[function_constant({function_constant_index})]];\n",
+                    kernel.name, argument.name
+                )
             })
             .collect::<String>()
     } else {
@@ -59,12 +63,12 @@ fn kernel_wrappers(
             .iter()
             .map(|type_parameter| type_parameter.variants.iter())
             .multi_cartesian_product()
-            .map(|values| {
+            .map(|variant_values| {
                 Some(
                     variants
                         .iter()
-                        .map(|tp| tp.name.to_string())
-                        .zip(values.iter().map(|v| v.to_string()))
+                        .map(|template_parameter| template_parameter.name.to_string())
+                        .zip(variant_values.iter().map(|variant_value| variant_value.to_string()))
                         .collect::<Vec<_>>(),
                 )
             })
@@ -74,8 +78,15 @@ fn kernel_wrappers(
     } {
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
-                static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),
-                format!("{}<{}>", kernel.name, type_variant.iter().map(|(_k, v)| v).join(", ")),
+                static_mangle(
+                    kernel.name.as_ref(),
+                    type_variant.iter().map(|(_parameter_name, parameter_value)| parameter_value.as_str()),
+                ),
+                format!(
+                    "{}<{}>",
+                    kernel.name,
+                    type_variant.iter().map(|(_parameter_name, parameter_value)| parameter_value).join(", ")
+                ),
             )
         } else {
             (static_mangle(kernel.name.as_ref(), [] as [&str; 0]), kernel.name.to_string())
@@ -84,8 +95,9 @@ fn kernel_wrappers(
         let max_total_threads_per_threadgroup = kernel
             .arguments
             .iter()
-            .filter_map(|a| match a.argument_type() {
-                Ok(MetalArgumentType::Axis(_, l)) | Ok(MetalArgumentType::Threads(l)) => Some(format!("({l})")),
+            .filter_map(|argument| match argument.argument_type() {
+                Ok(MetalArgumentType::Axis(_, axis_extent_expression))
+                | Ok(MetalArgumentType::Threads(axis_extent_expression)) => Some(format!("({axis_extent_expression})")),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -99,19 +111,21 @@ fn kernel_wrappers(
         let mut wrapper_arguments = kernel
             .arguments
             .iter()
-            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_))))
+            .filter(|argument| {
+                matches!(argument.argument_type(), Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_)))
+            })
             .enumerate()
-            .map(|(i, a)| match a.argument_type() {
+            .map(|(buffer_index, argument)| match argument.argument_type() {
                 Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_)) => {
-                    let condition = a.argument_condition().unwrap();
+                    let condition = argument.argument_condition().unwrap();
 
-                    if let Some(condition) = condition {
+                    if let Some(condition_parameter_name) = condition {
                         format!(
                             "{} {} [[buffer({}), function_constant(__dsl_specialize_{}_{})]]",
-                            &a.c_type, a.name, i, kernel.name, condition
+                            &argument.c_type, argument.name, buffer_index, kernel.name, condition_parameter_name
                         )
                     } else {
-                        format!("{} {} [[buffer({})]]", &a.c_type, a.name, i)
+                        format!("{} {} [[buffer({})]]", &argument.c_type, argument.name, buffer_index)
                     }
                 },
                 _ => unreachable!(),
@@ -143,11 +157,13 @@ fn kernel_wrappers(
 
         let wrapper_arguments = wrapper_arguments.join(", ");
 
-        let shared_definitions = kernel.arguments.iter().filter_map(|a| match a.argument_type() {
-            Ok(MetalArgumentType::Shared(Some(len))) => {
-                Some(format!("{} {}[{}]", &a.c_type.replace('*', ""), a.name, len.as_ref(),))
+        let shared_definitions = kernel.arguments.iter().filter_map(|argument| match argument.argument_type() {
+            Ok(MetalArgumentType::Shared(Some(length_expression))) => {
+                Some(format!("{} {}[{}]", argument.c_type.replace('*', ""), argument.name, length_expression.as_ref()))
             },
-            Ok(MetalArgumentType::Shared(None)) => Some(format!("{} {}", &a.c_type.replace('&', ""), a.name)),
+            Ok(MetalArgumentType::Shared(None)) => {
+                Some(format!("{} {}", argument.c_type.replace('&', ""), argument.name))
+            },
             _ => None,
         });
 
@@ -158,12 +174,12 @@ fn kernel_wrappers(
             kernel
                 .arguments
                 .iter()
-                .map(|a| match a.argument_type().unwrap() {
+                .map(|argument| match argument.argument_type().unwrap() {
                     MetalArgumentType::Buffer | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_) => {
-                        a.name.to_string()
+                        argument.name.to_string()
                     },
                     MetalArgumentType::Specialize(_) => {
-                        format!("__dsl_specialize_{}_{}", kernel.name, a.name)
+                        format!("__dsl_specialize_{}_{}", kernel.name, argument.name)
                     },
                     MetalArgumentType::Axis(..) => {
                         format!("__dsl_axis_idx.{}", group_axis_letters.next().unwrap())
@@ -182,21 +198,26 @@ fn kernel_wrappers(
 
         let underlying_call = format!("{underlying_name}({underlying_arguments})");
 
-        let wrapper_body =
-            shared_definitions.chain(once(underlying_call)).map(|l| format!("  {l};\n")).collect::<Vec<_>>().join("");
+        let wrapper_body = shared_definitions
+            .chain(once(underlying_call))
+            .map(|line| format!("  {line};\n"))
+            .collect::<Vec<_>>()
+            .join("");
 
-        let (defs, undefs) = type_variant
+        let (macro_definitions, macro_undefinitions) = type_variant
             .unwrap_or_default()
             .iter()
-            .map(|(k, v)| (format!("\n#define {k} {v}"), format!("#undef {k}\n")))
+            .map(|(parameter_name, parameter_value)| {
+                (format!("\n#define {parameter_name} {parameter_value}"), format!("#undef {parameter_name}\n"))
+            })
             .collect::<(Vec<_>, Vec<_>)>();
 
-        let defs = defs.join("");
-        let undefs = undefs.join("");
+        let macro_definitions = macro_definitions.join("");
+        let macro_undefinitions = macro_undefinitions.join("");
 
         kernel_wrappers.push(
             format!(
-                "{defs}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
+                "{macro_definitions}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{macro_undefinitions}"
             )
             .into(),
         );

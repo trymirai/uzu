@@ -108,6 +108,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
     let kernel_traits = quote! {
         use crate::backends::common::{Backend, NativeBuffer};
+        use crate::backends::common::gpu_types::*;
         use crate::DataType;
 
         pub trait BufferArg<'a, B: NativeBuffer> {
