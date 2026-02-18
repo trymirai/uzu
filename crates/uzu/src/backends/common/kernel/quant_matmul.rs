@@ -1,35 +1,21 @@
 use std::collections::HashMap;
 
-use metal::{MTLBuffer, MTLComputeCommandEncoder};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
 use crate::{
     DataType,
-    backends::{
-        common::kernel::{
+    backends::common::{
+        Backend, Kernels,
+        kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
             QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
-            matmul::{
-                QuantizedMatmulArguments as GenericQuantizedMatmulArguments, QuantizedMatmulConfiguration,
-                QuantizedMatmulKernel as QuantizedMatmulKernelTrait, QuantizedMatmulType,
-            },
-        },
-        metal::{
-            Metal, MetalContext, MetalError,
-            kernel::dsl::{
-                QuantizedMatmulQmmMetalKernel, QuantizedMatmulQmmTransposed64x64MetalKernel,
-                QuantizedMatmulQmmTransposedMetalKernel, QuantizedMatmulQmvFastMetalKernel,
-                QuantizedMatmulQmvMetalKernel, QuantizedMatmulQvmMetalKernel,
-            },
         },
     },
     config::QuantizationMode,
 };
 
 #[derive(Debug, thiserror::Error)]
-pub enum QuantizedMatmulError {
-    #[error("Metal error: {0}")]
-    MetalError(#[from] MetalError),
+pub enum QuantizedMatmulError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
     #[error("Unsupported group size: {0}")]
@@ -50,21 +36,51 @@ pub enum QuantizedMatmulError {
     MissingKernel(&'static str),
 }
 
-pub struct QuantizedMatmulKernel {
-    kernels: HashMap<KernelKey, EncodableVariant>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizedMatmulType {
+    ZeroPoint,
+    Mlx,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct QuantizedMatmulConfiguration {
+    pub data_type: DataType,
+    pub group_size: usize,
+    pub input_dim: usize,
+    pub output_dim: usize,
+    pub mode: QuantizationMode,
+    pub quantization_type: QuantizedMatmulType,
+    pub weights_transposed: bool,
+}
+
+pub struct QuantizedMatmulArguments<'a, B: Backend> {
+    pub a_buffer: &'a B::NativeBuffer,
+    pub a_offset: usize,
+    pub b_buffer: &'a B::NativeBuffer,
+    pub scales_buffer: &'a B::NativeBuffer,
+    pub zero_points_or_biases_buffer: &'a B::NativeBuffer,
+    pub output_buffer: &'a B::NativeBuffer,
+    pub batch: usize,
+    pub input_dim: usize,
+    pub output_dim: usize,
+    pub quantization_type: QuantizedMatmulType,
+}
+
+pub struct QuantizedMatmulKernelEncodable<B: Backend> {
+    kernels: HashMap<KernelKey, EncodableVariant<B>>,
     matrix_vector_key: KernelKey,
     matrix_matrix_key: KernelKey,
     output_dim: usize,
     quantization_type: QuantizedMatmulType,
 }
 
-enum EncodableVariant {
-    Qmv(QuantizedMatmulQmvMetalKernel),
-    QmvFast(QuantizedMatmulQmvFastMetalKernel),
-    Qvm(QuantizedMatmulQvmMetalKernel),
-    Qmm(QuantizedMatmulQmmMetalKernel),
-    QmmTransposed(QuantizedMatmulQmmTransposedMetalKernel),
-    QmmTransposed64x64(QuantizedMatmulQmmTransposed64x64MetalKernel),
+enum EncodableVariant<B: Backend> {
+    Qmv(<B::Kernels as Kernels>::QuantizedMatmulQmvKernel),
+    QmvFast(<B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel),
+    Qvm(<B::Kernels as Kernels>::QuantizedMatmulQvmKernel),
+    Qmm(<B::Kernels as Kernels>::QuantizedMatmulQmmKernel),
+    QmmTransposed(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel),
+    QmmTransposed64x64(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,11 +111,11 @@ enum RuntimeVariant {
     MatrixMatrix,
 }
 
-impl QuantizedMatmulKernel {
+impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
     pub fn new(
-        context: &MetalContext,
+        context: &B::Context,
         configuration: QuantizedMatmulConfiguration,
-    ) -> Result<Self, QuantizedMatmulError> {
+    ) -> Result<Self, QuantizedMatmulError<B>> {
         validate_configuration(&configuration)?;
 
         let bits = quant_bits(configuration.mode)?;
@@ -145,9 +161,9 @@ impl QuantizedMatmulKernel {
 
     pub fn encode(
         &self,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        arguments: GenericQuantizedMatmulArguments<Metal>,
-    ) -> Result<(), QuantizedMatmulError> {
+        encoder: &B::ComputeEncoder,
+        arguments: QuantizedMatmulArguments<B>,
+    ) -> Result<(), QuantizedMatmulError<B>> {
         if arguments.quantization_type != self.quantization_type {
             return Err(QuantizedMatmulError::QuantizationTypeMismatch {
                 kernel: self.quantization_type,
@@ -164,7 +180,7 @@ impl QuantizedMatmulKernel {
         let k = to_i32("input_dim", arguments.input_dim)?;
         let n = to_i32("output_dim", arguments.output_dim)?;
         let m = to_i32("batch", arguments.batch)?;
-        let (zero_points, biases) = quant_buffers(arguments.zero_points_or_biases_buffer, self.quantization_type);
+        let (zero_points, biases) = quant_buffers::<B>(arguments.zero_points_or_biases_buffer, self.quantization_type);
         let a_with_offset = (arguments.a_buffer, arguments.a_offset);
 
         match kernel {
@@ -269,100 +285,72 @@ impl QuantizedMatmulKernel {
     }
 }
 
-impl QuantizedMatmulKernelTrait for QuantizedMatmulKernel {
-    type Backend = Metal;
-
-    fn new(
-        context: &MetalContext,
-        configuration: QuantizedMatmulConfiguration,
-    ) -> Result<Self, MetalError> {
-        QuantizedMatmulKernel::new(context, configuration).map_err(|error| MetalError::Generic(format!("{error:?}")))
-    }
-
-    fn encode(
-        &self,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        arguments: GenericQuantizedMatmulArguments<Metal>,
-    ) {
-        QuantizedMatmulKernel::encode(self, encoder, arguments).expect("Failed to encode quantized matmul");
-    }
-}
-
-fn create_matrix_vector_kernel(
-    context: &MetalContext,
+fn create_matrix_vector_kernel<B: Backend>(
+    context: &B::Context,
     data_type: DataType,
     group_size: usize,
     bits: usize,
     use_mlx_quant: bool,
     family: MatrixVectorFamily,
-) -> Result<EncodableVariant, QuantizedMatmulError> {
+) -> Result<EncodableVariant<B>, QuantizedMatmulError<B>> {
     let group_size = to_i32("group_size", group_size)?;
     let bits = to_i32("bits", bits)?;
     let use_zero_points = !use_mlx_quant;
 
     let kernel = match family {
-        MatrixVectorFamily::Qmv => EncodableVariant::Qmv(QuantizedMatmulQmvMetalKernel::new(
-            context,
-            data_type,
-            group_size,
-            bits,
-            use_zero_points,
-            use_mlx_quant,
-        )?),
-        MatrixVectorFamily::QmvFast => EncodableVariant::QmvFast(QuantizedMatmulQmvFastMetalKernel::new(
-            context,
-            data_type,
-            group_size,
-            bits,
-            use_zero_points,
-            use_mlx_quant,
-        )?),
-        MatrixVectorFamily::Qvm => EncodableVariant::Qvm(QuantizedMatmulQvmMetalKernel::new(
-            context,
-            data_type,
-            group_size,
-            bits,
-            use_zero_points,
-            use_mlx_quant,
-        )?),
+        MatrixVectorFamily::Qmv => EncodableVariant::Qmv(
+            <B::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixVectorFamily::QmvFast => EncodableVariant::QmvFast(
+            <B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixVectorFamily::Qvm => EncodableVariant::Qvm(
+            <B::Kernels as Kernels>::QuantizedMatmulQvmKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
     };
 
     Ok(kernel)
 }
 
-fn create_matrix_matrix_kernel(
-    context: &MetalContext,
+fn create_matrix_matrix_kernel<B: Backend>(
+    context: &B::Context,
     data_type: DataType,
     group_size: usize,
     bits: usize,
     use_mlx_quant: bool,
     family: MatrixMatrixFamily,
-) -> Result<EncodableVariant, QuantizedMatmulError> {
+) -> Result<EncodableVariant<B>, QuantizedMatmulError<B>> {
     let group_size = to_i32("group_size", group_size)?;
     let bits = to_i32("bits", bits)?;
     let use_zero_points = !use_mlx_quant;
 
     let kernel = match family {
-        MatrixMatrixFamily::QmmAlignedK => EncodableVariant::Qmm(QuantizedMatmulQmmMetalKernel::new(
-            context,
-            data_type,
-            group_size,
-            bits,
-            use_zero_points,
-            use_mlx_quant,
-            true,
-        )?),
-        MatrixMatrixFamily::QmmUnalignedK => EncodableVariant::Qmm(QuantizedMatmulQmmMetalKernel::new(
-            context,
-            data_type,
-            group_size,
-            bits,
-            use_zero_points,
-            use_mlx_quant,
-            false,
-        )?),
-        MatrixMatrixFamily::QmmTransposedAlignedN => {
-            EncodableVariant::QmmTransposed(QuantizedMatmulQmmTransposedMetalKernel::new(
+        MatrixMatrixFamily::QmmAlignedK => EncodableVariant::Qmm(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -370,10 +358,11 @@ fn create_matrix_matrix_kernel(
                 use_zero_points,
                 use_mlx_quant,
                 true,
-            )?)
-        },
-        MatrixMatrixFamily::QmmTransposedUnalignedN => {
-            EncodableVariant::QmmTransposed(QuantizedMatmulQmmTransposedMetalKernel::new(
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixMatrixFamily::QmmUnalignedK => EncodableVariant::Qmm(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -381,24 +370,52 @@ fn create_matrix_matrix_kernel(
                 use_zero_points,
                 use_mlx_quant,
                 false,
-            )?)
-        },
-        MatrixMatrixFamily::QmmTransposed64x64 => {
-            EncodableVariant::QmmTransposed64x64(QuantizedMatmulQmmTransposed64x64MetalKernel::new(
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixMatrixFamily::QmmTransposedAlignedN => EncodableVariant::QmmTransposed(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
                 context,
                 data_type,
                 group_size,
                 bits,
                 use_zero_points,
                 use_mlx_quant,
-            )?)
-        },
+                true,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixMatrixFamily::QmmTransposedUnalignedN => EncodableVariant::QmmTransposed(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+                false,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixMatrixFamily::QmmTransposed64x64 => EncodableVariant::QmmTransposed64x64(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
     };
 
     Ok(kernel)
 }
 
-fn validate_configuration(configuration: &QuantizedMatmulConfiguration) -> Result<(), QuantizedMatmulError> {
+fn validate_configuration<B: Backend>(
+    configuration: &QuantizedMatmulConfiguration
+) -> Result<(), QuantizedMatmulError<B>> {
     if !matches!(configuration.data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
         return Err(QuantizedMatmulError::UnsupportedDataType(configuration.data_type));
     }
@@ -447,7 +464,7 @@ fn select_matrix_matrix_family(
     }
 }
 
-fn quant_bits(mode: QuantizationMode) -> Result<usize, QuantizedMatmulError> {
+fn quant_bits<B: Backend>(mode: QuantizationMode) -> Result<usize, QuantizedMatmulError<B>> {
     let bits = match mode {
         QuantizationMode::UInt4 => 4,
         QuantizationMode::UInt8 | QuantizationMode::Int8 => 8,
@@ -459,20 +476,20 @@ fn quant_bits(mode: QuantizationMode) -> Result<usize, QuantizedMatmulError> {
     }
 }
 
-fn to_i32(
+fn to_i32<B: Backend>(
     name: &'static str,
     value: usize,
-) -> Result<i32, QuantizedMatmulError> {
+) -> Result<i32, QuantizedMatmulError<B>> {
     i32::try_from(value).map_err(|_| QuantizedMatmulError::ValueOutOfRange {
         name,
         value,
     })
 }
 
-fn quant_buffers<'a>(
-    buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+fn quant_buffers<'a, B: Backend>(
+    buffer: &'a B::NativeBuffer,
     quantization_type: QuantizedMatmulType,
-) -> (Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>, Option<&'a Retained<ProtocolObject<dyn MTLBuffer>>>) {
+) -> (Option<&'a B::NativeBuffer>, Option<&'a B::NativeBuffer>) {
     match quantization_type {
         QuantizedMatmulType::ZeroPoint => (Some(buffer), None),
         QuantizedMatmulType::Mlx => (None, Some(buffer)),

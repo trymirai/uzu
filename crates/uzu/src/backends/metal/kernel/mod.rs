@@ -6,7 +6,6 @@ pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default
 
 pub mod matmul;
 pub mod moe;
-pub mod quant_matmul;
 
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
@@ -16,5 +15,4 @@ pub use moe::{
 
 impl MatmulKernels for dsl::MetalKernels {
     type FullPrecisionMatmulKernel = MatmulKernel;
-    type QuantizedMatmulKernel = quant_matmul::QuantizedMatmulKernel;
 }
