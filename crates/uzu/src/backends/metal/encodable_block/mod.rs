@@ -11,7 +11,6 @@ mod decoder;
 mod embedding;
 mod layer;
 mod linear;
-mod moe_block;
 pub mod transformer_layer;
 
 pub use classifier_layer::ClassifierLayer;
@@ -22,4 +21,3 @@ pub use embedding::{
 };
 pub use layer::LayerExecutables;
 pub use linear::{FullPrecisionLinear, QuantizedLinear};
-pub use moe_block::{MoeBlock, SharedMoeWeights};

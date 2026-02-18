@@ -1,14 +1,8 @@
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder};
-use objc2::{__framework_prelude::ProtocolObject, Message, rc::Retained};
-
 use crate::{
     DataType,
-    backends::{
-        common::kernel::{MoeExpertsDecodeSinglePassAKernel as _, MoeExpertsDecodeSinglePassBKernel as _},
-        metal::{
-            MetalContext, MetalError,
-            kernel::dsl::{MoeExpertsDecodeSinglePassAMetalKernel, MoeExpertsDecodeSinglePassBMetalKernel},
-        },
+    backends::common::{
+        Backend, CommandBuffer, Kernels,
+        kernel::{MoeExpertsDecodeSinglePassAKernel, MoeExpertsDecodeSinglePassBKernel},
     },
 };
 
@@ -16,25 +10,25 @@ static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 
 /// Arguments for single-token MoE decode (T=1 optimized path)
 #[derive(Debug)]
-pub struct MoeExpertsSingleDecodeArguments<'a> {
+pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     /// Input activation [d_model]
-    pub x: &'a ProtocolObject<dyn MTLBuffer>,
+    pub x: &'a B::NativeBuffer,
     /// Top-K expert indices from router [K]
-    pub topk_ids: &'a ProtocolObject<dyn MTLBuffer>,
+    pub topk_ids: &'a B::NativeBuffer,
     /// Top-K probabilities from router [K]
-    pub topk_probs: &'a ProtocolObject<dyn MTLBuffer>,
+    pub topk_probs: &'a B::NativeBuffer,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w13_all: &'a B::NativeBuffer,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: &'a ProtocolObject<dyn MTLBuffer>,
+    pub w2_all: &'a B::NativeBuffer,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: &'a ProtocolObject<dyn MTLBuffer>,
+    pub up_biases: &'a B::NativeBuffer,
     /// Down biases [E, d_model]
-    pub down_biases: &'a ProtocolObject<dyn MTLBuffer>,
+    pub down_biases: &'a B::NativeBuffer,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a ProtocolObject<dyn MTLBuffer>,
+    pub hidden: &'a B::NativeBuffer,
     /// Final output [d_model]
-    pub y: &'a ProtocolObject<dyn MTLBuffer>,
+    pub y: &'a B::NativeBuffer,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -57,18 +51,19 @@ pub struct MoeExpertsSingleDecodeArguments<'a> {
     pub data_type: DataType,
 }
 
-pub struct MoeExpertsSingleDecodeKernels {
-    pass_a: Vec<Vec<MoeExpertsDecodeSinglePassAMetalKernel>>,
-    pass_b: Vec<MoeExpertsDecodeSinglePassBMetalKernel>,
+pub struct MoeExpertsSingleDecodeKernels<B: Backend> {
+    pass_a: Vec<Vec<<B::Kernels as Kernels>::MoeExpertsDecodeSinglePassAKernel>>,
+    pass_b: Vec<<B::Kernels as Kernels>::MoeExpertsDecodeSinglePassBKernel>,
 }
 
-impl MoeExpertsSingleDecodeKernels {
-    pub fn new(ctx: &MetalContext) -> Result<Self, MetalError> {
+impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
+    pub fn new(ctx: &B::Context) -> Result<Self, B::Error> {
         let mut pass_a = vec![];
         for gate in 0..4 {
             let mut kernels = vec![];
             for dtype in &DTYPES {
-                let kernel = MoeExpertsDecodeSinglePassAMetalKernel::new(ctx, (*dtype).into(), gate)?;
+                let kernel =
+                    <B::Kernels as Kernels>::MoeExpertsDecodeSinglePassAKernel::new(ctx, (*dtype).into(), gate)?;
                 kernels.push(kernel)
             }
             pass_a.push(kernels);
@@ -76,7 +71,7 @@ impl MoeExpertsSingleDecodeKernels {
 
         let mut pass_b = Vec::with_capacity(DTYPES.len());
         for dtype in &DTYPES {
-            pass_b.push(MoeExpertsDecodeSinglePassBMetalKernel::new(ctx, (*dtype).into())?);
+            pass_b.push(<B::Kernels as Kernels>::MoeExpertsDecodeSinglePassBKernel::new(ctx, (*dtype).into())?);
         }
 
         Ok(Self {
@@ -87,8 +82,8 @@ impl MoeExpertsSingleDecodeKernels {
 
     pub fn encode(
         &self,
-        command_buffer: &Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-        args: MoeExpertsSingleDecodeArguments,
+        command_buffer: &B::CommandBuffer,
+        args: MoeExpertsSingleDecodeArguments<B>,
     ) {
         if args.k == 0 {
             return;
@@ -98,16 +93,14 @@ impl MoeExpertsSingleDecodeKernels {
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
 
         // Pass A: x @ W13[expert] -> hidden
-        {
+        command_buffer.with_compute_encoder(|encoder| {
             let kernel = &self.pass_a[gate_idx][dtype_idx];
-            let encoder =
-                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             kernel.encode(
-                &args.x.retain(),
-                &args.topk_ids.retain(),
-                &args.w13_all.retain(),
-                &args.up_biases.retain(),
-                &args.hidden.retain(),
+                args.x,
+                args.topk_ids,
+                args.w13_all,
+                args.up_biases,
+                args.hidden,
                 args.d_model as u32,
                 args.d_ff as u32,
                 args.k as u32,
@@ -118,27 +111,23 @@ impl MoeExpertsSingleDecodeKernels {
                 args.up_clip_max,
                 &encoder,
             );
-            encoder.end_encoding();
-        }
+        });
 
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
-        {
+        command_buffer.with_compute_encoder(|encoder| {
             let kernel = &self.pass_b[dtype_idx];
-            let encoder =
-                command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
             kernel.encode(
-                &args.hidden.retain(),
-                &args.topk_ids.retain(),
-                &args.topk_probs.retain(),
-                &args.w2_all.retain(),
-                &args.down_biases.retain(),
-                &args.y.retain(),
+                args.hidden,
+                args.topk_ids,
+                args.topk_probs,
+                args.w2_all,
+                args.down_biases,
+                args.y,
                 args.d_model as u32,
                 args.d_ff as u32,
                 args.k as u32,
                 &encoder,
             );
-            encoder.end_encoding();
-        }
+        });
     }
 }

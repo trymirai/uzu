@@ -1,6 +1,6 @@
 use super::{
-    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, MoeBlock,
-    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
+    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, QuantizedEmbeddingLookup,
+    QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
@@ -9,7 +9,7 @@ use crate::{
         metal::{Metal, MetalContext, MetalError},
     },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
-    encodable_block::{EncodableBlock, MlpBlock},
+    encodable_block::{EncodableBlock, MlpBlock, MoeBlock},
     forward_pass::state::ArrayId,
     parameters::ParameterTree,
 };
@@ -104,7 +104,8 @@ pub fn mlp_block(
 
     if let crate::config::MLPConfig::MixtureOfExperts(mixture_of_experts_config) = config {
         let mixture_of_experts_block =
-            MoeBlock::new(context, mixture_of_experts_config, model_dimension, hidden_dimension, parameter_tree)?;
+            MoeBlock::new(context, mixture_of_experts_config, model_dimension, hidden_dimension, parameter_tree)
+                .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
         return Ok(Box::new(mixture_of_experts_block));
     }
 

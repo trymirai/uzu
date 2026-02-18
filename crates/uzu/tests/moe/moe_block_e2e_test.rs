@@ -7,17 +7,13 @@ use uzu::{
         common::kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
+            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels},
         },
         metal::{
-            MetalContext,
-            kernel::{
-                dsl::{
-                    MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
-                    MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
-                },
-                moe::{
-                    MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels,
-                },
+            Metal, MetalContext,
+            kernel::dsl::{
+                MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
+                MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
             },
         },
     },
@@ -411,7 +407,7 @@ fn run_moe_parity_test_internal(
     );
     scatter_encoder.end_encoding();
 
-    let gather = MoeGatherKernels::new(&ctx).expect("gather");
+    let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("gather");
     gather.encode(
         &cb,
         DataType::BF16,
@@ -431,7 +427,7 @@ fn run_moe_parity_test_internal(
     let hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
 
-    let experts = MoeExpertsTwoPassPrefillBlock::new(&ctx).expect("experts");
+    let experts = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("experts");
     let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
     let args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,

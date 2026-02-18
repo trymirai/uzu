@@ -9,13 +9,14 @@ use uzu::{
         common::kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
+            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels},
         },
-        metal::kernel::{
-            dsl::{
+        metal::{
+            Metal,
+            kernel::dsl::{
                 MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
                 MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
             },
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels},
         },
     },
 };
@@ -299,8 +300,8 @@ fn test_moe_pipeline_breakdown_decode() {
         MoeBlockBasesFromPartialsMetalKernel::new(&ctx).expect("MoeBlockBasesFromPartialsMetalKernel");
     let scatter_map_kernel =
         MoeScatterBucketsMapMetalKernel::new(&ctx, DataType::BF16).expect("MoeScatterBucketsMapMetalKernel");
-    let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("experts two-pass decode");
+    let gather_kernel = MoeGatherKernels::<Metal>::new(&ctx).expect("gather");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("experts two-pass decode");
     let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
     let router_topk_fused_kernel = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused");
 
