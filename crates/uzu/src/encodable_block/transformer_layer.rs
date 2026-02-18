@@ -1,29 +1,52 @@
+use thiserror::Error;
+
 use super::{
     FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, QuantizedEmbeddingLookup,
     QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
-    backends::{
-        common::kernel::mlp_gate_act_mul::MlpGateActMulEncodable,
-        metal::{Metal, MetalContext, MetalError},
+    backends::common::{
+        Backend,
+        kernel::{matmul::MatmulKernels, mlp_gate_act_mul::MlpGateActMulEncodable},
     },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
-    encodable_block::{EncodableBlock, MlpBlock, MoeBlock},
+    encodable_block::{
+        EncodableBlock, FullPrecisionLinearError, MlpBlock, MoeBlock, QuantizedLinearError, moe_block::MoeBlockError,
+    },
     forward_pass::state::ArrayId,
-    parameters::ParameterTree,
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
-pub fn linear_block<const N: usize>(
+#[derive(Debug, Error)]
+pub enum LayerError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
+    #[error("QuantizedLinear error: {0}")]
+    QuantizedLinearError(#[source] QuantizedLinearError<B>),
+    #[error("FullPrecisionLinear error: {0}")]
+    FullPrecisionLinearError(#[source] FullPrecisionLinearError<B>),
+    #[error("MoeBlock error: {0}")]
+    MoeBlockError(#[source] MoeBlockError<B>),
+    #[error("Parameter loader error: {0}")]
+    ParameterLoaderError(#[source] ParameterLoaderError),
+    #[error("QLoRA linear layer not supported")]
+    QLoRaNotSupported,
+}
+
+pub fn linear_block<const N: usize, B: Backend + 'static>(
     config: &LinearConfig,
     _has_biases: bool,
     input_dimension: usize,
     output_dimensions: [usize; N],
-    context: &MetalContext,
-    parameter_tree: &ParameterTree<MetalContext>,
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B::Context>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock<Metal>>, MetalError> {
+) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>>
+where
+    B::Kernels: MatmulKernels,
+{
     let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
         LinearConfig::Quantized(quantization_config) | LinearConfig::MLXQuantized(quantization_config) => {
@@ -36,7 +59,7 @@ pub fn linear_block<const N: usize>(
                 input_array_id,
                 output_array_id,
             )
-            .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
+            .map_err(LayerError::QuantizedLinearError)?;
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {
@@ -51,23 +74,26 @@ pub fn linear_block<const N: usize>(
                 input_array_id,
                 output_array_id,
             )
-            .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
+            .map_err(LayerError::FullPrecisionLinearError)?;
             Ok(Box::new(block))
         },
         LinearConfig::QLoRA {
             ..
-        } => Err(MetalError::Generic("QLoRA linear layer not supported".to_string())),
+        } => Err(LayerError::QLoRaNotSupported),
     }
 }
 
 /// Creates an MLP block using the unfused implementation (separate up, activation, down)
-pub fn mlp_block(
+pub fn mlp_block<B: Backend + 'static>(
     config: &MLPConfig,
     model_dimension: usize,
     hidden_dimension: usize,
-    context: &MetalContext,
-    parameter_tree: &ParameterTree<MetalContext>,
-) -> Result<Box<dyn EncodableBlock<Metal>>, MetalError> {
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B::Context>,
+) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>>
+where
+    B::Kernels: MatmulKernels,
+{
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         let data_type: DataType = dense_config.linear_config.activation_precision().into();
 
@@ -78,14 +104,15 @@ pub fn mlp_block(
             model_dimension,
             [2 * hidden_dimension],
             context,
-            &parameter_tree.subtree("up_projection").map_err(|error| MetalError::Generic(format!("{:?}", error)))?,
+            &parameter_tree.subtree("up_projection").map_err(LayerError::ParameterLoaderError)?,
             ArrayId::Main,
             ArrayId::MlpFusedUp,
         )?;
 
         // Gate activation + multiply
         let gate_activation =
-            MlpGateActMulEncodable::new(context, data_type, dense_config.activation.clone(), hidden_dimension)?;
+            MlpGateActMulEncodable::new(context, data_type, dense_config.activation.clone(), hidden_dimension)
+                .map_err(LayerError::BackendError)?;
 
         // Down projection
         let down_projection = linear_block(
@@ -94,7 +121,7 @@ pub fn mlp_block(
             hidden_dimension,
             [model_dimension],
             context,
-            &parameter_tree.subtree("down_projection").map_err(|error| MetalError::Generic(format!("{:?}", error)))?,
+            &parameter_tree.subtree("down_projection").map_err(LayerError::ParameterLoaderError)?,
             ArrayId::MlpHidden,
             ArrayId::Main,
         )?;
@@ -105,18 +132,18 @@ pub fn mlp_block(
     if let crate::config::MLPConfig::MixtureOfExperts(mixture_of_experts_config) = config {
         let mixture_of_experts_block =
             MoeBlock::new(context, mixture_of_experts_config, model_dimension, hidden_dimension, parameter_tree)
-                .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
+                .map_err(LayerError::MoeBlockError)?;
         return Ok(Box::new(mixture_of_experts_block));
     }
 
     unreachable!("Unknown MLP config")
 }
 
-pub fn embed_block(
+pub fn embed_block<B: Backend + 'static>(
     config: &DecoderConfig,
-    context: &MetalContext,
-    parameter_tree: &ParameterTree<MetalContext>,
-) -> Box<dyn EncodableBlock<Metal>> {
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B::Context>,
+) -> Box<dyn EncodableBlock<B>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             common,
@@ -252,11 +279,14 @@ pub fn embed_block(
     }
 }
 
-pub fn readout_block(
+pub fn readout_block<B: Backend + 'static>(
     config: &DecoderConfig,
-    context: &MetalContext,
-    parameter_tree: &ParameterTree<MetalContext>,
-) -> Box<dyn EncodableBlock<Metal>> {
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B::Context>,
+) -> Box<dyn EncodableBlock<B>>
+where
+    B::Kernels: MatmulKernels,
+{
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,

@@ -3,14 +3,7 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 use metal::MTLCommandBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{
-    MetalContext,
-    encodable_block::{
-        ClassifierLayer,
-        transformer_layer::{embed_block, linear_block},
-    },
-    kernel::dsl::SigmoidMetalKernel,
-};
+use super::{MetalContext, kernel::dsl::SigmoidMetalKernel};
 use crate::{
     DataType,
     backends::{
@@ -18,7 +11,10 @@ use crate::{
         metal::{Metal, error::ClassifierError},
     },
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{Activation, ClassifierPredictionHead, EncodableBlock, Normalization, Pooling, Rope},
+    encodable_block::{
+        Activation, ClassifierLayer, ClassifierPredictionHead, EncodableBlock, Normalization, Pooling, Rope,
+        embed_block, linear_block,
+    },
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
@@ -103,7 +99,7 @@ impl ClassifierContext {
             .activation_precision()
             .into();
 
-        let embed = embed_block(&decoder_config, &context, &root_loader_view);
+        let embed = embed_block(&decoder_config, context.as_ref(), &root_loader_view);
 
         let global_rope = Self::create_rope_block(&context, data_type, RopeType::Global).map_err(Error::Classifier)?;
         let local_rope = classifier_model_config
@@ -205,12 +201,12 @@ impl ClassifierContext {
         let prediction_head_dense_tree = prediction_head_tree.subtree("dense").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.dense".to_string()))
         })?;
-        let prediction_head_dense = linear_block::<1>(
+        let prediction_head_dense = linear_block::<1, Metal>(
             &prediction_head_config.dense_config,
             prediction_head_config.use_dense_bias,
             model_dim,
             [model_dim],
-            &context,
+            context.as_ref(),
             &prediction_head_dense_tree,
             ArrayId::ClassifierPooling,
             ArrayId::ClassifierPredictionHeadDense,
@@ -247,12 +243,12 @@ impl ClassifierContext {
         let prediction_head_readout_tree = prediction_head_tree.subtree("readout").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.readout".to_string()))
         })?;
-        let prediction_head_final_linear = linear_block::<1>(
+        let prediction_head_final_linear = linear_block::<1, Metal>(
             &prediction_head_config.readout_config,
             true,
             model_dim,
             [num_labels],
-            &context,
+            context.as_ref(),
             &prediction_head_readout_tree,
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
