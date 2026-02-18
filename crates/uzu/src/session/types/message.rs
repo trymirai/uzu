@@ -43,9 +43,7 @@ impl Message {
     }
 }
 
-impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>>
-    for Message
-{
+impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>> for Message {
     fn resolve(
         &self,
         config: &MessageProcessorConfig,
@@ -56,10 +54,7 @@ impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>>
             Role::Assistant => config.assistant_role_name.clone(),
         };
         let content = self.content.clone();
-        let mut result = HashMap::from([
-            (String::from("role"), role),
-            (String::from("content"), content),
-        ]);
+        let mut result = HashMap::from([(String::from("role"), role), (String::from("content"), content)]);
         if let Some(reasoning_content) = self.reasoning_content.clone() {
             result.insert(String::from("reasoning_content"), reasoning_content);
         }

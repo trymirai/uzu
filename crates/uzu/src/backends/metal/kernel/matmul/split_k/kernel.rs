@@ -1,40 +1,32 @@
 use std::collections::HashMap;
 
-use metal::{
-    Buffer as MTLBuffer, ComputeCommandEncoderRef,
-    ComputePipelineState as MTLComputePipelineState,
-};
+use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{
-    DispatchDescriptor, pipeline_configuration::PipelineConfiguration,
-};
+use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration};
 use crate::{
     DataType,
-    backends::metal::{
-        MTLContext, MTLError,
-        kernel::matmul::common::{
-            GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
-            transpose_configuration,
+    backends::{
+        common::Context,
+        metal::{
+            ComputeEncoderSetValue, MetalContext, MetalError,
+            kernel::matmul::common::{MatmulArguments, transpose_configuration},
         },
     },
 };
 
 pub struct Kernel {
     data_type: DataType,
-    partial_pipelines: HashMap<PipelineConfiguration, MTLComputePipelineState>,
-    accum_pipeline: Option<MTLComputePipelineState>,
-    accumulator_buffer: Option<MTLBuffer>,
+    partial_pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accum_pipeline: Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    accumulator_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>>,
     accumulator_buffer_bytes: usize,
 }
 
 impl Kernel {
-    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for Split-K: {:?}",
-                data_type
-            )));
+    pub fn new(data_type: DataType) -> Result<Self, MetalError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
         }
         Ok(Self {
             data_type,
@@ -47,8 +39,8 @@ impl Kernel {
 
     pub fn precompile(
         &mut self,
-        context: &MTLContext,
-    ) -> Result<(), MTLError> {
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
         use super::tile_configuration::TileConfiguration;
 
         if !matches!(self.data_type, DataType::BF16) {
@@ -104,15 +96,12 @@ impl Kernel {
         Ok(())
     }
 
-    fn steel_type_name(&self) -> Result<&'static str, MTLError> {
+    fn steel_type_name(&self) -> Result<&'static str, MetalError> {
         match self.data_type {
             DataType::F16 => Ok("float16"),
             DataType::BF16 => Ok("bfloat16"),
             DataType::F32 => Ok("float32"),
-            _ => Err(MTLError::Generic(format!(
-                "Unsupported dtype for Split-K: {:?}",
-                self.data_type
-            ))),
+            _ => Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", self.data_type))),
         }
     }
 
@@ -123,12 +112,10 @@ impl Kernel {
     fn partial_kernel_name(
         &self,
         config: &PipelineConfiguration,
-    ) -> Result<String, MTLError> {
+    ) -> Result<String, MetalError> {
         let in_name = self.steel_type_name()?;
         let out_name = self.splitk_partial_out_name();
-        let transpose_suffix =
-            transpose_configuration(config.transpose_a, config.transpose_b)
-                .as_str();
+        let transpose_suffix = transpose_configuration(config.transpose_a, config.transpose_b).as_str();
         let mn_tag = if config.mn_aligned {
             "taligned"
         } else {
@@ -154,20 +141,16 @@ impl Kernel {
         ))
     }
 
-    fn accum_kernel_name(&self) -> Result<String, MTLError> {
+    fn accum_kernel_name(&self) -> Result<String, MetalError> {
         let out_name = self.steel_type_name()?;
-        Ok(format!(
-            "steel_gemm_splitk_accum_{}_{}",
-            out_name,
-            self.splitk_partial_out_name()
-        ))
+        Ok(format!("steel_gemm_splitk_accum_{}_{}", out_name, self.splitk_partial_out_name()))
     }
 
     fn get_partial_pipeline(
         &mut self,
-        mtl: &MTLContext,
+        mtl: &MetalContext,
         config: &PipelineConfiguration,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if !self.partial_pipelines.contains_key(config) {
             let name = self.partial_kernel_name(config)?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -178,8 +161,8 @@ impl Kernel {
 
     fn get_accum_pipeline(
         &mut self,
-        mtl: &MTLContext,
-    ) -> Result<&MTLComputePipelineState, MTLError> {
+        mtl: &MetalContext,
+    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
         if self.accum_pipeline.is_none() {
             let name = self.accum_kernel_name()?;
             let ps = mtl.compute_pipeline_state(&name, None)?;
@@ -208,84 +191,49 @@ impl Kernel {
 
     pub(crate) fn encode_descriptor(
         &mut self,
-        context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        context: &MetalContext,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
-    ) -> Result<bool, MTLError> {
+    ) -> Result<bool, MetalError> {
         self.ensure_accumulator_buffer(context, descriptor.accumulator_bytes);
-        let accumulator_buffer = self
-            .accumulator_buffer
-            .as_ref()
-            .cloned()
-            .expect("Accumulator buffer must be initialized");
+        let accumulator_buffer =
+            self.accumulator_buffer.as_ref().cloned().expect("Accumulator buffer must be initialized");
 
-        let partial_pipeline_state = self.get_partial_pipeline(
-            context,
-            &descriptor.pipeline_configuration,
-        )?;
+        let partial_pipeline_state = self.get_partial_pipeline(context, &descriptor.pipeline_configuration)?;
 
         encoder.set_compute_pipeline_state(partial_pipeline_state);
-        encoder.set_buffer(0, Some(arguments.a), arguments.a_offset);
-        encoder.set_buffer(1, Some(arguments.b), 0);
-        encoder.set_buffer(2, Some(&accumulator_buffer), 0);
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<SplitKGEMMParams>() as u64,
-            &descriptor.params as *const _ as *const _,
-        );
-        encoder.dispatch_thread_groups(
-            descriptor.partial_threadgroups,
-            descriptor.partial_threads_per_threadgroup,
-        );
+        encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
+        encoder.set_buffer(Some(arguments.b), 0, 1);
+        encoder.set_buffer(Some(&accumulator_buffer), 0, 2);
+        encoder.set_value(&descriptor.params, 3);
+        encoder.dispatch_threadgroups(descriptor.partial_threadgroups, descriptor.partial_threads_per_threadgroup);
 
         let accum_pipeline_state = self.get_accum_pipeline(context)?;
         encoder.set_compute_pipeline_state(accum_pipeline_state);
-        encoder.set_buffer(0, Some(&accumulator_buffer), 0);
-        encoder.set_buffer(1, Some(arguments.d), 0);
+        encoder.set_buffer(Some(&accumulator_buffer), 0, 0);
+        encoder.set_buffer(Some(arguments.d), 0, 1);
 
         let partition_count = descriptor.partition_count;
-        let output_elements_per_partition =
-            descriptor.output_elements_per_partition;
-        encoder.set_bytes(
-            2,
-            std::mem::size_of::<i32>() as u64,
-            &partition_count as *const i32 as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            3,
-            std::mem::size_of::<i32>() as u64,
-            &output_elements_per_partition as *const i32
-                as *const std::ffi::c_void,
-        );
-        encoder.set_bytes(
-            4,
-            std::mem::size_of::<i32>() as u64,
-            &(arguments.ldd) as *const i32 as *const std::ffi::c_void,
-        );
+        let output_elements_per_partition = descriptor.output_elements_per_partition;
+        encoder.set_value(&partition_count, 2);
+        encoder.set_value(&output_elements_per_partition, 3);
+        encoder.set_value(&arguments.ldd, 4);
 
-        encoder.dispatch_threads(
-            descriptor.accum_total_threads,
-            descriptor.accum_threads_per_threadgroup,
-        );
+        encoder.dispatch_threads(descriptor.accum_total_threads, descriptor.accum_threads_per_threadgroup);
 
         Ok(false)
     }
 
     fn ensure_accumulator_buffer(
         &mut self,
-        mtl: &MTLContext,
+        mtl: &MetalContext,
         required_bytes: usize,
     ) {
-        if required_bytes <= self.accumulator_buffer_bytes
-            && self.accumulator_buffer.is_some()
-        {
+        if required_bytes <= self.accumulator_buffer_bytes && self.accumulator_buffer.is_some() {
             return;
         }
-        self.accumulator_buffer = Some(mtl.device.new_buffer(
-            required_bytes as u64,
-            metal::MTLResourceOptions::StorageModePrivate,
-        ));
+        self.accumulator_buffer = Some(mtl.create_buffer(required_bytes).expect("Failed to create accumulator buffer"));
         self.accumulator_buffer_bytes = required_bytes;
     }
 }

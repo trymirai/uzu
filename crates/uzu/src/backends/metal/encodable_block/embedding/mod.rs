@@ -1,13 +1,16 @@
 //! Embedding encodables (quantized and full-precision).
 
-mod error;
-mod full_precision_lookup;
-mod full_precision_readout;
-mod quantized_lookup;
-mod quantized_readout;
+use super::super::Metal;
+use crate::encodable_block::{
+    FullPrecisionEmbeddingLookup as GenericFullPrecisionEmbeddingLookup,
+    FullPrecisionEmbeddingReadout as GenericFullPrecisionEmbeddingReadout,
+    QuantizedEmbeddingLookup as GenericQuantizedEmbeddingLookup,
+    QuantizedEmbeddingReadout as GenericQuantizedEmbeddingReadout,
+    QuantizedEmbeddingReadoutError as GenericQuantizedEmbeddingReadoutError,
+};
 
-pub use error::EmbeddingError;
-pub use full_precision_lookup::FullPrecisionEmbeddingLookup;
-pub use full_precision_readout::FullPrecisionEmbeddingReadout;
-pub use quantized_lookup::QuantizedEmbeddingLookup;
-pub use quantized_readout::QuantizedEmbeddingReadout;
+pub type EmbeddingError = GenericQuantizedEmbeddingReadoutError<Metal>;
+pub type QuantizedEmbeddingReadout = GenericQuantizedEmbeddingReadout<Metal>;
+pub type FullPrecisionEmbeddingReadout = GenericFullPrecisionEmbeddingReadout<Metal>;
+pub type FullPrecisionEmbeddingLookup = GenericFullPrecisionEmbeddingLookup<Metal>;
+pub type QuantizedEmbeddingLookup = GenericQuantizedEmbeddingLookup<Metal>;

@@ -1,13 +1,16 @@
 use std::time::Instant;
 
 use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::moe::{
-        MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernel,
-        MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeKernel,
-        MoeExpertsTwoPassPrefillKernel,
+use metal::{MTLCommandBuffer, MTLCommandQueue};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::{
+    DataType,
+    backends::metal::{
+        MetalContext,
+        kernel::moe::{
+            MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
+            MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
+        },
     },
 };
 
@@ -32,7 +35,7 @@ fn build_offsets(
 }
 
 fn run_decode_case(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     name: &str,
     t: usize,
     d_model: usize,
@@ -47,20 +50,14 @@ fn run_decode_case(
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
     let sum_k = t * k;
 
-    eprintln!(
-        "\n[decode/two-pass] {} => T={}, D={}, FF={}, E={}, K={}, sum_k={}",
-        name, t, d_model, d_ff, e, k, sum_k
-    );
+    eprintln!("\n[decode/two-pass] {} => T={}, D={}, FF={}, E={}, K={}, sum_k={}", name, t, d_model, d_ff, e, k, sum_k);
 
-    let x_perm: Vec<bf16> = (0..sum_k * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
+    let x_perm: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
     let offsets = build_offsets(e, sum_k);
 
     // Generate W13 in original layout [E, d_model, 2*d_ff]
-    let w13_original: Vec<bf16> = (0..e * d_model * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
+    let w13_original: Vec<bf16> =
+        (0..e * d_model * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
 
     // Transpose to GPU layout [E, 2*d_ff, d_model]
     let mut w13 = vec![bf16::from_f32(0.0); e * d_model * 2 * d_ff];
@@ -75,18 +72,11 @@ fn run_decode_case(
             }
         }
     }
-    let w2: Vec<bf16> = (0..e * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-    let down_biases: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
+    let w2: Vec<bf16> = (0..e * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
+    let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel =
-        MoeExpertsTwoPassDecodeKernel::new(ctx).expect("experts decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(ctx).expect("experts decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -138,14 +128,12 @@ fn run_decode_case(
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
         silu_alpha: 1.702,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -153,10 +141,8 @@ fn run_decode_case(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -167,14 +153,10 @@ fn run_decode_case(
     let median = times[times.len() / 2];
     let min = times[0];
     let max = times[times.len() - 1];
-    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
-        / times.len() as f64;
+    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / times.len() as f64;
     let std = var.sqrt();
 
-    eprintln!(
-        "    mean={:.3}ms median={:.3}ms min={:.3}ms max={:.3}ms std={:.3}ms",
-        mean, median, min, max, std
-    );
+    eprintln!("    mean={:.3}ms median={:.3}ms min={:.3}ms max={:.3}ms std={:.3}ms", mean, median, min, max, std);
     eprintln!("    → Latency: {:.1} µs/token", (mean / t as f64) * 1000.0);
 }
 
@@ -183,20 +165,16 @@ fn run_decode_case(
 fn test_two_pass_decode_speed() {
     let ctx = create_ctx();
 
-    let cases = vec![
-        ("T1_E16_D1024_F4096", 1, 1024, 4096, 16, 4, 3, 20),
-        ("T1_E8_D2048_F8192", 1, 2048, 8192, 8, 4, 3, 20),
-    ];
+    let cases =
+        vec![("T1_E16_D1024_F4096", 1, 1024, 4096, 16, 4, 3, 20), ("T1_E8_D2048_F8192", 1, 2048, 8192, 8, 4, 3, 20)];
 
     for (name, t, d_model, d_ff, e, k, warmup, iters) in &cases {
-        run_decode_case(
-            &ctx, name, *t, *d_model, *d_ff, *e, *k, *warmup, *iters,
-        );
+        run_decode_case(&ctx, name, *t, *d_model, *d_ff, *e, *k, *warmup, *iters);
     }
 }
 
 fn run_two_pass_prefill_case(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     name: &str,
     t: usize,
     d_model: usize,
@@ -211,19 +189,13 @@ fn run_two_pass_prefill_case(
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
     let sum_k = t * k;
 
-    eprintln!(
-        "\n[2-pass prefill] {} => T={}, D={}, FF={}, E={}, K={}, sum_k={}",
-        name, t, d_model, d_ff, e, k, sum_k
-    );
+    eprintln!("\n[2-pass prefill] {} => T={}, D={}, FF={}, E={}, K={}, sum_k={}", name, t, d_model, d_ff, e, k, sum_k);
 
-    let x_perm: Vec<bf16> = (0..sum_k * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
+    let x_perm: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
     let offsets = build_offsets(e, sum_k);
 
-    let w13_original: Vec<bf16> = (0..e * d_model * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
+    let w13_original: Vec<bf16> =
+        (0..e * d_model * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
 
     let mut w13 = vec![bf16::from_f32(0.0); e * d_model * 2 * d_ff];
     for expert in 0..e {
@@ -237,18 +209,11 @@ fn run_two_pass_prefill_case(
             }
         }
     }
-    let w2: Vec<bf16> = (0..e * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-    let down_biases: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
+    let w2: Vec<bf16> = (0..e * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
+    let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassPrefillKernel::new(ctx)
-        .expect("experts prefill kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillBlock::new(ctx).expect("experts prefill kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -296,14 +261,12 @@ fn run_two_pass_prefill_case(
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
         silu_alpha: 1.702,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass prefill encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -311,10 +274,8 @@ fn run_two_pass_prefill_case(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
-        experts_kernel
-            .encode(&cb, make_two_pass_args())
-            .expect("two-pass prefill encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        experts_kernel.encode(&cb, &make_two_pass_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -325,18 +286,11 @@ fn run_two_pass_prefill_case(
     let median = times[times.len() / 2];
     let min = times[0];
     let max = times[times.len() - 1];
-    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
-        / times.len() as f64;
+    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / times.len() as f64;
     let std = var.sqrt();
 
-    eprintln!(
-        "    mean={:.3}ms median={:.3}ms min={:.3}ms max={:.3}ms std={:.3}ms",
-        mean, median, min, max, std
-    );
-    eprintln!(
-        "    → Throughput: {:.1} µs/token (mean / sum_k)",
-        (mean / sum_k as f64) * 1000.0
-    );
+    eprintln!("    mean={:.3}ms median={:.3}ms min={:.3}ms max={:.3}ms std={:.3}ms", mean, median, min, max, std);
+    eprintln!("    → Throughput: {:.1} µs/token (mean / sum_k)", (mean / sum_k as f64) * 1000.0);
 }
 
 #[test]
@@ -351,14 +305,12 @@ fn test_two_pass_prefill_speed() {
     ];
 
     for (name, t, d_model, d_ff, e, k, warmup, iters) in cases {
-        run_two_pass_prefill_case(
-            &ctx, name, t, d_model, d_ff, e, k, warmup, iters,
-        );
+        run_two_pass_prefill_case(&ctx, name, t, d_model, d_ff, e, k, warmup, iters);
     }
 }
 
 fn run_fused_single_token_case(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     name: &str,
     d_model: usize,
     d_ff: usize,
@@ -369,39 +321,25 @@ fn run_fused_single_token_case(
 ) {
     let mut rng = StdRng::seed_from_u64(0xF053ED);
 
-    eprintln!(
-        "\n[fused single-token] {} => D={}, FF={}, E={}, K={}",
-        name, d_model, d_ff, e, k
-    );
+    eprintln!("\n[fused single-token] {} => D={}, FF={}, E={}, K={}", name, d_model, d_ff, e, k);
 
-    let x: Vec<bf16> = (0..d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
+    let x: Vec<bf16> = (0..d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
 
     let topk_ids: Vec<i32> = (0..k).map(|i| (i % e) as i32).collect();
 
     let topk_probs: Vec<bf16> = {
-        let raw: Vec<f32> =
-            (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+        let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
         let sum: f32 = raw.iter().sum();
         raw.iter().map(|p| bf16::from_f32(p / sum)).collect()
     };
 
-    let w13_all: Vec<bf16> = (0..e * 2 * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let w2_all: Vec<bf16> = (0..e * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-    let down_biases: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
+    let w13_all: Vec<bf16> =
+        (0..e * 2 * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let w2_all: Vec<bf16> = (0..e * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
+    let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let fused_kernel =
-        MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -432,12 +370,12 @@ fn run_fused_single_token_case(
         gate_clip_max: f32::INFINITY,
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -445,8 +383,8 @@ fn run_fused_single_token_case(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -457,14 +395,10 @@ fn run_fused_single_token_case(
     let median = times[times.len() / 2];
     let min = times[0];
     let max = times[times.len() - 1];
-    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
-        / times.len() as f64;
+    let var = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / times.len() as f64;
     let std = var.sqrt();
 
-    eprintln!(
-        "    mean={:.3}ms median={:.3}ms min={:.3}ms max={:.3}ms std={:.3}ms",
-        mean, median, min, max, std
-    );
+    eprintln!("    mean={:.3}ms median={:.3}ms min={:.3}ms max={:.3}ms std={:.3}ms", mean, median, min, max, std);
     eprintln!("    → Latency: {:.1} µs/token", mean * 1000.0);
 }
 
@@ -480,9 +414,7 @@ fn test_fused_single_token_speed() {
     ];
 
     for (name, d_model, d_ff, e, k, warmup, iters) in cases {
-        run_fused_single_token_case(
-            &ctx, name, d_model, d_ff, e, k, warmup, iters,
-        );
+        run_fused_single_token_case(&ctx, name, d_model, d_ff, e, k, warmup, iters);
     }
 }
 
@@ -507,24 +439,18 @@ fn test_single_token_indirect_vs_fused() {
         eprintln!("[{}] D={}, FF={}, E={}, K={}", name, d_model, d_ff, e, k);
 
         // Run indirect decode (T=1)
-        let indirect_mean = run_indirect_decode_timed(
-            &ctx, 1, d_model, d_ff, e, k, warmup, iters,
-        );
+        let indirect_mean = run_indirect_decode_timed(&ctx, 1, d_model, d_ff, e, k, warmup, iters);
 
         // Run fused decode
-        let fused_mean =
-            run_fused_decode_timed(&ctx, d_model, d_ff, e, k, warmup, iters);
+        let fused_mean = run_fused_decode_timed(&ctx, d_model, d_ff, e, k, warmup, iters);
 
         let speedup = indirect_mean / fused_mean;
-        eprintln!(
-            "    Indirect: {:.3}ms, Fused: {:.3}ms, Speedup: {:.2}x\n",
-            indirect_mean, fused_mean, speedup
-        );
+        eprintln!("    Indirect: {:.3}ms, Fused: {:.3}ms, Speedup: {:.2}x\n", indirect_mean, fused_mean, speedup);
     }
 }
 
 fn run_indirect_decode_timed(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     t: usize,
     d_model: usize,
     d_ff: usize,
@@ -538,14 +464,11 @@ fn run_indirect_decode_timed(
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
     let sum_k = t * k;
 
-    let x_perm: Vec<bf16> = (0..sum_k * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
+    let x_perm: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
     let offsets = build_offsets(e, sum_k);
 
-    let w13_original: Vec<bf16> = (0..e * d_model * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
+    let w13_original: Vec<bf16> =
+        (0..e * d_model * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
 
     let mut w13 = vec![bf16::from_f32(0.0); e * d_model * 2 * d_ff];
     for expert in 0..e {
@@ -559,18 +482,11 @@ fn run_indirect_decode_timed(
             }
         }
     }
-    let w2: Vec<bf16> = (0..e * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-    let down_biases: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
+    let w2: Vec<bf16> = (0..e * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
+    let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel =
-        MoeExpertsTwoPassDecodeKernel::new(ctx).expect("decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(ctx).expect("decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(ctx, &offsets);
@@ -617,12 +533,12 @@ fn run_indirect_decode_timed(
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
         silu_alpha: 1.0,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
-        experts_kernel.encode(&cb, make_args()).expect("encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        experts_kernel.encode(&cb, &make_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -630,8 +546,8 @@ fn run_indirect_decode_timed(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
-        experts_kernel.encode(&cb, make_args()).expect("encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        experts_kernel.encode(&cb, &make_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -641,7 +557,7 @@ fn run_indirect_decode_timed(
 }
 
 fn run_fused_decode_timed(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     d_model: usize,
     d_ff: usize,
     e: usize,
@@ -651,34 +567,23 @@ fn run_fused_decode_timed(
 ) -> f64 {
     let mut rng = StdRng::seed_from_u64(0xF053ED);
 
-    let x: Vec<bf16> = (0..d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-1.0..1.0)))
-        .collect();
+    let x: Vec<bf16> = (0..d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
 
     let topk_ids: Vec<i32> = (0..k).map(|i| (i % e) as i32).collect();
 
     let topk_probs: Vec<bf16> = {
-        let raw: Vec<f32> =
-            (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
+        let raw: Vec<f32> = (0..k).map(|_| rng.random_range(0.1..1.0)).collect();
         let sum: f32 = raw.iter().sum();
         raw.iter().map(|p| bf16::from_f32(p / sum)).collect()
     };
 
-    let w13_all: Vec<bf16> = (0..e * 2 * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let w2_all: Vec<bf16> = (0..e * d_ff * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.05..0.05)))
-        .collect();
-    let up_biases: Vec<bf16> = (0..e * 2 * d_ff)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
-    let down_biases: Vec<bf16> = (0..e * d_model)
-        .map(|_| bf16::from_f32(rng.random_range(-0.01..0.01)))
-        .collect();
+    let w13_all: Vec<bf16> =
+        (0..e * 2 * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let w2_all: Vec<bf16> = (0..e * d_ff * d_model).map(|_| bf16::from_f32(rng.random_range(-0.05..0.05))).collect();
+    let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
+    let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let fused_kernel =
-        MoeExpertsSingleDecodeKernel::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -709,12 +614,12 @@ fn run_fused_decode_timed(
         gate_clip_max: f32::INFINITY,
         up_clip_min: f32::NEG_INFINITY,
         up_clip_max: f32::INFINITY,
-        data_type: KernelDataType::BFloat16,
+        data_type: DataType::BF16,
     };
 
     for _ in 0..warmup {
-        let cb = ctx.command_queue.new_command_buffer();
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
     }
@@ -722,8 +627,8 @@ fn run_fused_decode_timed(
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let cb = ctx.command_queue.new_command_buffer();
-        fused_kernel.encode(&cb, make_args()).expect("encode");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        fused_kernel.encode(&cb, make_args());
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);

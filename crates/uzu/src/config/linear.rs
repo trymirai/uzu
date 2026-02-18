@@ -36,12 +36,8 @@ impl LinearConfig {
             LinearConfig::FullPrecision {
                 precision,
             } => *precision,
-            LinearConfig::Quantized(quantization) => {
-                quantization.activation_precision
-            },
-            LinearConfig::MLXQuantized(quantization) => {
-                quantization.activation_precision
-            },
+            LinearConfig::Quantized(quantization) => quantization.activation_precision,
+            LinearConfig::MLXQuantized(quantization) => quantization.activation_precision,
             LinearConfig::QLoRA {
                 quantization,
                 ..

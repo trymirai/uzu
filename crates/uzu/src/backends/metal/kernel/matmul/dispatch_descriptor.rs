@@ -1,7 +1,7 @@
 use super::{common::MatmulArguments, gemm, gemv, split_k};
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::metal::{MetalContext, MetalError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,32 +39,25 @@ impl MatmulDispatchDescriptor {
 }
 
 pub(crate) fn choose_dispatch_descriptor(
-    context: &MTLContext,
+    context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments,
-) -> Result<MatmulDispatchDescriptor, MTLError> {
-    if let Some(descriptor) =
-        gemv::DispatchDescriptor::try_new(context, data_type, arguments)?
-    {
+) -> Result<MatmulDispatchDescriptor, MetalError> {
+    if let Some(descriptor) = gemv::DispatchDescriptor::try_new(context, data_type, arguments)? {
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
 
-    if let Some(descriptor) =
-        split_k::DispatchDescriptor::try_new(context, data_type, arguments)?
-    {
+    if let Some(descriptor) = split_k::DispatchDescriptor::try_new(context, data_type, arguments)? {
         return Ok(MatmulDispatchDescriptor::SplitK(descriptor));
     }
 
-    Ok(MatmulDispatchDescriptor::Gemm(gemm::DispatchDescriptor::new(
-        context, data_type, arguments,
-    )?))
+    Ok(MatmulDispatchDescriptor::Gemm(gemm::DispatchDescriptor::new(context, data_type, arguments)?))
 }
 
 pub fn determine_kernel_variant(
-    context: &MTLContext,
+    context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments,
-) -> Result<MatmulKernelVariant, MTLError> {
-    choose_dispatch_descriptor(context, data_type, arguments)
-        .map(|d| d.variant())
+) -> Result<MatmulKernelVariant, MetalError> {
+    choose_dispatch_descriptor(context, data_type, arguments).map(|d| d.variant())
 }

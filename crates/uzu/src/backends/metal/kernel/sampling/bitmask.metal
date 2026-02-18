@@ -5,10 +5,11 @@
 #define GRAIN_SIZE 64
 #define BITS_IN_U32 32
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(Bitmask) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Bitmask) (
     device const T* logits,
     device const uint32_t* bitmask,
-    constant uint& bitmask_offset,
     device T* processed_logits,
     constant uint& batch_size,
     constant uint& vocab_size,
@@ -16,7 +17,6 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(Bitmask) (
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE)
 ) {
-  bitmask += bitmask_offset / sizeof(uint32_t);
   uint bitmask_size = (vocab_size + (BITS_IN_U32 - 1)) / BITS_IN_U32;
   uint base_idx =
       batch_idx * vocab_size + group_idx * BLOCK_SIZE * GRAIN_SIZE + thread_idx;

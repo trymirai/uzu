@@ -5,6 +5,7 @@ pub struct PipelineConfiguration {
     pub transpose_a: bool,
     pub transpose_b: bool,
     pub transpose_matrix: bool,
+    pub batch_pack: u32,
     pub threadgroup_rows: u32,
     pub threadgroup_cols: u32,
     pub threads_per_simdgroup_row: u32,
@@ -18,29 +19,24 @@ pub struct PipelineConfiguration {
 impl PipelineConfiguration {
     pub fn output_elements_per_threadgroup(&self) -> u32 {
         if self.transpose_matrix {
-            self.threadgroup_cols
-                * self.threads_per_simdgroup_col
-                * self.elements_per_thread_col
+            self.threadgroup_cols * self.threads_per_simdgroup_col * self.elements_per_thread_col
         } else {
-            self.threadgroup_rows
-                * self.threads_per_simdgroup_row
-                * self.elements_per_thread_row
+            self.threadgroup_rows * self.threads_per_simdgroup_row * self.elements_per_thread_row
         }
     }
 
     pub fn threads_per_threadgroup(&self) -> MTLSize {
-        MTLSize::new(
-            32,
-            self.threadgroup_cols as u64,
-            self.threadgroup_rows as u64,
-        )
+        MTLSize::new(32, self.threadgroup_cols as usize, self.threadgroup_rows as usize)
     }
 }
+
+const FORCE_TILESET_SMALL_BATCH: i32 = 0;
 
 pub fn select_configuration(
     transpose_a: bool,
     transpose_b: bool,
     transpose_matrix: bool,
+    batch_pack: u32,
     input_dimension: i32,
     output_dimension: i32,
     non_contiguous_batch: bool,
@@ -50,7 +46,14 @@ pub fn select_configuration(
     let (threads_per_simdgroup_row, threads_per_simdgroup_col);
     let (elements_per_thread_row, elements_per_thread_col);
 
-    if transpose_matrix {
+    if FORCE_TILESET_SMALL_BATCH == 1 && !transpose_matrix {
+        threadgroup_rows = 4;
+        threadgroup_cols = 1;
+        threads_per_simdgroup_row = 1;
+        threads_per_simdgroup_col = 32;
+        elements_per_thread_row = 2;
+        elements_per_thread_col = 4;
+    } else if transpose_matrix {
         let mut sm = 8;
         let mut sn = 4;
         if input_dimension >= 8192 && output_dimension >= 2048 {
@@ -115,6 +118,7 @@ pub fn select_configuration(
         transpose_a,
         transpose_b,
         transpose_matrix,
+        batch_pack,
         threadgroup_rows,
         threadgroup_cols,
         threads_per_simdgroup_row,

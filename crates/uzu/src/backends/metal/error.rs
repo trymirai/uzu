@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum MTLError {
-    #[error("MTLContext error: {0}")]
+pub enum MetalError {
+    #[error("MetalContext error: {0}")]
     Context(#[from] ContextError),
     #[error("MTLDevice error: {0}")]
     Device(#[from] DeviceError),
@@ -28,15 +28,15 @@ pub enum MTLError {
     Generic(String),
 }
 
-impl From<&str> for MTLError {
+impl From<&str> for MetalError {
     fn from(error: &str) -> Self {
-        MTLError::Generic(error.to_string())
+        MetalError::Generic(error.to_string())
     }
 }
 
-impl From<String> for MTLError {
+impl From<String> for MetalError {
     fn from(error: String) -> Self {
-        MTLError::Generic(error)
+        MetalError::Generic(error)
     }
 }
 
@@ -52,6 +52,8 @@ pub enum ContextError {
 // Device errors
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    #[error("No default Metal device found")]
+    NoDefaultDevice,
     #[error("Failed to create argument encoder")]
     ArgumentEncoderCreationFailed,
     #[error("Failed to create buffer")]

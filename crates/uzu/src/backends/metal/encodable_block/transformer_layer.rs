@@ -1,19 +1,16 @@
-use std::rc::Rc;
-
 use super::{
-    EncodableBlock, FullPrecisionEmbeddingLookup,
-    FullPrecisionEmbeddingReadout, FullPrecisionLinear, MlpBlock,
-    MlpFusedBlock, MoeBlock, QuantizedEmbeddingLookup,
-    QuantizedEmbeddingReadout, QuantizedLinear,
+    FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, MoeBlock,
+    QuantizedEmbeddingLookup, QuantizedEmbeddingReadout, QuantizedLinear,
 };
 use crate::{
     DataType,
-    backends::metal::{
-        MTLContext, MTLError,
-        forward_pass::ArrayId,
-        kernel::{mlp::MlpGateActMulEncodable, quant_matmul::QuantizationType},
+    backends::{
+        common::kernel::mlp_gate_act_mul::MlpGateActMulEncodable,
+        metal::{Metal, MetalContext, MetalError},
     },
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
+    encodable_block::{EncodableBlock, MlpBlock},
+    forward_pass::state::ArrayId,
     parameters::ParameterTree,
 };
 
@@ -22,15 +19,14 @@ pub fn linear_block<const N: usize>(
     _has_biases: bool,
     input_dimension: usize,
     output_dimensions: [usize; N],
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+) -> Result<Box<dyn EncodableBlock<Metal>>, MetalError> {
     let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
-        LinearConfig::Quantized(quantization_config)
-        | LinearConfig::MLXQuantized(quantization_config) => {
+        LinearConfig::Quantized(quantization_config) | LinearConfig::MLXQuantized(quantization_config) => {
             let block = QuantizedLinear::new(
                 context,
                 quantization_config,
@@ -39,7 +35,8 @@ pub fn linear_block<const N: usize>(
                 parameter_tree,
                 input_array_id,
                 output_array_id,
-            )?;
+            )
+            .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {
@@ -53,14 +50,13 @@ pub fn linear_block<const N: usize>(
                 parameter_tree,
                 input_array_id,
                 output_array_id,
-            )?;
+            )
+            .map_err(|error| MetalError::Generic(format!("{:?}", error)))?;
             Ok(Box::new(block))
         },
         LinearConfig::QLoRA {
             ..
-        } => Err(MTLError::Generic(
-            "QLoRA linear layer not supported".to_string(),
-        )),
+        } => Err(MetalError::Generic("QLoRA linear layer not supported".to_string())),
     }
 }
 
@@ -69,12 +65,11 @@ pub fn mlp_block(
     config: &MLPConfig,
     model_dimension: usize,
     hidden_dimension: usize,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
+) -> Result<Box<dyn EncodableBlock<Metal>>, MetalError> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
-        let data_type: DataType =
-            dense_config.linear_config.activation_precision().into();
+        let data_type: DataType = dense_config.linear_config.activation_precision().into();
 
         // Up projection (outputs 2*hidden_dimension for gate and up)
         let up_projection = linear_block(
@@ -83,20 +78,14 @@ pub fn mlp_block(
             model_dimension,
             [2 * hidden_dimension],
             context,
-            &parameter_tree
-                .subtree("up_projection")
-                .map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
+            &parameter_tree.subtree("up_projection").map_err(|error| MetalError::Generic(format!("{:?}", error)))?,
             ArrayId::Main,
             ArrayId::MlpFusedUp,
         )?;
 
         // Gate activation + multiply
-        let gate_activation = MlpGateActMulEncodable::new(
-            context,
-            data_type,
-            dense_config.activation.clone(),
-            hidden_dimension,
-        )?;
+        let gate_activation =
+            MlpGateActMulEncodable::new(context, data_type, dense_config.activation.clone(), hidden_dimension)?;
 
         // Down projection
         let down_projection = linear_block(
@@ -105,201 +94,17 @@ pub fn mlp_block(
             hidden_dimension,
             [model_dimension],
             context,
-            &parameter_tree
-                .subtree("down_projection")
-                .map_err(|error| MTLError::Generic(format!("{:?}", error)))?,
+            &parameter_tree.subtree("down_projection").map_err(|error| MetalError::Generic(format!("{:?}", error)))?,
             ArrayId::MlpHidden,
             ArrayId::Main,
         )?;
 
-        return Ok(Box::new(MlpBlock::new(
-            up_projection,
-            gate_activation,
-            down_projection,
-        )));
+        return Ok(Box::new(MlpBlock::new(up_projection, gate_activation, down_projection)));
     }
 
-    if let crate::config::MLPConfig::MixtureOfExperts(
-        mixture_of_experts_config,
-    ) = config
-    {
-        let mixture_of_experts_block = MoeBlock::new(
-            context,
-            mixture_of_experts_config,
-            model_dimension,
-            hidden_dimension,
-            parameter_tree,
-        )?;
-        return Ok(Box::new(mixture_of_experts_block));
-    }
-
-    unreachable!("Unknown MLP config")
-}
-
-/// Creates an MLP block using the fused implementation
-/// (up projection + activation fused into single kernel)
-pub fn mlp_fused_block(
-    config: &MLPConfig,
-    model_dimension: usize,
-    hidden_dimension: usize,
-    context: Rc<MTLContext>,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Result<Box<dyn EncodableBlock>, MTLError> {
-    if let crate::config::MLPConfig::Dense(dense_config) = config {
-        match &dense_config.linear_config {
-            LinearConfig::Quantized(quantization_config)
-            | LinearConfig::MLXQuantized(quantization_config) => {
-                let data_type: DataType =
-                    dense_config.linear_config.activation_precision().into();
-
-                // Load up_projection weights directly for fused kernel
-                let up_projection_tree =
-                    parameter_tree.subtree("up_projection").map_err(
-                        |error| MTLError::Generic(format!("{:?}", error)),
-                    )?;
-
-                let mut up_projection_weights =
-                    up_projection_tree.leaf("weights").map_err(|error| {
-                        MTLError::Generic(format!(
-                            "Failed to load up weights: {:?}",
-                            error
-                        ))
-                    })?;
-                let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer() }.to_owned();
-
-                let mut up_projection_scales =
-                    up_projection_tree.leaf("scales").map_err(|error| {
-                        MTLError::Generic(format!(
-                            "Failed to load up scales: {:?}",
-                            error
-                        ))
-                    })?;
-                let up_projection_scales_buffer =
-                    unsafe { up_projection_scales.mtl_buffer() }.to_owned();
-
-                // Load zero_points or biases depending on quantization type
-                let (
-                    up_projection_zero_points_or_biases_buffer,
-                    quantization_type,
-                ) = if let Ok(mut biases) = up_projection_tree.leaf("biases") {
-                    (
-                        unsafe { biases.mtl_buffer() }.to_owned(),
-                        QuantizationType::Mlx,
-                    )
-                } else if let Ok(mut zero_points) =
-                    up_projection_tree.leaf("zero_points")
-                {
-                    (
-                        unsafe { zero_points.mtl_buffer() }.to_owned(),
-                        QuantizationType::ZeroPoint,
-                    )
-                } else {
-                    return Err(MTLError::Generic(
-                            "Missing zero_points or biases for quantized up_projection"
-                                .to_string(),
-                        ));
-                };
-
-                // Create down projection as separate linear
-                let down_projection = QuantizedLinear::new(
-                    &context,
-                    quantization_config,
-                    hidden_dimension,
-                    model_dimension,
-                    &parameter_tree.subtree("down_projection").map_err(
-                        |error| MTLError::Generic(format!("{:?}", error)),
-                    )?,
-                    ArrayId::MlpHidden,
-                    ArrayId::Main,
-                )?;
-
-                let fused_block = MlpFusedBlock::new_quantized(
-                    context,
-                    data_type,
-                    up_projection_weights_buffer,
-                    up_projection_scales_buffer,
-                    up_projection_zero_points_or_biases_buffer,
-                    model_dimension,
-                    hidden_dimension,
-                    quantization_config.group_size,
-                    quantization_config.weight_quantization_mode,
-                    quantization_type,
-                    &dense_config.activation,
-                    Box::new(down_projection),
-                    ArrayId::Main,
-                    ArrayId::MlpHidden,
-                )?;
-                return Ok(Box::new(fused_block));
-            },
-            LinearConfig::FullPrecision {
-                precision,
-            } => {
-                let data_type: DataType = (*precision).into();
-
-                // Load up_projection weights directly for fused kernel
-                let up_projection_tree =
-                    parameter_tree.subtree("up_projection").map_err(
-                        |error| MTLError::Generic(format!("{:?}", error)),
-                    )?;
-
-                let mut up_projection_weights =
-                    up_projection_tree.leaf("weights").map_err(|error| {
-                        MTLError::Generic(format!(
-                            "Failed to load up weights: {:?}",
-                            error
-                        ))
-                    })?;
-                let up_projection_weights_buffer =
-                    unsafe { up_projection_weights.mtl_buffer() }.to_owned();
-
-                // Create down projection as separate linear
-                let down_projection = FullPrecisionLinear::new(
-                    &context,
-                    data_type,
-                    hidden_dimension,
-                    model_dimension,
-                    &parameter_tree.subtree("down_projection").map_err(
-                        |error| MTLError::Generic(format!("{:?}", error)),
-                    )?,
-                    ArrayId::MlpHidden,
-                    ArrayId::Main,
-                )?;
-
-                let fused_block = MlpFusedBlock::new_full_precision(
-                    context,
-                    data_type,
-                    up_projection_weights_buffer,
-                    model_dimension,
-                    hidden_dimension,
-                    &dense_config.activation,
-                    Box::new(down_projection),
-                    ArrayId::Main,
-                    ArrayId::MlpHidden,
-                )?;
-                return Ok(Box::new(fused_block));
-            },
-            LinearConfig::QLoRA {
-                ..
-            } => {
-                return Err(MTLError::Generic(
-                    "QLoRA MLP not supported".to_string(),
-                ));
-            },
-        }
-    }
-
-    if let crate::config::MLPConfig::MixtureOfExperts(
-        mixture_of_experts_config,
-    ) = config
-    {
-        let mixture_of_experts_block = MoeBlock::new(
-            &context,
-            mixture_of_experts_config,
-            model_dimension,
-            hidden_dimension,
-            parameter_tree,
-        )?;
+    if let crate::config::MLPConfig::MixtureOfExperts(mixture_of_experts_config) = config {
+        let mixture_of_experts_block =
+            MoeBlock::new(context, mixture_of_experts_config, model_dimension, hidden_dimension, parameter_tree)?;
         return Ok(Box::new(mixture_of_experts_block));
     }
 
@@ -308,17 +113,15 @@ pub fn mlp_fused_block(
 
 pub fn embed_block(
     config: &DecoderConfig,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Box<dyn EncodableBlock> {
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
+) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             common,
             precision,
         } => {
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = FullPrecisionEmbeddingLookup::new(
                 context,
@@ -336,9 +139,7 @@ pub fn embed_block(
             common,
             precision,
         } => {
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = FullPrecisionEmbeddingLookup::new(
                 context,
@@ -357,9 +158,7 @@ pub fn embed_block(
             activation_precision,
             ..
         } => {
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = FullPrecisionEmbeddingLookup::new(
                 context,
@@ -380,12 +179,9 @@ pub fn embed_block(
             ..
         } => {
             let data_type: DataType = (*activation_precision).into();
-            let input_scale =
-                config.embedding_config.common().input_scale.unwrap_or(1.0);
+            let input_scale = config.embedding_config.common().input_scale.unwrap_or(1.0);
 
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingLookup::new_untied_input(
                 context,
@@ -408,14 +204,11 @@ pub fn embed_block(
         } => {
             let data_type: DataType = (*activation_precision).into();
 
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             // For QuantizedTied, group_size is implicit (per-row quantization), so group_size == model_dim
             let group_size = config.model_dim;
-            let input_scale =
-                config.embedding_config.common().input_scale.unwrap_or(1.0);
+            let input_scale = config.embedding_config.common().input_scale.unwrap_or(1.0);
 
             let block = QuantizedEmbeddingLookup::new_tied(
                 context,
@@ -436,14 +229,10 @@ pub fn embed_block(
             embedding_quantization_mode,
             ..
         } => {
-            let data_type: DataType =
-                config.output_norm_config.scale_precision.into();
-            let input_scale =
-                config.embedding_config.common().input_scale.unwrap_or(1.0);
+            let data_type: DataType = config.output_norm_config.scale_precision.into();
+            let input_scale = config.embedding_config.common().input_scale.unwrap_or(1.0);
 
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingLookup::new_tied(
                 context,
@@ -464,17 +253,15 @@ pub fn embed_block(
 
 pub fn readout_block(
     config: &DecoderConfig,
-    context: &MTLContext,
-    parameter_tree: &ParameterTree<Rc<MTLContext>>,
-) -> Box<dyn EncodableBlock> {
+    context: &MetalContext,
+    parameter_tree: &ParameterTree<MetalContext>,
+) -> Box<dyn EncodableBlock<Metal>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,
             ..
         } => {
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = FullPrecisionEmbeddingReadout::new(
                 context,
@@ -491,9 +278,7 @@ pub fn readout_block(
             precision,
             ..
         } => {
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = FullPrecisionEmbeddingReadout::new(
                 context,
@@ -513,9 +298,7 @@ pub fn readout_block(
             ..
         } => {
             let data_type: DataType = (*activation_precision).into();
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingReadout::new_untied_output(
                 context,
@@ -537,9 +320,7 @@ pub fn readout_block(
         } => {
             let data_type: DataType = (*activation_precision).into();
 
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             // For QuantizedTied, group_size is implicit (per-row quantization), so group_size == model_dim
             let group_size = config.model_dim;
@@ -562,12 +343,9 @@ pub fn readout_block(
             embedding_quantization_mode,
             ..
         } => {
-            let data_type: DataType =
-                config.output_norm_config.scale_precision.into();
+            let data_type: DataType = config.output_norm_config.scale_precision.into();
 
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingReadout::new_tied(
                 context,
@@ -587,12 +365,9 @@ pub fn readout_block(
             embedding_quantization_mode,
             ..
         } => {
-            let data_type: DataType =
-                config.output_norm_config.scale_precision.into();
+            let data_type: DataType = config.output_norm_config.scale_precision.into();
 
-            let embeddings_tree = parameter_tree
-                .subtree("embedding")
-                .expect("Failed to get embedding subtree");
+            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingReadout::new_untied_output(
                 context,

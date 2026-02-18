@@ -1,14 +1,14 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::{
-    KernelDataType, MoeFinalizeArguments, MoeFinalizeKernel,
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::{
+    DataType,
+    backends::{common::kernel::MoeFinalizeKernel, metal::kernel::dsl::MoeFinalizeMetalKernel},
 };
 
-use super::test_utils::{
-    alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx,
-};
+use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
 
 fn cpu_finalize(
     tok2row: &[i32],
@@ -27,8 +27,7 @@ fn cpu_finalize(
                 let row = tok2row[idx];
                 if row >= 0 {
                     let rowu = row as usize;
-                    acc += f32::from(probs[idx])
-                        * f32::from(y_partial[rowu * d_model + f]);
+                    acc += f32::from(probs[idx]) * f32::from(y_partial[rowu * d_model + f]);
                 }
             }
             y[ti * d_model + f] = bf16::from_f32(acc);
@@ -51,10 +50,7 @@ fn test_finalize_correctness() {
     ];
 
     for (t, k, d_model, sum_k) in shapes {
-        eprintln!(
-            "[FinalizeTest] T={}, K={}, d_model={}, sum_k={}",
-            t, k, d_model, sum_k
-        );
+        eprintln!("[FinalizeTest] T={}, K={}, d_model={}, sum_k={}", t, k, d_model, sum_k);
 
         // Generate random tok2row mapping: maps (token, k_idx) → row in y_partial
         // Some entries can be -1 (no expert selected)
@@ -74,14 +70,10 @@ fn test_finalize_correctness() {
         }
 
         // Generate random probabilities (should sum to 1 per token, but not critical for unit test)
-        let probs: Vec<bf16> = (0..t * k)
-            .map(|_| bf16::from_f32(rng.random_range(0.0..1.0)))
-            .collect();
+        let probs: Vec<bf16> = (0..t * k).map(|_| bf16::from_f32(rng.random_range(0.0..1.0))).collect();
 
         // Generate random y_partial (expert outputs)
-        let y_partial: Vec<bf16> = (0..sum_k * d_model)
-            .map(|_| bf16::from_f32(rng.random_range(-2.0..2.0)))
-            .collect();
+        let y_partial: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
 
         // CPU reference
         let y_cpu = cpu_finalize(&tok2row, &probs, &y_partial, t, d_model, k);
@@ -93,33 +85,25 @@ fn test_finalize_correctness() {
         let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
 
         // Execute finalize kernel
-        let finalize = MoeFinalizeKernel::new(&ctx).expect("finalize kernel");
-        let cb = ctx.command_queue.new_command_buffer();
-        finalize
-            .encode(
-                &cb,
-                MoeFinalizeArguments {
-                    tok2row_buffer: &tok2row_buf,
-                    probs_buffer: &probs_buf,
-                    y_partial_buffer: &y_partial_buf,
-                    y_out_buffer: &y_out_buf,
-                    t,
-                    d_model,
-                    k,
-                },
-                KernelDataType::BFloat16,
-            )
-            .expect("encode finalize");
+        let finalize = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize kernel");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        finalize.encode(
+            &tok2row_buf,
+            &probs_buf,
+            &y_partial_buf,
+            &y_out_buf,
+            t as u32,
+            d_model as u32,
+            k as u32,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
         // Compare
-        let y_gpu = unsafe {
-            std::slice::from_raw_parts(
-                y_out_buf.contents() as *const bf16,
-                t * d_model,
-            )
-        };
+        let y_gpu = unsafe { std::slice::from_raw_parts(y_out_buf.contents().as_ptr() as *const bf16, t * d_model) };
 
         // BF16 has limited precision, especially for weighted sums
         assert_bf16_close(y_gpu, &y_cpu, 1e-2, "finalize output");

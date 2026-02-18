@@ -1,17 +1,17 @@
-use metal::{ComputeCommandEncoderRef, ComputePipelineState, MTLSize};
+use metal::{MTLCommandEncoderExt, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize};
+use objc2::runtime::ProtocolObject;
 
 use super::{
-    command_encoder_extensions_device::CommandEncoderDeviceAccess,
     compute_pipeline_state_extensions_threads::ComputePipelineStateThreads,
     device_extensions_features::{DeviceFeatures, Feature},
 };
 
-/// Extensions for metal::ComputeCommandEncoder to simplify dispatch operations
+/// Extensions for MTLComputeCommandEncoder to simplify dispatch operations
 pub trait ComputeEncoderDispatch {
     /// Dispatches a 1D compute grid, covering at least the specified size.
     fn dispatch_1d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: usize,
         threadgroup_width: Option<usize>,
     );
@@ -19,7 +19,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 1D compute grid with exactly the specified size.
     fn dispatch_1d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: usize,
         threadgroup_width: Option<usize>,
     );
@@ -27,7 +27,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 1D compute grid, using the most efficient method available on the device.
     fn dispatch_1d(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: usize,
         threadgroup_width: Option<usize>,
     );
@@ -35,7 +35,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 2D compute grid, covering at least the specified size.
     fn dispatch_2d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -43,7 +43,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 2D compute grid with exactly the specified size.
     fn dispatch_2d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -51,7 +51,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 2D compute grid, using the most efficient method available on the device.
     fn dispatch_2d(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -59,7 +59,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 3D compute grid, covering at least the specified size.
     fn dispatch_3d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -67,7 +67,7 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 3D compute grid with exactly the specified size.
     fn dispatch_3d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
@@ -75,47 +75,44 @@ pub trait ComputeEncoderDispatch {
     /// Dispatches a 3D compute grid, using the most efficient method available on the device.
     fn dispatch_3d(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     );
 }
 
-impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
+impl ComputeEncoderDispatch for ProtocolObject<dyn MTLComputeCommandEncoder> {
     fn dispatch_1d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
-        let tg_width = threadgroup_width
-            .unwrap_or(state.thread_execution_width() as usize);
+        let tg_width = threadgroup_width.unwrap_or(state.thread_execution_width() as usize);
         let tg_size = MTLSize {
-            width: tg_width as u64,
+            width: tg_width,
             height: 1,
             depth: 1,
         };
 
         let count = MTLSize {
-            width: ((size + tg_width - 1) / tg_width) as u64,
+            width: (size + tg_width - 1) / tg_width,
             height: 1,
             depth: 1,
         };
 
         self.set_compute_pipeline_state(state);
-        self.dispatch_thread_groups(count, tg_size);
+        self.dispatch_threadgroups(count, tg_size);
     }
 
     fn dispatch_1d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
         let tg_size = MTLSize {
-            width: threadgroup_width
-                .unwrap_or(state.thread_execution_width() as usize)
-                as u64,
+            width: threadgroup_width.unwrap_or(state.thread_execution_width() as usize),
             height: 1,
             depth: 1,
         };
@@ -123,7 +120,7 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         self.set_compute_pipeline_state(state);
         self.dispatch_threads(
             MTLSize {
-                width: size as u64,
+                width: size,
                 height: 1,
                 depth: 1,
             },
@@ -133,11 +130,10 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
 
     fn dispatch_1d(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: usize,
         threadgroup_width: Option<usize>,
     ) {
-        // Get the device using the CommandEncoderDeviceAccess trait
         let device = self.device();
 
         if device.supports_feature(Feature::NonUniformThreadgroups) {
@@ -149,12 +145,11 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
 
     fn dispatch_2d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size =
-            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         let count = MTLSize {
             width: (size.width + tg_size.width - 1) / tg_size.width,
@@ -163,17 +158,16 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         };
 
         self.set_compute_pipeline_state(state);
-        self.dispatch_thread_groups(count, tg_size);
+        self.dispatch_threadgroups(count, tg_size);
     }
 
     fn dispatch_2d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size =
-            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         self.set_compute_pipeline_state(state);
         self.dispatch_threads(size, tg_size);
@@ -181,11 +175,10 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
 
     fn dispatch_2d(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        // Get the device using the CommandEncoderDeviceAccess trait
         let device = self.device();
 
         if device.supports_feature(Feature::NonUniformThreadgroups) {
@@ -197,12 +190,11 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
 
     fn dispatch_3d_covering(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size =
-            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         let count = MTLSize {
             width: (size.width + tg_size.width - 1) / tg_size.width,
@@ -211,17 +203,16 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
         };
 
         self.set_compute_pipeline_state(state);
-        self.dispatch_thread_groups(count, tg_size);
+        self.dispatch_threadgroups(count, tg_size);
     }
 
     fn dispatch_3d_exactly(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        let tg_size =
-            threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
+        let tg_size = threadgroup_size.unwrap_or_else(|| state.max_2d_threadgroup_size());
 
         self.set_compute_pipeline_state(state);
         self.dispatch_threads(size, tg_size);
@@ -229,11 +220,10 @@ impl ComputeEncoderDispatch for ComputeCommandEncoderRef {
 
     fn dispatch_3d(
         &self,
-        state: &ComputePipelineState,
+        state: &ProtocolObject<dyn MTLComputePipelineState>,
         size: MTLSize,
         threadgroup_size: Option<MTLSize>,
     ) {
-        // Get the device using the CommandEncoderDeviceAccess trait
         let device = self.device();
 
         if device.supports_feature(Feature::NonUniformThreadgroups) {

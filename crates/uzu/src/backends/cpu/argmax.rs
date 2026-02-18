@@ -24,8 +24,7 @@ pub fn optimized_argmax<T: ArrayElement>(input: &[T]) -> usize {
             for chunk in 0..4 {
                 let base = i + chunk * 8;
                 for j in 0..8 {
-                    let val: f32 = NumCast::from(*ptr.add(base + j))
-                        .unwrap_or(f32::NEG_INFINITY);
+                    let val: f32 = NumCast::from(*ptr.add(base + j)).unwrap_or(f32::NEG_INFINITY);
                     if val > max_val || (val == max_val && base + j < max_idx) {
                         max_val = val;
                         max_idx = base + j;
@@ -38,8 +37,7 @@ pub fn optimized_argmax<T: ArrayElement>(input: &[T]) -> usize {
         // Handle remaining 16x chunks
         while i + 16 <= len {
             for j in 0..16 {
-                let val: f32 =
-                    NumCast::from(*ptr.add(i + j)).unwrap_or(f32::NEG_INFINITY);
+                let val: f32 = NumCast::from(*ptr.add(i + j)).unwrap_or(f32::NEG_INFINITY);
                 if val > max_val || (val == max_val && i + j < max_idx) {
                     max_val = val;
                     max_idx = i + j;
@@ -51,8 +49,7 @@ pub fn optimized_argmax<T: ArrayElement>(input: &[T]) -> usize {
         // Handle remaining 8x chunks
         while i + 8 <= len {
             for j in 0..8 {
-                let val: f32 =
-                    NumCast::from(*ptr.add(i + j)).unwrap_or(f32::NEG_INFINITY);
+                let val: f32 = NumCast::from(*ptr.add(i + j)).unwrap_or(f32::NEG_INFINITY);
                 if val > max_val || (val == max_val && i + j < max_idx) {
                     max_val = val;
                     max_idx = i + j;
@@ -63,8 +60,7 @@ pub fn optimized_argmax<T: ArrayElement>(input: &[T]) -> usize {
 
         // Handle remaining elements
         while i < len {
-            let val: f32 =
-                NumCast::from(*ptr.add(i)).unwrap_or(f32::NEG_INFINITY);
+            let val: f32 = NumCast::from(*ptr.add(i)).unwrap_or(f32::NEG_INFINITY);
             if val > max_val || (val == max_val && i < max_idx) {
                 max_val = val;
                 max_idx = i;
@@ -80,20 +76,14 @@ pub fn simple_argmax<T: ArrayElement>(input: &[T]) -> usize {
     input
         .iter()
         .enumerate()
-        .fold(
-            (0, f32::NEG_INFINITY),
-            |(best_index, best_value), (index, &value)| {
-                let value_f32 =
-                    NumCast::from(value).unwrap_or(f32::NEG_INFINITY);
-                if value_f32 > best_value
-                    || (value_f32 == best_value && index < best_index)
-                {
-                    (index, value_f32)
-                } else {
-                    (best_index, best_value)
-                }
-            },
-        )
+        .fold((0, f32::NEG_INFINITY), |(best_index, best_value), (index, &value)| {
+            let value_f32 = NumCast::from(value).unwrap_or(f32::NEG_INFINITY);
+            if value_f32 > best_value || (value_f32 == best_value && index < best_index) {
+                (index, value_f32)
+            } else {
+                (best_index, best_value)
+            }
+        })
         .0
 }
 
@@ -150,8 +140,7 @@ pub unsafe fn neon_argmax_f32(input: &[f32]) -> usize {
 
         for j in 1..4 {
             if max_vals_array[j] > global_max
-                || (max_vals_array[j] == global_max
-                    && (max_indices_array[j] as usize) < global_max_idx)
+                || (max_vals_array[j] == global_max && (max_indices_array[j] as usize) < global_max_idx)
             {
                 global_max = max_vals_array[j];
                 global_max_idx = max_indices_array[j] as usize;
@@ -182,10 +171,7 @@ pub fn neon_optimized_argmax<T: ArrayElement>(input: &[T]) -> usize {
     // For f32, use direct NEON implementation
     if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() {
         unsafe {
-            let f32_slice = std::slice::from_raw_parts(
-                input.as_ptr() as *const f32,
-                input.len(),
-            );
+            let f32_slice = std::slice::from_raw_parts(input.as_ptr() as *const f32, input.len());
             return neon_argmax_f32(f32_slice);
         }
     }
@@ -225,11 +211,7 @@ mod tests {
         // Compare NEON result to expected
         let neon_result = neon_optimized_argmax(&data);
 
-        assert_eq!(
-            expected, neon_result,
-            "64k array test failed: expected {}, got {}",
-            expected, neon_result
-        );
+        assert_eq!(expected, neon_result, "64k array test failed: expected {}, got {}", expected, neon_result);
         assert_eq!(expected, 42_000, "Expected max should be at index 42_000");
     }
 
@@ -280,34 +262,15 @@ mod tests {
 
             if batch_idx == 0 {
                 println!("128k argmax performance comparison:");
-                println!(
-                    "NEON:      {:.3} ms",
-                    neon_duration.as_secs_f64() * 1000.0
-                );
-                println!(
-                    "Simple:    {:.3} ms",
-                    simple_duration.as_secs_f64() * 1000.0
-                );
-                println!(
-                    "Optimized: {:.3} ms",
-                    optimized_duration.as_secs_f64() * 1000.0
-                );
+                println!("NEON:      {:.3} ms", neon_duration.as_secs_f64() * 1000.0);
+                println!("Simple:    {:.3} ms", simple_duration.as_secs_f64() * 1000.0);
+                println!("Optimized: {:.3} ms", optimized_duration.as_secs_f64() * 1000.0);
 
-                if simple_duration.as_nanos() > 0
-                    && neon_duration.as_nanos() > 0
-                {
-                    let speedup_simple = simple_duration.as_secs_f64()
-                        / neon_duration.as_secs_f64();
-                    let speedup_optimized = optimized_duration.as_secs_f64()
-                        / neon_duration.as_secs_f64();
-                    println!(
-                        "NEON vs Simple speedup:    {:.2}x",
-                        speedup_simple
-                    );
-                    println!(
-                        "NEON vs Optimized speedup: {:.2}x",
-                        speedup_optimized
-                    );
+                if simple_duration.as_nanos() > 0 && neon_duration.as_nanos() > 0 {
+                    let speedup_simple = simple_duration.as_secs_f64() / neon_duration.as_secs_f64();
+                    let speedup_optimized = optimized_duration.as_secs_f64() / neon_duration.as_secs_f64();
+                    println!("NEON vs Simple speedup:    {:.2}x", speedup_simple);
+                    println!("NEON vs Optimized speedup: {:.2}x", speedup_optimized);
                 }
             }
 

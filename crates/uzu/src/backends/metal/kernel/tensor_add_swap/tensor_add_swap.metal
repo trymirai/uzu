@@ -2,31 +2,17 @@
 #include "../definitions.metal"
 
 template <typename T>
-void tensorAddSwap(
-    device T* skipBuffer,
-    device T* mainBuffer,
-    constant int& length,
-    const uint position
+VARIANTS(T, float, half, bfloat)
+KERNEL(TensorAddSwap)(
+    device T* skip_buffer,
+    device T* main_buffer,
+    constant uint& length,
+    const uint position AXIS(length, 32)
 ) {
-  if (position < length) {
-    T skipValue = skipBuffer[position];
-    T mainValue = mainBuffer[position];
-    T result = mainValue + skipValue;
+  T skip_value = skip_buffer[position];
+  T main_value = main_buffer[position];
+  T result = main_value + skip_value;
 
-    mainBuffer[position] = result;
-    skipBuffer[position] = result;
-  }
+  main_buffer[position] = result;
+  skip_buffer[position] = result;
 }
-
-#define outerArguments(T)                                                      \
-  (device T * skipBuffer [[buffer(0)]],                                        \
-   device T * mainBuffer [[buffer(1)]],                                        \
-   constant int& length [[buffer(2)]],                                         \
-   const uint position [[thread_position_in_grid]])
-
-#define innerArguments (skipBuffer, mainBuffer, length, position)
-
-generateKernels(32, tensorAddSwap)
-
-#undef outerArguments
-#undef innerArguments

@@ -1,29 +1,26 @@
 #include <metal_stdlib>
-using namespace metal;
+#include "../definitions.metal"
 
-// Defaults must match Rust launcher
 #define BM 32
 #define BN 64
 
 template <typename T>
-inline void moe_finalize_impl(
+VARIANTS(T, float, half, bfloat)
+KERNEL(MoeFinalize)(
     device const int* tok2row, // [T*K], -1 if dropped
     device const T* probs,     // [T*K]
-    device const T* Y_partial, // [sum_k, d_model]
-    device T* Y,               // [T, d_model]
-    constant uint& T_count,
+    device const T* y_partial, // [sum_k, d_model]
+    device T* y,               // [T, d_model]
+    constant uint& t_count,
     constant uint& d_model,
-    constant uint& K,
-    uint lid,
-    uint3 tgpig
+    constant uint& k_input,
+    const uint lid THREADS(128),
+    const uint tg_n GROUPS(d_model.div_ceil(BN)),
+    const uint tg_m GROUPS(t_count.div_ceil(BM))
 ) {
-  if (T_count == 0u || d_model == 0u)
-    return;
-  const uint tile_m0 = tgpig.y * BM;
-  const uint tile_n0 = tgpig.x * BN;
-  if (tile_m0 >= T_count || tile_n0 >= d_model)
-    return;
-  const uint m_rows = min((uint)BM, T_count - tile_m0);
+  const uint tile_n0 = tg_n * BN;
+  const uint tile_m0 = tg_m * BM;
+  const uint m_rows = min((uint)BM, t_count - tile_m0);
   const uint n_cols = min((uint)BN, d_model - tile_n0);
 
   // 128 threads per TG expected
@@ -33,8 +30,8 @@ inline void moe_finalize_impl(
     const uint t = tile_m0 + mi;
     const uint f = tile_n0 + nj;
     float acc = 0.0f;
-    const uint base = t * K;
-    for (uint k = 0; k < K; ++k) {
+    const uint base = t * k_input;
+    for (uint k = 0; k < k_input; ++k) {
       const int row = tok2row[base + k];
       if (row >= 0) {
         const ulong yidx = (ulong)(uint)row * (ulong)d_model + (ulong)f;
@@ -42,7 +39,7 @@ inline void moe_finalize_impl(
         if (!isfinite(prob)) {
           prob = 0.0f;
         }
-        float val = (float)Y_partial[yidx];
+        float val = (float)y_partial[yidx];
         if (!isfinite(val)) {
           val = 0.0f;
         }
@@ -52,27 +49,6 @@ inline void moe_finalize_impl(
     if (!isfinite(acc)) {
       acc = 0.0f;
     }
-    Y[t * d_model + f] = T(acc);
+    y[t * d_model + f] = T(acc);
   }
 }
-
-#define DEFINE_MOE_FINALIZE_KERNEL(SUFFIX, T)                                  \
-  [[max_total_threads_per_threadgroup(128)]]                                   \
-  kernel void moe_finalize_##SUFFIX(                                           \
-      device const int* tok2row [[buffer(0)]],                                 \
-      device const T* probs [[buffer(1)]],                                     \
-      device const T* Y_partial [[buffer(2)]],                                 \
-      device T* Y [[buffer(3)]],                                               \
-      constant uint& T_count [[buffer(4)]],                                    \
-      constant uint& d_model [[buffer(5)]],                                    \
-      constant uint& K [[buffer(6)]],                                          \
-      uint lid [[thread_index_in_threadgroup]],                                \
-      uint3 tgpig [[threadgroup_position_in_grid]]                             \
-  ) {                                                                          \
-    moe_finalize_impl<                                                         \
-        T>(tok2row, probs, Y_partial, Y, T_count, d_model, K, lid, tgpig);     \
-  }
-
-DEFINE_MOE_FINALIZE_KERNEL(f16, half)
-DEFINE_MOE_FINALIZE_KERNEL(bf16, bfloat)
-DEFINE_MOE_FINALIZE_KERNEL(f32, float)

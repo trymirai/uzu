@@ -1,5 +1,3 @@
-
-
 #pragma once
 
 #define STEEL_CONST static constant constexpr const

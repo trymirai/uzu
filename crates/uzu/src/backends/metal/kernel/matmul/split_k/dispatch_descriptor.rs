@@ -1,16 +1,11 @@
 use metal::MTLSize;
 
-use super::{
-    pipeline_configuration::PipelineConfiguration,
-    tile_configuration::select_tile_configuration,
-};
+use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::select_tile_configuration};
 use crate::{
     DataType,
     backends::metal::{
-        MTLContext, MTLError,
-        kernel::matmul::common::{
-            GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments,
-        },
+        MetalContext, MetalError,
+        kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
     },
 };
 
@@ -29,16 +24,12 @@ pub(crate) struct DispatchDescriptor {
 
 impl DispatchDescriptor {
     pub(crate) fn try_new(
-        _context: &MTLContext,
+        _context: &MetalContext,
         data_type: DataType,
         arguments: &MatmulArguments,
-    ) -> Result<Option<Self>, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for Split-K: {:?}",
-                data_type
-            )));
+    ) -> Result<Option<Self>, MetalError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
         }
 
         if arguments.c.is_some() {
@@ -74,11 +65,8 @@ impl DispatchDescriptor {
         let k_elements_per_partition = gemm_k_iterations * tile.tile_depth;
         let output_elements_per_partition = m * n;
 
-        let accumulator_element_count = partition_count
-            * output_elements_per_partition
-            * arguments.batch_count;
-        let accumulator_bytes =
-            (accumulator_element_count as usize) * std::mem::size_of::<f32>();
+        let accumulator_element_count = partition_count * output_elements_per_partition * arguments.batch_count;
+        let accumulator_bytes = (accumulator_element_count as usize) * std::mem::size_of::<f32>();
 
         let params = SplitKGEMMParams {
             M: m,
@@ -95,20 +83,12 @@ impl DispatchDescriptor {
             gemm_k_iterations_aligned: gemm_k_iterations,
         };
 
-        let partial_threads_per_threadgroup = MTLSize::new(
-            32,
-            tile.warps_per_col as u64,
-            tile.warps_per_row as u64,
-        );
-        let partial_threadgroups = MTLSize::new(
-            tile_count_n as u64,
-            tile_count_m as u64,
-            partition_count as u64,
-        );
+        let partial_threads_per_threadgroup =
+            MTLSize::new(32, tile.warps_per_col as usize, tile.warps_per_row as usize);
+        let partial_threadgroups = MTLSize::new(tile_count_n as usize, tile_count_m as usize, partition_count as usize);
 
-        let accum_total_threads = MTLSize::new(n as u64, m as u64, 1);
-        let accum_threads_per_threadgroup =
-            MTLSize::new(16.min(n as u64), 16.min(m as u64), 1);
+        let accum_total_threads = MTLSize::new(n as usize, m as usize, 1);
+        let accum_threads_per_threadgroup = MTLSize::new(16.min(n as usize), 16.min(m as usize), 1);
 
         Ok(Some(Self {
             pipeline_configuration,

@@ -22,15 +22,9 @@ pub fn get_memory_usage() -> Option<u64> {
             suspend_count: 0,
         };
 
-        let mut count: mach_msg_type_number_t =
-            (mem::size_of::<task_basic_info>() / mem::size_of::<u32>()) as u32;
+        let mut count: mach_msg_type_number_t = (mem::size_of::<task_basic_info>() / mem::size_of::<u32>()) as u32;
 
-        let result = task_info(
-            task,
-            TASK_BASIC_INFO,
-            &mut info as *mut _ as *mut i32,
-            &mut count,
-        );
+        let result = task_info(task, TASK_BASIC_INFO, &mut info as *mut _ as *mut i32, &mut count);
 
         if result == KERN_SUCCESS {
             Some(info.resident_size as u64)

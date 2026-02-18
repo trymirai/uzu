@@ -1,9 +1,6 @@
 use std::iter::repeat_n;
 
-use xgrammar::{
-    DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler,
-    GrammarMatcher, TokenizerInfo,
-};
+use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
 use crate::session::{config::GrammarConfig, types::Error};
 
@@ -55,10 +52,8 @@ impl CompiledGrammarEngagementState {
                 trigger_token_id: _,
                 trigger_distance,
             } => {
-                let num_grammar_tokens =
-                    usize::min(trigger_distance.unwrap_or(0), num_tokens);
-                *trigger_distance =
-                    trigger_distance.and_then(|x| x.checked_sub(num_tokens));
+                let num_grammar_tokens = usize::min(trigger_distance.unwrap_or(0), num_tokens);
+                *trigger_distance = trigger_distance.and_then(|x| x.checked_sub(num_tokens));
                 num_grammar_tokens
             },
         }
@@ -97,18 +92,9 @@ impl CompiledGrammar {
                 separators,
                 strict_mode,
             } => {
-                let separators_ref =
-                    separators.as_ref().map(|(a, b)| (a.as_str(), b.as_str()));
-                Grammar::from_json_schema(
-                    schema,
-                    *any_whitespace,
-                    *indent,
-                    separators_ref,
-                    *strict_mode,
-                    None,
-                    false,
-                )
-                .map_err(|error_message| Error::GrammarError(error_message))?
+                let separators_ref = separators.as_ref().map(|(a, b)| (a.as_str(), b.as_str()));
+                Grammar::from_json_schema(schema, *any_whitespace, *indent, separators_ref, *strict_mode, None, false)
+                    .map_err(|error_message| Error::GrammarError(error_message))?
             },
             GrammarConfig::Regex {
                 pattern,
@@ -119,14 +105,12 @@ impl CompiledGrammar {
         };
         let mut compiler = GrammarCompiler::new(tokenizer_info, 8, true, -1)
             .map_err(|error_message| Error::GrammarError(error_message))?;
-        let compiled = compiler
-            .compile_grammar(&grammar)
-            .map_err(|error_message| Error::GrammarError(error_message))?;
+        let compiled =
+            compiler.compile_grammar(&grammar).map_err(|error_message| Error::GrammarError(error_message))?;
         let matcher = GrammarMatcher::new(&compiled, None, true, -1)
             .map_err(|error_message| Error::GrammarError(error_message))?;
 
-        let engagement_state = if let Some(trigger_token_id) = trigger_token_id
-        {
+        let engagement_state = if let Some(trigger_token_id) = trigger_token_id {
             CompiledGrammarEngagementState::Triggered {
                 trigger_token_id,
                 trigger_distance: None,
@@ -144,8 +128,7 @@ impl CompiledGrammar {
 
     pub fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error> {
         if self.engagement_state.is_engaged() {
-            let mut cpu_mask = repeat_n(0, self.vocab_size.div_ceil(32))
-                .collect::<Box<[u32]>>();
+            let mut cpu_mask = repeat_n(0, self.vocab_size.div_ceil(32)).collect::<Box<[u32]>>();
             let batch_mask_slice = &mut cpu_mask;
             let mut shape_i64 = [self.vocab_size.div_ceil(32) as i64];
             let mut bitmask_tensor = DLTensor {
@@ -165,15 +148,9 @@ impl CompiledGrammar {
                 byte_offset: 0,
             };
 
-            let success = self.matcher.fill_next_token_bitmask(
-                &mut bitmask_tensor,
-                0,
-                false,
-            );
+            let success = self.matcher.fill_next_token_bitmask(&mut bitmask_tensor, 0, false);
             if !success {
-                return Err(Error::GrammarError(
-                    "Failed to fill next token bitmask".to_string(),
-                ));
+                return Err(Error::GrammarError("Failed to fill next token bitmask".to_string()));
             }
 
             Ok(Some(cpu_mask))
@@ -188,10 +165,7 @@ impl CompiledGrammar {
     ) -> Result<(), Error> {
         if self.engagement_state.is_engaged() {
             if (token_id as usize) >= self.vocab_size {
-                return Err(Error::TokenOutOfGrammarRange(
-                    token_id,
-                    self.vocab_size,
-                ));
+                return Err(Error::TokenOutOfGrammarRange(token_id, self.vocab_size));
             }
 
             if !self.matcher.accept_token(token_id as i32) {

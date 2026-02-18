@@ -2,16 +2,17 @@
 use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, path::Path, time::Instant};
 
+use metal::MTLCommandBuffer;
 use objc2::rc::autoreleasepool;
 
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    Array, DataType,
-    backends::metal::forward_pass::{
-        ArrayId, EncodableBlock, EncodingParameters, ForwardPassState,
-    },
+    DataType,
+    backends::metal::Metal,
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
 };
 
@@ -38,8 +39,7 @@ impl Classifier {
             let forward_start = Instant::now();
 
             #[cfg(feature = "tracing")]
-            let (logits, _traces) =
-                self.forward_pass_with_traces(&token_ids, &token_positions)?;
+            let (logits, _traces) = self.forward_pass_with_traces(&token_ids, &token_positions)?;
 
             #[cfg(not(feature = "tracing"))]
             let logits = self.forward_pass(&token_ids, &token_positions)?;
@@ -48,8 +48,7 @@ impl Classifier {
 
             let postprocessing_start = Instant::now();
             let probabilities = self.logits_to_probabilities(&logits)?;
-            let postprocessing_duration =
-                postprocessing_start.elapsed().as_secs_f64();
+            let postprocessing_duration = postprocessing_start.elapsed().as_secs_f64();
 
             let (predicted_label, confidence) = probabilities
                 .iter()
@@ -80,7 +79,7 @@ impl Classifier {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace>>), Error> {
+    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<Metal>>>), Error> {
         self.forward_pass(token_ids, token_positions)
     }
 
@@ -89,7 +88,7 @@ impl Classifier {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace>>), Error> {
+    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<Metal>>>), Error> {
         autoreleasepool(|_| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
@@ -107,16 +106,8 @@ impl Classifier {
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
-            self.context.embedding_norm.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
+            self.context.embed.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.embedding_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
@@ -128,17 +119,9 @@ impl Classifier {
             }
 
             for layer in self.context.layers.iter() {
-                layer.encode(
-                    &mut state,
-                    &self.context.command_buffer,
-                    &encoding_params,
-                );
+                layer.encode(&mut state, &encoding_params, &self.context.command_buffer);
             }
-            self.context.output_norm.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
+            self.context.output_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
@@ -149,17 +132,9 @@ impl Classifier {
                 );
             }
 
-            self.context.pooling.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
+            self.context.pooling.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
-            self.context.prediction_head.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
+            self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
             self.context.command_buffer.commit();
             self.context.command_buffer.wait_until_completed();
@@ -194,38 +169,14 @@ impl Classifier {
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
-            self.context.embedding_norm.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
+            self.context.embed.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.embedding_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
             for layer in self.context.layers.iter() {
-                layer.encode(
-                    &mut state,
-                    &self.context.command_buffer,
-                    &encoding_params,
-                );
+                layer.encode(&mut state, &encoding_params, &self.context.command_buffer);
             }
-            self.context.output_norm.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
-            self.context.pooling.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
-            self.context.prediction_head.encode(
-                &mut state,
-                &self.context.command_buffer,
-                &encoding_params,
-            );
+            self.context.output_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.pooling.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
             self.context.command_buffer.commit();
             self.context.command_buffer.wait_until_completed();
@@ -238,35 +189,26 @@ impl Classifier {
 
     fn copy_logits_from_state(
         &self,
-        state: &ForwardPassState,
+        state: &ForwardPassState<Metal>,
     ) -> Result<Box<[f32]>, Error> {
-        let logits_arrays =
-            state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
+        let logits_arrays = state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
         let logits_array = logits_arrays[0].borrow();
 
         let num_labels = self.context.model_config.model_config.num_labels;
-        let buffer = Array::buffer(&*logits_array);
+        let buffer = logits_array.as_bytes();
 
-        match Array::data_type(&*logits_array) {
+        match logits_array.data_type() {
             DataType::F32 => {
                 let slice: &[f32] = bytemuck::cast_slice(buffer);
                 Ok(slice[..num_labels].into())
             },
             DataType::F16 => {
                 let slice: &[half::f16] = bytemuck::cast_slice(buffer);
-                Ok(slice[..num_labels]
-                    .iter()
-                    .map(|&x| x.to_f32())
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice())
+                Ok(slice[..num_labels].iter().map(|&x| x.to_f32()).collect::<Vec<_>>().into_boxed_slice())
             },
             DataType::BF16 => {
                 let slice: &[half::bf16] = bytemuck::cast_slice(buffer);
-                Ok(slice[..num_labels]
-                    .iter()
-                    .map(|&x| x.to_f32())
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice())
+                Ok(slice[..num_labels].iter().map(|&x| x.to_f32()).collect::<Vec<_>>().into_boxed_slice())
             },
             _ => Err(Error::UnableToDecodeText),
         }
@@ -276,18 +218,14 @@ impl Classifier {
         &self,
         logits: &[f32],
     ) -> Result<HashMap<String, f32>, Error> {
-        let output_labels =
-            &self.context.model_config.model_config.output_labels;
+        let output_labels = &self.context.model_config.model_config.output_labels;
         let mut probabilities = HashMap::new();
 
         for (idx, &logit) in logits.iter().enumerate() {
             let prob = 1.0 / (1.0 + (-logit).exp());
 
             let label = if let Some(labels) = output_labels {
-                labels
-                    .get(idx)
-                    .map(|s| s.clone())
-                    .unwrap_or_else(|| format!("class_{}", idx))
+                labels.get(idx).map(|s| s.clone()).unwrap_or_else(|| format!("class_{}", idx))
             } else {
                 format!("class_{}", idx)
             };

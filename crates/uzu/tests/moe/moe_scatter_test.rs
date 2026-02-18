@@ -1,11 +1,19 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::{
-    KernelDataType, MoeBlockBasesArguments, MoeCountsOffsetsFusedArguments,
-    MoeCountsOffsetsFusedKernel, MoeScatterArguments, MoeScatterKernels,
-    moe::{MoeRouterTopKArguments, MoeRouterTopKKernel},
+use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use uzu::{
+    DataType,
+    backends::{
+        common::kernel::{
+            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel, MoeScatterBucketsKernel,
+        },
+        metal::kernel::dsl::{
+            MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeRouterTopKMetalKernel,
+            MoeScatterBucketsMetalKernel,
+        },
+    },
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
@@ -58,19 +66,13 @@ fn test_scatter_buckets_parity() {
 
         // Generate random input and router weights for fused kernel
         let d_model = 64;
-        let input_f32: Vec<f32> =
-            (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
-        let weight_f32: Vec<f32> =
-            (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
-        let bias_f32: Vec<f32> =
-            (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
+        let input_f32: Vec<f32> = (0..t * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+        let weight_f32: Vec<f32> = (0..e * d_model).map(|_| rng.random_range(-1.0..1.0)).collect();
+        let bias_f32: Vec<f32> = (0..e).map(|_| rng.random_range(-0.5..0.5)).collect();
 
-        let input: Vec<bf16> =
-            input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
-        let weight: Vec<bf16> =
-            weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
-        let bias: Vec<bf16> =
-            bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let input: Vec<bf16> = input_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let weight: Vec<bf16> = weight_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        let bias: Vec<bf16> = bias_f32.iter().map(|&x| bf16::from_f32(x)).collect();
 
         let input_buf = alloc_buffer_with_data(&ctx, &input);
         let weight_buf = alloc_buffer_with_data(&ctx, &weight);
@@ -79,67 +81,51 @@ fn test_scatter_buckets_parity() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         // Use fused router+topk kernel
-        let router_topk = MoeRouterTopKKernel::new(&ctx).expect("router_topk");
-        let cb = ctx.command_queue.new_command_buffer();
-        router_topk
-            .encode(
-                &cb,
-                KernelDataType::BFloat16,
-                MoeRouterTopKArguments {
-                    input_buffer: &input_buf,
-                    weight_buffer: &weight_buf,
-                    bias_buffer: &bias_buf,
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    t,
-                    d_model,
-                    e,
-                    k,
-                    renorm: true,
-                },
-            )
-            .expect("encode router_topk");
+        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router_topk");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let encoder = cb.new_compute_command_encoder().expect("Failed to create encoder");
+        router_topk.encode(
+            &input_buf,
+            &weight_buf,
+            &bias_buf,
+            &topk_ids_buf,
+            &topk_probs_buf,
+            t as u32,
+            d_model as u32,
+            e as u32,
+            k as u32,
+            true,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
         // Read back CPU probs for reference compare
-        let probs_bf16 = unsafe {
-            std::slice::from_raw_parts(
-                topk_probs_buf.contents() as *const bf16,
-                t * k,
-            )
-        };
-        let topk_probs_cpu: Vec<f32> =
-            probs_bf16.iter().map(|&h| f32::from(h)).collect();
-        let topk_ids_cpu = unsafe {
-            std::slice::from_raw_parts(
-                topk_ids_buf.contents() as *const i32,
-                t * k,
-            )
-        };
+        let probs_bf16 =
+            unsafe { std::slice::from_raw_parts(topk_probs_buf.contents().as_ptr() as *const bf16, t * k) };
+        let topk_probs_cpu: Vec<f32> = probs_bf16.iter().map(|&h| f32::from(h)).collect();
+        let topk_ids_cpu = unsafe { std::slice::from_raw_parts(topk_ids_buf.contents().as_ptr() as *const i32, t * k) };
 
         let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
         let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
         let num_tiles = ((e + 511) / 512).max(1);
         let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-        let fused_kernel =
-            MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-        let cb = ctx.command_queue.new_command_buffer();
-        fused_kernel
-            .encode(
-                &cb,
-                MoeCountsOffsetsFusedArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    offsets_buffer: &offsets_buf,
-                    sum_k_buffer: &sumk_buf,
-                    partials_buffer: &partials_buf,
-                    t,
-                    e,
-                    k,
-                },
-            )
-            .expect("encode fused");
+        let fused_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        fused_kernel.encode(
+            &topk_ids_buf,
+            &offsets_buf,
+            &sumk_buf,
+            &partials_buf,
+            t as u32,
+            e as u32,
+            k as u32,
+            &encoder,
+        );
+        encoder.end_encoding();
         cb.commit();
         cb.wait_until_completed();
 
@@ -149,79 +135,62 @@ fn test_scatter_buckets_parity() {
         let entries = num_blocks * num_tiles * 512usize;
         let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
 
-        let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
-        let cb = ctx.command_queue.new_command_buffer();
+        let scatter_bases_kernel = MoeBlockBasesFromPartialsMetalKernel::new(&ctx)
+            .expect("Failed to create MoeBlockBasesFromPartialsMetalKernel");
+        let scatter_kernel = MoeScatterBucketsMetalKernel::new(&ctx, DataType::BF16)
+            .expect("Failed to create MoeScatterBucketsMetalKernel");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
-        scatter
-            .encode_block_bases(
-                &cb,
-                MoeBlockBasesArguments {
-                    partials_buffer: &partials_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    e,
-                    num_blocks,
-                    num_tiles,
-                },
-            )
-            .expect("encode bases");
+
+        let scatter_bases_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_bases_encoder");
+        scatter_bases_kernel.encode(
+            &partials_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            e as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            0u32,
+            &scatter_bases_encoder,
+        );
+        scatter_bases_encoder.end_encoding();
+
         cb.commit();
         cb.wait_until_completed();
 
-        let sumk = unsafe {
-            std::slice::from_raw_parts(sumk_buf.contents() as *const u32, 1)
-        }[0] as usize;
+        let sumk = unsafe { std::slice::from_raw_parts(sumk_buf.contents().as_ptr() as *const u32, 1) }[0] as usize;
         let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
         let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
-        let cb = ctx.command_queue.new_command_buffer();
-        scatter
-            .encode_scatter(
-                &cb,
-                MoeScatterArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    offsets_buffer: &offsets_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    out_ids_buffer: &out_ids_buf,
-                    out_probs_buffer: &out_probs_buf,
-                    t,
-                    e,
-                    k,
-                    num_blocks,
-                    num_tiles,
-                },
-                KernelDataType::BFloat16,
-            )
-            .expect("encode scatter");
+        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let scatter_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_encoder");
+        scatter_kernel.encode(
+            &topk_ids_buf,
+            &topk_probs_buf,
+            &offsets_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            &out_ids_buf,
+            &out_probs_buf,
+            t as u32,
+            e as u32,
+            k as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            &scatter_encoder,
+        );
+        scatter_encoder.end_encoding();
+
         cb.commit();
         cb.wait_until_completed();
 
-        let out_ids = unsafe {
-            std::slice::from_raw_parts(
-                out_ids_buf.contents() as *const i32,
-                sumk,
-            )
-        };
-        let out_probs_h = unsafe {
-            std::slice::from_raw_parts(
-                out_probs_buf.contents() as *const bf16,
-                sumk,
-            )
-        };
-        let _out_probs: Vec<f32> =
-            out_probs_h.iter().map(|&h| f32::from(h)).collect();
+        let out_ids = unsafe { std::slice::from_raw_parts(out_ids_buf.contents().as_ptr() as *const i32, sumk) };
+        let out_probs_h = unsafe { std::slice::from_raw_parts(out_probs_buf.contents().as_ptr() as *const bf16, sumk) };
+        let _out_probs: Vec<f32> = out_probs_h.iter().map(|&h| f32::from(h)).collect();
 
         // CPU reference
-        let (cpu_ids, _cpu_probs, offsets_cpu) =
-            cpu_expert_buckets(topk_ids_cpu, &topk_probs_cpu, t, e, k);
-        let offsets_gpu = unsafe {
-            std::slice::from_raw_parts(
-                offsets_buf.contents() as *const u32,
-                e + 1,
-            )
-        };
+        let (cpu_ids, _cpu_probs, offsets_cpu) = cpu_expert_buckets(topk_ids_cpu, &topk_probs_cpu, t, e, k);
+        let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
         assert_eq!(offsets_gpu, &offsets_cpu[..]);
 
         // Compare per-expert multisets of ids

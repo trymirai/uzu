@@ -28,26 +28,20 @@ impl ClassificationSession {
             return Err(Error::ModelFolderNotFound);
         }
 
-        let config_file = std::fs::File::open(&config_path)
-            .map_err(|_| Error::UnableToLoadConfig)?;
+        let config_file = std::fs::File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
         let model_metadata: ModelMetadata =
-            serde_json::from_reader(std::io::BufReader::new(config_file))
-                .map_err(|_| Error::UnableToLoadConfig)?;
+            serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
             return Err(Error::UnableToLoadTokenizer);
         }
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|_| Error::UnableToLoadTokenizer)?;
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
 
-        let classifier_model_config = model_metadata
-            .model_config
-            .as_classifier()
-            .ok_or(Error::UnableToLoadConfig)?;
-        let input_processor = Box::new(InputProcessorDefault::new(
-            classifier_model_config.message_processor_config.clone(),
-        )) as Box<dyn InputProcessor>;
+        let classifier_model_config = model_metadata.model_config.as_classifier().ok_or(Error::UnableToLoadConfig)?;
+        let input_processor =
+            Box::new(InputProcessorDefault::new(classifier_model_config.message_processor_config.clone()))
+                as Box<dyn InputProcessor>;
         let classifier = Classifier::new(&model_path)?;
 
         Ok(Self {
@@ -75,11 +69,9 @@ impl ClassificationSession {
             .collect();
 
         let token_positions: Vec<usize> = (0..tokens.len()).collect();
-        let preprocessing_duration =
-            preprocessing_start.elapsed().as_secs_f64();
+        let preprocessing_duration = preprocessing_start.elapsed().as_secs_f64();
 
-        let mut output =
-            self.classifier.classify_tokens(tokens, token_positions)?;
+        let mut output = self.classifier.classify_tokens(tokens, token_positions)?;
         output.stats.preprocessing_duration = preprocessing_duration;
 
         Ok(output)

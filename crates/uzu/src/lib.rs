@@ -1,7 +1,11 @@
+pub mod array;
 pub mod backends;
 pub mod audio_codec;
 pub mod classifier;
 pub mod config;
+pub mod data_type;
+pub mod encodable_block;
+pub mod forward_pass;
 pub mod language_model;
 pub mod parameters;
 pub mod prelude;
@@ -11,7 +15,7 @@ pub mod speculators;
 pub mod tracer;
 pub mod trie;
 pub mod utils;
-pub use utils::*;
-pub mod device;
+
 pub use config::*;
-pub use device::*;
+pub use data_type::*;
+pub use utils::*;
