@@ -10,8 +10,8 @@ pub mod quant_matmul;
 
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
-    MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
-    MoeGatherArguments, MoeGatherKernels, MoeScatterArguments, MoeScatterKernels, MoeScatterWithMapArguments,
+    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments,
+    MoeGatherKernels,
 };
 
 impl MatmulKernels for dsl::MetalKernels {

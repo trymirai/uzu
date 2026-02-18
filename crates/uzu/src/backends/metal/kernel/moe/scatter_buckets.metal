@@ -1,57 +1,12 @@
 #include <metal_stdlib>
 #include <metal_atomic>
+#include "../definitions.metal"
 using namespace metal;
 
 #define BLOCK_SIZE 256
 #define TILE_E 512
 #define SIMD_WIDTH 32
 #define NUM_SG (BLOCK_SIZE / SIMD_WIDTH)
-
-// 4A: Compute per-block base offsets from partials
-// partials layout: index = (block_id * num_tiles + tile_id) * TILE_E + te
-[[max_total_threads_per_threadgroup(256)]]
-kernel void moe_block_bases_from_partials(
-    device const uint* partials [[buffer(0)]],
-    device uint* block_bases [[buffer(1)]],
-    device uint* block_alloc [[buffer(2)]],
-    constant uint& E [[buffer(3)]],
-    constant uint& num_blocks [[buffer(4)]],
-    constant uint& num_tiles [[buffer(5)]],
-    constant uint& capacity_per_expert [[buffer(6)]], // 0 => no clamp
-    uint gid [[thread_position_in_grid]]
-) {
-  const uint entries = num_tiles * TILE_E;
-  if (gid >= entries)
-    return;
-  const uint tile_id = gid / TILE_E;
-  const uint te = gid % TILE_E;
-  const uint e = tile_id * TILE_E + te;
-  if (e >= E)
-    return;
-
-  uint running = 0u;
-  const bool clamp = (capacity_per_expert > 0u);
-  for (uint b = 0; b < num_blocks; ++b) {
-    const uint idx = (b * num_tiles + tile_id) * TILE_E + te;
-    const uint p = partials[idx];
-    const uint alloc = clamp ? (running < capacity_per_expert
-                                    ? min(p, capacity_per_expert - running)
-                                    : 0u)
-                             : p;
-    block_bases[idx] = running;
-    block_alloc[idx] = alloc;
-    running += alloc;
-    if (clamp && running >= capacity_per_expert) {
-      // Remainder allocate zero and base stays at capacity
-      for (uint bb = b + 1; bb < num_blocks; ++bb) {
-        const uint idx2 = (bb * num_tiles + tile_id) * TILE_E + te;
-        block_bases[idx2] = running;
-        block_alloc[idx2] = 0u;
-      }
-      break;
-    }
-  }
-}
 
 // 4B: Scatter into expert-major buckets using atomic-free device writes
 template <typename ProbT>
@@ -188,98 +143,136 @@ inline void moe_scatter_buckets_impl(
   }
 }
 
-#define DEFINE_MOE_SCATTER_BUCKETS_KERNEL(SUFFIX, ProbT)                       \
-  [[max_total_threads_per_threadgroup(256)]]                                   \
-  kernel void moe_scatter_buckets_##SUFFIX(                                    \
-      device const int* topk_ids [[buffer(0)]],                                \
-      device const ProbT* topk_probs [[buffer(1)]],                            \
-      device const uint* offsets [[buffer(2)]],                                \
-      device const uint* block_bases [[buffer(3)]],                            \
-      device const uint* block_alloc [[buffer(4)]],                            \
-      device int* out_ids [[buffer(5)]],                                       \
-      device ProbT* out_probs [[buffer(6)]],                                   \
-      constant uint& T [[buffer(7)]],                                          \
-      constant uint& E [[buffer(8)]],                                          \
-      constant uint& K [[buffer(9)]],                                          \
-      constant uint& num_blocks [[buffer(10)]],                                \
-      constant uint& num_tiles [[buffer(11)]],                                 \
-      uint3 tid3 [[thread_position_in_grid]],                                  \
-      uint lid [[thread_index_in_threadgroup]],                                \
-      uint3 tgpig [[threadgroup_position_in_grid]]                             \
-  ) {                                                                          \
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];                      \
-    threadgroup uint sg_base[NUM_SG * TILE_E];                                 \
-    moe_scatter_buckets_impl<ProbT>(                                           \
-        topk_ids,                                                              \
-        topk_probs,                                                            \
-        offsets,                                                               \
-        block_bases,                                                           \
-        block_alloc,                                                           \
-        out_ids,                                                               \
-        out_probs,                                                             \
-        (device int*)nullptr,                                                  \
-        T,                                                                     \
-        E,                                                                     \
-        K,                                                                     \
-        num_blocks,                                                            \
-        num_tiles,                                                             \
-        tid3,                                                                  \
-        lid,                                                                   \
-        tgpig,                                                                 \
-        sg_counts,                                                             \
-        sg_base                                                                \
-    );                                                                         \
-  }
+// 4A: Compute per-block base offsets from partials
+// partials layout: index = (block_id * num_tiles + tile_id) * TILE_E + te
+KERNEL(MoeBlockBasesFromPartials)(
+    device const uint* partials,
+    device uint* block_bases,
+    device uint* block_alloc,
+    constant uint& e_input,
+    constant uint& num_blocks,
+    constant uint& num_tiles,
+    constant uint& capacity_per_expert, // 0 => no clamp
+    const uint gid AXIS(num_tiles * 512, 256)
+) {
+  const uint tile_id = gid / TILE_E;
+  const uint te = gid % TILE_E;
+  const uint e = tile_id * TILE_E + te;
+  if (e >= e_input)
+    return;
 
-DEFINE_MOE_SCATTER_BUCKETS_KERNEL(f16, half)
-DEFINE_MOE_SCATTER_BUCKETS_KERNEL(f32, float)
-DEFINE_MOE_SCATTER_BUCKETS_KERNEL(bf16, bfloat)
+  uint running = 0u;
+  const bool clamp = (capacity_per_expert > 0u);
+  for (uint b = 0; b < num_blocks; ++b) {
+    const uint idx = (b * num_tiles + tile_id) * TILE_E + te;
+    const uint p = partials[idx];
+    const uint alloc = clamp ? (running < capacity_per_expert
+                                    ? min(p, capacity_per_expert - running)
+                                    : 0u)
+                             : p;
+    block_bases[idx] = running;
+    block_alloc[idx] = alloc;
+    running += alloc;
+    if (clamp && running >= capacity_per_expert) {
+      // Remainder allocate zero and base stays at capacity
+      for (uint bb = b + 1; bb < num_blocks; ++bb) {
+        const uint idx2 = (bb * num_tiles + tile_id) * TILE_E + te;
+        block_bases[idx2] = running;
+        block_alloc[idx2] = 0u;
+      }
+      break;
+    }
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MoeScatterBuckets)(
+    device const int* topk_ids,
+    device const T* topk_probs,
+    device const uint* offsets,
+    device const uint* block_bases,
+    device const uint* block_alloc,
+    device int* out_ids,
+    device T* out_probs,
+    constant uint& t,
+    constant uint& e,
+    constant uint& k,
+    constant uint& num_blocks,
+    constant uint& num_tiles,
+    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E],
+    threadgroup uint sg_base[NUM_SG * TILE_E],
+    const uint tgpig_x GROUPS(num_blocks),
+    const uint lid THREADS(256)
+) {
+  const uint3 tgpig = {tgpig_x, 0, 0};
+  const uint tid_x = tgpig.x * BLOCK_SIZE + lid;
+  const uint3 tid3 = {tid_x, 0, 0};
+  moe_scatter_buckets_impl<T>(
+      topk_ids,
+      topk_probs,
+      offsets,
+      block_bases,
+      block_alloc,
+      out_ids,
+      out_probs,
+      (device int*)nullptr,
+      t,
+      e,
+      k,
+      num_blocks,
+      num_tiles,
+      tid3,
+      lid,
+      tgpig,
+      sg_counts,
+      sg_base
+  );
+}
 
 // Map variants
-#define DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(SUFFIX, ProbT)                   \
-  [[max_total_threads_per_threadgroup(256)]]                                   \
-  kernel void moe_scatter_buckets_map_##SUFFIX(                                \
-      device const int* topk_ids [[buffer(0)]],                                \
-      device const ProbT* topk_probs [[buffer(1)]],                            \
-      device const uint* offsets [[buffer(2)]],                                \
-      device const uint* block_bases [[buffer(3)]],                            \
-      device const uint* block_alloc [[buffer(4)]],                            \
-      device int* out_ids [[buffer(5)]],                                       \
-      device ProbT* out_probs [[buffer(6)]],                                   \
-      constant uint& T [[buffer(7)]],                                          \
-      constant uint& E [[buffer(8)]],                                          \
-      constant uint& K [[buffer(9)]],                                          \
-      constant uint& num_blocks [[buffer(10)]],                                \
-      constant uint& num_tiles [[buffer(11)]],                                 \
-      device int* tok2row [[buffer(12)]],                                      \
-      uint3 tid3 [[thread_position_in_grid]],                                  \
-      uint lid [[thread_index_in_threadgroup]],                                \
-      uint3 tgpig [[threadgroup_position_in_grid]]                             \
-  ) {                                                                          \
-    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E];                      \
-    threadgroup uint sg_base[NUM_SG * TILE_E];                                 \
-    moe_scatter_buckets_impl<ProbT>(                                           \
-        topk_ids,                                                              \
-        topk_probs,                                                            \
-        offsets,                                                               \
-        block_bases,                                                           \
-        block_alloc,                                                           \
-        out_ids,                                                               \
-        out_probs,                                                             \
-        tok2row,                                                               \
-        T,                                                                     \
-        E,                                                                     \
-        K,                                                                     \
-        num_blocks,                                                            \
-        num_tiles,                                                             \
-        tid3,                                                                  \
-        lid,                                                                   \
-        tgpig,                                                                 \
-        sg_counts,                                                             \
-        sg_base                                                                \
-    );                                                                         \
-  }
-
-DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(f16, half)
-DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(f32, float)
-DEFINE_MOE_SCATTER_BUCKETS_MAP_KERNEL(bf16, bfloat)
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MoeScatterBucketsMap)(
+    device const int* topk_ids,
+    device const T* topk_probs,
+    device const uint* offsets,
+    device const uint* block_bases,
+    device const uint* block_alloc,
+    device int* out_ids,
+    device T* out_probs,
+    constant uint& t,
+    constant uint& e,
+    constant uint& k,
+    constant uint& num_blocks,
+    constant uint& num_tiles,
+    device int* tok2row,
+    threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E],
+    threadgroup uint sg_base[NUM_SG * TILE_E],
+    const uint tgpig_x GROUPS(num_blocks),
+    const uint lid THREADS(256)
+) {
+  const uint3 tgpig = {tgpig_x, 0, 0};
+  const uint tid_x = tgpig.x * BLOCK_SIZE + lid;
+  const uint3 tid3 = {tid_x, 0, 0};
+  moe_scatter_buckets_impl<T>(
+      topk_ids,
+      topk_probs,
+      offsets,
+      block_bases,
+      block_alloc,
+      out_ids,
+      out_probs,
+      tok2row,
+      t,
+      e,
+      k,
+      num_blocks,
+      num_tiles,
+      tid3,
+      lid,
+      tgpig,
+      sg_counts,
+      sg_base
+  );
+}

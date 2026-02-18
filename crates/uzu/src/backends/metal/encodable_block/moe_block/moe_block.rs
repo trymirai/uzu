@@ -10,16 +10,21 @@ use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
     array::Array,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel},
+        common::kernel::{
+            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
+            MoeScatterBucketsKernel,
+        },
         metal::{
             Metal, MetalContext,
             kernel::{
                 MoeGatherKernels,
-                dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
+                dsl::{
+                    MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
+                    MoeRouterTopKMetalKernel, MoeScatterBucketsMetalKernel,
+                },
                 moe::{
-                    MoeBlockBasesArguments, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
-                    MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeScatterArguments, MoeScatterKernels,
-                    MoeScatterWithMapArguments,
+                    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
+                    MoeGatherArguments,
                 },
             },
         },
@@ -41,7 +46,8 @@ pub struct MoeBlock {
     router_renorm: bool,
     router_topk_kernel: MoeRouterTopKMetalKernel,
     counts_offsets_kernel: MoeCountsOffsetsFusedMetalKernel,
-    scatter_kernels: MoeScatterKernels,
+    scatter_bases_kernel: MoeBlockBasesFromPartialsMetalKernel,
+    scatter_kernel: MoeScatterBucketsMetalKernel,
     gather_kernels: MoeGatherKernels,
     experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeBlock,
     experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillBlock,
@@ -109,9 +115,18 @@ impl MoeBlock {
         let counts_offsets_kernel = MoeCountsOffsetsFusedKernel::new(context).map_err(|e| {
             crate::backends::metal::MetalError::Generic(format!("Counts+offsets kernel error: {:?}", e))
         })?;
-        let scatter_kernels = MoeScatterKernels::new(context)
-            .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Scatter kernels error: {:?}", e)))?;
-        let gather_kernel = MoeGatherKernels::new(context)
+
+        let scatter_bases_kernel = MoeBlockBasesFromPartialsMetalKernel::new(context).map_err(|e| {
+            crate::backends::metal::MetalError::Generic(format!(
+                "MoeBlockBasesFromPartialsMetalKernel kernel error: {:?}",
+                e
+            ))
+        })?;
+        let scatter_kernel = MoeScatterBucketsMetalKernel::new(context, data_type).map_err(|e| {
+            crate::backends::metal::MetalError::Generic(format!("MoeScatterBucketsMetalKernel kernel error: {:?}", e))
+        })?;
+
+        let gather_kernels = MoeGatherKernels::new(context)
             .map_err(|e| crate::backends::metal::MetalError::Generic(format!("Gather kernel error: {:?}", e)))?;
         let experts_two_pass_decode_kernel = MoeExpertsTwoPassDecodeBlock::new(context).map_err(|e| {
             crate::backends::metal::MetalError::Generic(format!("Experts two-pass decode kernel error: {:?}", e))
@@ -166,8 +181,9 @@ impl MoeBlock {
             router_renorm,
             router_topk_kernel,
             counts_offsets_kernel,
-            scatter_kernels,
-            gather_kernels: gather_kernel,
+            scatter_bases_kernel,
+            scatter_kernel,
+            gather_kernels,
             experts_two_pass_decode_kernel,
             experts_two_pass_prefill_kernel,
             finalize_kernel,
@@ -349,44 +365,40 @@ impl EncodableBlock<Metal> for MoeBlock {
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
+        let scatter_bases_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder for scatter bases kernel");
+        self.scatter_bases_kernel.encode(
+            &partials_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            e as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            0u32,
+            &scatter_bases_encoder,
+        );
+        scatter_bases_encoder.end_encoding();
 
-        self.scatter_kernels
-            .encode_block_bases(
-                root,
-                MoeBlockBasesArguments {
-                    partials_buffer: &partials_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    e,
-                    num_blocks,
-                    num_tiles,
-                },
-            )
-            .expect("MoE block bases failed");
-
-        self.scatter_kernels
-            .encode_scatter_with_map(
-                root,
-                MoeScatterWithMapArguments {
-                    base: MoeScatterArguments {
-                        topk_ids_buffer: &topk_ids_buf,
-                        topk_probs_buffer: &topk_probs_buf,
-                        offsets_buffer: &offsets_buf,
-                        block_bases_buffer: &block_bases_buf,
-                        block_alloc_buffer: &block_alloc_buf,
-                        out_ids_buffer: &bucketed_ids_buf,
-                        out_probs_buffer: &bucketed_probs_buf,
-                        t: suffix_length,
-                        e,
-                        k,
-                        num_blocks,
-                        num_tiles,
-                    },
-                    tok2row_buffer: &tok2row_buf,
-                },
-                self.data_type,
-            )
-            .expect("MoE scatter failed");
+        let scatter_encoder = command_buffer
+            .new_compute_command_encoder()
+            .expect("Failed to create compute command encoder for scatter kernel");
+        self.scatter_kernel.encode(
+            &topk_ids_buf,
+            &topk_probs_buf,
+            &offsets_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            &bucketed_ids_buf,
+            &bucketed_probs_buf,
+            suffix_length as u32,
+            e as u32,
+            k as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            &scatter_encoder,
+        );
+        scatter_encoder.end_encoding();
 
         self.gather_kernels.encode(
             root,
