@@ -6,13 +6,16 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel},
+        common::kernel::{
+            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
+            MoeScatterBucketsMapKernel,
+        },
         metal::kernel::{
-            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel, MoeRouterTopKMetalKernel},
-            moe::{
-                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels,
-                MoeScatterKernels, MoeScatterWithMapArguments,
+            dsl::{
+                MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
+                MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
             },
+            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels},
         },
     },
 };
@@ -292,7 +295,10 @@ fn test_moe_pipeline_breakdown_decode() {
 
     // Create kernel structs (use production-validated encoding logic)
     let counts_offsets_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("counts+offsets fused");
-    let scatter_kernel = MoeScatterKernels::new(&ctx).expect("scatter");
+    let scatter_bases_kernel =
+        MoeBlockBasesFromPartialsMetalKernel::new(&ctx).expect("MoeBlockBasesFromPartialsMetalKernel");
+    let scatter_map_kernel =
+        MoeScatterBucketsMapMetalKernel::new(&ctx, DataType::BF16).expect("MoeScatterBucketsMapMetalKernel");
     let gather_kernel = MoeGatherKernels::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("experts two-pass decode");
     let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
@@ -340,42 +346,38 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let scatter_perf = time_kernel("Scatter", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        scatter_kernel
-            .encode_block_bases(
-                &cb,
-                uzu::backends::metal::kernel::moe::MoeBlockBasesArguments {
-                    partials_buffer: &partials_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    e,
-                    num_blocks,
-                    num_tiles,
-                },
-            )
-            .expect("block bases");
-        scatter_kernel
-            .encode_scatter_with_map(
-                &cb,
-                MoeScatterWithMapArguments {
-                    base: uzu::backends::metal::kernel::moe::MoeScatterArguments {
-                        topk_ids_buffer: &topk_ids_buf,
-                        topk_probs_buffer: &topk_probs_buf,
-                        offsets_buffer: &offsets_buf,
-                        block_bases_buffer: &block_bases_buf,
-                        block_alloc_buffer: &block_alloc_buf,
-                        out_ids_buffer: &bucketed_ids_buf,
-                        out_probs_buffer: &bucketed_probs_buf,
-                        t,
-                        e,
-                        k,
-                        num_blocks,
-                        num_tiles,
-                    },
-                    tok2row_buffer: &tok2row_buf,
-                },
-                DataType::BF16,
-            )
-            .expect("scatter");
+        let scatter_bases_encoder = cb.new_compute_command_encoder().expect("scatter_bases_encoder");
+        scatter_bases_kernel.encode(
+            &partials_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            e as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            0u32,
+            &scatter_bases_encoder,
+        );
+        scatter_bases_encoder.end_encoding();
+
+        let scatter_map_encoder = cb.new_compute_command_encoder().expect("scatter_map_encoder");
+        scatter_map_kernel.encode(
+            &topk_ids_buf,
+            &topk_probs_buf,
+            &offsets_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            &bucketed_ids_buf,
+            &bucketed_probs_buf,
+            t as u32,
+            e as u32,
+            k as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            &tok2row_buf,
+            &scatter_map_encoder,
+        );
+        scatter_map_encoder.end_encoding();
+
         cb.commit();
         cb.wait_until_completed();
     });
