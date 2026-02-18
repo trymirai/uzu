@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt,
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
     MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
@@ -226,5 +226,9 @@ impl Context for MetalContext {
 
     fn create_command_buffer(&self) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MetalError> {
         self.command_queue.command_buffer().ok_or(MetalError::Generic("cannot create command buffer".into()))
+    }
+
+    fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
+        self.device.new_event().ok_or(MetalError::Generic("cannot create event".into()))
     }
 }

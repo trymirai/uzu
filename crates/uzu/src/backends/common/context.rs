@@ -17,4 +17,6 @@ pub trait Context: Sized {
     fn create_command_buffer(
         &self
     ) -> Result<<Self::Backend as Backend>::CommandBuffer, <Self::Backend as Backend>::Error>;
+
+    fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
 }

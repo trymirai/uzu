@@ -83,12 +83,12 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
 
     pub fn create_state(
         &self,
-        context: &mut LanguageModelGeneratorContext,
+        context: &mut LanguageModelGeneratorContext<Metal>,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         should_fill_attention_bias: bool,
     ) -> ForwardPassState<Metal> {
         ForwardPassState::new_llm(
-            context.mtl_context.clone(),
+            context.context.clone(),
             &context.decoder_config,
             &context.model_shape,
             &context.scratch_buffers,
@@ -112,7 +112,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
 
     pub fn build_encoded_task(
         &self,
-        context: &LanguageModelGeneratorContext,
+        context: &LanguageModelGeneratorContext<Metal>,
         state: &mut ForwardPassState<Metal>,
         parameters: &EncodingParameters<Metal>,
         key: String,
@@ -122,7 +122,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         LanguageModelGeneratorEncodedTask {
             key,
             predicate_buffer: context
-                .mtl_context
+                .context
                 .create_buffer(size_of::<u32>())
                 .expect("Failed to create predicate buffer"),
         }
