@@ -31,7 +31,6 @@ KERNEL(SSDPrefill64)(
     const uint lane_idx THREADS(32)
 ) {
   const uint simd_width = 32;
-  const int state_dim = state_size;
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
   const uint safe_group = uint(max(group_size, 1));

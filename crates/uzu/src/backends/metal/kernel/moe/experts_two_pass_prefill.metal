@@ -469,8 +469,7 @@ KERNEL(MoeExpertsPrefillPassB)(
 
   // Cooperative load config - vec8 loads for better bandwidth
   constexpr uint H_VEC = 8;
-  constexpr uint H_TCOLS = Bk / H_VEC;         // 64/8 = 8
-  constexpr uint H_TROWS = TGP_SIZE / H_TCOLS; // 128/8 = 16
+  constexpr uint H_TCOLS = Bk / H_VEC; // 64/8 = 8
   const uint h_bi = lin / H_TCOLS;
   const uint h_bj = (lin % H_TCOLS) * H_VEC;
 
