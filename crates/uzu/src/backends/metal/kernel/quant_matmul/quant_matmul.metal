@@ -1096,7 +1096,6 @@ void qmv_impl_dispatch(
   const int in_vec_size_g =
       (K + group_size - 1) / group_size; // ceil(K / group_size)
   const device T* scales_base = scales;
-  const device uint8_t* zero_points_base = zero_points;
   const int out_row = tid.y * (num_simdgroups * results_per_simdgroup) +
                       simd_gid * results_per_simdgroup;
   const int used_out_row = min(N - results_per_simdgroup, out_row);
