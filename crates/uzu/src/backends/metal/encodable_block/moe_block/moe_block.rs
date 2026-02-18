@@ -12,7 +12,7 @@ use crate::{
     backends::{
         common::kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
-            MoeScatterBucketsKernel, MoeScatterBucketsMapKernel,
+            MoeScatterBucketsMapKernel,
         },
         metal::{
             Metal, MetalContext,
@@ -20,7 +20,7 @@ use crate::{
                 MoeGatherKernels,
                 dsl::{
                     MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
-                    MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel, MoeScatterBucketsMetalKernel,
+                    MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
                 },
                 moe::{
                     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
