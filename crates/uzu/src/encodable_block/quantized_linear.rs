@@ -7,9 +7,9 @@ use crate::{
         Backend,
         kernel::{
             Kernels, TensorAddBiasKernel,
-            matmul::{
-                MatmulKernels, QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernel,
-                QuantizedMatmulType,
+            quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
             },
         },
     },
@@ -22,6 +22,8 @@ use crate::{
 pub enum QuantizedLinearError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("QuantizedMatmul error: {0}")]
+    QuantizedMatmulError(#[source] QuantizedMatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(ParameterLoaderError),
     #[error("Unsupported data type for quantized kernel: {0:?}")]
@@ -77,11 +79,8 @@ pub enum QuantizedLinearError<B: Backend> {
     },
 }
 
-pub struct QuantizedLinear<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
-    kernel: <B::Kernels as MatmulKernels>::QuantizedMatmulKernel,
+pub struct QuantizedLinear<B: Backend> {
+    kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
     biases_buffer: Option<B::NativeBuffer>,
     weights_buffer: B::NativeBuffer,
@@ -94,10 +93,7 @@ where
     output_array_id: ArrayId,
 }
 
-impl<B: Backend> QuantizedLinear<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> QuantizedLinear<B> {
     pub fn new(
         context: &B::Context,
         config: &QuantizationConfig,
@@ -211,7 +207,7 @@ where
             Err(_) => (None, None),
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::QuantizedMatmulKernel::new(
+        let kernel = QuantizedMatmulKernelEncodable::new(
             context,
             QuantizedMatmulConfiguration {
                 data_type: kernel_data_type,
@@ -223,7 +219,7 @@ where
                 weights_transposed,
             },
         )
-        .map_err(QuantizedLinearError::BackendError)?;
+        .map_err(QuantizedLinearError::QuantizedMatmulError)?;
 
         Ok(Self {
             kernel,
@@ -241,10 +237,7 @@ where
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
     fn supports_shared_encoder(&self) -> bool {
         true
     }
@@ -261,21 +254,23 @@ where
         let output_array = arrays[1].borrow_mut();
         let output_buffer = output_array.buffer();
 
-        self.kernel.encode(
-            encoder,
-            QuantizedMatmulArguments {
-                a_buffer: input_array.buffer(),
-                a_offset: 0,
-                b_buffer: &self.weights_buffer,
-                scales_buffer: &self.scales_buffer,
-                zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
-                output_buffer,
-                batch: batch_size,
-                input_dim: self.input_dim,
-                output_dim: self.output_dim,
-                quantization_type: self.quantization_type,
-            },
-        );
+        self.kernel
+            .encode(
+                encoder,
+                QuantizedMatmulArguments {
+                    a_buffer: input_array.buffer(),
+                    a_offset: 0,
+                    b_buffer: &self.weights_buffer,
+                    scales_buffer: &self.scales_buffer,
+                    zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
+                    output_buffer,
+                    batch: batch_size,
+                    input_dim: self.input_dim,
+                    output_dim: self.output_dim,
+                    quantization_type: self.quantization_type,
+                },
+            )
+            .expect("Failed to encode quantized matmul");
 
         if let (Some(bias_add_kernel), Some(biases_buffer)) = (&self.bias_add_kernel, &self.biases_buffer) {
             let total_length = batch_size * self.output_dim;

@@ -7,9 +7,9 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Context, NativeBuffer,
-        kernel::matmul::{
-            MatmulKernels, QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernel,
-            QuantizedMatmulType,
+        kernel::quant_matmul::{
+            QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+            QuantizedMatmulKernelEncodable, QuantizedMatmulType,
         },
     },
     config::QuantizationMode,
@@ -18,12 +18,11 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum QuantizedEmbeddingReadoutError<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
+pub enum QuantizedEmbeddingReadoutError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    MatmulError(#[source] QuantizedMatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(ParameterLoaderError),
     #[error("Unsupported data type: {0:?}")]
@@ -64,11 +63,8 @@ where
     },
 }
 
-pub struct QuantizedEmbeddingReadout<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
-    kernel: <B::Kernels as MatmulKernels>::QuantizedMatmulKernel,
+pub struct QuantizedEmbeddingReadout<B: Backend> {
+    kernel: QuantizedMatmulKernelEncodable<B>,
     weights_buffer: B::NativeBuffer,
     scales_buffer: B::NativeBuffer,
     biases_buffer: B::NativeBuffer,
@@ -76,10 +72,7 @@ where
     model_dim: usize,
 }
 
-impl<B: Backend> QuantizedEmbeddingReadout<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> QuantizedEmbeddingReadout<B> {
     pub fn new_tied(
         context: &B::Context,
         data_type: DataType,
@@ -204,7 +197,7 @@ where
             },
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::QuantizedMatmulKernel::new(
+        let kernel = QuantizedMatmulKernelEncodable::new(
             context,
             QuantizedMatmulConfiguration {
                 data_type,
@@ -216,7 +209,7 @@ where
                 weights_transposed,
             },
         )
-        .map_err(QuantizedEmbeddingReadoutError::BackendError)?;
+        .map_err(QuantizedEmbeddingReadoutError::MatmulError)?;
 
         Ok(Self {
             kernel,
@@ -229,10 +222,7 @@ where
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
     fn supports_shared_encoder(&self) -> bool {
         true
     }
@@ -256,20 +246,22 @@ where
         let element_size = input_array.data_type().size_in_bytes();
         let a_offset = sampling_start * self.model_dim * element_size;
 
-        self.kernel.encode(
-            encoder,
-            QuantizedMatmulArguments {
-                a_buffer: input_array.buffer(),
-                a_offset,
-                b_buffer: &self.weights_buffer,
-                scales_buffer: &self.scales_buffer,
-                zero_points_or_biases_buffer: &self.biases_buffer,
-                output_buffer: output_array.buffer(),
-                batch: batch_size,
-                input_dim: self.model_dim,
-                output_dim: self.vocab_size,
-                quantization_type: QuantizedMatmulType::Mlx,
-            },
-        );
+        self.kernel
+            .encode(
+                encoder,
+                QuantizedMatmulArguments {
+                    a_buffer: input_array.buffer(),
+                    a_offset,
+                    b_buffer: &self.weights_buffer,
+                    scales_buffer: &self.scales_buffer,
+                    zero_points_or_biases_buffer: &self.biases_buffer,
+                    output_buffer: output_array.buffer(),
+                    batch: batch_size,
+                    input_dim: self.model_dim,
+                    output_dim: self.vocab_size,
+                    quantization_type: QuantizedMatmulType::Mlx,
+                },
+            )
+            .expect("Failed to encode quantized embedding readout kernel");
     }
 }
