@@ -1,7 +1,6 @@
 use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
 
 use itertools::{Either, Itertools, izip};
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder};
 
 use super::{
     LanguageModelGeneratorContext,
@@ -12,12 +11,9 @@ use super::{
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
-    backends::{
-        common::{
-            Context,
-            kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
-        },
-        metal::Metal,
+    backends::common::{
+        Backend, CommandBuffer, Context, NativeBuffer,
+        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, matmul::MatmulKernels},
     },
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::{
@@ -30,20 +26,26 @@ use crate::{
         types::Error,
     },
     trie::{TrieCreationConfig, TrieNode},
-    utils::env_utils::MetalEnvVar,
+    utils::env_utils::EnvVar,
 };
 
-pub struct LanguageModelGenerator {
+pub struct LanguageModelGenerator<B: Backend + 'static>
+where
+    B::Kernels: MatmulKernels,
+{
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
-    pub context: LanguageModelGeneratorContext<Metal>,
-    encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask>,
+    pub context: LanguageModelGeneratorContext<B>,
+    encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask<B>>,
     registered_prefix_len: usize,
-    gpu_capture: GpuCaptureManager,
+    gpu_capture: GpuCaptureManager<B>,
 }
 
-impl LanguageModelGenerator {
+impl<B: Backend + 'static> LanguageModelGenerator<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
@@ -119,7 +121,7 @@ impl LanguageModelGenerator {
 
         let token_seeds = repeat_n(0, tokens_length - 1).chain(flat_trie.token_seeds()).chunks(prefill_step_size);
 
-        let mut last_state: Option<ForwardPassState<Metal>> = None;
+        let mut last_state: Option<ForwardPassState<B>> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -201,7 +203,7 @@ impl LanguageModelGenerator {
             );
 
             if should_capture {
-                self.gpu_capture.stop_capture("prefill");
+                self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
             }
 
             // Register the accepted prompt tokens from this step.
@@ -393,7 +395,7 @@ impl LanguageModelGenerator {
         let is_continuation = current_counter > 0;
         let batch_size = self.context.async_buffers.batch_size;
         let slot = pass_idx % batch_size;
-        let async_event = self.context.async_buffers.event.clone();
+
         let results_buffer = self.context.async_buffers.results.clone();
         let async_positions_buffer = self.context.async_buffers.positions.clone();
         let async_seeds_buffer = self.context.async_buffers.seeds.clone();
@@ -401,7 +403,7 @@ impl LanguageModelGenerator {
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let token_position = unsafe {
-            let ptr = async_positions_buffer.contents().as_ptr() as *const u32;
+            let ptr = async_positions_buffer.cpu_ptr().as_ptr() as *const u32;
             *ptr.add(pass_idx) as usize
         };
 
@@ -455,11 +457,11 @@ impl LanguageModelGenerator {
         }
 
         self.context.reset_command_buffer();
-        let root_command_buffer = self.context.command_buffer.clone();
+        let root_command_buffer = &self.context.command_buffer;
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
-            root_command_buffer.encode_wait_for_event_value(&async_event, current_counter);
+            root_command_buffer.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
         self.context.executables.encode(
@@ -481,67 +483,65 @@ impl LanguageModelGenerator {
         let sampling_output_buffer = sampling_output.borrow().buffer().clone();
         let token_ids_buffer = self.context.scratch_buffers.token_ids.borrow().buffer().clone();
 
-        let encoder =
-            root_command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-        self.context.token_copy_sampled.encode(&sampling_output_buffer, &token_ids_buffer, &encoder);
-        let results_offset = slot * std::mem::size_of::<u32>();
-        self.context.token_copy_results.encode(&sampling_output_buffer, (&results_buffer, results_offset), &encoder);
-        encoder.end_encoding();
+        root_command_buffer.with_compute_encoder(|encoder| {
+            self.context.token_copy_sampled.encode(&sampling_output_buffer, &token_ids_buffer, encoder);
+            let results_offset = slot * std::mem::size_of::<u32>();
+            self.context.token_copy_results.encode(&sampling_output_buffer, (&results_buffer, results_offset), encoder);
+        });
 
         // Scatter + register for all transformer layers
-        {
-            let cb = root_command_buffer.clone();
-            self.context.cache_layers.borrow_mut().update_after_acceptance(
-                &[0],
-                None,
-                &cb,
-                &self.context.kv_cache_update,
-            );
-            self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
-        }
+        self.context.cache_layers.borrow_mut().update_after_acceptance(
+            &[0],
+            None,
+            &root_command_buffer,
+            &self.context.kv_cache_update,
+        );
+        self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
 
-        let encoder =
-            root_command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder");
-
-        if let Some(mask_update) = &self.context.mask_update {
-            let updates: Vec<AttentionBiasUpdate> =
-                self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
-            for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
-                if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
-                    if update.unmask_col >= 0 || update.mask_col >= 0 {
-                        mask_update.encode(mask_buffer.borrow().buffer(), update.unmask_col, update.mask_col, &encoder);
+        root_command_buffer.with_compute_encoder(|encoder| {
+            if let Some(mask_update) = &self.context.mask_update {
+                let updates: Vec<AttentionBiasUpdate> =
+                    self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
+                for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
+                    if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
+                        if update.unmask_col >= 0 || update.mask_col >= 0 {
+                            mask_update.encode(
+                                mask_buffer.borrow().buffer(),
+                                update.unmask_col,
+                                update.mask_col,
+                                &encoder,
+                            );
+                        }
                     }
                 }
             }
-        }
-
-        encoder.end_encoding();
+        });
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        root_command_buffer.encode_signal_event_value(&async_event, next_counter);
+        root_command_buffer.encode_signal_event(&self.context.async_buffers.event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
         let results_buffer_clone = results_buffer.clone();
         let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
 
-        let handler = MTLCommandBufferHandler::new(move |_| {
+        let handler = move || {
             let token = {
-                let ptr = results_buffer_clone.contents().as_ptr() as *const u32;
+                let ptr = results_buffer_clone.cpu_ptr().as_ptr() as *const u32;
                 unsafe { *ptr.add(slot) as u64 }
             };
             if let Some(cb) = callback.lock().unwrap().take() {
                 cb(token);
             }
-        });
+        };
 
-        root_command_buffer.add_completed_handler(&handler);
-        root_command_buffer.commit();
+        root_command_buffer.add_completed_handler(handler);
+        root_command_buffer.submit();
 
         if should_capture {
             root_command_buffer.wait_until_completed();
-            self.gpu_capture.stop_capture("decode");
+            self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
         Ok(())
@@ -603,7 +603,7 @@ impl LanguageModelGenerator {
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
-    ) -> (ForwardPassState<Metal>, f64) {
+    ) -> (ForwardPassState<B>, f64) {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
@@ -650,7 +650,7 @@ impl LanguageModelGenerator {
                 }
             }
 
-            self.context.command_buffer.commit();
+            root_command_buffer.submit();
 
             if allow_pre_encode {
                 self.context.reset_command_buffer();
@@ -670,7 +670,10 @@ impl LanguageModelGenerator {
             root_command_buffer.wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
             if should_capture {
-                self.gpu_capture.stop_capture("decode");
+                self.gpu_capture
+                    .stop_capture(&self.context.context, "decode")
+                    .map_err(|_| Error::CaptureFailed)
+                    .expect("failed to stop capture");
             }
 
             (state, run_time)
@@ -679,7 +682,7 @@ impl LanguageModelGenerator {
 
     fn sample(
         &mut self,
-        state: &mut ForwardPassState<Metal>,
+        state: &mut ForwardPassState<B>,
     ) -> Result<Vec<u64>, Error> {
         let sampling_output = state
             .sampling_output()
@@ -704,7 +707,7 @@ impl LanguageModelGenerator {
         wait_until_completed: bool,
     ) {
         let command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
-        let root_command_buffer = command_buffer.to_owned();
+        let root_command_buffer = &command_buffer;
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
@@ -716,7 +719,7 @@ impl LanguageModelGenerator {
             );
         }
 
-        command_buffer.commit();
+        command_buffer.submit();
 
         if wait_until_completed {
             command_buffer.wait_until_completed();
@@ -724,9 +727,9 @@ impl LanguageModelGenerator {
     }
 
     fn allow_pre_encode(&self) -> bool {
-        let metal_debug_active = MetalEnvVar::DeviceWrapperType.is_enabled();
+        let debug_active = EnvVar::DeviceWrapperType.is_enabled();
 
-        let result = self.decoding_config.allow_pre_encode && !metal_debug_active;
+        let result = self.decoding_config.allow_pre_encode && !debug_active;
 
         result
     }

@@ -2,7 +2,6 @@
 use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, path::Path, time::Instant};
 
-use metal::MTLCommandBuffer;
 use objc2::rc::autoreleasepool;
 
 #[cfg(feature = "tracing")]
@@ -10,17 +9,23 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    backends::metal::Metal,
+    backends::common::{Backend, CommandBuffer, kernel::matmul::MatmulKernels},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
 };
 
-pub struct Classifier {
-    pub context: ClassifierContext<Metal>,
+pub struct Classifier<B: Backend + 'static>
+where
+    B::Kernels: MatmulKernels,
+{
+    pub context: ClassifierContext<B>,
 }
 
-impl Classifier {
+impl<B: Backend + 'static> Classifier<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(model_path: &Path) -> Result<Self, Error> {
         let context = ClassifierContext::new(model_path)?;
         Ok(Self {
@@ -79,7 +84,7 @@ impl Classifier {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<Metal>>>), Error> {
+    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<B>>>), Error> {
         self.forward_pass(token_ids, token_positions)
     }
 
@@ -88,7 +93,7 @@ impl Classifier {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<Metal>>>), Error> {
+    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<B>>>), Error> {
         autoreleasepool(|_| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
@@ -136,7 +141,7 @@ impl Classifier {
 
             self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
-            self.context.command_buffer.commit();
+            self.context.command_buffer.submit();
             self.context.command_buffer.wait_until_completed();
 
             let logits = self.copy_logits_from_state(&state)?;
@@ -178,7 +183,7 @@ impl Classifier {
             self.context.pooling.encode(&mut state, &encoding_params, &self.context.command_buffer);
             self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
 
-            self.context.command_buffer.commit();
+            self.context.command_buffer.submit();
             self.context.command_buffer.wait_until_completed();
 
             let logits = self.copy_logits_from_state(&state)?;
@@ -189,7 +194,7 @@ impl Classifier {
 
     fn copy_logits_from_state(
         &self,
-        state: &ForwardPassState<Metal>,
+        state: &ForwardPassState<B>,
     ) -> Result<Box<[f32]>, Error> {
         let logits_arrays = state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
         let logits_array = logits_arrays[0].borrow();

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use metal::{MTLCommandBuffer, MTLCommandBufferExt, MTLCommandEncoder};
+use metal::{MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder, MTLEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
@@ -33,6 +33,29 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
         encoder.end_encoding();
 
         ret
+    }
+
+    fn encode_wait_for_event(
+        &self,
+        event: &Retained<ProtocolObject<dyn MTLEvent>>,
+        value: u64,
+    ) {
+        self.encode_wait_for_event_value(event, value);
+    }
+
+    fn encode_signal_event(
+        &self,
+        event: &Retained<ProtocolObject<dyn MTLEvent>>,
+        value: u64,
+    ) {
+        self.encode_signal_event_value(event, value);
+    }
+
+    fn add_completed_handler(
+        &self,
+        handler: impl Fn() + 'static,
+    ) {
+        self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |_| handler()));
     }
 
     fn submit(&self) {

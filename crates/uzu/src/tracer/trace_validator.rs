@@ -12,16 +12,15 @@ use std::{
 };
 
 use half::{bf16, f16};
-use metal::{MTLCommandBuffer, MTLCommandQueue};
 use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::{
-        common::kernel::kv_cache_update::KVCacheUpdate,
-        metal::{Metal, MetalContext},
+    backends::common::{
+        Backend, CommandBuffer, Context,
+        kernel::{kv_cache_update::KVCacheUpdate, matmul::MatmulKernels},
     },
     classifier::Classifier,
     config::ModelMetadata,
@@ -156,9 +155,12 @@ pub enum ArrayTransform {
 // Model Context (internal)
 // ============================================================================
 
-enum ModelContext {
-    LanguageModelGenerator(LanguageModelGeneratorContext<Metal>),
-    Classifier(Classifier),
+enum ModelContext<B: Backend + 'static>
+where
+    B::Kernels: MatmulKernels,
+{
+    LanguageModelGenerator(LanguageModelGeneratorContext<B>),
+    Classifier(Classifier<B>),
 }
 
 // ============================================================================
@@ -169,12 +171,18 @@ enum ModelContext {
 ///
 /// Automatically detects whether the model is an LLM or classifier and
 /// runs the appropriate validation.
-pub struct TraceValidator {
+pub struct TraceValidator<B: Backend + 'static>
+where
+    B::Kernels: MatmulKernels,
+{
     model_path: PathBuf,
-    context: ModelContext,
+    context: ModelContext<B>,
 }
 
-impl TraceValidator {
+impl<B: Backend + 'static> TraceValidator<B>
+where
+    B::Kernels: MatmulKernels,
+{
     /// Create a new trace validator for the given model path.
     ///
     /// Automatically detects the model type from config.json.
@@ -202,7 +210,7 @@ impl TraceValidator {
                 AsyncBatchSize::default(),
                 false,
             );
-            let mut llm_context = LanguageModelGeneratorContext::<Metal>::new(model_path, &decoding_config)?;
+            let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
             let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
             Self::ensure_llm_context_capacity(&decoding_config, desired_suffix_length, &mut llm_context);
             ModelContext::LanguageModelGenerator(llm_context)
@@ -240,7 +248,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn run_llm_validation(
-        ctx: &LanguageModelGeneratorContext<Metal>,
+        ctx: &LanguageModelGeneratorContext<B>,
         traces_path: &Path,
     ) -> Result<TracerValidationResults, Error> {
         let traces_file = File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
@@ -274,10 +282,10 @@ impl TraceValidator {
             None,
         );
 
-        let command_buffer = ctx.context.command_queue.command_buffer().expect("Failed to create command buffer");
+        let command_buffer = ctx.context.create_command_buffer().expect("Failed to create command buffer");
 
         ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &command_buffer);
-        command_buffer.commit();
+        command_buffer.submit();
         command_buffer.wait_until_completed();
 
         let traces = state.traces().clone();
@@ -385,7 +393,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn run_classifier_validation(
-        classifier: &mut Classifier,
+        classifier: &mut Classifier<B>,
         traces_path: &Path,
     ) -> Result<TracerValidationResults, Error> {
         let traces_file = File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
@@ -425,7 +433,7 @@ impl TraceValidator {
         })
     }
 
-    fn handle_missing_tokens(traces_view: &ParameterTree<MetalContext>) -> TracerValidationResults {
+    fn handle_missing_tokens(traces_view: &ParameterTree<B::Context>) -> TracerValidationResults {
         if let Ok(expected_logits) = traces_view.leaf("logits") {
             let reference_shape = expected_logits.shape().to_vec();
             let metrics = TracerValidationMetrics {
@@ -470,13 +478,13 @@ impl TraceValidator {
     // ========================================================================
 
     fn validate_layer_traces(
-        traces: &Rc<RefCell<ActivationTrace<Metal>>>,
-        traces_view: &ParameterTree<MetalContext>,
+        traces: &Rc<RefCell<ActivationTrace<B>>>,
+        traces_view: &ParameterTree<B::Context>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        let validate = |path: &str, array: &Ref<Array<Metal>>| -> Option<TracerValidationResult> {
+        let validate = |path: &str, array: &Ref<Array<B>>| -> Option<TracerValidationResult> {
             if traces_view.leaf(path).is_ok() {
                 Some(TracerValidationResult {
                     name: path.to_string(),
@@ -539,8 +547,8 @@ impl TraceValidator {
     }
 
     fn validate_classifier_traces(
-        traces: &Rc<RefCell<ActivationTrace<Metal>>>,
-        traces_view: &ParameterTree<MetalContext>,
+        traces: &Rc<RefCell<ActivationTrace<B>>>,
+        traces_view: &ParameterTree<B::Context>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
@@ -584,8 +592,8 @@ impl TraceValidator {
 
     fn validate_array(
         data_type: DataType,
-        expected_array: &Array<Metal>,
-        produced_array: &Ref<Array<Metal>>,
+        expected_array: &Array<B>,
+        produced_array: &Ref<Array<B>>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         match data_type {
@@ -598,17 +606,17 @@ impl TraceValidator {
 
     fn validate_array_with_name(
         data_type: DataType,
-        traces_view: &ParameterTree<MetalContext>,
+        traces_view: &ParameterTree<B::Context>,
         expected_array_path: &str,
-        produced_array: &Ref<Array<Metal>>,
+        produced_array: &Ref<Array<B>>,
     ) -> TracerValidationMetrics {
         let expected_array = traces_view.leaf(expected_array_path).unwrap();
         Self::validate_array(data_type, &expected_array, produced_array, None)
     }
 
     fn validate_array_of_type<Precision: ArrayElement>(
-        expected_array: &Array<Metal>,
-        produced_array: &Ref<Array<Metal>>,
+        expected_array: &Array<B>,
+        produced_array: &Ref<Array<B>>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
@@ -778,7 +786,7 @@ impl TraceValidator {
     // ========================================================================
 
     fn load_array_as_vec<SourcePrecision: ArrayElement, TargetPrecision: NumCast>(
-        traces_view: &ParameterTree<MetalContext>,
+        traces_view: &ParameterTree<B::Context>,
         name: &str,
     ) -> Vec<TargetPrecision> {
         let array = traces_view.leaf(name).unwrap();
@@ -803,7 +811,7 @@ impl TraceValidator {
     fn ensure_llm_context_capacity(
         decoding_config: &DecodingConfig,
         desired_suffix_length: usize,
-        context: &mut LanguageModelGeneratorContext<Metal>,
+        context: &mut LanguageModelGeneratorContext<B>,
     ) {
         let resolved_prefix_length = decoding_config.context_length.resolve(&context.model_config);
         let current_suffix_length = std::cmp::max(
@@ -847,7 +855,7 @@ impl TraceValidator {
         .expect("Failed to create sampling kernel");
     }
 
-    fn get_tokens_from_logits(logits: &Array<Metal>) -> Vec<u64> {
+    fn get_tokens_from_logits(logits: &Array<B>) -> Vec<u64> {
         let data_type = logits.data_type();
         match data_type {
             DataType::F16 => Self::get_tokens_from_logits_of_type::<f16>(logits),
@@ -857,7 +865,7 @@ impl TraceValidator {
         }
     }
 
-    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<Metal>) -> Vec<u64> {
+    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<B>) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
         sampler.sample(logits.as_view::<Precision>())
     }

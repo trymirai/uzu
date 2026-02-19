@@ -1,6 +1,6 @@
 use super::Backend;
 
-pub trait CommandBuffer {
+pub trait CommandBuffer: Clone {
     type Backend: Backend;
 
     fn with_compute_encoder<T>(
@@ -12,6 +12,23 @@ pub trait CommandBuffer {
         &self,
         callback: impl FnOnce(&<Self::Backend as Backend>::CopyEncoder) -> T,
     ) -> T;
+
+    fn encode_wait_for_event(
+        &self,
+        event: &<Self::Backend as Backend>::Event,
+        value: u64,
+    );
+
+    fn encode_signal_event(
+        &self,
+        event: &<Self::Backend as Backend>::Event,
+        value: u64,
+    );
+
+    fn add_completed_handler(
+        &self,
+        handler: impl Fn() + 'static,
+    );
 
     fn submit(&self);
     fn wait_until_completed(&self);

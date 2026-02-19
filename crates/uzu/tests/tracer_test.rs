@@ -3,7 +3,7 @@
 mod common;
 use std::path::PathBuf;
 
-use uzu::tracer::TraceValidator;
+use uzu::{backends::metal::Metal, tracer::TraceValidator};
 
 fn build_model_path() -> PathBuf {
     common::get_test_model_path()
@@ -19,7 +19,7 @@ fn test_tracer() {
         return;
     }
 
-    let mut tracer = match TraceValidator::new(&model_path) {
+    let mut tracer = match TraceValidator::<Metal>::new(&model_path) {
         Ok(t) => t,
         Err(e) => {
             println!("Failed to create TraceValidator: {:?}", e);

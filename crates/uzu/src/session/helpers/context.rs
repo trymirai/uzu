@@ -1,15 +1,15 @@
-use crate::{backends::metal::Metal, forward_pass::cache_layers::CacheLayers, session::config::DecodingConfig};
+use crate::{backends::common::Backend, forward_pass::cache_layers::CacheLayers, session::config::DecodingConfig};
 
-pub struct Context {
+pub struct Context<B: Backend> {
     pub tokens: Vec<u64>,
-    pub cache_layers: CacheLayers<Metal>,
+    pub cache_layers: CacheLayers<B>,
     pub decoding_config: DecodingConfig,
 }
 
-impl Context {
+impl<B: Backend> Context<B> {
     pub fn new(
         tokens: Vec<u64>,
-        cache_layers: CacheLayers<Metal>,
+        cache_layers: CacheLayers<B>,
         decoding_config: DecodingConfig,
     ) -> Self {
         Self {
