@@ -131,6 +131,10 @@ struct Simd {
   uint group_idx;
   uint group_size;
   uint groups_per_threadgroup;
+
+  uint groups_count(const uint threads_count) const {
+    return (threads_count + this->group_size - 1) / this->group_size;
+  }
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -374,7 +378,7 @@ static T threadgroup_cooperative_reduce_sum(
 
   // Reduce across simdgroups
   T total_sum = T(0);
-  const ushort num_simd_groups = (BLOCK_SIZE + 31) / 32;
+  const ushort num_simd_groups = simd.groups_count(BLOCK_SIZE);
   if (lid < num_simd_groups) {
     total_sum = shared[lid];
   }
@@ -412,7 +416,7 @@ static T threadgroup_cooperative_reduce_max(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Reduce across simdgroups
-  T total_max = (lid < ((BLOCK_SIZE + 31) / 32)) ? shared[lid] : T(-INFINITY);
+  T total_max = lid < simd.groups_count(BLOCK_SIZE) ? shared[lid] : T(-INFINITY);
   total_max = simd_max(total_max);
 
   // Broadcast the result to all threads
@@ -447,7 +451,7 @@ static T threadgroup_cooperative_reduce_min(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Reduce across simdgroups
-  T total_min = (lid < ((BLOCK_SIZE + 31) / 32)) ? shared[lid] : T(INFINITY);
+  T total_min = lid < simd.groups_count(BLOCK_SIZE) ? shared[lid] : T(INFINITY);
   total_min = simd_min(total_min);
 
   // Broadcast the result to all threads
