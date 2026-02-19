@@ -1,0 +1,40 @@
+.DS_Store
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Ruff
+.ruff_cache/
+
+# Virtual environments
+.venv
+
+# Pyright
+.mypy_cache/
+.pytest_cache/
+.pyright/
+
+# Notebooks
+notebooks/
+
+# Downloads
+downloads/
+
+# IDE
+.idea/
+
+sync.bb
+.clj-kondo
+.lsp
+
+# Profiler
+memray-*.bin
+memray-*.html
+
+# Local-only scripts
+validate_storage_local.py

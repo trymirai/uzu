@@ -1,0 +1,14 @@
+[project]
+name = "performance"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["tinygrad"]
+
+[tool.uv.sources]
+tinygrad = { git = "https://github.com/tinygrad/tinygrad.git", tag="19ce7a3f7f18d9ad987d552a83dc4c8d0b01a66c" }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.1",
+    "ty>=0.0.17",
+]
