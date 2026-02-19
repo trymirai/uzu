@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub struct Classifier {
-    pub context: ClassifierContext,
+    pub context: ClassifierContext<Metal>,
 }
 
 impl Classifier {
@@ -92,7 +92,7 @@ impl Classifier {
         autoreleasepool(|_| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
-                self.context.mtl_context.clone(),
+                self.context.context.clone(),
                 &self.context.model_shape,
                 &self.context.scratch_buffers,
                 self.context.shared_buffers.clone(),
@@ -155,7 +155,7 @@ impl Classifier {
         autoreleasepool(|_| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
-                self.context.mtl_context.clone(),
+                self.context.context.clone(),
                 &self.context.model_shape,
                 &self.context.scratch_buffers,
                 self.context.shared_buffers.clone(),

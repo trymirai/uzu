@@ -6,20 +6,14 @@ use std::{
     rc::Rc,
 };
 
-use metal::{MTLBuffer, MTLCommandBuffer, MTLDeviceExt, MTLEvent};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
-use super::{Metal, MetalContext};
 use crate::{
     DataType,
-    backends::{
-        common::{
-            Context,
-            kernel::{
-                MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate,
-            },
+    backends::common::{
+        Backend, Context, Kernels, NativeBuffer,
+        kernel::{
+            MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate,
+            matmul::MatmulKernels,
         },
-        metal::kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
@@ -37,18 +31,18 @@ use crate::{
 
 /// Pre-allocated buffers for async generation pipeline.
 /// Indexed by pass_idx to avoid race conditions between GPU passes.
-pub struct AsyncBuffers {
+pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub positions: B::NativeBuffer,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub seeds: B::NativeBuffer,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Retained<ProtocolObject<dyn MTLBuffer>>,
-    /// Metal event for GPU-side synchronization between passes
-    pub event: Retained<ProtocolObject<dyn MTLEvent>>,
+    pub results: B::NativeBuffer,
+    /// Event for GPU-side synchronization between passes
+    pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
     pub counter: Cell<u64>,
     /// Number of tokens after prefill (base for position calculation)
@@ -57,9 +51,9 @@ pub struct AsyncBuffers {
     pub batch_size: usize,
 }
 
-impl AsyncBuffers {
+impl<B: Backend> AsyncBuffers<B> {
     pub fn new(
-        context: &MetalContext,
+        context: &B::Context,
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
@@ -69,7 +63,7 @@ impl AsyncBuffers {
             context.create_buffer(max_tokens * std::mem::size_of::<u64>()).expect("Failed to create seeds buffer");
         let results =
             context.create_buffer(batch_size * std::mem::size_of::<u32>()).expect("Failed to create results buffer");
-        let event = context.device.new_event().expect("Failed to create event");
+        let event = context.create_event().expect("Failed to create event");
 
         Self {
             positions,
@@ -91,7 +85,7 @@ impl AsyncBuffers {
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let ptr = self.positions.contents().as_ptr() as *mut i32;
+        let ptr = self.positions.cpu_ptr().as_ptr() as *mut i32;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = (base_position + i) as i32;
@@ -106,7 +100,7 @@ impl AsyncBuffers {
         prefix_len: usize,
         tokens_to_generate: usize,
     ) {
-        let ptr = self.seeds.contents().as_ptr() as *mut u64;
+        let ptr = self.seeds.cpu_ptr().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
@@ -124,44 +118,47 @@ impl AsyncBuffers {
         &self,
         pass_idx: usize,
     ) -> u32 {
-        let ptr = self.results.contents().as_ptr() as *const u32;
+        let ptr = self.results.cpu_ptr().as_ptr() as *const u32;
         unsafe { *ptr.add(pass_idx % self.batch_size) }
     }
 }
 
-pub struct LanguageModelGeneratorContext {
-    pub mtl_context: Rc<MetalContext>,
-    pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+pub struct LanguageModelGeneratorContext<B: Backend> {
+    pub context: Rc<B::Context>,
+    pub command_buffer: B::CommandBuffer,
 
-    pub cache_layers: Rc<RefCell<CacheLayers<Metal>>>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
-    pub scratch_buffers: ScratchBuffers<Metal>,
+    pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
+    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    pub scratch_buffers: ScratchBuffers<B>,
 
     pub model_config: LanguageModelConfig,
     pub decoder_config: Rc<DecoderConfig>,
     pub model_shape: ModelShape,
-    pub executables: Decoder<Metal>,
-    pub kv_cache_update: Box<KVCacheUpdate<Metal>>,
-    pub gpu_sampler: Sampling<Metal>,
+    pub executables: Decoder<B>,
+    pub kv_cache_update: Box<KVCacheUpdate<B>>,
+    pub gpu_sampler: Sampling<B>,
     pub seed: PRng,
 
     /// Kernels for copying sampled tokens in async pipeline
-    pub token_copy_sampled: TokenCopySampledMetalKernel,
-    pub token_copy_results: TokenCopyToResultsMetalKernel,
+    pub token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
+    pub token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
     /// Kernel for updating attention mask between async passes
-    pub mask_update: Option<MaskUpdateMetalKernel>,
+    pub mask_update: Option<<B::Kernels as Kernels>::MaskUpdateKernel>,
     /// Pre-allocated buffers for async generation
-    pub async_buffers: AsyncBuffers,
+    pub async_buffers: AsyncBuffers<B>,
 }
 
-impl LanguageModelGeneratorContext {
+impl<B: Backend + 'static> LanguageModelGeneratorContext<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let context = MetalContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
 
-        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer").to_owned();
+        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -208,35 +205,35 @@ impl LanguageModelGeneratorContext {
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
         let kv_cache_update = Box::new(
             KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
-                .map_err(|_| Error::UnableToCreateMetalContext)?,
+                .map_err(|_| Error::UnableToCreateBackendContext)?,
         );
 
         let gpu_sampler =
-            Sampling::<Metal>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(|_| Error::UnableToCreateMetalContext)?;
+            Sampling::<B>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
 
-        let token_copy_sampled =
-            TokenCopySampledMetalKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
-        let token_copy_results =
-            TokenCopyToResultsMetalKernel::new(&context).map_err(|_| Error::UnableToCreateMetalContext)?;
+        let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
+            .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(&context)
+            .map_err(|_| Error::UnableToCreateBackendContext)?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
-                MaskUpdateMetalKernel::new(&context, intermediate_data_type)
-                    .map_err(|_| Error::UnableToCreateMetalContext)?,
+                <B::Kernels as Kernels>::MaskUpdateKernel::new(&context, intermediate_data_type)
+                    .map_err(|_| Error::UnableToCreateBackendContext)?,
             )
         } else {
             None
         };
 
         let async_batch_size = decoding_config.async_batch_size.resolve(model_path);
-        let async_buffers = AsyncBuffers::new(&context, max_prefix_length, async_batch_size);
+        let async_buffers = AsyncBuffers::new(context.as_ref(), max_prefix_length, async_batch_size);
 
         let seed = PRng::new(decoding_config.sampling_seed.resolve());
 
         let context = Self {
-            mtl_context: context,
+            context,
             command_buffer,
             cache_layers,
             shared_buffers,
@@ -258,6 +255,6 @@ impl LanguageModelGeneratorContext {
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer = self.mtl_context.create_command_buffer().expect("Failed to create command buffer");
+        self.command_buffer = self.context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

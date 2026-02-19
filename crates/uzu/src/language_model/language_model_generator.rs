@@ -37,7 +37,7 @@ pub struct LanguageModelGenerator {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
-    pub context: LanguageModelGeneratorContext,
+    pub context: LanguageModelGeneratorContext<Metal>,
     encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager,
@@ -173,7 +173,7 @@ impl LanguageModelGenerator {
             let should_capture = self.gpu_capture.should_capture_prefill(step == 0);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "prefill");
+                let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
             }
 
             objc2::rc::autoreleasepool(|_pool| {
@@ -363,7 +363,7 @@ impl LanguageModelGenerator {
             &self.context.scratch_buffers.attention_window_size_to_bias,
             &[first_decode_position],
             1,
-            &self.context.mtl_context,
+            &self.context.context,
         );
 
         self.context.async_buffers.prepare_positions(prefill_count, tokens_to_generate);
@@ -426,11 +426,11 @@ impl LanguageModelGenerator {
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
         if should_capture {
-            let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "decode");
+            let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
         }
 
         let mut state = ForwardPassState::new_llm(
-            self.context.mtl_context.clone(),
+            self.context.context.clone(),
             &self.context.decoder_config,
             &self.context.model_shape,
             &self.context.scratch_buffers,
@@ -616,7 +616,7 @@ impl LanguageModelGenerator {
             let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.mtl_context, "decode");
+                let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
             }
 
             let encoded_task_key = task.encoded_task_key(self.tokens.len());
@@ -703,7 +703,7 @@ impl LanguageModelGenerator {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
-        let command_buffer = self.context.mtl_context.create_command_buffer().expect("Failed to create command buffer");
+        let command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
         let root_command_buffer = command_buffer.to_owned();
 
         {

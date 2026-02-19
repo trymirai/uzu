@@ -1,11 +1,11 @@
-use crate::backends::metal::error::ClassifierError;
+use crate::classifier::ClassifierError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Model folder not found")]
     ModelFolderNotFound,
-    #[error("Unable to create Metal context")]
-    UnableToCreateMetalContext,
+    #[error("Unable to create Backend context")]
+    UnableToCreateBackendContext,
     #[error("Unable to load model configuration")]
     UnableToLoadConfig,
     #[error("Unable to load model weights")]

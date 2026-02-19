@@ -157,7 +157,7 @@ pub enum ArrayTransform {
 // ============================================================================
 
 enum ModelContext {
-    LanguageModelGenerator(LanguageModelGeneratorContext),
+    LanguageModelGenerator(LanguageModelGeneratorContext<Metal>),
     Classifier(Classifier),
 }
 
@@ -202,7 +202,7 @@ impl TraceValidator {
                 AsyncBatchSize::default(),
                 false,
             );
-            let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
+            let mut llm_context = LanguageModelGeneratorContext::<Metal>::new(model_path, &decoding_config)?;
             let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
             Self::ensure_llm_context_capacity(&decoding_config, desired_suffix_length, &mut llm_context);
             ModelContext::LanguageModelGenerator(llm_context)
@@ -240,12 +240,12 @@ impl TraceValidator {
     // ========================================================================
 
     fn run_llm_validation(
-        ctx: &LanguageModelGeneratorContext,
+        ctx: &LanguageModelGeneratorContext<Metal>,
         traces_path: &Path,
     ) -> Result<TracerValidationResults, Error> {
         let traces_file = File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_loader =
-            ParameterLoader::new(&traces_file, ctx.mtl_context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
+            ParameterLoader::new(&traces_file, ctx.context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
@@ -253,7 +253,7 @@ impl TraceValidator {
         let token_seeds: Vec<u64> = vec![0; token_ids.len()];
 
         let mut state = ForwardPassState::new_llm(
-            ctx.mtl_context.clone(),
+            ctx.context.clone(),
             &ctx.decoder_config,
             &ctx.model_shape,
             &ctx.scratch_buffers,
@@ -274,7 +274,7 @@ impl TraceValidator {
             None,
         );
 
-        let command_buffer = ctx.mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
+        let command_buffer = ctx.context.command_queue.command_buffer().expect("Failed to create command buffer");
 
         ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &command_buffer);
         command_buffer.commit();
@@ -389,9 +389,9 @@ impl TraceValidator {
         traces_path: &Path,
     ) -> Result<TracerValidationResults, Error> {
         let traces_file = File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
-        let mtl_context = classifier.context.mtl_context.clone();
+        let context = classifier.context.context.clone();
         let traces_loader =
-            ParameterLoader::new(&traces_file, mtl_context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
+            ParameterLoader::new(&traces_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
         let has_token_ids = traces_view.leaf("activation_trace.token_ids").is_ok();
@@ -803,7 +803,7 @@ impl TraceValidator {
     fn ensure_llm_context_capacity(
         decoding_config: &DecodingConfig,
         desired_suffix_length: usize,
-        context: &mut LanguageModelGeneratorContext,
+        context: &mut LanguageModelGeneratorContext<Metal>,
     ) {
         let resolved_prefix_length = decoding_config.context_length.resolve(&context.model_config);
         let current_suffix_length = std::cmp::max(
@@ -817,7 +817,7 @@ impl TraceValidator {
 
         let decoder_config = &context.decoder_config;
         context.scratch_buffers = ScratchBuffers::new(
-            context.mtl_context.as_ref(),
+            context.context.as_ref(),
             decoder_config,
             &context.model_shape,
             resolved_prefix_length,
@@ -825,7 +825,7 @@ impl TraceValidator {
         );
 
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
-            context.mtl_context.as_ref(),
+            context.context.as_ref(),
             &context.model_shape,
             resolved_prefix_length,
             desired_suffix_length,
@@ -834,12 +834,12 @@ impl TraceValidator {
         let intermediate_dtype: DataType = decoder_config.output_norm_config.scale_precision.into();
 
         context.kv_cache_update = Box::new(
-            KVCacheUpdate::new(context.mtl_context.as_ref(), intermediate_dtype, resolved_prefix_length)
+            KVCacheUpdate::new(context.context.as_ref(), intermediate_dtype, resolved_prefix_length)
                 .expect("Failed to create KV cache update kernel"),
         );
 
         context.gpu_sampler = Sampling::new(
-            context.mtl_context.as_ref(),
+            context.context.as_ref(),
             intermediate_dtype,
             desired_suffix_length,
             decoder_config.vocab_size,
