@@ -229,12 +229,11 @@ impl<B: Backend> ShortConvMixer<B> {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.buffer().clone();
-        let state_buf = conv_state.buffer().clone();
-        let out_buf = out.buffer().clone();
+        let in_proj_buf = in_proj.buffer();
+        let state_buf = conv_state.buffer();
+        let out_buf = out.buffer();
 
-        let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.buffer().clone();
+        let weight_buf = self.conv_weight.buffer();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         let kernel_size = self.config.kernel_size;
@@ -247,8 +246,8 @@ impl<B: Backend> ShortConvMixer<B> {
         let padded_size = padded_rows * self.model_dim * element_size;
         let padded_buf = state.context().create_buffer(padded_size).expect("Failed to create padded buffer");
         self.short_conv_pack.encode(
-            &state_buf,
-            &in_proj_buf,
+            state_buf,
+            in_proj_buf,
             &padded_buf,
             state_stride as u32,
             suffix_length as u32,
@@ -259,11 +258,11 @@ impl<B: Backend> ShortConvMixer<B> {
 
         self.short_conv_prefill.encode(
             &padded_buf,
-            &in_proj_buf,
-            &weight_buf,
+            in_proj_buf,
+            weight_buf,
             bias_buf,
-            &out_buf,
-            &state_buf,
+            out_buf,
+            state_buf,
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,

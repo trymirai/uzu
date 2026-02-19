@@ -139,8 +139,8 @@ impl<B: Backend> QuantizedLinear<B> {
                     && deq_biases_shape == [output_dim, k_g])
                 {
                     return Err(QuantizedLinearError::InvalidMlxShapes {
-                        weights: weights_shape.clone().into_boxed_slice(),
-                        scales: scales_shape.clone().into_boxed_slice(),
+                        weights: weights_shape.into_boxed_slice(),
+                        scales: scales_shape.into_boxed_slice(),
                         deq_biases: deq_biases_shape.into_boxed_slice(),
                         packing_divisor,
                     });
@@ -164,8 +164,8 @@ impl<B: Backend> QuantizedLinear<B> {
                     && zero_points_shape == [output_dim, expected_zero_points_entries])
                 {
                     return Err(QuantizedLinearError::InvalidAwqShapes {
-                        weights: weights_shape.clone().into_boxed_slice(),
-                        scales: scales_shape.clone().into_boxed_slice(),
+                        weights: weights_shape.into_boxed_slice(),
+                        scales: scales_shape.into_boxed_slice(),
                         zero_points: zero_points_shape.into_boxed_slice(),
                         packing_divisor,
                         packing_minus_one: packing_divisor - 1,

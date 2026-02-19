@@ -82,7 +82,7 @@ where
 
             let mixer = match &layer_config.mixer_config {
                 MixerConfig::Attention(attention_config) => {
-                    let rope_block = rope.clone().expect("RoPE encoder missing for attention layer");
+                    let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
                     let qkv_projection = linear_block(
                         &attention_config.qkv_projection_config,
