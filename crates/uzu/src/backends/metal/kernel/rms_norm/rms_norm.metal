@@ -22,6 +22,7 @@ KERNEL(RMSNorm)(
     constant float& scale_offset,
     constant bool& full_layer,
     threadgroup AccumT shared_sum[SIMD_SIZE],
+    const Simd simd,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
 ) {
@@ -51,7 +52,8 @@ KERNEL(RMSNorm)(
   AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
       partial_sum,
       shared_sum,
-      thread_in_row
+      thread_in_row,
+      simd
   );
 
   // Compute RMS norm factor

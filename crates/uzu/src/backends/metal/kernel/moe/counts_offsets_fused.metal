@@ -23,6 +23,7 @@ KERNEL(MoeCountsOffsetsFused)(
     threadgroup uint
         counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
     threadgroup uint& carry,
+    const Simd simd,
     const uint lid THREADS(128)
 ) {
   if (e_input == 0) {
@@ -100,7 +101,8 @@ KERNEL(MoeCountsOffsetsFused)(
     uint block_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
         v,
         reduce_shared,
-        (ushort)lid
+        (ushort)lid,
+        simd
     );
     if (lid == 0) {
       carry += block_sum;

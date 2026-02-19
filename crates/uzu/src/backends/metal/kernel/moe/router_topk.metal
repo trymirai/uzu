@@ -96,14 +96,16 @@ KERNEL(MoeRouterTopK)(
     float max_val = threadgroup_cooperative_reduce_max<THREADS_PER_TG>(
         local_best,
         reduce_tmp,
-        lid
+        lid,
+        simd
     );
 
     uint candidate_id = (local_best == max_val) ? local_idx : 0xFFFFFFFFu;
     uint best_idx = threadgroup_cooperative_reduce_min<THREADS_PER_TG>(
         candidate_id,
         reduce_tmp_u,
-        lid
+        lid,
+        simd
     );
 
     if (lid == 0) {

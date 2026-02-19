@@ -126,6 +126,13 @@ struct TensorView4D {
   }
 };
 
+struct Simd {
+  uint lane_idx;
+  uint group_idx;
+  uint group_size;
+  uint groups_per_threadgroup;
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 //  MARK: - Thread Functions
 ///////////////////////////////////////////////////////////////////////////////
@@ -351,17 +358,15 @@ template <ushort BLOCK_SIZE, typename T>
 static T threadgroup_cooperative_reduce_sum(
     T value,
     threadgroup T* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup
   T local_sum = simd_sum(value);
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_sum;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_sum;
   }
 
   // Synchronize across the threadgroup
@@ -392,17 +397,15 @@ template <ushort BLOCK_SIZE, typename T>
 static T threadgroup_cooperative_reduce_max(
     T value,
     threadgroup T* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup
   T local_max = simd_max(value);
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_max;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_max;
   }
 
   // Synchronize across the threadgroup
@@ -429,17 +432,15 @@ template <ushort BLOCK_SIZE, typename T>
 static T threadgroup_cooperative_reduce_min(
     T value,
     threadgroup T* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup
   T local_min = simd_min(value);
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_min;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_min;
   }
 
   // Synchronize across the threadgroup
@@ -488,13 +489,6 @@ static T threadgroup_cooperative_reduce_min(
 #define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))
 #define GROUPS(EXPR) DSL_META("dsl.groups", DSL_XSTR(EXPR))
 #define THREADS(EXPR) DSL_META("dsl.threads", DSL_XSTR(EXPR))
-
-struct Simd {
-  uint lane_idx;
-  uint group_idx;
-  uint group_size;
-  uint groups_per_threadgroup;
-};
 
 // MARK: - Generate Template Kernels
 
