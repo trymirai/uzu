@@ -39,8 +39,6 @@ pub enum AudioError {
         range_start: u64,
         range_end: u64,
     },
-    #[error("audio decode chunk_frames must be > 0")]
-    InvalidChunkFrames,
     #[error("tokenizer operation failed: {0}")]
     Tokenizer(String),
     #[error("audio runtime rejected input: {0}")]
