@@ -28,15 +28,14 @@ inline void moe_scatter_buckets_impl(
     uint lid,
     uint3 tgpig,
     threadgroup _atomic<uint>* sg_counts,
-    threadgroup uint* sg_base
+    threadgroup uint* sg_base,
+    const thread Simd& simd
 ) {
   if (E == 0 || T == 0 || K == 0)
     return;
   const uint block_id = tgpig.x;
   const uint t_start = block_id * BLOCK_SIZE;
   const uint t_end = min(t_start + BLOCK_SIZE, T);
-  const uint sg_id = lid / SIMD_WIDTH;
-  const uint lane = lid % SIMD_WIDTH;
 
   // Per-tile processing
   for (uint e0 = 0; e0 < E; e0 += TILE_E) {
@@ -65,7 +64,7 @@ inline void moe_scatter_buckets_impl(
           if (ue >= e0 && ue < e0 + tile_e) {
             const uint te = ue - e0;
             atomic_fetch_add_explicit(
-                &sg_counts[sg_id * TILE_E + te],
+                &sg_counts[simd.group_idx * TILE_E + te],
                 1u,
                 memory_order_relaxed
             );
@@ -103,8 +102,8 @@ inline void moe_scatter_buckets_impl(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Phase 3: deterministic write with 32-lane sequencing, no device atomics
-    for (uint step = 0; step < SIMD_WIDTH; ++step) {
-      if (lane == step) {
+    for (uint step = 0; step < simd.group_size; ++step) {
+      if (simd.lane_idx == step) {
         const uint t = t_start + lid;
         if (t < t_end) {
           const uint base = t * K;
@@ -117,7 +116,7 @@ inline void moe_scatter_buckets_impl(
                 const uint tile_id = e0 / TILE_E;
                 const uint base_idx_block =
                     (block_id * num_tiles + tile_id) * TILE_E + te;
-                const uint idx_sg_te = sg_id * TILE_E + te;
+                const uint idx_sg_te = simd.group_idx * TILE_E + te;
                 const uint local = atomic_fetch_add_explicit(
                     &sg_counts[idx_sg_te],
                     1u,
@@ -202,6 +201,7 @@ KERNEL(MoeScatterBuckets)(
     constant uint& num_tiles,
     threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E],
     threadgroup uint sg_base[NUM_SG * TILE_E],
+    const Simd simd,
     const uint tgpig_x GROUPS(num_blocks),
     const uint lid THREADS(256)
 ) {
@@ -226,7 +226,8 @@ KERNEL(MoeScatterBuckets)(
       lid,
       tgpig,
       sg_counts,
-      sg_base
+      sg_base,
+      simd
   );
 }
 
@@ -249,6 +250,7 @@ KERNEL(MoeScatterBucketsMap)(
     device int* tok2row,
     threadgroup _atomic<uint> sg_counts[NUM_SG * TILE_E],
     threadgroup uint sg_base[NUM_SG * TILE_E],
+    const Simd simd,
     const uint tgpig_x GROUPS(num_blocks),
     const uint lid THREADS(256)
 ) {
@@ -273,6 +275,7 @@ KERNEL(MoeScatterBucketsMap)(
       lid,
       tgpig,
       sg_counts,
-      sg_base
+      sg_base,
+      simd
   );
 }

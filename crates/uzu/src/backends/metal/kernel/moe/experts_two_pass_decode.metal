@@ -8,8 +8,6 @@ using namespace metal;
 // Structure: 4 simdgroups (128 threads), each outputs 1 hidden element
 // Each simdgroup: 32 threads reduce d_model using float4 vectorized loads
 // Grid: (h_blocks, rows, 1) where h_blocks = ceil(d_ff/4)
-#define SIMD_SIZE 32
-
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(MoeExpertsDecodePassA)(
@@ -28,12 +26,10 @@ KERNEL(MoeExpertsDecodePassA)(
     constant float& silu_alpha,
     device const uint* tile_map,
     const uint gating_sel SPECIALIZE,
+    const Simd simd,
     const uint tile_idx GROUPS(INDIRECT),
     const uint tid THREADS(128)
 ) {
-  const uint simd_gid = tid / SIMD_SIZE;
-  const uint simd_lid = tid % SIMD_SIZE;
-
   // Read tile descriptor
   const uint h_block_idx = tile_map[tile_idx * 3 + 0];
   const uint expert_idx = tile_map[tile_idx * 3 + 1];
@@ -47,7 +43,7 @@ KERNEL(MoeExpertsDecodePassA)(
     return;
 
   // Each simdgroup outputs one hidden element
-  const uint h_idx = h_block_idx * 4 + simd_gid;
+  const uint h_idx = h_block_idx * 4 + simd.group_idx;
   if (h_idx >= d_ff)
     return;
 
@@ -69,7 +65,7 @@ KERNEL(MoeExpertsDecodePassA)(
   const uint vec_iters = d_model / 128;
 
   for (uint i = 0; i < vec_iters; ++i) {
-    uint base_idx = i * 128 + simd_lid * 4;
+    uint base_idx = i * 128 + simd.lane_idx * 4;
 
     device const T* x_vec = reinterpret_cast<device const T*>(x_ptr + base_idx);
     device const T* w_up_vec =
@@ -90,7 +86,7 @@ KERNEL(MoeExpertsDecodePassA)(
   }
 
   // Handle leftover elements
-  uint leftover_start = vec_iters * 128 + simd_lid;
+  uint leftover_start = vec_iters * 128 + simd.lane_idx;
   for (uint idx = leftover_start; idx < d_model; idx += 32) {
     float xv = float(x_ptr[idx]);
     acc_up += xv * float(w_up_row[idx]);
@@ -106,7 +102,7 @@ KERNEL(MoeExpertsDecodePassA)(
   }
 
   // Lane 0 applies activation and writes result
-  if (simd_lid == 0) {
+  if (simd.lane_idx == 0) {
     float up_val = acc_up + float(up_biases[bias_base + h_idx]);
     up_val = clamp(up_val, up_clip_min, up_clip_max);
 
@@ -145,16 +141,15 @@ KERNEL(MoeExpertsDecodeDownFused2D)(
     constant uint& d_model,
     constant uint& d_ff,
     constant uint& e,
+    const Simd simd,
     const uint tgpig_x GROUPS(d_model.div_ceil(SIMDGROUPS_PER_TG)),
     const uint tgpig_y GROUPS(total_rows),
     const uint tid THREADS(256) 
 ) {
-  const uint simd_gid = tid / SIMD_SIZE;
-  const uint simd_lid = tid % SIMD_SIZE;
   const uint row_idx = tgpig_y;
 
   // Each simdgroup computes one output column
-  const uint my_col = tgpig_x * SIMDGROUPS_PER_TG + simd_gid;
+  const uint my_col = tgpig_x * SIMDGROUPS_PER_TG + simd.group_idx;
   if (my_col >= d_model)
     return;
 
@@ -175,7 +170,7 @@ KERNEL(MoeExpertsDecodeDownFused2D)(
   const uint k_vec_iters = k_iters / 8;
 
   for (uint iter = 0; iter < k_vec_iters; ++iter) {
-    const uint k_base = iter * (8 * THREADS_PER_SIMD) + simd_lid;
+    const uint k_base = iter * (8 * THREADS_PER_SIMD) + simd.lane_idx;
 
     // hidden: stride-32 per lane, already f32 from Pass A
     const AccumT h0 = hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD];
@@ -221,7 +216,7 @@ KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Handle remaining full iterations
   for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
-    const uint k = iter * THREADS_PER_SIMD + simd_lid;
+    const uint k = iter * THREADS_PER_SIMD + simd.lane_idx;
     acc =
         fma(AccumT(hidden[hidden_base + k]),
             AccumT(w2_all[w2_col_base + k]),
@@ -230,8 +225,8 @@ KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Handle leftover elements (d_ff % 32)
   const uint leftover_start = k_iters * THREADS_PER_SIMD;
-  if (leftover_start + simd_lid < d_ff) {
-    const uint k = leftover_start + simd_lid;
+  if (leftover_start + simd.lane_idx < d_ff) {
+    const uint k = leftover_start + simd.lane_idx;
     acc =
         fma(AccumT(hidden[hidden_base + k]),
             AccumT(w2_all[w2_col_base + k]),
@@ -242,7 +237,7 @@ KERNEL(MoeExpertsDecodeDownFused2D)(
   AccumT result = simd_sum(acc);
 
   // Lane 0 writes result
-  if (simd_lid == 0) {
+  if (simd.lane_idx == 0) {
     const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
     result += AccumT(down_biases[bias_idx]);
 
