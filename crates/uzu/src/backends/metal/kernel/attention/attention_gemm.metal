@@ -32,7 +32,6 @@ METAL_FUNC T row_reduce_sum(T v) {
 }
 
 #define BQ 32
-#define SIMD_WIDTH 32
 #define WM 4
 #define WN 1
 
@@ -58,17 +57,12 @@ KERNEL(AttentionGemm)(
     const bool has_sinks SPECIALIZE,
     threadgroup T q_smem[BQ * (BD + 16 / sizeof(T))],
     threadgroup T kv_smem[BK * (BD + 16 / sizeof(T))],
+    const Simd simd,
     const uint tgid_x GROUPS(suffix_length.div_ceil(BQ)),
     const uint tgid_y GROUPS(num_heads),
     const uint tgid_z GROUPS(1),
     const uint lid THREADS(128)
 ) {
-  const uint simd_group_id = lid / SIMD_WIDTH;
-  const uint simd_lane_id = lid % SIMD_WIDTH;
-
-  // Pacifying compiler
-  (void)lid;
-
   // -------------------------------------------------------------------------
   // Pointer setup (all strides are in elements)
   // tgid_x: query tile index (BQ rows)
@@ -140,9 +134,9 @@ KERNEL(AttentionGemm)(
   const int k_src_ld = int(params.k_strides[2]);
   const int v_src_ld = int(params.v_strides[2]);
 
-  thread QBlockLoader loader_q(q, q_src_ld, Qs, simd_group_id, simd_lane_id);
-  thread KBlockLoader loader_k(k, k_src_ld, Ks, simd_group_id, simd_lane_id);
-  thread VBlockLoader loader_v(v, v_src_ld, Vs, simd_group_id, simd_lane_id);
+  thread QBlockLoader loader_q(q, q_src_ld, Qs, simd.group_idx, simd.lane_idx);
+  thread KBlockLoader loader_k(k, k_src_ld, Ks, simd.group_idx, simd.lane_idx);
+  thread VBlockLoader loader_v(v, v_src_ld, Vs, simd.group_idx, simd.lane_idx);
 
   TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
 
@@ -177,11 +171,11 @@ KERNEL(AttentionGemm)(
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 simd_coord = MMAFrag_acc_t::get_coord(simd_lane_id);
+  const short2 simd_coord = MMAFrag_acc_t::get_coord(simd.lane_idx);
   const short sm = simd_coord.y;
   const short sn = simd_coord.x;
 
-  const short tm = kFragSize * TQ * short(simd_group_id);
+  const short tm = kFragSize * TQ * short(simd.group_idx);
 
   // Qs is row-major [BQ, BD]
   const short Qs_offset = (tm + sm) * LDQ_tgp + sn;
