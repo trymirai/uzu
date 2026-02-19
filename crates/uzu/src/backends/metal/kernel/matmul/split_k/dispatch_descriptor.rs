@@ -142,9 +142,5 @@ fn is_supported_pipeline_configuration(config: &PipelineConfiguration) -> bool {
         warps_per_col: 2,
     };
 
-    config.tile == supported_tile
-        && !config.transpose_a
-        && config.transpose_b
-        && !config.mn_aligned
-        && config.k_aligned
+    config.tile == supported_tile && !config.transpose_a && config.transpose_b && !config.mn_aligned && config.k_aligned
 }

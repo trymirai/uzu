@@ -43,18 +43,15 @@ struct BlockLoader {
       short reduction_dim,
       short tgp_size
   )
-      : BROWS(BROWS_), dst_ld(dst_ld_),
-        vec_size((BCOLS_ * BROWS_) / tgp_size),
+      : BROWS(BROWS_), dst_ld(dst_ld_), vec_size((BCOLS_ * BROWS_) / tgp_size),
         TROWS(tgp_size / (BCOLS_ / ((BCOLS_ * BROWS_) / tgp_size))),
-        src_ld(src_ld_),
-        tile_stride(reduction_dim ? BCOLS_ : BROWS_ * src_ld_),
+        src_ld(src_ld_), tile_stride(reduction_dim ? BCOLS_ : BROWS_ * src_ld_),
         bi(short(simd_group_id * 32 + simd_lane_id) /
            short(BCOLS_ / ((BCOLS_ * BROWS_) / tgp_size))),
         bj(short((BCOLS_ * BROWS_) / tgp_size) *
            (short(simd_group_id * 32 + simd_lane_id) %
             short(BCOLS_ / ((BCOLS_ * BROWS_) / tgp_size)))),
-        dst(dst_ + bi * dst_ld_ + bj),
-        src(src_ + bi * src_ld_ + bj) {}
+        dst(dst_ + bi * dst_ld_ + bj), src(src_ + bi * src_ld_ + bj) {}
 
   /* Load from device memory into threadgroup memory - without bound checking */
   METAL_FUNC void load_unsafe() const {

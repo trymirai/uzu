@@ -134,16 +134,8 @@ const MATMUL_CORRECTNESS_FULL_ENV: &str = "UZU_MATMUL_CORRECTNESS_FULL";
 const QUICK_BATCH_SIZES: [usize; 2] = [1, 16];
 const FULL_BATCH_SIZES: [usize; 12] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
 
-const QUICK_MODEL_SHAPES: [(usize, usize); 8] = [
-    (896, 896),
-    (896, 4864),
-    (1024, 4096),
-    (1152, 6912),
-    (1536, 8960),
-    (2048, 8192),
-    (4096, 14336),
-    (5120, 17408),
-];
+const QUICK_MODEL_SHAPES: [(usize, usize); 8] =
+    [(896, 896), (896, 4864), (1024, 4096), (1152, 6912), (1536, 8960), (2048, 8192), (4096, 14336), (5120, 17408)];
 
 const FULL_MODEL_SHAPES: [(usize, usize); 51] = [
     // Qwen2.5-Coder-0.5B

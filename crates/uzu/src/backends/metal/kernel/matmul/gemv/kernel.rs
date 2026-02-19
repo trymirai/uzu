@@ -40,17 +40,61 @@ impl Kernel {
     ) -> Result<(), MetalError> {
         let configs: &[PipelineConfiguration] = match self.data_type {
             DataType::BF16 => &[
-                PipelineConfiguration { threadgroup_rows: 4, threadgroup_cols: 1, threads_per_simdgroup_row: 1, threads_per_simdgroup_col: 32, elements_per_thread_row: 4, elements_per_thread_col: 4, apply_output_scale_and_accumulate: false },
-                PipelineConfiguration { threadgroup_rows: 4, threadgroup_cols: 1, threads_per_simdgroup_row: 1, threads_per_simdgroup_col: 32, elements_per_thread_row: 4, elements_per_thread_col: 4, apply_output_scale_and_accumulate: true },
-                PipelineConfiguration { threadgroup_rows: 8, threadgroup_cols: 1, threads_per_simdgroup_row: 1, threads_per_simdgroup_col: 32, elements_per_thread_row: 4, elements_per_thread_col: 4, apply_output_scale_and_accumulate: false },
-                PipelineConfiguration { threadgroup_rows: 8, threadgroup_cols: 1, threads_per_simdgroup_row: 1, threads_per_simdgroup_col: 32, elements_per_thread_row: 4, elements_per_thread_col: 4, apply_output_scale_and_accumulate: true },
+                PipelineConfiguration {
+                    threadgroup_rows: 4,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: false,
+                },
+                PipelineConfiguration {
+                    threadgroup_rows: 4,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: true,
+                },
+                PipelineConfiguration {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: false,
+                },
+                PipelineConfiguration {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: true,
+                },
             ],
-            DataType::F16 => &[
-                PipelineConfiguration { threadgroup_rows: 8, threadgroup_cols: 1, threads_per_simdgroup_row: 1, threads_per_simdgroup_col: 32, elements_per_thread_row: 4, elements_per_thread_col: 4, apply_output_scale_and_accumulate: false },
-            ],
-            DataType::F32 => &[
-                PipelineConfiguration { threadgroup_rows: 8, threadgroup_cols: 1, threads_per_simdgroup_row: 1, threads_per_simdgroup_col: 32, elements_per_thread_row: 4, elements_per_thread_col: 4, apply_output_scale_and_accumulate: false },
-            ],
+            DataType::F16 => &[PipelineConfiguration {
+                threadgroup_rows: 8,
+                threadgroup_cols: 1,
+                threads_per_simdgroup_row: 1,
+                threads_per_simdgroup_col: 32,
+                elements_per_thread_row: 4,
+                elements_per_thread_col: 4,
+                apply_output_scale_and_accumulate: false,
+            }],
+            DataType::F32 => &[PipelineConfiguration {
+                threadgroup_rows: 8,
+                threadgroup_cols: 1,
+                threads_per_simdgroup_row: 1,
+                threads_per_simdgroup_col: 32,
+                elements_per_thread_row: 4,
+                elements_per_thread_col: 4,
+                apply_output_scale_and_accumulate: false,
+            }],
             _ => &[],
         };
 
@@ -112,14 +156,14 @@ impl Kernel {
                             .to_owned(),
                     ));
                 },
-                OutputSource::Bias => {
-                    Some(arguments.bias.ok_or_else(|| {
-                        MetalError::Generic("GEMV descriptor requires bias buffer".to_owned())
-                    })?)
-                },
-                OutputSource::C => Some(arguments.c.ok_or_else(|| {
-                    MetalError::Generic("GEMV descriptor requires C buffer".to_owned())
-                })?),
+                OutputSource::Bias => Some(
+                    arguments
+                        .bias
+                        .ok_or_else(|| MetalError::Generic("GEMV descriptor requires bias buffer".to_owned()))?,
+                ),
+                OutputSource::C => Some(
+                    arguments.c.ok_or_else(|| MetalError::Generic("GEMV descriptor requires C buffer".to_owned()))?,
+                ),
             }
         } else {
             None

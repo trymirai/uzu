@@ -55,7 +55,11 @@ fn select_tile(
 
     if context.is_nax_available() && prefer_half_or_tf32 {
         let tile_rows = (arguments.batch + 128 - 1) / 128;
-        let swizzle_log2 = if tile_rows <= 3 { 0 } else { 1 };
+        let swizzle_log2 = if tile_rows <= 3 {
+            0
+        } else {
+            1
+        };
         return (128, 128, 512, 4, 4, swizzle_log2);
     }
 

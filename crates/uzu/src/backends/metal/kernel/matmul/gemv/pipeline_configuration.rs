@@ -20,70 +20,70 @@ impl PipelineConfiguration {
         output_dimension: i32,
         apply_output_scale_and_accumulate: bool,
     ) -> Self {
-    let (threadgroup_rows, threadgroup_cols);
-    let (threads_per_simdgroup_row, threads_per_simdgroup_col);
-    let (elements_per_thread_row, elements_per_thread_col);
+        let (threadgroup_rows, threadgroup_cols);
+        let (threads_per_simdgroup_row, threads_per_simdgroup_col);
+        let (elements_per_thread_row, elements_per_thread_col);
 
-    if transpose_matrix {
-        let mut simdgroup_thread_rows = 8;
-        let mut simdgroup_thread_cols = 4;
-        if input_dimension >= 8192 && output_dimension >= 2048 {
-            simdgroup_thread_rows = 4;
-            simdgroup_thread_cols = 8;
+        if transpose_matrix {
+            let mut simdgroup_thread_rows = 8;
+            let mut simdgroup_thread_cols = 4;
+            if input_dimension >= 8192 && output_dimension >= 2048 {
+                simdgroup_thread_rows = 4;
+                simdgroup_thread_cols = 8;
+            }
+
+            let threadgroup_simd_cols = if output_dimension >= 2048 {
+                16
+            } else if output_dimension >= 512 {
+                4
+            } else {
+                2
+            };
+
+            let thread_output_cols = if output_dimension < 4 {
+                1
+            } else {
+                4
+            };
+
+            threadgroup_rows = 1;
+            threadgroup_cols = threadgroup_simd_cols;
+            threads_per_simdgroup_row = simdgroup_thread_rows;
+            threads_per_simdgroup_col = simdgroup_thread_cols;
+            elements_per_thread_row = 4;
+            elements_per_thread_col = thread_output_cols;
+        } else {
+            let threadgroup_simd_rows;
+            let mut simdgroup_thread_rows = 1;
+            let mut simdgroup_thread_cols = 32;
+            let mut threadgroup_simd_cols = 1;
+
+            if input_dimension <= 64 {
+                threadgroup_simd_rows = 1;
+                simdgroup_thread_rows = 8;
+                simdgroup_thread_cols = 4;
+            } else if input_dimension >= 16 * output_dimension {
+                threadgroup_simd_rows = 1;
+                threadgroup_simd_cols = 8;
+            } else if output_dimension >= 4096 {
+                threadgroup_simd_rows = 8;
+            } else {
+                threadgroup_simd_rows = 4;
+            }
+
+            let thread_output_rows = if output_dimension < 4 {
+                1
+            } else {
+                4
+            };
+
+            threadgroup_rows = threadgroup_simd_rows;
+            threadgroup_cols = threadgroup_simd_cols;
+            threads_per_simdgroup_row = simdgroup_thread_rows;
+            threads_per_simdgroup_col = simdgroup_thread_cols;
+            elements_per_thread_row = thread_output_rows;
+            elements_per_thread_col = 4;
         }
-
-        let threadgroup_simd_cols = if output_dimension >= 2048 {
-            16
-        } else if output_dimension >= 512 {
-            4
-        } else {
-            2
-        };
-
-        let thread_output_cols = if output_dimension < 4 {
-            1
-        } else {
-            4
-        };
-
-        threadgroup_rows = 1;
-        threadgroup_cols = threadgroup_simd_cols;
-        threads_per_simdgroup_row = simdgroup_thread_rows;
-        threads_per_simdgroup_col = simdgroup_thread_cols;
-        elements_per_thread_row = 4;
-        elements_per_thread_col = thread_output_cols;
-    } else {
-        let threadgroup_simd_rows;
-        let mut simdgroup_thread_rows = 1;
-        let mut simdgroup_thread_cols = 32;
-        let mut threadgroup_simd_cols = 1;
-
-        if input_dimension <= 64 {
-            threadgroup_simd_rows = 1;
-            simdgroup_thread_rows = 8;
-            simdgroup_thread_cols = 4;
-        } else if input_dimension >= 16 * output_dimension {
-            threadgroup_simd_rows = 1;
-            threadgroup_simd_cols = 8;
-        } else if output_dimension >= 4096 {
-            threadgroup_simd_rows = 8;
-        } else {
-            threadgroup_simd_rows = 4;
-        }
-
-        let thread_output_rows = if output_dimension < 4 {
-            1
-        } else {
-            4
-        };
-
-        threadgroup_rows = threadgroup_simd_rows;
-        threadgroup_cols = threadgroup_simd_cols;
-        threads_per_simdgroup_row = simdgroup_thread_rows;
-        threads_per_simdgroup_col = simdgroup_thread_cols;
-        elements_per_thread_row = thread_output_rows;
-        elements_per_thread_col = 4;
-    }
 
         Self {
             threadgroup_rows,

@@ -74,20 +74,44 @@ METAL_FUNC void gemm_splitk_impl(
        (c_row_long * params->ldc + c_col_long);
 
   thread BlockLoader<T> loader_a(
-      a, params->lda, a_shared,
-      simd_group_id, simd_lane_id,
-      BM, BK, lda_tgp, 1, tgp_size);
+      a,
+      params->lda,
+      a_shared,
+      simd_group_id,
+      simd_lane_id,
+      BM,
+      BK,
+      lda_tgp,
+      1,
+      tgp_size
+  );
 
   thread BlockLoader<T> loader_b(
-      b, params->ldb, b_shared,
-      simd_group_id, simd_lane_id,
-      BN, BK, ldb_tgp, 1, tgp_size);
+      b,
+      params->ldb,
+      b_shared,
+      simd_group_id,
+      simd_lane_id,
+      BN,
+      BK,
+      ldb_tgp,
+      1,
+      tgp_size
+  );
 
   thread BlockMMA<T, U, float> mma_op(
-      simd_group_id, simd_lane_id,
-      BM, BN, BK, WM, WN,
-      transpose_a, transpose_b,
-      lda_tgp, ldb_tgp);
+      simd_group_id,
+      simd_lane_id,
+      BM,
+      BN,
+      BK,
+      WM,
+      WN,
+      transpose_a,
+      transpose_b,
+      lda_tgp,
+      ldb_tgp
+  );
 
   int gemm_k_iterations = params->gemm_k_iterations_aligned;
 
@@ -99,24 +123,76 @@ METAL_FUNC void gemm_splitk_impl(
 
   if (mn_aligned) {
     gemm_loop<T, U, float>(
-        a_shared, b_shared, gemm_k_iterations, loader_a, loader_b,
-        mma_op, tgp_bm, tgp_bn, leftover_bk,
-        BK, transpose_a, transpose_b, true, true, true);
+        a_shared,
+        b_shared,
+        gemm_k_iterations,
+        loader_a,
+        loader_b,
+        mma_op,
+        tgp_bm,
+        tgp_bn,
+        leftover_bk,
+        BK,
+        transpose_a,
+        transpose_b,
+        true,
+        true,
+        true
+    );
   } else if (tgp_bn == BN) {
     gemm_loop<T, U, float>(
-        a_shared, b_shared, gemm_k_iterations, loader_a, loader_b,
-        mma_op, tgp_bm, tgp_bn, leftover_bk,
-        BK, transpose_a, transpose_b, false, true, true);
+        a_shared,
+        b_shared,
+        gemm_k_iterations,
+        loader_a,
+        loader_b,
+        mma_op,
+        tgp_bm,
+        tgp_bn,
+        leftover_bk,
+        BK,
+        transpose_a,
+        transpose_b,
+        false,
+        true,
+        true
+    );
   } else if (tgp_bm == BM) {
     gemm_loop<T, U, float>(
-        a_shared, b_shared, gemm_k_iterations, loader_a, loader_b,
-        mma_op, tgp_bm, tgp_bn, leftover_bk,
-        BK, transpose_a, transpose_b, true, false, true);
+        a_shared,
+        b_shared,
+        gemm_k_iterations,
+        loader_a,
+        loader_b,
+        mma_op,
+        tgp_bm,
+        tgp_bn,
+        leftover_bk,
+        BK,
+        transpose_a,
+        transpose_b,
+        true,
+        false,
+        true
+    );
   } else {
     gemm_loop<T, U, float>(
-        a_shared, b_shared, gemm_k_iterations, loader_a, loader_b,
-        mma_op, tgp_bm, tgp_bn, leftover_bk,
-        BK, transpose_a, transpose_b, false, false, true);
+        a_shared,
+        b_shared,
+        gemm_k_iterations,
+        loader_a,
+        loader_b,
+        mma_op,
+        tgp_bm,
+        tgp_bn,
+        leftover_bk,
+        BK,
+        transpose_a,
+        transpose_b,
+        false,
+        false,
+        true
+    );
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -126,9 +202,22 @@ METAL_FUNC void gemm_splitk_impl(
         (params->K - (k_start + params->split_k_partition_size)) / BK;
     if (!align_k || gemm_k_iter_remaining > 0)
       gemm_loop<T, U, float>(
-          a_shared, b_shared, gemm_k_iter_remaining, loader_a, loader_b,
-          mma_op, tgp_bm, tgp_bn, leftover_bk,
-          BK, transpose_a, transpose_b, false, false, align_k);
+          a_shared,
+          b_shared,
+          gemm_k_iter_remaining,
+          loader_a,
+          loader_b,
+          mma_op,
+          tgp_bm,
+          tgp_bn,
+          leftover_bk,
+          BK,
+          transpose_a,
+          transpose_b,
+          false,
+          false,
+          align_k
+      );
   }
 
   if (mn_aligned) {
@@ -191,11 +280,21 @@ KERNEL(MatmulSplitKPartialBfloat16)(
     const Simd simd
 ) {
   gemm_splitk_impl<bfloat16_t, float>(
-      a, b, c, params,
-      16, 32, 16, 2, 2,
-      false, true,
-      a_shared, b_shared,
-      simd.lane_idx, simd.group_idx,
+      a,
+      b,
+      c,
+      params,
+      16,
+      32,
+      16,
+      2,
+      2,
+      false,
+      true,
+      a_shared,
+      b_shared,
+      simd.lane_idx,
+      simd.group_idx,
       uint3(group_x, group_y, group_z),
       uint3(thread_x, thread_y, thread_z)
   );
@@ -213,6 +312,11 @@ KERNEL(MatmulSplitKAccumBfloat16)(
     const uint gid_y AXIS(accum_total_threads_y, 16)
 ) {
   gemm_splitk_accum_impl<float, bfloat16_t>(
-      c_split, d, k_partitions, partition_stride, ldd, uint2(gid_x, gid_y)
+      c_split,
+      d,
+      k_partitions,
+      partition_stride,
+      ldd,
+      uint2(gid_x, gid_y)
   );
 }

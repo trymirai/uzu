@@ -56,10 +56,7 @@ impl Kernel {
         context: &MetalContext,
     ) -> Result<(), MetalError> {
         if !matches!(self.data_type, DataType::BF16) {
-            return Err(MetalError::Generic(format!(
-                "Split-K currently supports BF16 only, got {:?}",
-                self.data_type
-            )));
+            return Err(MetalError::Generic(format!("Split-K currently supports BF16 only, got {:?}", self.data_type)));
         }
         if self.partial_bfloat16.is_none() {
             self.partial_bfloat16 = Some(MatmulSplitKPartialBfloat16MetalKernel::new(context)?);
@@ -147,7 +144,8 @@ impl Kernel {
         if required_bytes <= self.accumulator_buffer_bytes && self.accumulator_buffer.is_some() {
             return;
         }
-        self.accumulator_buffer = Some(context.create_buffer(required_bytes).expect("Failed to create accumulator buffer"));
+        self.accumulator_buffer =
+            Some(context.create_buffer(required_bytes).expect("Failed to create accumulator buffer"));
         self.accumulator_buffer_bytes = required_bytes;
     }
 }

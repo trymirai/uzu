@@ -24,7 +24,7 @@ namespace steel {
 // tile_matmad K dim is always 1
 #define STEEL_MAX_TM 8
 #define STEEL_MAX_TN 4
-#define STEEL_MAX_CTILE_FRAGS (STEEL_MAX_TM * STEEL_MAX_TN)  // 32
+#define STEEL_MAX_CTILE_FRAGS (STEEL_MAX_TM * STEEL_MAX_TN) // 32
 
 template <typename T>
 struct BaseMMAFrag {
@@ -211,8 +211,9 @@ struct MMATile {
   METAL_FUNC MMATile() thread : kTileRows(0), kTileCols(0), kNumFrags(0) {}
 
   METAL_FUNC MMATile(short tile_rows, short tile_cols) thread
-      : kTileRows(tile_rows), kTileCols(tile_cols),
-        kNumFrags(tile_rows * tile_cols) {}
+      : kTileRows(tile_rows),
+        kTileCols(tile_cols),
+        kNumFrags(tile_rows* tile_cols) {}
 
   METAL_FUNC constexpr void clear() {
     STEEL_PRAGMA_UNROLL
@@ -240,22 +241,26 @@ struct MMATile {
     return reinterpret_cast<const thread elem_type*>(val_frags);
   }
 
-  METAL_FUNC short elems_per_tile() const {
-    return kNumFrags * kElemsPerFrag;
-  }
+  METAL_FUNC short elems_per_tile() const { return kNumFrags * kElemsPerFrag; }
 
   template <typename U>
   METAL_FUNC void load(
       const threadgroup U* src,
-      int w_x, int w_y, int str_x, int str_y
+      int w_x,
+      int w_y,
+      int str_x,
+      int str_y
   ) {
     for (short i = 0; i < kTileRows; ++i) {
       for (short j = 0; j < kTileCols; ++j) {
         MMAFrag_t::load(
             frag_at(i, j),
-            &(src[(i * kFragRows) * w_x * str_x +
-                  (j * kFragCols) * w_y * str_y]),
-            str_x, str_y
+            &(
+                src[(i * kFragRows) * w_x * str_x +
+                    (j * kFragCols) * w_y * str_y]
+            ),
+            str_x,
+            str_y
         );
       }
     }
@@ -264,15 +269,21 @@ struct MMATile {
   template <typename U>
   METAL_FUNC void store(
       threadgroup U* dst,
-      int w_x, int w_y, int str_x, int str_y
+      int w_x,
+      int w_y,
+      int str_x,
+      int str_y
   ) const {
     for (short i = 0; i < kTileRows; ++i) {
       for (short j = 0; j < kTileCols; ++j) {
         MMAFrag_t::store(
             frag_at(i, j),
-            &(dst[(i * kFragRows) * w_x * str_x +
-                  (j * kFragCols) * w_y * str_y]),
-            str_x, str_y
+            &(
+                dst[(i * kFragRows) * w_x * str_x +
+                    (j * kFragCols) * w_y * str_y]
+            ),
+            str_x,
+            str_y
         );
       }
     }
@@ -285,7 +296,8 @@ struct MMATile {
         MMAFrag_t::load(
             frag_at(i, j),
             &(src[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
-            ld, 1
+            ld,
+            1
         );
       }
     }
@@ -298,7 +310,8 @@ struct MMATile {
         MMAFrag_t::store(
             frag_at(i, j),
             &(dst[(i * kFragRows) * w_x * ld + (j * kFragCols) * w_y]),
-            ld, 1
+            ld,
+            1
         );
       }
     }
@@ -309,14 +322,16 @@ struct MMATile {
       const device U* src,
       const int ld,
       const short2 src_tile_dims,
-      int w_x, int w_y
+      int w_x,
+      int w_y
   ) {
     for (int i = 0; i < kTileRows; ++i) {
       for (int j = 0; j < kTileCols; ++j) {
         MMAFrag_t::load_safe(
             frag_at(i, j),
             src,
-            ld, 1,
+            ld,
+            1,
             src_tile_dims.y,
             src_tile_dims.x,
             (i * kFragRows) * w_x,
@@ -331,14 +346,16 @@ struct MMATile {
       device U* dst,
       const int ld,
       const short2 dst_tile_dims,
-      int w_x, int w_y
+      int w_x,
+      int w_y
   ) const {
     for (int i = 0; i < kTileRows; ++i) {
       for (int j = 0; j < kTileCols; ++j) {
         MMAFrag_t::store_safe(
             frag_at(i, j),
             dst,
-            ld, 1,
+            ld,
+            1,
             dst_tile_dims.y,
             dst_tile_dims.x,
             (i * kFragRows) * w_x,
@@ -354,16 +371,20 @@ struct MMATile {
       const int ld,
       const short2 start,
       const short2 stop,
-      int w_x, int w_y
+      int w_x,
+      int w_y
   ) const {
     for (int i = 0; i < kTileRows; ++i) {
       for (int j = 0; j < kTileCols; ++j) {
         MMAFrag_t::store_slice(
             frag_at(i, j),
             dst,
-            ld, 1,
-            start.y, stop.y,
-            start.x, stop.x,
+            ld,
+            1,
+            start.y,
+            stop.y,
+            start.x,
+            stop.x,
             (i * kFragRows) * w_x,
             (j * kFragCols) * w_y
         );
@@ -436,27 +457,27 @@ struct BlockMMA {
   METAL_FUNC BlockMMA(
       ushort simd_group_id,
       ushort simd_lane_id,
-      short BM_, short BN_, short BK_,
-      short WM_, short WN_,
-      bool transpose_a_, bool transpose_b_,
-      short lda_tgp_, short ldb_tgp_
-  ) : BM(BM_), BN(BN_), BK(BK_), WM(WM_), WN(WN_),
-      transpose_a(transpose_a_), transpose_b(transpose_b_),
-      lda_tgp(lda_tgp_), ldb_tgp(ldb_tgp_),
-      TM_stride(kFragSize * WM_),
-      TN_stride(kFragSize * WN_),
-      TM(BM_ / (kFragSize * WM_)),
-      TN(BN_ / (kFragSize * WN_)),
-      A_str_m(transpose_a_ ? 1 : lda_tgp_),
-      A_str_k(transpose_a_ ? lda_tgp_ : 1),
-      B_str_k(transpose_b_ ? 1 : ldb_tgp_),
-      B_str_n(transpose_b_ ? ldb_tgp_ : 1),
-      tile_stride_a(kFragSize * (transpose_a_ ? lda_tgp_ : 1)),
-      tile_stride_b(kFragSize * (transpose_b_ ? 1 : ldb_tgp_)),
-      Atile(TM, 1),
-      Btile(1, TN),
-      Ctile(TM, TN)
-  {
+      short BM_,
+      short BN_,
+      short BK_,
+      short WM_,
+      short WN_,
+      bool transpose_a_,
+      bool transpose_b_,
+      short lda_tgp_,
+      short ldb_tgp_
+  )
+      : BM(BM_), BN(BN_), BK(BK_), WM(WM_), WN(WN_), transpose_a(transpose_a_),
+        transpose_b(transpose_b_), lda_tgp(lda_tgp_), ldb_tgp(ldb_tgp_),
+        TM_stride(kFragSize * WM_), TN_stride(kFragSize * WN_),
+        TM(BM_ / (kFragSize * WM_)), TN(BN_ / (kFragSize * WN_)),
+        A_str_m(transpose_a_ ? 1 : lda_tgp_),
+        A_str_k(transpose_a_ ? lda_tgp_ : 1),
+        B_str_k(transpose_b_ ? 1 : ldb_tgp_),
+        B_str_n(transpose_b_ ? ldb_tgp_ : 1),
+        tile_stride_a(kFragSize * (transpose_a_ ? lda_tgp_ : 1)),
+        tile_stride_b(kFragSize * (transpose_b_ ? 1 : ldb_tgp_)), Atile(TM, 1),
+        Btile(1, TN), Ctile(TM, TN) {
     short tm = kFragSize * (simd_group_id / WN);
     short tn = kFragSize * (simd_group_id % WN);
 
@@ -464,8 +485,8 @@ struct BlockMMA {
     sm = simd_coord.y;
     sn = simd_coord.x;
 
-    As_offset = (tm + sm) * A_str_m + (sn) * A_str_k;
-    Bs_offset = (sm) * B_str_k + (tn + sn) * B_str_n;
+    As_offset = (tm + sm) * A_str_m + (sn)*A_str_k;
+    Bs_offset = (sm)*B_str_k + (tn + sn) * B_str_n;
 
     sm += tm;
     sn += tn;
@@ -520,7 +541,7 @@ struct BlockMMA {
       const int fdc,
       thread const BinaryEpilogue& epilogue_op
   ) {
-    C += (sm) * ldc + (sn) * fdc;
+    C += (sm)*ldc + (sn)*fdc;
 
     for (short i = 0; i < TM; i++) {
       for (short j = 0; j < TN; j++) {
@@ -546,7 +567,7 @@ struct BlockMMA {
       short2 dst_tile_dims,
       thread const BinaryEpilogue& epilogue_op
   ) {
-    C += (sm) * ldc + (sn) * fdc;
+    C += (sm)*ldc + (sn)*fdc;
     dst_tile_dims -= short2(sn, sm);
 
     if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0)
@@ -583,8 +604,8 @@ struct BlockMMA {
       const int fdc,
       thread const Epilogue& epilogue_op
   ) const {
-    C += (sm) * ldc + (sn) * fdc;
-    D += (sm) * ldd + sn;
+    C += (sm)*ldc + (sn)*fdc;
+    D += (sm)*ldd + sn;
 
     for (short i = 0; i < TM; i++) {
       for (short j = 0; j < TN; j++) {
@@ -609,8 +630,8 @@ struct BlockMMA {
       short2 dst_tile_dims,
       thread const Epilogue& epilogue_op
   ) const {
-    C += (sm) * ldc + (sn) * fdc;
-    D += (sm) * ldd + sn;
+    C += (sm)*ldc + (sn)*fdc;
+    D += (sm)*ldd + sn;
     dst_tile_dims -= short2(sn, sm);
 
     if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0)
