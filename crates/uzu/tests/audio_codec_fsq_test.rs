@@ -7,11 +7,11 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::{AudioFsqDecodeKernel, AudioFsqEncodeKernel, AudioLeakyReluKernel},
+            kernel::{AudioFsqDecodeKernel, AudioFsqEncodeKernel},
         },
         metal::{
             MetalContext,
-            kernel::dsl::{AudioFsqDecodeMetalKernel, AudioFsqEncodeMetalKernel, AudioLeakyReluMetalKernel},
+            kernel::dsl::{AudioFsqDecodeMetalKernel, AudioFsqEncodeMetalKernel},
         },
     },
 };
@@ -21,46 +21,7 @@ fn create_test_context() -> std::rc::Rc<MetalContext> {
 }
 
 #[test]
-fn audio_dsl_leaky_relu_matches_reference() {
-    let context = create_test_context();
-    let kernel = AudioLeakyReluMetalKernel::new(&context, DataType::F32).expect("audio runtime");
-
-    let input_values: Vec<f32> = vec![-2.0, -0.5, 0.0, 0.5, 3.0];
-    let n = input_values.len();
-
-    let mut input = context.create_array(&[n], DataType::F32, "audio_leaky_input");
-    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
-    let output = context.create_array(&[n], DataType::F32, "audio_leaky_output");
-
-    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
-
-    kernel.encode(input.buffer(), output.buffer(), n as i32, 0.1, &encoder);
-
-    encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
-
-    let expected: Vec<f32> = input_values
-        .iter()
-        .map(|&x| {
-            if x >= 0.0 {
-                x
-            } else {
-                x * 0.1
-            }
-        })
-        .collect();
-    let actual = output.as_slice::<f32>();
-
-    for (index, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
-        let delta = (a - e).abs();
-        assert!(delta <= 1e-6, "index={index}, actual={a}, expected={e}, delta={delta}");
-    }
-}
-
-#[test]
-fn audio_dsl_fsq_decode_matches_reference() {
+fn audio_fsq_decode_matches_reference() {
     let context = create_test_context();
     let kernel = AudioFsqDecodeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
@@ -112,7 +73,7 @@ fn audio_dsl_fsq_decode_matches_reference() {
 }
 
 #[test]
-fn audio_dsl_fsq_encode_matches_reference() {
+fn audio_fsq_encode_matches_reference() {
     let context = create_test_context();
     let kernel = AudioFsqEncodeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
