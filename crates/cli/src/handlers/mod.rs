@@ -4,7 +4,3 @@ pub mod serve;
 pub use serve::handle_serve;
 pub mod bench;
 pub use bench::handle_bench;
-#[cfg(feature = "audio-prototype-cli")]
-pub mod audio_codec;
-#[cfg(feature = "audio-prototype-cli")]
-pub use audio_codec::handle_nanocodec_roundtrip;

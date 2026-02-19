@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [features]
 default = []
-audio-prototype-cli = ["uzu/audio-prototype-cli"]
 
 [dependencies]
 clap.workspace = true

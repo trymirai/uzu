@@ -1,6 +1,4 @@
 use clap::{CommandFactory, Parser, Subcommand};
-#[cfg(feature = "audio-prototype-cli")]
-use cli::handlers::handle_nanocodec_roundtrip;
 use cli::handlers::{handle_bench, handle_run, handle_serve};
 
 #[derive(Parser)]
@@ -40,16 +38,6 @@ enum Commands {
         /// Path to the output file
         output_path: String,
     },
-    #[cfg(feature = "audio-prototype-cli")]
-    /// Run NanoCodec audio -> tokens -> audio roundtrip
-    NanoCodecRoundtrip {
-        /// Path to the `.nemo` archive
-        nemo_path: String,
-        /// Input WAV file path
-        input_wav: String,
-        /// Output WAV file path
-        output_wav: String,
-    },
 }
 
 fn main() {
@@ -76,16 +64,6 @@ fn main() {
             output_path,
         }) => {
             let _ = handle_bench(model_path, task_path, output_path);
-        },
-        #[cfg(feature = "audio-prototype-cli")]
-        Some(Commands::NanoCodecRoundtrip {
-            nemo_path,
-            input_wav,
-            output_wav,
-        }) => {
-            if let Err(e) = handle_nanocodec_roundtrip(nemo_path, input_wav, output_wav) {
-                eprintln!("Error: {e}");
-            }
         },
         None => {
             let mut cmd = Cli::command();

@@ -84,7 +84,6 @@ metal-nax = []
 tracing = []
 audio-runtime = []
 audio-tools = ["dep:serde_yaml", "dep:tar", "dep:tempfile", "dep:zip"]
-audio-prototype-cli = ["audio-runtime", "audio-tools"]
 
 [[test]]
 name = "moe"
