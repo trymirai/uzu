@@ -40,7 +40,8 @@ void fsq_decode(
     // Zero all D codes for this token when masked.
     for (int d = 0; d < codebook_dim; ++d) {
       const uint out_c = g * (uint)codebook_dim + (uint)d;
-      const uint out_idx = (b * (uint)(num_groups * codebook_dim) + out_c) * (uint)seq_len + t;
+      const uint out_idx =
+          (b * (uint)(num_groups * codebook_dim) + out_c) * (uint)seq_len + t;
       out[out_idx] = (T)0;
     }
     return;
@@ -66,7 +67,8 @@ void fsq_decode(
     const float code = ((float)(code_nonneg - offset)) / (float)scale;
 
     const uint out_c = g * (uint)codebook_dim + (uint)d;
-    const uint out_idx = (b * (uint)(num_groups * codebook_dim) + out_c) * (uint)seq_len + t;
+    const uint out_idx =
+        (b * (uint)(num_groups * codebook_dim) + out_c) * (uint)seq_len + t;
     out[out_idx] = (T)code;
 
     base *= levels;
@@ -91,16 +93,16 @@ generateKernels(256, fsq_decode)
 #undef outerArguments
 #undef innerArguments
 
-// === Elementwise ops for codec blocks ===
+    // === Elementwise ops for codec blocks ===
 
-template <typename T>
-void audio_codec_leaky_relu(
-    device const T* input,
-    device T* output,
-    const constant int& n,
-    const constant float& negative_slope,
-    const uint tid
-) {
+    template <typename T>
+    void audio_codec_leaky_relu(
+        device const T* input,
+        device T* output,
+        const constant int& n,
+        const constant float& negative_slope,
+        const uint tid
+    ) {
   if ((int)tid >= n) {
     return;
   }
@@ -123,13 +125,13 @@ generateKernels(256, audio_codec_leaky_relu)
 #undef outerArguments
 #undef innerArguments
 
-template <typename T>
-void audio_codec_tanh(
-    device const T* input,
-    device T* output,
-    const constant int& n,
-    const uint tid
-) {
+    template <typename T>
+    void audio_codec_tanh(
+        device const T* input,
+        device T* output,
+        const constant int& n,
+        const uint tid
+    ) {
   if ((int)tid >= n) {
     return;
   }
@@ -150,14 +152,14 @@ generateKernels(256, audio_codec_tanh)
 #undef outerArguments
 #undef innerArguments
 
-template <typename T>
-void audio_codec_add(
-    device const T* a,
-    device const T* b,
-    device T* out,
-    const constant int& n,
-    const uint tid
-) {
+    template <typename T>
+    void audio_codec_add(
+        device const T* a,
+        device const T* b,
+        device T* out,
+        const constant int& n,
+        const uint tid
+    ) {
   if ((int)tid >= n) {
     return;
   }
@@ -178,14 +180,14 @@ generateKernels(256, audio_codec_add)
 #undef outerArguments
 #undef innerArguments
 
-template <typename T>
-void audio_codec_scale(
-    device const T* input,
-    device T* output,
-    const constant int& n,
-    const constant float& scale,
-    const uint tid
-) {
+    template <typename T>
+    void audio_codec_scale(
+        device const T* input,
+        device T* output,
+        const constant int& n,
+        const constant float& scale,
+        const uint tid
+    ) {
   if ((int)tid >= n) {
     return;
   }
@@ -207,26 +209,28 @@ generateKernels(256, audio_codec_scale)
 #undef outerArguments
 #undef innerArguments
 
-// === Causal Conv1d (stride=1, groups=1) ===
-//
-// Matches NeMo's CausalConv1dNorm forward for the decoder path where stride=1:
-// - left padding by padding_total = (kernel_size_eff - 1) where kernel_size_eff=(K-1)*dilation+1
-// - no right padding (extra_padding=0 for stride=1)
-// - output length equals input length
-template <typename T>
-void audio_codec_causal_conv1d(
-    device const T* input,  // [B, Cin, T]
-    device const T* weight, // [Cout, Cin, K]
-    device const T* bias,   // [Cout]
-    device T* output,       // [B, Cout, T]
-    device const int* lengths, // [B]
-    const constant int& cin,
-    const constant int& cout,
-    const constant int& seq_len,
-    const constant int& kernel_size,
-    const constant int& dilation,
-    const uint3 gid
-) {
+    // === Causal Conv1d (stride=1, groups=1) ===
+    //
+    // Matches NeMo's CausalConv1dNorm forward for the decoder path where
+    // stride=1:
+    // - left padding by padding_total = (kernel_size_eff - 1) where
+    // kernel_size_eff=(K-1)*dilation+1
+    // - no right padding (extra_padding=0 for stride=1)
+    // - output length equals input length
+    template <typename T>
+    void audio_codec_causal_conv1d(
+        device const T* input,     // [B, Cin, T]
+        device const T* weight,    // [Cout, Cin, K]
+        device const T* bias,      // [Cout]
+        device T* output,          // [B, Cout, T]
+        device const int* lengths, // [B]
+        const constant int& cin,
+        const constant int& cout,
+        const constant int& seq_len,
+        const constant int& kernel_size,
+        const constant int& dilation,
+        const uint3 gid
+    ) {
   const uint t = gid.x;
   const uint oc = gid.y;
   const uint b = gid.z;
@@ -279,35 +283,45 @@ void audio_codec_causal_conv1d(
    const uint3 gid [[thread_position_in_grid]])
 
 #define innerArguments                                                         \
-  (input, weight, bias, output, lengths, cin, cout, seq_len, kernel_size, dilation, gid)
+  (input,                                                                      \
+   weight,                                                                     \
+   bias,                                                                       \
+   output,                                                                     \
+   lengths,                                                                    \
+   cin,                                                                        \
+   cout,                                                                       \
+   seq_len,                                                                    \
+   kernel_size,                                                                \
+   dilation,                                                                   \
+   gid)
 
 generateKernels(256, audio_codec_causal_conv1d)
 
 #undef outerArguments
 #undef innerArguments
 
-// === Causal ConvTranspose1d upsample (kernel_size = 2*stride) ===
-//
-// Matches NeMo's CausalConvTranspose1dNorm forward for trim_right_ratio=1:
-// - ConvTranspose1d with padding=0, output_padding=0, dilation=1
-// - kernel_size = 2 * stride
-// - unpad: trim_right = kernel_size - stride (= stride), trim_left = 0
-// Resulting output length is input_len * stride.
-template <typename T>
-void audio_codec_causal_conv_transpose1d(
-    device const T* input,   // [B, Cin, Tin]
-    device const T* weight,  // [Cin, Cout_per_group, 2*stride]
-    device const T* bias,    // [Cout]
-    device T* output,        // [B, Cout, Tout]
-    device const int* lengths, // [B] (output lengths)
-    const constant int& cin,
-    const constant int& cout,
-    const constant int& seq_len_in,
-    const constant int& seq_len_out,
-    const constant int& stride,
-    const constant int& groups,
-    const uint3 gid
-) {
+    // === Causal ConvTranspose1d upsample (kernel_size = 2*stride) ===
+    //
+    // Matches NeMo's CausalConvTranspose1dNorm forward for trim_right_ratio=1:
+    // - ConvTranspose1d with padding=0, output_padding=0, dilation=1
+    // - kernel_size = 2 * stride
+    // - unpad: trim_right = kernel_size - stride (= stride), trim_left = 0
+    // Resulting output length is input_len * stride.
+    template <typename T>
+    void audio_codec_causal_conv_transpose1d(
+        device const T* input,     // [B, Cin, Tin]
+        device const T* weight,    // [Cin, Cout_per_group, 2*stride]
+        device const T* bias,      // [Cout]
+        device T* output,          // [B, Cout, Tout]
+        device const int* lengths, // [B] (output lengths)
+        const constant int& cin,
+        const constant int& cout,
+        const constant int& seq_len_in,
+        const constant int& seq_len_out,
+        const constant int& stride,
+        const constant int& groups,
+        const uint3 gid
+    ) {
   const uint t_out = gid.x;
   const uint oc = gid.y;
   const uint b = gid.z;
@@ -346,14 +360,16 @@ void audio_codec_causal_conv_transpose1d(
     const uint in_base = in_base_b + (uint)ic * (uint)seq_len_in;
 
     // Weight layout: [Cin, Cout_per_group, K]
-    const uint w_base = ((uint)ic * (uint)cout_per_group) * (uint)(2 * stride) + w_base_oc;
+    const uint w_base =
+        ((uint)ic * (uint)cout_per_group) * (uint)(2 * stride) + w_base_oc;
 
     // Contribution from input[q] with k=r
     acc += float(weight[w_base + (uint)r]) * float(input[in_base + (uint)q]);
 
     // Contribution from input[q-1] with k=stride+r
     if (q > 0) {
-      acc += float(weight[w_base + (uint)(stride + r)]) * float(input[in_base + (uint)(q - 1)]);
+      acc += float(weight[w_base + (uint)(stride + r)]) *
+             float(input[in_base + (uint)(q - 1)]);
     }
   }
 
@@ -375,30 +391,42 @@ void audio_codec_causal_conv_transpose1d(
    const uint3 gid [[thread_position_in_grid]])
 
 #define innerArguments                                                         \
-  (input, weight, bias, output, lengths, cin, cout, seq_len_in, seq_len_out, stride, groups, gid)
+  (input,                                                                      \
+   weight,                                                                     \
+   bias,                                                                       \
+   output,                                                                     \
+   lengths,                                                                    \
+   cin,                                                                        \
+   cout,                                                                       \
+   seq_len_in,                                                                 \
+   seq_len_out,                                                                \
+   stride,                                                                     \
+   groups,                                                                     \
+   gid)
 
 generateKernels(256, audio_codec_causal_conv_transpose1d)
 
 #undef outerArguments
 #undef innerArguments
 
-// === Snake / HalfSnake / Clamp (NeMo common.parts.utils) ===
-//
-// snake(x, alpha, eps) = x + (alpha + eps)^-1 * sin(alpha * x)^2
-// HalfSnake applies snake to the first half channels and LeakyReLU to the rest.
+    // === Snake / HalfSnake / Clamp (NeMo common.parts.utils) ===
+    //
+    // snake(x, alpha, eps) = x + (alpha + eps)^-1 * sin(alpha * x)^2
+    // HalfSnake applies snake to the first half channels and LeakyReLU to the
+    // rest.
 
-template <typename T>
-void audio_codec_half_snake(
-    device const T* input,     // [B, C, T]
-    device const T* alpha,     // [1, C_snake, 1] (contiguous, index by channel)
-    device T* output,          // [B, C, T]
-    const constant int& channels,
-    const constant int& seq_len,
-    const constant int& snake_channels,
-    const constant float& negative_slope,
-    const constant float& eps,
-    const uint3 gid
-) {
+    template <typename T>
+    void audio_codec_half_snake(
+        device const T* input, // [B, C, T]
+        device const T* alpha, // [1, C_snake, 1] (contiguous, index by channel)
+        device T* output,      // [B, C, T]
+        const constant int& channels,
+        const constant int& seq_len,
+        const constant int& snake_channels,
+        const constant float& negative_slope,
+        const constant float& eps,
+        const uint3 gid
+    ) {
   const uint t = gid.x;
   const uint c = gid.y;
   const uint b = gid.z;
@@ -434,22 +462,30 @@ void audio_codec_half_snake(
    const uint3 gid [[thread_position_in_grid]])
 
 #define innerArguments                                                         \
-  (input, alpha, output, channels, seq_len, snake_channels, negative_slope, eps, gid)
+  (input,                                                                      \
+   alpha,                                                                      \
+   output,                                                                     \
+   channels,                                                                   \
+   seq_len,                                                                    \
+   snake_channels,                                                             \
+   negative_slope,                                                             \
+   eps,                                                                        \
+   gid)
 
 generateKernels(256, audio_codec_half_snake)
 
 #undef outerArguments
 #undef innerArguments
 
-template <typename T>
-void audio_codec_clamp(
-    device const T* input,
-    device T* output,
-    const constant int& n,
-    const constant float& min_value,
-    const constant float& max_value,
-    const uint tid
-) {
+    template <typename T>
+    void audio_codec_clamp(
+        device const T* input,
+        device T* output,
+        const constant int& n,
+        const constant float& min_value,
+        const constant float& max_value,
+        const uint tid
+    ) {
   if ((int)tid >= n) {
     return;
   }
@@ -473,30 +509,31 @@ generateKernels(256, audio_codec_clamp)
 #undef outerArguments
 #undef innerArguments
 
-// === Non-causal Conv1d with padding + stride (for encoder) ===
-//
-// Matches torch.nn.Conv1d with explicit padding and padding_mode:
-// out[t_out] = bias + sum_{ic,k} w[oc,ic,k] * x[ic, t_out*stride - padding + k*dilation]
-// - pad_mode=0: zeros
-// - pad_mode=1: replicate (clamp index to [0, seq_len_in-1])
-template <typename T>
-void audio_codec_conv1d(
-    device const T* input,   // [B, Cin, Tin]
-    device const T* weight,  // [Cout, Cin, K]
-    device const T* bias,    // [Cout]
-    device T* output,        // [B, Cout, Tout]
-    device const int* lengths, // [B] (Tout lengths)
-    const constant int& cin,
-    const constant int& cout,
-    const constant int& seq_len_in,
-    const constant int& seq_len_out,
-    const constant int& kernel_size,
-    const constant int& stride,
-    const constant int& dilation,
-    const constant int& padding,
-    const constant int& pad_mode,
-    const uint3 gid
-) {
+    // === Non-causal Conv1d with padding + stride (for encoder) ===
+    //
+    // Matches torch.nn.Conv1d with explicit padding and padding_mode:
+    // out[t_out] = bias + sum_{ic,k} w[oc,ic,k] * x[ic, t_out*stride - padding
+    // + k*dilation]
+    // - pad_mode=0: zeros
+    // - pad_mode=1: replicate (clamp index to [0, seq_len_in-1])
+    template <typename T>
+    void audio_codec_conv1d(
+        device const T* input,     // [B, Cin, Tin]
+        device const T* weight,    // [Cout, Cin, K]
+        device const T* bias,      // [Cout]
+        device T* output,          // [B, Cout, Tout]
+        device const int* lengths, // [B] (Tout lengths)
+        const constant int& cin,
+        const constant int& cout,
+        const constant int& seq_len_in,
+        const constant int& seq_len_out,
+        const constant int& kernel_size,
+        const constant int& stride,
+        const constant int& dilation,
+        const constant int& padding,
+        const constant int& pad_mode,
+        const uint3 gid
+    ) {
   const uint t_out = gid.x;
   const uint oc = gid.y;
   const uint b = gid.z;
@@ -552,30 +589,44 @@ void audio_codec_conv1d(
    const uint3 gid [[thread_position_in_grid]])
 
 #define innerArguments                                                         \
-  (input, weight, bias, output, lengths, cin, cout, seq_len_in, seq_len_out, kernel_size, stride, dilation, padding, pad_mode, gid)
+  (input,                                                                      \
+   weight,                                                                     \
+   bias,                                                                       \
+   output,                                                                     \
+   lengths,                                                                    \
+   cin,                                                                        \
+   cout,                                                                       \
+   seq_len_in,                                                                 \
+   seq_len_out,                                                                \
+   kernel_size,                                                                \
+   stride,                                                                     \
+   dilation,                                                                   \
+   padding,                                                                    \
+   pad_mode,                                                                   \
+   gid)
 
 generateKernels(256, audio_codec_conv1d)
 
 #undef outerArguments
 #undef innerArguments
 
-// === FSQ (Finite Scalar Quantization) encode ===
-//
-// Implements GroupFiniteScalarQuantizer.encode() for inference:
-// - input:  [B, G*D, T] float
-// - output: [B, G,   T] int32
-//
-// NeMo reference (FiniteScalarQuantizer):
-//   output_scale = (num_levels - 1) / 2 * (1 - eps)
-//   output_offset = 0.5 if even else 0
-//   input_shift = tan(output_offset / output_scale)
-//   compressed = output_scale * tanh(inputs + input_shift) - output_offset
-//   rounded = round(compressed)  # half away from zero
-//   code_nonneg = rounded + (num_levels//2)
-//   token = sum_d code_nonneg[d] * dim_base_index[d]
+    // === FSQ (Finite Scalar Quantization) encode ===
+    //
+    // Implements GroupFiniteScalarQuantizer.encode() for inference:
+    // - input:  [B, G*D, T] float
+    // - output: [B, G,   T] int32
+    //
+    // NeMo reference (FiniteScalarQuantizer):
+    //   output_scale = (num_levels - 1) / 2 * (1 - eps)
+    //   output_offset = 0.5 if even else 0
+    //   input_shift = tan(output_offset / output_scale)
+    //   compressed = output_scale * tanh(inputs + input_shift) - output_offset
+    //   rounded = round(compressed)  # half away from zero
+    //   code_nonneg = rounded + (num_levels//2)
+    //   token = sum_d code_nonneg[d] * dim_base_index[d]
 
-// Match torch.round() semantics (ties to even).
-inline float round_ties_to_even(const float x) {
+    // Match torch.round() semantics (ties to even).
+    inline float round_ties_to_even(const float x) {
   const float f = floor(x);
   const float frac = x - f;
   if (frac < 0.5f) {
@@ -590,8 +641,8 @@ inline float round_ties_to_even(const float x) {
 
 template <typename T>
 void fsq_encode(
-    device const T* input,   // [B, G*D, T]
-    device int* tokens,      // [B, G, T]
+    device const T* input,     // [B, G*D, T]
+    device int* tokens,        // [B, G, T]
     device const int* lengths, // [B]
     const constant int& num_groups,
     const constant int& seq_len,
@@ -616,7 +667,10 @@ void fsq_encode(
     return;
   }
 
-  const uint in_base = (b * (uint)(num_groups * codebook_dim) + g * (uint)codebook_dim) * (uint)seq_len + t;
+  const uint in_base =
+      (b * (uint)(num_groups * codebook_dim) + g * (uint)codebook_dim) *
+          (uint)seq_len +
+      t;
 
   int token = 0;
   for (int d = 0; d < codebook_dim; ++d) {
@@ -627,7 +681,8 @@ void fsq_encode(
     const float input_shift = tan(output_offset / output_scale);
 
     const float x = float(input[in_base + (uint)d * (uint)seq_len]);
-    const float compressed = output_scale * tanh(x + input_shift) - output_offset;
+    const float compressed =
+        output_scale * tanh(x + input_shift) - output_offset;
     const float rounded = round_ties_to_even(compressed);
 
     int code_nonneg = (int)rounded + scale_i;
@@ -651,7 +706,16 @@ void fsq_encode(
    const uint3 gid [[thread_position_in_grid]])
 
 #define innerArguments                                                         \
-  (input, tokens, lengths, num_groups, seq_len, codebook_dim, num_levels, dim_base_index, eps, gid)
+  (input,                                                                      \
+   tokens,                                                                     \
+   lengths,                                                                    \
+   num_groups,                                                                 \
+   seq_len,                                                                    \
+   codebook_dim,                                                               \
+   num_levels,                                                                 \
+   dim_base_index,                                                             \
+   eps,                                                                        \
+   gid)
 
 generateKernels(256, fsq_encode)
 
@@ -678,7 +742,16 @@ KERNEL(AudioFsqDecode)(
     uint g AXIS(num_groups, 1),
     uint b AXIS(batch_size, 1)
 ) {
-  fsq_decode<T>(tokens, out, lengths, num_groups, seq_len, codebook_dim, num_levels, uint3(t, g, b));
+  fsq_decode<T>(
+      tokens,
+      out,
+      lengths,
+      num_groups,
+      seq_len,
+      codebook_dim,
+      num_levels,
+      uint3(t, g, b)
+  );
 }
 
 template <typename T>
