@@ -75,16 +75,16 @@ void fsq_decode(
   }
 }
 
-    // === Elementwise ops for codec blocks ===
+// === Elementwise ops for codec blocks ===
 
-    template <typename T>
-    void audio_codec_leaky_relu(
-        device const T* input,
-        device T* output,
-        const constant int& n,
-        const constant float& negative_slope,
-        const uint tid
-    ) {
+template <typename T>
+void audio_codec_leaky_relu(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const constant float& negative_slope,
+    const uint tid
+) {
   if ((int)tid >= n) {
     return;
   }
@@ -93,13 +93,13 @@ void fsq_decode(
   output[tid] = (T)y;
 }
 
-    template <typename T>
-    void audio_codec_tanh(
-        device const T* input,
-        device T* output,
-        const constant int& n,
-        const uint tid
-    ) {
+template <typename T>
+void audio_codec_tanh(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const uint tid
+) {
   if ((int)tid >= n) {
     return;
   }
@@ -107,28 +107,28 @@ void fsq_decode(
   output[tid] = (T)tanh(x);
 }
 
-    template <typename T>
-    void audio_codec_add(
-        device const T* a,
-        device const T* b,
-        device T* out,
-        const constant int& n,
-        const uint tid
-    ) {
+template <typename T>
+void audio_codec_add(
+    device const T* a,
+    device const T* b,
+    device T* out,
+    const constant int& n,
+    const uint tid
+) {
   if ((int)tid >= n) {
     return;
   }
   out[tid] = a[tid] + b[tid];
 }
 
-    template <typename T>
-    void audio_codec_scale(
-        device const T* input,
-        device T* output,
-        const constant int& n,
-        const constant float& scale,
-        const uint tid
-    ) {
+template <typename T>
+void audio_codec_scale(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const constant float& scale,
+    const uint tid
+) {
   if ((int)tid >= n) {
     return;
   }
@@ -136,28 +136,28 @@ void fsq_decode(
   output[tid] = (T)(x * scale);
 }
 
-    // === Causal Conv1d (stride=1, groups=1) ===
-    //
-    // Matches NeMo's CausalConv1dNorm forward for the decoder path where
-    // stride=1:
-    // - left padding by padding_total = (kernel_size_eff - 1) where
-    // kernel_size_eff=(K-1)*dilation+1
-    // - no right padding (extra_padding=0 for stride=1)
-    // - output length equals input length
-    template <typename T>
-    void audio_codec_causal_conv1d(
-        device const T* input,     // [B, Cin, T]
-        device const T* weight,    // [Cout, Cin, K]
-        device const T* bias,      // [Cout]
-        device T* output,          // [B, Cout, T]
-        device const int* lengths, // [B]
-        const constant int& cin,
-        const constant int& cout,
-        const constant int& seq_len,
-        const constant int& kernel_size,
-        const constant int& dilation,
-        const uint3 gid
-    ) {
+// === Causal Conv1d (stride=1, groups=1) ===
+//
+// Matches NeMo's CausalConv1dNorm forward for the decoder path where
+// stride=1:
+// - left padding by padding_total = (kernel_size_eff - 1) where
+// kernel_size_eff=(K-1)*dilation+1
+// - no right padding (extra_padding=0 for stride=1)
+// - output length equals input length
+template <typename T>
+void audio_codec_causal_conv1d(
+    device const T* input,     // [B, Cin, T]
+    device const T* weight,    // [Cout, Cin, K]
+    device const T* bias,      // [Cout]
+    device T* output,          // [B, Cout, T]
+    device const int* lengths, // [B]
+    const constant int& cin,
+    const constant int& cout,
+    const constant int& seq_len,
+    const constant int& kernel_size,
+    const constant int& dilation,
+    const uint3 gid
+) {
   const uint t = gid.x;
   const uint oc = gid.y;
   const uint b = gid.z;
@@ -196,28 +196,28 @@ void fsq_decode(
   output[out_idx] = (T)acc;
 }
 
-    // === Causal ConvTranspose1d upsample (kernel_size = 2*stride) ===
-    //
-    // Matches NeMo's CausalConvTranspose1dNorm forward for trim_right_ratio=1:
-    // - ConvTranspose1d with padding=0, output_padding=0, dilation=1
-    // - kernel_size = 2 * stride
-    // - unpad: trim_right = kernel_size - stride (= stride), trim_left = 0
-    // Resulting output length is input_len * stride.
-    template <typename T>
-    void audio_codec_causal_conv_transpose1d(
-        device const T* input,     // [B, Cin, Tin]
-        device const T* weight,    // [Cin, Cout_per_group, 2*stride]
-        device const T* bias,      // [Cout]
-        device T* output,          // [B, Cout, Tout]
-        device const int* lengths, // [B] (output lengths)
-        const constant int& cin,
-        const constant int& cout,
-        const constant int& seq_len_in,
-        const constant int& seq_len_out,
-        const constant int& stride,
-        const constant int& groups,
-        const uint3 gid
-    ) {
+// === Causal ConvTranspose1d upsample (kernel_size = 2*stride) ===
+//
+// Matches NeMo's CausalConvTranspose1dNorm forward for trim_right_ratio=1:
+// - ConvTranspose1d with padding=0, output_padding=0, dilation=1
+// - kernel_size = 2 * stride
+// - unpad: trim_right = kernel_size - stride (= stride), trim_left = 0
+// Resulting output length is input_len * stride.
+template <typename T>
+void audio_codec_causal_conv_transpose1d(
+    device const T* input,     // [B, Cin, Tin]
+    device const T* weight,    // [Cin, Cout_per_group, 2*stride]
+    device const T* bias,      // [Cout]
+    device T* output,          // [B, Cout, Tout]
+    device const int* lengths, // [B] (output lengths)
+    const constant int& cin,
+    const constant int& cout,
+    const constant int& seq_len_in,
+    const constant int& seq_len_out,
+    const constant int& stride,
+    const constant int& groups,
+    const uint3 gid
+) {
   const uint t_out = gid.x;
   const uint oc = gid.y;
   const uint b = gid.z;
@@ -272,24 +272,24 @@ void fsq_decode(
   output[out_idx] = (T)acc;
 }
 
-    // === Snake / HalfSnake / Clamp (NeMo common.parts.utils) ===
-    //
-    // snake(x, alpha, eps) = x + (alpha + eps)^-1 * sin(alpha * x)^2
-    // HalfSnake applies snake to the first half channels and LeakyReLU to the
-    // rest.
+// === Snake / HalfSnake / Clamp (NeMo common.parts.utils) ===
+//
+// snake(x, alpha, eps) = x + (alpha + eps)^-1 * sin(alpha * x)^2
+// HalfSnake applies snake to the first half channels and LeakyReLU to the
+// rest.
 
-    template <typename T>
-    void audio_codec_half_snake(
-        device const T* input, // [B, C, T]
-        device const T* alpha, // [1, C_snake, 1] (contiguous, index by channel)
-        device T* output,      // [B, C, T]
-        const constant int& channels,
-        const constant int& seq_len,
-        const constant int& snake_channels,
-        const constant float& negative_slope,
-        const constant float& eps,
-        const uint3 gid
-    ) {
+template <typename T>
+void audio_codec_half_snake(
+    device const T* input, // [B, C, T]
+    device const T* alpha, // [1, C_snake, 1] (contiguous, index by channel)
+    device T* output,      // [B, C, T]
+    const constant int& channels,
+    const constant int& seq_len,
+    const constant int& snake_channels,
+    const constant float& negative_slope,
+    const constant float& eps,
+    const uint3 gid
+) {
   const uint t = gid.x;
   const uint c = gid.y;
   const uint b = gid.z;
@@ -313,15 +313,15 @@ void fsq_decode(
   }
 }
 
-    template <typename T>
-    void audio_codec_clamp(
-        device const T* input,
-        device T* output,
-        const constant int& n,
-        const constant float& min_value,
-        const constant float& max_value,
-        const uint tid
-    ) {
+template <typename T>
+void audio_codec_clamp(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const constant float& min_value,
+    const constant float& max_value,
+    const uint tid
+) {
   if ((int)tid >= n) {
     return;
   }
@@ -330,31 +330,31 @@ void fsq_decode(
   output[tid] = (T)y;
 }
 
-    // === Non-causal Conv1d with padding + stride (for encoder) ===
-    //
-    // Matches torch.nn.Conv1d with explicit padding and padding_mode:
-    // out[t_out] = bias + sum_{ic,k} w[oc,ic,k] * x[ic, t_out*stride - padding
-    // + k*dilation]
-    // - pad_mode=0: zeros
-    // - pad_mode=1: replicate (clamp index to [0, seq_len_in-1])
-    template <typename T>
-    void audio_codec_conv1d(
-        device const T* input,     // [B, Cin, Tin]
-        device const T* weight,    // [Cout, Cin, K]
-        device const T* bias,      // [Cout]
-        device T* output,          // [B, Cout, Tout]
-        device const int* lengths, // [B] (Tout lengths)
-        const constant int& cin,
-        const constant int& cout,
-        const constant int& seq_len_in,
-        const constant int& seq_len_out,
-        const constant int& kernel_size,
-        const constant int& stride,
-        const constant int& dilation,
-        const constant int& padding,
-        const constant int& pad_mode,
-        const uint3 gid
-    ) {
+// === Non-causal Conv1d with padding + stride (for encoder) ===
+//
+// Matches torch.nn.Conv1d with explicit padding and padding_mode:
+// out[t_out] = bias + sum_{ic,k} w[oc,ic,k] * x[ic, t_out*stride - padding
+// + k*dilation]
+// - pad_mode=0: zeros
+// - pad_mode=1: replicate (clamp index to [0, seq_len_in-1])
+template <typename T>
+void audio_codec_conv1d(
+    device const T* input,     // [B, Cin, Tin]
+    device const T* weight,    // [Cout, Cin, K]
+    device const T* bias,      // [Cout]
+    device T* output,          // [B, Cout, Tout]
+    device const int* lengths, // [B] (Tout lengths)
+    const constant int& cin,
+    const constant int& cout,
+    const constant int& seq_len_in,
+    const constant int& seq_len_out,
+    const constant int& kernel_size,
+    const constant int& stride,
+    const constant int& dilation,
+    const constant int& padding,
+    const constant int& pad_mode,
+    const uint3 gid
+) {
   const uint t_out = gid.x;
   const uint oc = gid.y;
   const uint b = gid.z;
@@ -392,23 +392,23 @@ void fsq_decode(
   output[out_idx] = (T)acc;
 }
 
-    // === FSQ (Finite Scalar Quantization) encode ===
-    //
-    // Implements GroupFiniteScalarQuantizer.encode() for inference:
-    // - input:  [B, G*D, T] float
-    // - output: [B, G,   T] int32
-    //
-    // NeMo reference (FiniteScalarQuantizer):
-    //   output_scale = (num_levels - 1) / 2 * (1 - eps)
-    //   output_offset = 0.5 if even else 0
-    //   input_shift = tan(output_offset / output_scale)
-    //   compressed = output_scale * tanh(inputs + input_shift) - output_offset
-    //   rounded = round(compressed)  # half away from zero
-    //   code_nonneg = rounded + (num_levels//2)
-    //   token = sum_d code_nonneg[d] * dim_base_index[d]
+// === FSQ (Finite Scalar Quantization) encode ===
+//
+// Implements GroupFiniteScalarQuantizer.encode() for inference:
+// - input:  [B, G*D, T] float
+// - output: [B, G,   T] int32
+//
+// NeMo reference (FiniteScalarQuantizer):
+//   output_scale = (num_levels - 1) / 2 * (1 - eps)
+//   output_offset = 0.5 if even else 0
+//   input_shift = tan(output_offset / output_scale)
+//   compressed = output_scale * tanh(inputs + input_shift) - output_offset
+//   rounded = round(compressed)  # half away from zero
+//   code_nonneg = rounded + (num_levels//2)
+//   token = sum_d code_nonneg[d] * dim_base_index[d]
 
-    // Match torch.round() semantics (ties to even).
-    inline float round_ties_to_even(const float x) {
+// Match torch.round() semantics (ties to even).
+inline float round_ties_to_even(const float x) {
   const float f = floor(x);
   const float frac = x - f;
   if (frac < 0.5f) {
@@ -477,8 +477,9 @@ void fsq_encode(
 
 // === DSL kernel wrappers ===
 //
-// Keep the scalar helper implementations above and expose a DSL-annotated surface
-// so audio kernels are integrated through the same generated wrapper path as other kernels.
+// Keep the scalar helper implementations above and expose a DSL-annotated
+// surface so audio kernels are integrated through the same generated wrapper
+// path as other kernels.
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
