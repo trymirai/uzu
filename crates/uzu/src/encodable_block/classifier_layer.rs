@@ -2,18 +2,15 @@ use std::rc::Rc;
 
 use objc2::rc::autoreleasepool;
 
-use super::transformer_layer;
 #[cfg(not(feature = "tracing"))]
 use crate::backends::common::CommandBuffer;
 use crate::{
     DataType,
-    backends::{
-        common::Backend,
-        metal::{Metal, MetalContext},
-    },
+    backends::common::{Backend, kernel::matmul::MatmulKernels},
     config::TransformerLayerConfig,
     encodable_block::{
         Attention, EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy,
+        transformer_layer::{linear_block, mlp_block},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -38,9 +35,12 @@ pub struct ClassifierLayer<B: Backend> {
     mlp_residual_add: Box<dyn EncodableBlock<B>>,
 }
 
-impl ClassifierLayer<Metal> {
+impl<B: Backend + 'static> ClassifierLayer<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(
-        mtl_context: Rc<MetalContext>,
+        context: Rc<B::Context>,
         layer_config: &TransformerLayerConfig,
         layer_index: usize,
         model_dim: usize,
@@ -49,17 +49,17 @@ impl ClassifierLayer<Metal> {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        layer_loader: &ParameterTree<MetalContext>,
-        rope: Rc<Box<dyn EncodableBlock<Metal>>>,
+        layer_loader: &ParameterTree<B::Context>,
+        rope: Rc<Box<dyn EncodableBlock<B>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let ctx = mtl_context.as_ref(); // Reference for functions expecting &MetalContext
+            let ctx = context.as_ref(); // Reference for functions expecting &B::Context
             let attention_config =
                 layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
             let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
-            let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::<Metal>::new(
+            let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorCopy::<B>::new(
                     ctx,
                     intermediate_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
@@ -67,7 +67,7 @@ impl ClassifierLayer<Metal> {
                 .unwrap(),
             );
 
-            let pre_attention_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+            let pre_attention_norm: Option<Box<dyn EncodableBlock<B>>> =
                 if let Some(norm_config) = &layer_config.pre_attention_norm_config {
                     if layer_loader.subtree("pre_mixer_norm").is_ok() {
                         Some(Box::new(
@@ -88,7 +88,7 @@ impl ClassifierLayer<Metal> {
                     None
                 };
 
-            let qkv_projection = transformer_layer::linear_block(
+            let qkv_projection = linear_block(
                 &attention_config.qkv_projection_config,
                 attention_config.has_qkv_biases,
                 model_dim,
@@ -100,7 +100,7 @@ impl ClassifierLayer<Metal> {
             )
             .expect("Failed to create qkv projection");
 
-            let qk_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+            let qk_norm: Option<Box<dyn EncodableBlock<B>>> =
                 if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
                     match QKNorm::new(
                         ctx,
@@ -120,7 +120,7 @@ impl ClassifierLayer<Metal> {
                     None
                 };
 
-            let out_projection = transformer_layer::linear_block(
+            let out_projection = linear_block(
                 &attention_config.out_projection_config,
                 attention_config.has_out_biases,
                 num_heads * head_dim,
@@ -132,7 +132,7 @@ impl ClassifierLayer<Metal> {
             )
             .expect("Failed to create out projection");
 
-            let post_attention_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+            let post_attention_norm: Option<Box<dyn EncodableBlock<B>>> =
                 if let Some(norm_config) = &layer_config.post_attention_norm_config {
                     Some(Box::new(
                         Normalization::new(
@@ -149,8 +149,8 @@ impl ClassifierLayer<Metal> {
                     None
                 };
 
-            let mixer_residual_add: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::<Metal>::new(
+            let mixer_residual_add: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorAddSwap::<B>::new(
                     ctx,
                     intermediate_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
@@ -158,8 +158,8 @@ impl ClassifierLayer<Metal> {
                 .unwrap(),
             );
 
-            let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::<Metal>::new(
+            let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorCopy::<B>::new(
                     ctx,
                     intermediate_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
@@ -167,7 +167,7 @@ impl ClassifierLayer<Metal> {
                 .unwrap(),
             );
 
-            let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
+            let pre_mlp_norm: Box<dyn EncodableBlock<B>> = Box::new(
                 Normalization::new(
                     ctx,
                     intermediate_data_type,
@@ -179,16 +179,16 @@ impl ClassifierLayer<Metal> {
                 .expect("Failed to create pre-MLP norm kernel"),
             );
 
-            let mlp = transformer_layer::mlp_block(
+            let mlp = mlp_block(
                 &layer_config.mlp_config,
                 model_dim,
                 hidden_dim,
-                &mtl_context,
+                context.as_ref(),
                 &layer_loader.subtree("mlp").unwrap(),
             )
             .expect("Failed to create mlp block");
 
-            let post_mlp_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+            let post_mlp_norm: Option<Box<dyn EncodableBlock<B>>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
                     Some(Box::new(
                         Normalization::new(
@@ -205,7 +205,7 @@ impl ClassifierLayer<Metal> {
                     None
                 };
 
-            let attention: Box<dyn EncodableBlock<Metal>> = Box::new(
+            let attention: Box<dyn EncodableBlock<B>> = Box::new(
                 Attention::new(
                     ctx,
                     intermediate_data_type,
@@ -218,8 +218,8 @@ impl ClassifierLayer<Metal> {
                 .expect("Failed to create attention kernel"),
             );
 
-            let mlp_residual_add: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::<Metal>::new(
+            let mlp_residual_add: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorAddSwap::<B>::new(
                     ctx,
                     intermediate_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),

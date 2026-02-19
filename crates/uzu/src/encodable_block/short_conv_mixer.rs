@@ -1,15 +1,15 @@
 use crate::{
     DataType,
     array::Array,
-    backends::{
-        common::{
-            Backend, CommandBuffer, Context, Kernels,
-            kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
+    backends::common::{
+        Backend, CommandBuffer, Context, Kernels,
+        kernel::{
+            ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel,
+            matmul::MatmulKernels,
         },
-        metal::{Metal, encodable_block::transformer_layer},
     },
     config::{DecoderLayerType, ShortConvConfig},
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::{EncodableBlock, EncodingParameters, transformer_layer::linear_block},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterTree, resolve_subtree},
 };
@@ -28,14 +28,17 @@ pub struct ShortConvMixer<B: Backend> {
     conv_bias: Option<Array<B>>,
 }
 
-impl ShortConvMixer<Metal> {
+impl<B: Backend + 'static> ShortConvMixer<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(
-        context: &<Metal as Backend>::Context,
+        context: &B::Context,
         layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
         layer_index: usize,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<<Metal as Backend>::Context>,
+        decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Self {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
@@ -46,7 +49,7 @@ impl ShortConvMixer<Metal> {
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
-        let in_projection = transformer_layer::linear_block(
+        let in_projection = linear_block(
             &short_conv_config.in_projection_config,
             false,
             model_dim,
@@ -58,7 +61,7 @@ impl ShortConvMixer<Metal> {
         )
         .expect("Failed to create in-projection kernel");
 
-        let out_projection = transformer_layer::linear_block(
+        let out_projection = linear_block(
             &short_conv_config.out_projection_config,
             false,
             model_dim,
@@ -78,17 +81,14 @@ impl ShortConvMixer<Metal> {
         };
 
         let has_bias = short_conv_config.conv_config.has_biases;
-        let short_conv_pack = <<Metal as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(context, data_type)
+        let short_conv_pack = <B::Kernels as Kernels>::ShortConvPackKernel::new(context, data_type)
             .expect("Failed to create short conv pack kernel");
-        let short_conv_prefill =
-            <<Metal as Backend>::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, has_bias)
-                .expect("Failed to create short conv prefill kernel");
-        let short_conv_decode =
-            <<Metal as Backend>::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias)
-                .expect("Failed to create short conv decode kernel");
-        let short_conv_trie =
-            <<Metal as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
-                .expect("Failed to create short conv trie kernel");
+        let short_conv_prefill = <B::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, has_bias)
+            .expect("Failed to create short conv prefill kernel");
+        let short_conv_decode = <B::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias)
+            .expect("Failed to create short conv decode kernel");
+        let short_conv_trie = <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
+            .expect("Failed to create short conv trie kernel");
 
         Self {
             layer_index,

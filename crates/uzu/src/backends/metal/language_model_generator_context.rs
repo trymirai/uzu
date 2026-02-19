@@ -9,7 +9,7 @@ use std::{
 use metal::{MTLBuffer, MTLCommandBuffer, MTLDeviceExt, MTLEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{Decoder, Metal, MetalContext};
+use super::{Metal, MetalContext};
 use crate::{
     DataType,
     backends::{
@@ -22,7 +22,7 @@ use crate::{
         metal::kernel::dsl::{MaskUpdateMetalKernel, TokenCopySampledMetalKernel, TokenCopyToResultsMetalKernel},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
-    encodable_block::Sampling,
+    encodable_block::{Decoder, Sampling},
     forward_pass::{
         cache_layers::CacheLayers, model_shape::ModelShape, scratch_buffers::ScratchBuffers, state::SharedBuffers,
     },

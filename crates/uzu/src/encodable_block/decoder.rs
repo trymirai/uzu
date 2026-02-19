@@ -2,18 +2,14 @@
 
 use std::rc::Rc;
 
-use super::LayerExecutables;
 use crate::{
     DataType, DecoderConfig,
-    backends::{
-        common::Backend,
-        metal::{
-            Metal, MetalContext,
-            encodable_block::transformer_layer::{embed_block, readout_block},
-        },
-    },
+    backends::common::{Backend, kernel::matmul::MatmulKernels},
     config::{DecoderLayerType, MixerConfig},
-    encodable_block::{EncodableBlock, EncodingParameters, RMSNorm, Rope},
+    encodable_block::{
+        EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
+        transformer_layer::{embed_block, readout_block},
+    },
     forward_pass::{
         model_shape::ModelShape,
         state::{ArrayId, ForwardPassState, RopeType},
@@ -31,17 +27,20 @@ pub struct Decoder<B: Backend> {
     pub local_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
 }
 
-impl Decoder<Metal> {
+impl<B: Backend + 'static> Decoder<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(
-        mtl_context: Rc<MetalContext>,
+        context: Rc<B::Context>,
         decoder_config: Rc<DecoderConfig>,
-        root_weight_loader: &ParameterTree<MetalContext>,
+        root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
         let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
 
-        let embed = embed_block(&decoder_config, &mtl_context, root_weight_loader);
+        let embed = embed_block(&decoder_config, context.as_ref(), root_weight_loader);
 
-        let readout = readout_block(&decoder_config, &mtl_context, root_weight_loader);
+        let readout = readout_block(&decoder_config, context.as_ref(), root_weight_loader);
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer =
@@ -59,15 +58,13 @@ impl Decoder<Metal> {
         let global_rope = if decoder_config.global_rope_config.is_some() {
             attention_data_type
                 .as_ref()
-                .map(|data_type| Self::create_rope_block(&mtl_context, *data_type, RopeType::Global))
+                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Global))
         } else {
             None
         };
 
         let local_rope = if decoder_config.local_rope_config.is_some() {
-            attention_data_type
-                .as_ref()
-                .map(|data_type| Self::create_rope_block(&mtl_context, *data_type, RopeType::Local))
+            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Local))
         } else {
             None
         };
@@ -104,7 +101,7 @@ impl Decoder<Metal> {
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
                 LayerExecutables::new(
-                    mtl_context.clone(),
+                    context.clone(),
                     layer_config,
                     layer_type,
                     layer_index,
@@ -120,9 +117,9 @@ impl Decoder<Metal> {
             })
             .collect::<Vec<_>>();
 
-        let norm_block: Box<dyn EncodableBlock<Metal>> = Box::new(
+        let norm_block: Box<dyn EncodableBlock<B>> = Box::new(
             RMSNorm::new(
-                mtl_context.as_ref(),
+                context.as_ref(),
                 norm_data_type,
                 decoder_config.output_norm_config.clone(),
                 ArrayId::Main,
@@ -144,12 +141,12 @@ impl Decoder<Metal> {
     }
 
     fn create_rope_block(
-        mtl_context: &MetalContext,
+        context: &B::Context,
         data_type: DataType,
         rope_type: RopeType,
-    ) -> Rc<Box<dyn EncodableBlock<Metal>>> {
-        let rotation: Box<dyn EncodableBlock<Metal>> =
-            Box::new(Rope::<Metal>::new(mtl_context, data_type, rope_type).expect("Failed to create Rope"));
+    ) -> Rc<Box<dyn EncodableBlock<B>>> {
+        let rotation: Box<dyn EncodableBlock<B>> =
+            Box::new(Rope::<B>::new(context, data_type, rope_type).expect("Failed to create Rope"));
         Rc::new(rotation)
     }
 
