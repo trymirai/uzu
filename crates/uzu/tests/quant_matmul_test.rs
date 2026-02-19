@@ -51,6 +51,81 @@ fn quantize_slice(
 
 struct ExecutionResult {
     elapsed: f64,
+    output: Option<Vec<f32>>,
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(
+        key: &'static str,
+        value: Option<&str>,
+    ) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        Self {
+            key,
+            previous,
+        }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.previous {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
+fn median_ms(values: &[f64]) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let len = sorted.len();
+    if len == 0 {
+        return 0.0;
+    }
+    if len % 2 == 1 {
+        sorted[len / 2]
+    } else {
+        (sorted[len / 2 - 1] + sorted[len / 2]) * 0.5
+    }
+}
+
+fn read_output_buffer_as_f32(
+    y_buf: &ProtocolObject<dyn MTLBuffer>,
+    data_type: DataType,
+    len: usize,
+) -> Vec<f32> {
+    match data_type {
+        DataType::F16 => {
+            let y_ptr = y_buf.contents().as_ptr() as *const f16;
+            let y_out = unsafe { std::slice::from_raw_parts(y_ptr, len) };
+            y_out.iter().map(|&v| v.to_f32()).collect()
+        },
+        DataType::BF16 => {
+            let y_ptr = y_buf.contents().as_ptr() as *const bf16;
+            let y_out = unsafe { std::slice::from_raw_parts(y_ptr, len) };
+            y_out.iter().map(|&v| v.to_f32()).collect()
+        },
+        DataType::F32 => {
+            let y_ptr = y_buf.contents().as_ptr() as *const f32;
+            let y_out = unsafe { std::slice::from_raw_parts(y_ptr, len) };
+            y_out.to_vec()
+        },
+        other => panic!("Unsupported dtype for output readback: {:?}", other),
+    }
 }
 
 fn create_test_weights(
@@ -429,6 +504,7 @@ fn execute_quantized_matmul(
     group_size: usize,
     data_type: DataType,
     bits: usize,
+    capture_output: bool,
 ) -> ExecutionResult {
     let weights_quant = create_test_weights(output_dim, input_dim, weights_transposed, bits);
     let weights_packed = if bits == 4 {
@@ -540,6 +616,12 @@ fn execute_quantized_matmul(
     }
     let elapsed = start.elapsed();
 
+    let y_out_f32 = if validate || capture_output {
+        Some(read_output_buffer_as_f32(&y_buf, data_type, batch * output_dim))
+    } else {
+        None
+    };
+
     if validate {
         let y_expected = cpu_reference(
             batch,
@@ -558,24 +640,7 @@ fn execute_quantized_matmul(
             params.zero_points_stride,
         );
 
-        let y_out_f32: Vec<f32> = match data_type {
-            DataType::F16 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const f16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
-                y_out.iter().map(|&v| v.to_f32()).collect()
-            },
-            DataType::BF16 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const bf16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
-                y_out.iter().map(|&v| v.to_f32()).collect()
-            },
-            DataType::F32 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const f32;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
-                y_out.to_vec()
-            },
-            other => panic!("Unsupported dtype for validation: {:?}", other),
-        };
+        let y_out_f32 = y_out_f32.as_ref().expect("Missing output buffer readback for validation");
 
         let mut debug_prints = 0;
 
@@ -614,10 +679,16 @@ fn execute_quantized_matmul(
 
         ExecutionResult {
             elapsed: elapsed.as_secs_f64(),
+            output: if capture_output {
+                Some(y_out_f32.clone())
+            } else {
+                None
+            },
         }
     } else {
         ExecutionResult {
             elapsed: elapsed.as_secs_f64(),
+            output: y_out_f32,
         }
     }
 }
@@ -644,6 +715,30 @@ fn run_kernel_test(
     validate: bool,
     iterations: usize,
 ) -> ExecutionResult {
+    run_kernel_test_with_output(
+        ctx,
+        batch,
+        output_dim,
+        input_dim,
+        weights_transposed,
+        config,
+        validate,
+        iterations,
+        false,
+    )
+}
+
+fn run_kernel_test_with_output(
+    ctx: &MetalContext,
+    batch: usize,
+    output_dim: usize,
+    input_dim: usize,
+    weights_transposed: bool,
+    config: &TestConfig,
+    validate: bool,
+    iterations: usize,
+    capture_output: bool,
+) -> ExecutionResult {
     let randomize_zp = config.quant_type == QuantizationType::ZeroPoint;
 
     execute_quantized_matmul(
@@ -659,6 +754,7 @@ fn run_kernel_test(
         config.group_size,
         config.data_type,
         config.bits,
+        capture_output,
     )
 }
 
@@ -1120,6 +1216,8 @@ fn test_quant_matmul_batch_decode_suffix_1_2_4_total_perf() {
             return;
         },
     };
+    let _qmm_batch_threshold_guard = EnvVarGuard::set("UZU_QMM_BATCH_THRESHOLD", Some("32"));
+    let _batched_qmv_mode_guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", None);
 
     // Shapes selected from downloaded model configs:
     // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
@@ -1161,35 +1259,26 @@ fn test_quant_matmul_batch_decode_suffix_1_2_4_total_perf() {
         ),
     ];
 
-    let iterations = std::env::var("UZU_SUFFIX_COMPARE_ITERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(30);
-    let warmup_rounds = std::env::var("UZU_SUFFIX_COMPARE_WARMUP_ROUNDS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(2);
-    let warmup_iterations = std::env::var("UZU_SUFFIX_COMPARE_WARMUP_ITERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(5);
-    let threshold = std::env::var("UZU_QMM_BATCH_THRESHOLD")
-        .unwrap_or_else(|_| "32(default)".to_string());
+    const SAMPLE_ROUNDS: usize = 24;
+    const SAMPLE_ITERATIONS: usize = 40;
+    const WARMUP_ROUNDS: usize = 3;
+    const WARMUP_ITERATIONS: usize = 8;
+    const QMM_BATCH_THRESHOLD: usize = 32;
 
-    println!("Using UZU_QMM_BATCH_THRESHOLD={}", threshold);
+    println!("Using QMM batch threshold={} (forced constant)", QMM_BATCH_THRESHOLD);
     println!(
-        "Comparing total latency for suffix lengths [1, 2, 4] (iterations={}, warmup_rounds={}, warmup_iters={})",
-        iterations, warmup_rounds, warmup_iterations
+        "Comparing total latency for suffix lengths [1, 2, 4] with p50 (rounds={}, iters_per_round={}, warmup_rounds={}, warmup_iters={})",
+        SAMPLE_ROUNDS, SAMPLE_ITERATIONS, WARMUP_ROUNDS, WARMUP_ITERATIONS
     );
     println!(
         "{:<12} | {:<12} | {:<12} | {:<12} | {:<12} | {:<12}",
-        "Model", "Block", "N x K", "1 tok total", "2 tok total", "4 tok total"
+        "Model", "Block", "N x K", "1 tok p50", "2 tok p50", "4 tok p50"
     );
     println!("{}", "-".repeat(98));
 
     for (model_name, config, shapes) in &model_shapes {
         for &(block_name, output_dim, input_dim) in shapes {
-            for _ in 0..warmup_rounds {
+            for _ in 0..WARMUP_ROUNDS {
                 for suffix_length in [1usize, 2, 4] {
                     let _ = run_kernel_test(
                         &ctx,
@@ -1199,62 +1288,371 @@ fn test_quant_matmul_batch_decode_suffix_1_2_4_total_perf() {
                         true,
                         config,
                         false,
-                        warmup_iterations,
+                        WARMUP_ITERATIONS,
                     );
                 }
             }
 
-            let avg_ms_1tok = (run_kernel_test(
-                &ctx,
-                1,
-                output_dim,
-                input_dim,
-                true,
-                config,
-                false,
-                iterations,
-            )
-            .elapsed
-                / iterations as f64)
-                * 1000.0;
+            let mut samples_1tok_ms = Vec::with_capacity(SAMPLE_ROUNDS);
+            let mut samples_2tok_ms = Vec::with_capacity(SAMPLE_ROUNDS);
+            let mut samples_4tok_ms = Vec::with_capacity(SAMPLE_ROUNDS);
 
-            let avg_ms_2tok = (run_kernel_test(
-                &ctx,
-                2,
-                output_dim,
-                input_dim,
-                true,
-                config,
-                false,
-                iterations,
-            )
-            .elapsed
-                / iterations as f64)
-                * 1000.0;
+            let measure_suffix = |suffix_length: usize| -> f64 {
+                let result = run_kernel_test(
+                    &ctx,
+                    suffix_length,
+                    output_dim,
+                    input_dim,
+                    true,
+                    config,
+                    false,
+                    SAMPLE_ITERATIONS,
+                );
+                (result.elapsed / SAMPLE_ITERATIONS as f64) * 1000.0
+            };
 
-            let avg_ms_4tok = (run_kernel_test(
-                &ctx,
-                4,
-                output_dim,
-                input_dim,
-                true,
-                config,
-                false,
-                iterations,
-            )
-            .elapsed
-                / iterations as f64)
-                * 1000.0;
+            for round in 0..SAMPLE_ROUNDS {
+                let suffix_order: [usize; 3] = match round % 3 {
+                    0 => [1, 2, 4],
+                    1 => [2, 4, 1],
+                    _ => [4, 1, 2],
+                };
+                for suffix_length in suffix_order {
+                    let latency_ms = measure_suffix(suffix_length);
+                    match suffix_length {
+                        1 => samples_1tok_ms.push(latency_ms),
+                        2 => samples_2tok_ms.push(latency_ms),
+                        4 => samples_4tok_ms.push(latency_ms),
+                        _ => unreachable!(),
+                    }
+                }
+            }
+
+            let p50_ms_1tok = median_ms(&samples_1tok_ms);
+            let p50_ms_2tok = median_ms(&samples_2tok_ms);
+            let p50_ms_4tok = median_ms(&samples_4tok_ms);
 
             println!(
                 "{:<12} | {:<12} | {:<12} | {:>8.4} ms | {:>8.4} ms | {:>8.4} ms",
                 model_name,
                 block_name,
                 format!("{}x{}", output_dim, input_dim),
-                avg_ms_1tok,
-                avg_ms_2tok,
-                avg_ms_4tok
+                p50_ms_1tok,
+                p50_ms_2tok,
+                p50_ms_4tok
             );
         }
     }
+}
+
+#[test]
+#[ignore]
+fn test_quant_matmul_suffix4_batched_vs_nonbatched_definitive() {
+    let ctx = match MetalContext::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping suffix-4 batched/non-batched comparison");
+            return;
+        },
+    };
+
+    const SUFFIX_LENGTH: usize = 4;
+    const QMM_BATCH_THRESHOLD: &str = "32";
+    const SAMPLE_ROUNDS: usize = 24;
+    const SAMPLE_ITERATIONS: usize = 40;
+    const WARMUP_ROUNDS: usize = 3;
+    const WARMUP_ITERATIONS: usize = 8;
+
+    let _qmm_batch_threshold_guard = EnvVarGuard::set("UZU_QMM_BATCH_THRESHOLD", Some(QMM_BATCH_THRESHOLD));
+
+    // Shapes selected from downloaded model configs:
+    // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
+    //   attention heads=(16 q, 8 kv) with head_dim=128 => qkv out dim=4096.
+    // - LFM2-1.2B-4bit: model_dim=2048, hidden_dim=8192,
+    //   attention heads=(32 q, 8 kv) with head_dim=64 => qkv out dim=3072.
+    let qwen_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 128,
+    };
+    let lfm_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 64,
+    };
+    let model_shapes = vec![
+        (
+            "Qwen3-1.7B",
+            qwen_config,
+            vec![
+                ("attn_qkv", 4096, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 12288, 2048),
+                ("mlp_down", 2048, 6144),
+            ],
+        ),
+        (
+            "LFM2-1.2B",
+            lfm_config,
+            vec![
+                ("attn_qkv", 3072, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 16384, 2048),
+                ("mlp_down", 2048, 8192),
+            ],
+        ),
+    ];
+
+    println!("Forced UZU_QMM_BATCH_THRESHOLD={}", QMM_BATCH_THRESHOLD);
+    println!(
+        "Suffix={} | rounds={} | iters_per_round={} | warmup_rounds={} | warmup_iters={}",
+        SUFFIX_LENGTH, SAMPLE_ROUNDS, SAMPLE_ITERATIONS, WARMUP_ROUNDS, WARMUP_ITERATIONS
+    );
+    println!(
+        "{:<12} | {:<12} | {:<12} | {:<14} | {:<14} | {:<10} | {:<10} | {:<12}",
+        "Model",
+        "Block",
+        "N x K",
+        "Batched p50",
+        "NoBatch p50",
+        "Winner",
+        "Delta",
+        "Bitwise same"
+    );
+    println!("{}", "-".repeat(130));
+
+    let mut total_batched_ms = 0.0;
+    let mut total_non_batched_ms = 0.0;
+    let mut batched_faster_rows = 0usize;
+    let mut non_batched_faster_rows = 0usize;
+    let mut bitwise_equal_rows = 0usize;
+    let mut total_rows = 0usize;
+    let mut global_max_abs_diff = 0.0f32;
+
+    for (model_name, config, shapes) in &model_shapes {
+        for &(block_name, output_dim, input_dim) in shapes {
+            total_rows += 1;
+
+            {
+                let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", None);
+                run_kernel_test(
+                    &ctx,
+                    SUFFIX_LENGTH,
+                    output_dim,
+                    input_dim,
+                    true,
+                    config,
+                    true,
+                    1,
+                );
+            }
+
+            {
+                let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", Some("1"));
+                run_kernel_test(
+                    &ctx,
+                    SUFFIX_LENGTH,
+                    output_dim,
+                    input_dim,
+                    true,
+                    config,
+                    true,
+                    1,
+                );
+            }
+
+            for _ in 0..WARMUP_ROUNDS {
+                {
+                    let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", None);
+                    let _ = run_kernel_test(
+                        &ctx,
+                        SUFFIX_LENGTH,
+                        output_dim,
+                        input_dim,
+                        true,
+                        config,
+                        false,
+                        WARMUP_ITERATIONS,
+                    );
+                }
+                {
+                    let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", Some("1"));
+                    let _ = run_kernel_test(
+                        &ctx,
+                        SUFFIX_LENGTH,
+                        output_dim,
+                        input_dim,
+                        true,
+                        config,
+                        false,
+                        WARMUP_ITERATIONS,
+                    );
+                }
+            }
+
+            let mut batched_samples_ms = Vec::with_capacity(SAMPLE_ROUNDS);
+            let mut non_batched_samples_ms = Vec::with_capacity(SAMPLE_ROUNDS);
+
+            for round in 0..SAMPLE_ROUNDS {
+                let run_batched = |ctx: &MetalContext| -> f64 {
+                    let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", None);
+                    let result = run_kernel_test(
+                        ctx,
+                        SUFFIX_LENGTH,
+                        output_dim,
+                        input_dim,
+                        true,
+                        config,
+                        false,
+                        SAMPLE_ITERATIONS,
+                    );
+                    (result.elapsed / SAMPLE_ITERATIONS as f64) * 1000.0
+                };
+                let run_non_batched = |ctx: &MetalContext| -> f64 {
+                    let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", Some("1"));
+                    let result = run_kernel_test(
+                        ctx,
+                        SUFFIX_LENGTH,
+                        output_dim,
+                        input_dim,
+                        true,
+                        config,
+                        false,
+                        SAMPLE_ITERATIONS,
+                    );
+                    (result.elapsed / SAMPLE_ITERATIONS as f64) * 1000.0
+                };
+
+                if round % 2 == 0 {
+                    batched_samples_ms.push(run_batched(&ctx));
+                    non_batched_samples_ms.push(run_non_batched(&ctx));
+                } else {
+                    non_batched_samples_ms.push(run_non_batched(&ctx));
+                    batched_samples_ms.push(run_batched(&ctx));
+                }
+            }
+
+            let batched_p50_ms = median_ms(&batched_samples_ms);
+            let non_batched_p50_ms = median_ms(&non_batched_samples_ms);
+
+            total_batched_ms += batched_p50_ms;
+            total_non_batched_ms += non_batched_p50_ms;
+
+            let (winner, delta_pct) = if batched_p50_ms < non_batched_p50_ms {
+                batched_faster_rows += 1;
+                let delta = ((non_batched_p50_ms - batched_p50_ms) / non_batched_p50_ms) * 100.0;
+                ("batched", delta)
+            } else if non_batched_p50_ms < batched_p50_ms {
+                non_batched_faster_rows += 1;
+                let delta = ((batched_p50_ms - non_batched_p50_ms) / batched_p50_ms) * 100.0;
+                ("nonbatch", delta)
+            } else {
+                ("tie", 0.0)
+            };
+
+            let batched_output = {
+                let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", None);
+                let result = run_kernel_test_with_output(
+                    &ctx,
+                    SUFFIX_LENGTH,
+                    output_dim,
+                    input_dim,
+                    true,
+                    config,
+                    false,
+                    1,
+                    true,
+                );
+                result.output.expect("Missing batched output")
+            };
+            let non_batched_output = {
+                let _guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", Some("1"));
+                let result = run_kernel_test_with_output(
+                    &ctx,
+                    SUFFIX_LENGTH,
+                    output_dim,
+                    input_dim,
+                    true,
+                    config,
+                    false,
+                    1,
+                    true,
+                );
+                result.output.expect("Missing non-batched output")
+            };
+
+            assert_eq!(
+                batched_output.len(),
+                non_batched_output.len(),
+                "Output lengths differ for {}:{}",
+                model_name,
+                block_name
+            );
+
+            let mut bitwise_same = true;
+            let mut row_max_abs_diff = 0.0f32;
+            for (&a, &b) in batched_output.iter().zip(non_batched_output.iter()) {
+                if a.to_bits() != b.to_bits() {
+                    bitwise_same = false;
+                }
+                let abs_diff = (a - b).abs();
+                if abs_diff > row_max_abs_diff {
+                    row_max_abs_diff = abs_diff;
+                }
+            }
+            if bitwise_same {
+                bitwise_equal_rows += 1;
+            }
+            if row_max_abs_diff > global_max_abs_diff {
+                global_max_abs_diff = row_max_abs_diff;
+            }
+
+            println!(
+                "{:<12} | {:<12} | {:<12} | {:>9.4} ms   | {:>9.4} ms   | {:<10} | {:>6.2}%   | {:<12}",
+                model_name,
+                block_name,
+                format!("{}x{}", output_dim, input_dim),
+                batched_p50_ms,
+                non_batched_p50_ms,
+                winner,
+                delta_pct,
+                if bitwise_same { "yes" } else { "no" }
+            );
+        }
+    }
+
+    let overall_winner = if total_batched_ms < total_non_batched_ms {
+        "batched"
+    } else if total_non_batched_ms < total_batched_ms {
+        "nonbatch"
+    } else {
+        "tie"
+    };
+    let overall_delta_pct = if total_batched_ms < total_non_batched_ms {
+        ((total_non_batched_ms - total_batched_ms) / total_non_batched_ms) * 100.0
+    } else if total_non_batched_ms < total_batched_ms {
+        ((total_batched_ms - total_non_batched_ms) / total_batched_ms) * 100.0
+    } else {
+        0.0
+    };
+
+    println!("{}", "-".repeat(130));
+    println!(
+        "Summary: rows={} | batched_faster={} | nonbatch_faster={} | total_p50_batched={:.4} ms | total_p50_nonbatch={:.4} ms | overall_winner={} ({:.2}%)",
+        total_rows,
+        batched_faster_rows,
+        non_batched_faster_rows,
+        total_batched_ms,
+        total_non_batched_ms,
+        overall_winner,
+        overall_delta_pct
+    );
+    println!(
+        "Output equivalence: bitwise_equal_rows={}/{} | global_max_abs_diff={:.8}",
+        bitwise_equal_rows,
+        total_rows,
+        global_max_abs_diff
+    );
 }

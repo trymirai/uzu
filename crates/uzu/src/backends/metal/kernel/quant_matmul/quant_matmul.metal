@@ -175,6 +175,138 @@ inline U qdot_zero_point(
 }
 
 template <typename U, int values_per_thread, int bits>
+inline U qdot_thread(
+    const thread uint8_t* w,
+    const thread U* x_thread,
+    U scale,
+    U bias,
+    U sum
+) {
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+
+  U accum = 0;
+  if (bits == 4) {
+    const thread uint16_t* ws = (const thread uint16_t*)w;
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      accum +=
+          (x_thread[4 * i] * (ws[i] & 0x000f) +
+           x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
+           x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
+           x_thread[4 * i + 3] * (ws[i] & 0xf000));
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      accum += x_thread[i] * w[i];
+    }
+  }
+  return scale * accum + sum * bias;
+}
+
+template <typename U, int values_per_thread, int bits>
+inline U qdot_zero_point_thread(
+    const thread uint8_t* w,
+    const thread U* x_thread,
+    U scale,
+    U zero_point
+) {
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+
+  U accum = 0;
+  if (bits == 4) {
+    const thread uint16_t* ws = (const thread uint16_t*)w;
+    const uint16_t zp0 = static_cast<uint16_t>(zero_point);
+    const uint16_t zp1 = static_cast<uint16_t>(zero_point) << 4;
+    const uint16_t zp2 = static_cast<uint16_t>(zero_point) << 8;
+    const uint16_t zp3 = static_cast<uint16_t>(zero_point) << 12;
+
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      uint16_t word = ws[i];
+      accum += x_thread[4 * i] *
+               static_cast<U>(
+                   static_cast<int>(word & 0x000f) - static_cast<int>(zp0)
+               );
+      accum += x_thread[4 * i + 1] *
+               static_cast<U>(
+                   static_cast<int>(word & 0x00f0) - static_cast<int>(zp1)
+               );
+      accum += x_thread[4 * i + 2] *
+               static_cast<U>(
+                   static_cast<int>(word & 0x0f00) - static_cast<int>(zp2)
+               );
+      accum += x_thread[4 * i + 3] *
+               static_cast<U>(
+                   static_cast<int>(word & 0xf000) - static_cast<int>(zp3)
+               );
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      accum += x_thread[i] * (static_cast<U>(w[i]) - zero_point);
+    }
+  }
+  return scale * accum;
+}
+
+template <typename U, int values_per_thread, int bits>
+inline void decode_qweights(
+    const device uint8_t* w,
+    thread U* decoded
+) {
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+
+  if (bits == 4) {
+    const device uint16_t* ws = (const device uint16_t*)w;
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      const uint16_t word = ws[i];
+      decoded[4 * i] = static_cast<U>(word & 0x000f);
+      decoded[4 * i + 1] = static_cast<U>(word & 0x00f0);
+      decoded[4 * i + 2] = static_cast<U>(word & 0x0f00);
+      decoded[4 * i + 3] = static_cast<U>(word & 0xf000);
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      decoded[i] = static_cast<U>(w[i]);
+    }
+  }
+}
+
+template <typename U, int values_per_thread, int bits>
+inline void apply_zero_point_to_decoded_weights(
+    thread U* decoded,
+    U zero_point
+) {
+  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+
+  if (bits == 4) {
+    const U zp0 = zero_point;
+    const U zp1 = zero_point * static_cast<U>(16.0f);
+    const U zp2 = zero_point * static_cast<U>(256.0f);
+    const U zp3 = zero_point * static_cast<U>(4096.0f);
+    for (int i = 0; i < values_per_thread; i += 4) {
+      decoded[i] -= zp0;
+      decoded[i + 1] -= zp1;
+      decoded[i + 2] -= zp2;
+      decoded[i + 3] -= zp3;
+    }
+  } else if (bits == 8) {
+    for (int i = 0; i < values_per_thread; i++) {
+      decoded[i] -= zero_point;
+    }
+  }
+}
+
+template <typename U, int values_per_thread>
+inline U dot_decoded_weights(
+    const thread U* x_thread,
+    const thread U* decoded
+) {
+  U accum = 0;
+  for (int i = 0; i < values_per_thread; i++) {
+    accum += x_thread[i] * decoded[i];
+  }
+  return accum;
+}
+
+template <typename U, int values_per_thread, int bits>
 inline U qdot_safe(
     const device uint8_t* w,
     const thread U* x_thread,
@@ -1600,122 +1732,65 @@ void qmv_fast_batch_impl(
   bool high_nibble_k = high_nibble;
 
   for (int k = 0; k < in_vec_size; k += block_size) {
-    auto wl0 = (const device uint8_t*)(ws_k);
-    auto wl1 = (const device uint8_t*)(ws_k + in_vec_size_w);
-    auto wl2 = (const device uint8_t*)(ws_k + 2 * in_vec_size_w);
-    auto wl3 = (const device uint8_t*)(ws_k + 3 * in_vec_size_w);
-
-    U s0 = static_cast<U>(scales_k[0]);
-    U s1 = static_cast<U>(scales_k[in_vec_size_g]);
-    U s2 = static_cast<U>(scales_k[2 * in_vec_size_g]);
-    U s3 = static_cast<U>(scales_k[3 * in_vec_size_g]);
-
-    U b0 = 0.0f;
-    U b1 = 0.0f;
-    U b2 = 0.0f;
-    U b3 = 0.0f;
-    U zp0 = 0.0f;
-    U zp1 = 0.0f;
-    U zp2 = 0.0f;
-    U zp3 = 0.0f;
-
-    if (kUseMlxQuant) {
-      b0 = static_cast<U>(biases_k[0]);
-      b1 = static_cast<U>(biases_k[in_vec_size_g]);
-      b2 = static_cast<U>(biases_k[2 * in_vec_size_g]);
-      b3 = static_cast<U>(biases_k[3 * in_vec_size_g]);
-    } else {
-      uint8_t zp_byte0 = zps_k[0];
-      uint8_t zp_byte1 = zps_k[zp_stride];
-      uint8_t zp_byte2 = zps_k[2 * zp_stride];
-      uint8_t zp_byte3 = zps_k[3 * zp_stride];
-      zp0 = static_cast<U>(
-          (bits == 4 && high_nibble_k) ? (zp_byte0 >> 4) : (zp_byte0 & 0x0F)
-      );
-      zp1 = static_cast<U>(
-          (bits == 4 && high_nibble_k) ? (zp_byte1 >> 4) : (zp_byte1 & 0x0F)
-      );
-      zp2 = static_cast<U>(
-          (bits == 4 && high_nibble_k) ? (zp_byte2 >> 4) : (zp_byte2 & 0x0F)
-      );
-      zp3 = static_cast<U>(
-          (bits == 4 && high_nibble_k) ? (zp_byte3 >> 4) : (zp_byte3 & 0x0F)
-      );
-      if (bits == 8) {
-        zp0 = static_cast<U>(zp_byte0);
-        zp1 = static_cast<U>(zp_byte1);
-        zp2 = static_cast<U>(zp_byte2);
-        zp3 = static_cast<U>(zp_byte3);
-      }
-    }
+    thread U sum_batch[batch_tile];
+    thread uint8_t w_cache[results_per_simdgroup][values_per_thread * bytes_per_pack / pack_factor];
 
     for (int b = 0; b < batch_tile; b++) {
       if (!active[b]) {
+        sum_batch[b] = 0.0f;
         continue;
       }
 
-      U sum = load_vector<T, U, values_per_thread, bits>(
+      sum_batch[b] = load_vector<T, U, values_per_thread, bits>(
           x_batch_ptr[b],
           x_thread[b]
       );
-
-      if (kUseMlxQuant) {
-        result[b][0] += qdot<U, values_per_thread, bits>(
-            wl0,
-            x_thread[b],
-            s0,
-            b0,
-            sum
-        );
-        result[b][1] += qdot<U, values_per_thread, bits>(
-            wl1,
-            x_thread[b],
-            s1,
-            b1,
-            sum
-        );
-        result[b][2] += qdot<U, values_per_thread, bits>(
-            wl2,
-            x_thread[b],
-            s2,
-            b2,
-            sum
-        );
-        result[b][3] += qdot<U, values_per_thread, bits>(
-            wl3,
-            x_thread[b],
-            s3,
-            b3,
-            sum
-        );
-      } else {
-        result[b][0] += qdot_zero_point<U, values_per_thread, bits>(
-            wl0,
-            x_thread[b],
-            s0,
-            zp0
-        );
-        result[b][1] += qdot_zero_point<U, values_per_thread, bits>(
-            wl1,
-            x_thread[b],
-            s1,
-            zp1
-        );
-        result[b][2] += qdot_zero_point<U, values_per_thread, bits>(
-            wl2,
-            x_thread[b],
-            s2,
-            zp2
-        );
-        result[b][3] += qdot_zero_point<U, values_per_thread, bits>(
-            wl3,
-            x_thread[b],
-            s3,
-            zp3
-        );
-      }
-
       x_batch_ptr[b] += block_size;
+    }
+
+    for (int row = 0; row < results_per_simdgroup; row++) {
+      const device uint8_t* wl = ws_k + row * in_vec_size_w;
+      for (int i = 0; i < (values_per_thread * bytes_per_pack / pack_factor); i++) {
+        w_cache[row][i] = wl[i];
+      }
+    }
+
+    for (int row = 0; row < results_per_simdgroup; row++) {
+      const U scale_value = static_cast<U>(scales_k[row * in_vec_size_g]);
+      if (kUseMlxQuant) {
+        const U bias_value = static_cast<U>(biases_k[row * in_vec_size_g]);
+        for (int b = 0; b < batch_tile; b++) {
+          if (!active[b]) {
+            continue;
+          }
+          result[b][row] += qdot_thread<U, values_per_thread, bits>(
+              w_cache[row],
+              x_thread[b],
+              scale_value,
+              bias_value,
+              sum_batch[b]
+          );
+        }
+      } else {
+        const uint8_t zp_byte = zps_k[row * zp_stride];
+        U zero_point = static_cast<U>(
+            (bits == 4 && high_nibble_k) ? (zp_byte >> 4) : (zp_byte & 0x0F)
+        );
+        if (bits == 8) {
+          zero_point = static_cast<U>(zp_byte);
+        }
+        for (int b = 0; b < batch_tile; b++) {
+          if (!active[b]) {
+            continue;
+          }
+          result[b][row] += qdot_zero_point_thread<U, values_per_thread, bits>(
+              w_cache[row],
+              x_thread[b],
+              scale_value,
+              zero_point
+          );
+        }
+      }
     }
 
     ws_k += block_size * bytes_per_pack / pack_factor;
