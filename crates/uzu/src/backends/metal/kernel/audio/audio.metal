@@ -75,24 +75,6 @@ void fsq_decode(
   }
 }
 
-#define outerArguments(T)                                                      \
-  (device const int* tokens [[buffer(0)]],                                     \
-   device T* out [[buffer(1)]],                                                \
-   device const int* lengths [[buffer(2)]],                                    \
-   const constant int& num_groups [[buffer(3)]],                               \
-   const constant int& seq_len [[buffer(4)]],                                  \
-   const constant int& codebook_dim [[buffer(5)]],                             \
-   const constant int* num_levels [[buffer(6)]],                               \
-   const uint3 gid [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (tokens, out, lengths, num_groups, seq_len, codebook_dim, num_levels, gid)
-
-generateKernels(256, fsq_decode)
-
-#undef outerArguments
-#undef innerArguments
-
     // === Elementwise ops for codec blocks ===
 
     template <typename T>
@@ -111,20 +93,6 @@ generateKernels(256, fsq_decode)
   output[tid] = (T)y;
 }
 
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device T* output [[buffer(1)]],                                             \
-   const constant int& n [[buffer(2)]],                                        \
-   const constant float& negative_slope [[buffer(3)]],                         \
-   const uint tid [[thread_position_in_grid]])
-
-#define innerArguments (input, output, n, negative_slope, tid)
-
-generateKernels(256, audio_codec_leaky_relu)
-
-#undef outerArguments
-#undef innerArguments
-
     template <typename T>
     void audio_codec_tanh(
         device const T* input,
@@ -138,19 +106,6 @@ generateKernels(256, audio_codec_leaky_relu)
   const float x = float(input[tid]);
   output[tid] = (T)tanh(x);
 }
-
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device T* output [[buffer(1)]],                                             \
-   const constant int& n [[buffer(2)]],                                        \
-   const uint tid [[thread_position_in_grid]])
-
-#define innerArguments (input, output, n, tid)
-
-generateKernels(256, audio_codec_tanh)
-
-#undef outerArguments
-#undef innerArguments
 
     template <typename T>
     void audio_codec_add(
@@ -166,20 +121,6 @@ generateKernels(256, audio_codec_tanh)
   out[tid] = a[tid] + b[tid];
 }
 
-#define outerArguments(T)                                                      \
-  (device const T* a [[buffer(0)]],                                            \
-   device const T* b [[buffer(1)]],                                            \
-   device T* out [[buffer(2)]],                                                \
-   const constant int& n [[buffer(3)]],                                        \
-   const uint tid [[thread_position_in_grid]])
-
-#define innerArguments (a, b, out, n, tid)
-
-generateKernels(256, audio_codec_add)
-
-#undef outerArguments
-#undef innerArguments
-
     template <typename T>
     void audio_codec_scale(
         device const T* input,
@@ -194,20 +135,6 @@ generateKernels(256, audio_codec_add)
   const float x = float(input[tid]);
   output[tid] = (T)(x * scale);
 }
-
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device T* output [[buffer(1)]],                                             \
-   const constant int& n [[buffer(2)]],                                        \
-   const constant float& scale [[buffer(3)]],                                  \
-   const uint tid [[thread_position_in_grid]])
-
-#define innerArguments (input, output, n, scale, tid)
-
-generateKernels(256, audio_codec_scale)
-
-#undef outerArguments
-#undef innerArguments
 
     // === Causal Conv1d (stride=1, groups=1) ===
     //
@@ -268,37 +195,6 @@ generateKernels(256, audio_codec_scale)
 
   output[out_idx] = (T)acc;
 }
-
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device const T* weight [[buffer(1)]],                                       \
-   device const T* bias [[buffer(2)]],                                         \
-   device T* output [[buffer(3)]],                                             \
-   device const int* lengths [[buffer(4)]],                                    \
-   const constant int& cin [[buffer(5)]],                                      \
-   const constant int& cout [[buffer(6)]],                                     \
-   const constant int& seq_len [[buffer(7)]],                                  \
-   const constant int& kernel_size [[buffer(8)]],                              \
-   const constant int& dilation [[buffer(9)]],                                 \
-   const uint3 gid [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (input,                                                                      \
-   weight,                                                                     \
-   bias,                                                                       \
-   output,                                                                     \
-   lengths,                                                                    \
-   cin,                                                                        \
-   cout,                                                                       \
-   seq_len,                                                                    \
-   kernel_size,                                                                \
-   dilation,                                                                   \
-   gid)
-
-generateKernels(256, audio_codec_causal_conv1d)
-
-#undef outerArguments
-#undef innerArguments
 
     // === Causal ConvTranspose1d upsample (kernel_size = 2*stride) ===
     //
@@ -376,39 +272,6 @@ generateKernels(256, audio_codec_causal_conv1d)
   output[out_idx] = (T)acc;
 }
 
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device const T* weight [[buffer(1)]],                                       \
-   device const T* bias [[buffer(2)]],                                         \
-   device T* output [[buffer(3)]],                                             \
-   device const int* lengths [[buffer(4)]],                                    \
-   const constant int& cin [[buffer(5)]],                                      \
-   const constant int& cout [[buffer(6)]],                                     \
-   const constant int& seq_len_in [[buffer(7)]],                               \
-   const constant int& seq_len_out [[buffer(8)]],                              \
-   const constant int& stride [[buffer(9)]],                                   \
-   const constant int& groups [[buffer(10)]],                                  \
-   const uint3 gid [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (input,                                                                      \
-   weight,                                                                     \
-   bias,                                                                       \
-   output,                                                                     \
-   lengths,                                                                    \
-   cin,                                                                        \
-   cout,                                                                       \
-   seq_len_in,                                                                 \
-   seq_len_out,                                                                \
-   stride,                                                                     \
-   groups,                                                                     \
-   gid)
-
-generateKernels(256, audio_codec_causal_conv_transpose1d)
-
-#undef outerArguments
-#undef innerArguments
-
     // === Snake / HalfSnake / Clamp (NeMo common.parts.utils) ===
     //
     // snake(x, alpha, eps) = x + (alpha + eps)^-1 * sin(alpha * x)^2
@@ -450,33 +313,6 @@ generateKernels(256, audio_codec_causal_conv_transpose1d)
   }
 }
 
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device const T* alpha [[buffer(1)]],                                        \
-   device T* output [[buffer(2)]],                                             \
-   const constant int& channels [[buffer(3)]],                                 \
-   const constant int& seq_len [[buffer(4)]],                                  \
-   const constant int& snake_channels [[buffer(5)]],                           \
-   const constant float& negative_slope [[buffer(6)]],                         \
-   const constant float& eps [[buffer(7)]],                                    \
-   const uint3 gid [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (input,                                                                      \
-   alpha,                                                                      \
-   output,                                                                     \
-   channels,                                                                   \
-   seq_len,                                                                    \
-   snake_channels,                                                             \
-   negative_slope,                                                             \
-   eps,                                                                        \
-   gid)
-
-generateKernels(256, audio_codec_half_snake)
-
-#undef outerArguments
-#undef innerArguments
-
     template <typename T>
     void audio_codec_clamp(
         device const T* input,
@@ -493,21 +329,6 @@ generateKernels(256, audio_codec_half_snake)
   const float y = clamp(x, min_value, max_value);
   output[tid] = (T)y;
 }
-
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device T* output [[buffer(1)]],                                             \
-   const constant int& n [[buffer(2)]],                                        \
-   const constant float& min_value [[buffer(3)]],                              \
-   const constant float& max_value [[buffer(4)]],                              \
-   const uint tid [[thread_position_in_grid]])
-
-#define innerArguments (input, output, n, min_value, max_value, tid)
-
-generateKernels(256, audio_codec_clamp)
-
-#undef outerArguments
-#undef innerArguments
 
     // === Non-causal Conv1d with padding + stride (for encoder) ===
     //
@@ -570,45 +391,6 @@ generateKernels(256, audio_codec_clamp)
 
   output[out_idx] = (T)acc;
 }
-
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device const T* weight [[buffer(1)]],                                       \
-   device const T* bias [[buffer(2)]],                                         \
-   device T* output [[buffer(3)]],                                             \
-   device const int* lengths [[buffer(4)]],                                    \
-   const constant int& cin [[buffer(5)]],                                      \
-   const constant int& cout [[buffer(6)]],                                     \
-   const constant int& seq_len_in [[buffer(7)]],                               \
-   const constant int& seq_len_out [[buffer(8)]],                              \
-   const constant int& kernel_size [[buffer(9)]],                              \
-   const constant int& stride [[buffer(10)]],                                  \
-   const constant int& dilation [[buffer(11)]],                                \
-   const constant int& padding [[buffer(12)]],                                 \
-   const constant int& pad_mode [[buffer(13)]],                                \
-   const uint3 gid [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (input,                                                                      \
-   weight,                                                                     \
-   bias,                                                                       \
-   output,                                                                     \
-   lengths,                                                                    \
-   cin,                                                                        \
-   cout,                                                                       \
-   seq_len_in,                                                                 \
-   seq_len_out,                                                                \
-   kernel_size,                                                                \
-   stride,                                                                     \
-   dilation,                                                                   \
-   padding,                                                                    \
-   pad_mode,                                                                   \
-   gid)
-
-generateKernels(256, audio_codec_conv1d)
-
-#undef outerArguments
-#undef innerArguments
 
     // === FSQ (Finite Scalar Quantization) encode ===
     //
@@ -692,35 +474,6 @@ void fsq_encode(
 
   tokens[out_idx] = token;
 }
-
-#define outerArguments(T)                                                      \
-  (device const T* input [[buffer(0)]],                                        \
-   device int* tokens [[buffer(1)]],                                           \
-   device const int* lengths [[buffer(2)]],                                    \
-   const constant int& num_groups [[buffer(3)]],                               \
-   const constant int& seq_len [[buffer(4)]],                                  \
-   const constant int& codebook_dim [[buffer(5)]],                             \
-   const constant int* num_levels [[buffer(6)]],                               \
-   const constant int* dim_base_index [[buffer(7)]],                           \
-   const constant float& eps [[buffer(8)]],                                    \
-   const uint3 gid [[thread_position_in_grid]])
-
-#define innerArguments                                                         \
-  (input,                                                                      \
-   tokens,                                                                     \
-   lengths,                                                                    \
-   num_groups,                                                                 \
-   seq_len,                                                                    \
-   codebook_dim,                                                               \
-   num_levels,                                                                 \
-   dim_base_index,                                                             \
-   eps,                                                                        \
-   gid)
-
-generateKernels(256, fsq_encode)
-
-#undef outerArguments
-#undef innerArguments
 
 // === DSL kernel wrappers ===
 //
