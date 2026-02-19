@@ -78,6 +78,7 @@ metal = [
 metal-nax = []
 
 tracing = []
+audio-runtime = []
 
 [[test]]
 name = "moe"

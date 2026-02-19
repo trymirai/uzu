@@ -1,4 +1,5 @@
 pub mod array;
+pub mod audio;
 pub mod backends;
 pub mod classifier;
 pub mod config;
