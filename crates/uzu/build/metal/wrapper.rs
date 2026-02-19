@@ -38,20 +38,36 @@ fn kernel_wrappers(
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
-    let specialize_constants = if let Some(&base) = base_index {
-        kernel
+    let (specialize_constants, specialize_undefs) = if let Some(&base) = base_index {
+        let specialize_args: Vec<_> = kernel
             .arguments
             .iter()
             .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+            .collect();
+
+        let constants = specialize_args
+            .iter()
             .enumerate()
             .map(|(i, a)| {
                 let c_type = a.c_type.trim_start_matches("const ");
                 let idx = base + i;
                 format!("constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n", kernel.name, a.name)
             })
-            .collect::<String>()
+            .collect::<String>();
+
+        let defines = specialize_args
+            .iter()
+            .map(|a| format!("#define {} __dsl_specialize_{}_{}\n", a.name, kernel.name, a.name))
+            .collect::<String>();
+
+        let undefs = specialize_args
+            .iter()
+            .map(|a| format!("#undef {}\n", a.name))
+            .collect::<String>();
+
+        (format!("{constants}{defines}"), undefs)
     } else {
-        String::new()
+        (String::new(), String::new())
     };
 
     for type_variant in if let Some(variants) = &kernel.variants {
@@ -204,6 +220,10 @@ fn kernel_wrappers(
 
     if !specialize_constants.is_empty() {
         kernel_wrappers.insert(0, specialize_constants.into());
+    }
+
+    if !specialize_undefs.is_empty() {
+        kernel_wrappers.push(specialize_undefs.into());
     }
 
     Ok(kernel_wrappers.into())

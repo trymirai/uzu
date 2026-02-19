@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use super::pipeline_configuration::{PipelineConfiguration, select_configuration};
+use super::pipeline_configuration::PipelineConfiguration;
 use crate::{
     DataType,
     backends::metal::{MetalContext, MetalError, kernel::matmul::common::MatmulArguments},
@@ -33,18 +33,12 @@ pub(crate) struct DispatchDescriptor {
     pub(crate) matrix_leading_dim: i32,
     pub(crate) alpha: f32,
     pub(crate) beta: f32,
-    pub(crate) batch_ndim: i32,
     pub(crate) batch_shape: [i32; 1],
     pub(crate) vector_batch_stride: [i64; 1],
     pub(crate) matrix_batch_stride: [i64; 1],
     pub(crate) bias_batch_stride: [i64; 1],
     pub(crate) bias_stride: i32,
-    /// Number of batch rows (M dimension) - used for batched GEMV
     pub(crate) batch_rows: i32,
-    /// Leading dimension of output (ldd)
-    pub(crate) output_ld: i32,
-    /// Leading dimension of input vector (lda)
-    pub(crate) vector_ld: i32,
 }
 
 impl DispatchDescriptor {
@@ -101,16 +95,10 @@ impl DispatchDescriptor {
             arguments.batch
         };
 
-        let batch_pack = 1_u32;
-
-        let pipeline_configuration = select_configuration(
-            arguments.transpose_a,
-            arguments.transpose_b,
+        let pipeline_configuration = PipelineConfiguration::select(
             transpose_matrix,
-            batch_pack,
             arguments.input_dim,
             output_dimension,
-            false,
             apply_output_scale_and_accumulate,
         );
 
@@ -121,7 +109,6 @@ impl DispatchDescriptor {
             arguments.lda
         };
 
-        let batch_ndim = 1i32;
         let batch_shape = [if arguments.batch_count > 1 {
             arguments.batch_count
         } else {
@@ -155,9 +142,6 @@ impl DispatchDescriptor {
 
         let batch_rows = arguments.batch;
 
-        let output_ld = arguments.ldd;
-        let vector_ld = arguments.lda;
-
         Ok(Some(Self {
             pipeline_configuration,
             matrix_is_rhs,
@@ -167,15 +151,12 @@ impl DispatchDescriptor {
             matrix_leading_dim,
             alpha,
             beta,
-            batch_ndim,
             batch_shape,
             vector_batch_stride,
             matrix_batch_stride,
             bias_batch_stride,
             bias_stride,
             batch_rows,
-            output_ld,
-            vector_ld,
         }))
     }
 

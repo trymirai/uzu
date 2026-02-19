@@ -1,5 +1,4 @@
 mod dispatch_descriptor;
-mod dsl_kernel;
 mod kernel;
 mod pipeline_configuration;
 mod tile_configuration;
