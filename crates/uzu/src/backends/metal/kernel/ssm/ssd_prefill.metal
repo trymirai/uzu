@@ -27,10 +27,10 @@ KERNEL(SSDPrefill64)(
     constant const uint* state_strides,
     constant const uint& num_heads,
     constant const uint& head_dim,
+    const Simd simd,
     const uint pair_idx GROUPS(num_heads * head_dim),
     const uint lane_idx THREADS(32)
 ) {
-  const uint simd_width = 32;
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
   const uint safe_group = uint(max(group_size, 1));
@@ -55,7 +55,7 @@ KERNEL(SSDPrefill64)(
   const float d_scalar = float(d[h_idx]);
 
   const uint idx0 = lane_idx;
-  const uint idx1 = lane_idx + simd_width;
+  const uint idx1 = lane_idx + simd.group_size;
 
   float state0 = 0.0f;
   float state1 = 0.0f;
@@ -125,10 +125,10 @@ KERNEL(SSDPrefill)(
     constant const uint* state_strides,
     constant const uint& num_heads,
     constant const uint& head_dim,
+    const Simd simd,
     const uint pair_idx GROUPS(num_heads * head_dim),
     const uint lane_idx THREADS(32)
 ) {
-  const uint simd_width = 32;
   const int state_dim = state_size;
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
@@ -153,8 +153,8 @@ KERNEL(SSDPrefill)(
   const uint cb_group_base = group_idx * cb_group_stride;
   const float d_scalar = float(d[h_idx]);
 
-  const int max_chunks = SSM_PREFILL_MAX_STATE / simd_width;
-  const int chunk_count = (state_dim + int(simd_width) - 1) / int(simd_width);
+  const int max_chunks = SSM_PREFILL_MAX_STATE / simd.group_size;
+  const int chunk_count = (state_dim + int(simd.group_size) - 1) / int(simd.group_size);
   if (state_dim <= 0 || chunk_count > max_chunks) {
     return;
   }
@@ -163,7 +163,7 @@ KERNEL(SSDPrefill)(
 
 #pragma unroll
   for (int chunk = 0; chunk < chunk_count; ++chunk) {
-    const int idx = chunk * int(simd_width) + int(lane_idx);
+    const int idx = chunk * int(simd.group_size) + int(lane_idx);
     const uint state_idx = state_base + idx * state_inner_stride;
     lane_states[chunk] = float(state[state_idx]);
   }
@@ -181,7 +181,7 @@ KERNEL(SSDPrefill)(
     float contrib_sum = 0.0f;
 #pragma unroll
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
-      const int idx = chunk * int(simd_width) + int(lane_idx);
+      const int idx = chunk * int(simd.group_size) + int(lane_idx);
       const uint cb_idx =
           cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
       const float new_state =
@@ -198,7 +198,7 @@ KERNEL(SSDPrefill)(
 
 #pragma unroll
   for (int chunk = 0; chunk < chunk_count; ++chunk) {
-    const int idx = chunk * int(simd_width) + int(lane_idx);
+    const int idx = chunk * int(simd.group_size) + int(lane_idx);
     const uint state_idx = state_base + uint(idx) * state_inner_stride;
     state[state_idx] = static_cast<T>(lane_states[chunk]);
   }
