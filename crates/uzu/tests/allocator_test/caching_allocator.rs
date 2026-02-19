@@ -1,19 +1,19 @@
 use std::rc::Rc;
 
 use uzu::backends::{
-    common::{Buffer, BufferLifetime, Context},
-    metal::{Metal, MetalContext},
+    common::{Backend, Buffer, BufferLifetime, Context},
+    metal::Metal,
 };
 
 use super::allocator_trait::AllocatorTrait;
 
 pub struct CachingAllocator {
-    pub context: Rc<MetalContext>,
+    pub context: Rc<<Metal as Backend>::Context>,
 }
 
 impl CachingAllocator {
     pub fn new() -> Self {
-        let context = MetalContext::new().expect("Failed to create MetalContext");
+        let context = <Metal as Backend>::Context::new().expect("Failed to create MetalContext");
         Self {
             context,
         }

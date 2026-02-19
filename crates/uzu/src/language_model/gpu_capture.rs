@@ -1,29 +1,30 @@
 use std::{
+    marker::PhantomData,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueueExt};
+use crate::{
+    backends::common::{Backend, Context},
+    utils::env_utils::EnvVar,
+};
 
-use crate::{backends::metal::MetalContext, utils::env_utils::MetalEnvVar};
-
-pub struct GpuCaptureManager {
+pub struct GpuCaptureManager<B: Backend> {
     capture_prefill_enabled: bool,
     capture_decode_enabled: bool,
     first_prefill_captured: bool,
     first_decode_captured: bool,
+    phantom: PhantomData<B>,
 }
 
-impl GpuCaptureManager {
+impl<B: Backend> GpuCaptureManager<B> {
     pub fn new() -> Self {
-        let capture_prefill_enabled = MetalEnvVar::CaptureFirstPrefill.is_enabled();
-        let capture_decode_enabled = MetalEnvVar::CaptureFirstDecode.is_enabled();
+        let capture_prefill_enabled = EnvVar::CaptureFirstPrefill.is_enabled();
+        let capture_decode_enabled = EnvVar::CaptureFirstDecode.is_enabled();
 
-        // Enable Metal capture layer BEFORE device creation if any capture is requested
+        // Enable backend capture BEFORE device creation if any capture is requested
         if capture_prefill_enabled || capture_decode_enabled {
-            unsafe {
-                std::env::set_var("METAL_CAPTURE_ENABLED", "1");
-            }
+            B::Context::enable_capture();
         }
 
         Self {
@@ -31,6 +32,7 @@ impl GpuCaptureManager {
             capture_decode_enabled,
             first_prefill_captured: false,
             first_decode_captured: false,
+            phantom: PhantomData,
         }
     }
 
@@ -50,7 +52,7 @@ impl GpuCaptureManager {
 
     pub fn start_capture(
         &self,
-        mtl_context: &MetalContext,
+        context: &B::Context,
         capture_type: &str,
     ) -> Result<PathBuf, String> {
         let timestamp =
@@ -60,20 +62,7 @@ impl GpuCaptureManager {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(format!("uzu_first_{}-{}.gputrace", capture_type, timestamp));
 
-        let capture_manager = MTLCaptureManager::shared_capture_manager();
-        let capture_descriptor = MTLCaptureDescriptor::new();
-        capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
-        capture_descriptor.set_output_path(Some(&trace_path));
-
-        mtl_context.command_queue.set_label(Some("uzu_command_queue"));
-        use objc2::rc::Retained;
-        unsafe {
-            capture_descriptor.set_capture_object(Some(&*(Retained::as_ptr(&mtl_context.command_queue).cast())));
-        }
-
-        capture_manager
-            .start_capture_with_descriptor_error(&capture_descriptor)
-            .map_err(|e| format!("Failed to start GPU capture: {}", e))?;
+        context.start_capture(&trace_path).map_err(|err| err.to_string())?;
 
         println!("GPU capture started for first {}: {:?}", capture_type, trace_path);
 
@@ -82,9 +71,10 @@ impl GpuCaptureManager {
 
     pub fn stop_capture(
         &mut self,
+        context: &B::Context,
         capture_type: &str,
-    ) {
-        MTLCaptureManager::shared_capture_manager().stop_capture();
+    ) -> Result<(), String> {
+        context.stop_capture().map_err(|err| err.to_string())?;
         println!("GPU capture stopped for {}", capture_type);
 
         match capture_type {
@@ -92,6 +82,8 @@ impl GpuCaptureManager {
             "decode" => self.first_decode_captured = true,
             _ => {},
         }
+
+        Ok(())
     }
 
     pub fn reset(&mut self) {

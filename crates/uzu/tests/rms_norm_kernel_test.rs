@@ -8,13 +8,10 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            CommandBuffer, Context,
+            Backend, CommandBuffer, Context, Kernels,
             kernel::{QKNormKernel, RMSNormKernel},
         },
-        metal::{
-            MetalContext,
-            kernel::dsl::{QKNormMetalKernel, RMSNormMetalKernel},
-        },
+        metal::Metal,
     },
 };
 
@@ -247,7 +244,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     OutputT: TestFloat,
 {
     // Create Metal context
-    let mtl_context = match MetalContext::new() {
+    let mtl_context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm test: {}", e);
@@ -303,8 +300,14 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         .expect("Failed to create buffer");
 
     // Create RMS norm kernel
-    let kernel = RMSNormMetalKernel::new(&mtl_context, input_type, scale_type, output_type, accumulation_type)
-        .expect("Failed to create RMS norm kernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::RMSNormKernel::new(
+        &mtl_context,
+        input_type,
+        scale_type,
+        output_type,
+        accumulation_type,
+    )
+    .expect("Failed to create RMS norm kernel");
     // Create command buffer and encode
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
@@ -380,7 +383,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     ScaleT: TestFloat,
     OutputT: TestFloat,
 {
-    let mtl_context = match MetalContext::new() {
+    let mtl_context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm edge case test: {}", e);
@@ -414,8 +417,14 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
         .new_buffer(4 * OutputT::size_of(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let kernel = RMSNormMetalKernel::new(&mtl_context, input_type, scale_type, output_type, accumulation_type)
-        .expect("Failed to create RMS norm kernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::RMSNormKernel::new(
+        &mtl_context,
+        input_type,
+        scale_type,
+        output_type,
+        accumulation_type,
+    )
+    .expect("Failed to create RMS norm kernel");
 
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
@@ -572,7 +581,7 @@ fn perf_rms_norm_with_size(
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // ---- Metal context ----
-    let mtl_context = match MetalContext::new() {
+    let mtl_context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping RMS norm perf test: {}", e);
@@ -583,8 +592,14 @@ fn perf_rms_norm_with_size(
     const EPSILON: f32 = 1e-6;
 
     // ---- Create kernel ----
-    let kernel = RMSNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
-        .expect("Failed to create RMS norm kernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::RMSNormKernel::new(
+        &mtl_context,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+    )
+    .expect("Failed to create RMS norm kernel");
 
     // ---- Generate random data ----
     let mut rng = StdRng::seed_from_u64(42);
@@ -698,7 +713,7 @@ fn perf_rms_norm_16k() {
 #[test]
 fn qk_norm_test() {
     // Test to verify that the QK norm kernel now accesses the correct data ranges
-    let mtl_context = match MetalContext::new() {
+    let mtl_context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Skipping QK norm buffer addressing test: {}", e);
@@ -766,11 +781,23 @@ fn qk_norm_test() {
         .expect("Failed to create buffer");
 
     // Create QK norm kernels
-    let q_kernel = QKNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
-        .expect("Failed to create Q norm kernel");
+    let q_kernel = <<Metal as Backend>::Kernels as Kernels>::QKNormKernel::new(
+        &mtl_context,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+    )
+    .expect("Failed to create Q norm kernel");
 
-    let k_kernel = QKNormMetalKernel::new(&mtl_context, DataType::F32, DataType::F32, DataType::F32, DataType::F32)
-        .expect("Failed to create K norm kernel");
+    let k_kernel = <<Metal as Backend>::Kernels as Kernels>::QKNormKernel::new(
+        &mtl_context,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+        DataType::F32,
+    )
+    .expect("Failed to create K norm kernel");
 
     // Test Q head normalization
     {

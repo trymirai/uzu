@@ -6,13 +6,14 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{
-            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel, MoeScatterBucketsKernel,
+        common::{
+            Backend, Kernels,
+            kernel::{
+                MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel,
+                MoeScatterBucketsKernel,
+            },
         },
-        metal::kernel::dsl::{
-            MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeRouterTopKMetalKernel,
-            MoeScatterBucketsMetalKernel,
-        },
+        metal::Metal,
     },
 };
 
@@ -81,7 +82,8 @@ fn test_scatter_buckets_parity() {
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         // Use fused router+topk kernel
-        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router_topk");
+        let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
+            .expect("router_topk");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let encoder = cb.new_compute_command_encoder().expect("Failed to create encoder");
         router_topk.encode(
@@ -112,7 +114,8 @@ fn test_scatter_buckets_parity() {
         let num_tiles = ((e + 511) / 512).max(1);
         let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-        let fused_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+        let fused_kernel =
+            <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let encoder = cb.new_compute_command_encoder().expect("encoder");
         fused_kernel.encode(
@@ -135,10 +138,11 @@ fn test_scatter_buckets_parity() {
         let entries = num_blocks * num_tiles * 512usize;
         let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
 
-        let scatter_bases_kernel = MoeBlockBasesFromPartialsMetalKernel::new(&ctx)
-            .expect("Failed to create MoeBlockBasesFromPartialsMetalKernel");
-        let scatter_kernel = MoeScatterBucketsMetalKernel::new(&ctx, DataType::BF16)
-            .expect("Failed to create MoeScatterBucketsMetalKernel");
+        let scatter_bases_kernel = <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx)
+            .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel");
+        let scatter_kernel =
+            <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel::new(&ctx, DataType::BF16)
+                .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
 

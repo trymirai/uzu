@@ -4,11 +4,11 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLResou
 use ndarray::{Array, Array3, s};
 use uzu::backends::{
     common::{
-        Context,
+        Backend, Context,
         gpu_types::Swap,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData, create_swaps_direct},
     },
-    metal::{Metal, MetalContext},
+    metal::Metal,
 };
 
 fn apply_swaps_3d<T: Clone>(
@@ -31,7 +31,7 @@ fn apply_swaps_3d<T: Clone>(
 
 #[test]
 fn test_kv_cache_update_kernel() {
-    let metal_context = match MetalContext::new() {
+    let metal_context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
         Err(e) => {
             println!("Failed to create MetalContext: {:?}. Skipping test.", e);
@@ -42,7 +42,7 @@ fn test_kv_cache_update_kernel() {
     test_random_pattern(&metal_context);
 }
 
-fn test_random_pattern(context: &MetalContext) {
+fn test_random_pattern(context: &<Metal as Backend>::Context) {
     println!("Testing with random pattern...");
 
     let max_sequence_length = 256usize;

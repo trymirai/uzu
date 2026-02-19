@@ -6,8 +6,8 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::MoeRouterTopKKernel,
-        metal::{MetalContext, kernel::dsl::MoeRouterTopKMetalKernel},
+        common::{Backend, Kernels, kernel::MoeRouterTopKKernel},
+        metal::Metal,
     },
 };
 
@@ -128,8 +128,8 @@ pub fn cpu_topk_select_f32(
 }
 
 fn run_router_topk_once(
-    ctx: &MetalContext,
-    kernel: &MoeRouterTopKMetalKernel,
+    ctx: &<Metal as Backend>::Context,
+    kernel: &<<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel,
     t: usize,
     d_model: usize,
     e: usize,
@@ -223,7 +223,8 @@ fn run_router_topk_once(
 #[test]
 fn test_router_topk_fused_matches_reference() {
     let ctx = create_ctx();
-    let kernel = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("kernel");
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16).expect("kernel");
 
     let configs =
         [(1usize, 64usize, 32usize, 4usize), (2, 128, 64, 8), (4, 256, 128, 16), (8, 256, 256, 32), (1, 512, 512, 64)];

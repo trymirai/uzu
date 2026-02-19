@@ -1,11 +1,11 @@
 //! GEMM kernel parameter structs.
 //!
 //! Field names use uppercase for matrix dimensions (M, N, K) to match
-//! standard BLAS/GEMM convention and generated Metal headers.
+//! standard BLAS/GEMM convention and generated shader headers.
 
 #![allow(non_snake_case)]
 
-/// Main GEMM parameters passed to Metal kernels as constant buffer.
+/// Main GEMM parameters passed to backend kernels as constant buffer.
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct GEMMParams {
