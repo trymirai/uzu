@@ -1,17 +1,11 @@
-#![allow(dead_code, unused_variables, unused_imports)]
-
-mod command_buffer_timing;
 mod compute_command_encoder_extensions_conditional;
-mod compute_command_encoder_extensions_dispatch;
 mod compute_command_encoder_extensions_set_value;
-mod compute_pipeline_state_extensions_threads;
-mod device_extensions_features;
+mod data_type;
 mod function_constant_values_extensions_set_value;
 mod library_extensions_pipeline;
 
-pub use command_buffer_timing::CommandBufferTimingExt;
 pub use compute_command_encoder_extensions_conditional::ComputeEncoderConditional;
-pub use compute_command_encoder_extensions_dispatch::ComputeEncoderDispatch;
 pub use compute_command_encoder_extensions_set_value::ComputeEncoderSetValue;
+pub use data_type::MetalDataTypeExt;
 pub use function_constant_values_extensions_set_value::FunctionConstantValuesSetValue;
 pub use library_extensions_pipeline::LibraryPipelineExtensions;

@@ -12,7 +12,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
+            CommandBuffer, Context,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
@@ -21,7 +21,6 @@ use uzu::{
         metal::{
             Metal, MetalContext,
             kernel::dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
-            metal_extensions::CommandBufferTimingExt,
         },
     },
 };

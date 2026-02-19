@@ -7,8 +7,10 @@ use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration, t
 use crate::{
     DataType,
     backends::metal::{
-        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalContext, MetalError,
+        context::MetalContext,
+        error::MetalError,
         kernel::matmul::common::{MatmulArguments, transpose_configuration},
+        metal_extensions::{ComputeEncoderSetValue, FunctionConstantValuesSetValue},
     },
 };
 

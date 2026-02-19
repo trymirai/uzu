@@ -4,7 +4,8 @@ use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::s
 use crate::{
     DataType,
     backends::metal::{
-        MetalContext, MetalError,
+        context::MetalContext,
+        error::MetalError,
         kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
     },
 };

@@ -19,7 +19,7 @@ use crate::{
         common::kernel::matmul::{
             FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait,
         },
-        metal::{Metal, MetalContext, MetalError},
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
 };
 

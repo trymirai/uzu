@@ -9,7 +9,10 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::metal::{ComputeEncoderSetValue, MetalContext, MetalError, kernel::matmul::common::MatmulArguments},
+    backends::metal::{
+        context::MetalContext, error::MetalError, kernel::matmul::common::MatmulArguments,
+        metal_extensions::ComputeEncoderSetValue,
+    },
 };
 
 fn gemv_kernel_name(

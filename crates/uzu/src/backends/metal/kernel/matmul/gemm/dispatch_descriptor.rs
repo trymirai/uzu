@@ -4,7 +4,8 @@ use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::T
 use crate::{
     DataType,
     backends::metal::{
-        DeviceClass, MetalContext, MetalError,
+        context::{DeviceClass, MetalContext},
+        error::MetalError,
         kernel::matmul::common::{GEMMAddMMParams, GEMMParams, MatmulArguments},
     },
 };

@@ -1,7 +1,7 @@
 use metal::{MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLComputeCommandEncoder, MTLEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{MetalContext, MetalError, MetalKernels};
+use super::{context::MetalContext, error::MetalError, kernel::dsl::MetalKernels};
 use crate::backends::common::Backend;
 
 #[derive(Debug, Clone)]
