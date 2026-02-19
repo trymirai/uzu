@@ -80,8 +80,7 @@ impl<B: Backend> ScratchBuffers<B> {
     ) -> Self {
         // Helper closure for allocation
         let alloc = |shape: &[usize], dtype: DataType, label: &str| -> ArrayCell<B> {
-            let array =
-                unsafe { context.create_array_uninitialized(shape, dtype, &format!("scratch_buffers_{label}")) };
+            let array = context.create_array_uninitialized(shape, dtype, &format!("scratch_buffers_{label}"));
             RefCell::new(array)
         };
 
