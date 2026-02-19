@@ -367,8 +367,6 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     Some(k) => k,
                     None => panic!("Can not find AttentionSinglePassKernel for key {:?}", kernel_key),
                 };
-                let mask_buffer_opt = attention_bias_buffer.as_ref();
-                let sinks_buffer_opt = sinks_buffer.as_ref();
                 kernel.encode(
                     queries_buffer,
                     &key_cache_buffer,
@@ -381,11 +379,11 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     v_head_stride as u32,
                     v_seq_stride as u32,
                     scale,
-                    mask_buffer_opt,
+                    attention_bias_buffer.as_ref(),
                     mask_kv_seq_stride_opt,
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
-                    sinks_buffer_opt,
+                    sinks_buffer.as_ref(),
                     num_heads as u32,
                     suffix_length as u32,
                     &compute_encoder,
@@ -400,9 +398,6 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     Some(k) => k,
                     None => panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key),
                 };
-
-                let mask_buffer_opt = attention_bias_buffer.as_ref().map(|b| b);
-                let sinks_buffer_opt = sinks_buffer.as_ref().map(|b| b);
                 kernel_pass1.encode(
                     queries_buffer,
                     &key_cache_buffer,
@@ -419,11 +414,11 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     scale,
                     num_heads as u32,
                     suffix_length as u32,
-                    mask_buffer_opt,
+                    attention_bias_buffer.as_ref(),
                     mask_kv_seq_stride_opt,
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
-                    sinks_buffer_opt,
+                    sinks_buffer.as_ref(),
                     &compute_encoder,
                 );
                 kernel_pass2.encode(
