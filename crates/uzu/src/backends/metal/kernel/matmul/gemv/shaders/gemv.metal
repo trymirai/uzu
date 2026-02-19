@@ -2,6 +2,7 @@
 #include <metal_stdlib>
 
 #include "../../../common/utils.h"
+#include "../../../definitions.metal"
 
 #include "../../common/steel/utils.h"
 
@@ -284,846 +285,695 @@ struct GEMVKernel {
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-/// Vector matrix multiplication
-///////////////////////////////////////////////////////////////////////////////
-
-template <
-    typename T,
-    const int BM,        /* Threadgroup rows (in simdgroups) */
-    const int BN,        /* Threadgroup cols (in simdgroups) */
-    const int SM,        /* Simdgroup rows (in threads) */
-    const int SN,        /* Simdgroup cols (in threads) */
-    const int TM,        /* Thread rows (in elements) */
-    const int TN,        /* Thread cols (in elements) */
-    const bool kDoAxpby, /* Do out = alpha * out + beta * bias */
-    typename AccT = typename DefaultAccT<T>::type>
-struct GEMVTKernel {
-  using acc_type = AccT;
-
-  MTL_CONST int threadsM = BM * SM;
-  MTL_CONST int threadsN = BN * SN;
-
-  MTL_CONST int blockM = threadsM * TM;
-  MTL_CONST int blockN = threadsN * TN;
-
-  static_assert(SM * SN == 32, "simdgroup can only have 32 threads");
-
-  // - The matrix of size (M = in_vec_size, N = out_vec_size) is divided up
-  //   into blocks of (blockM, blockN) divided among threadgroups
-  // - Every thread works on a block of (TM, TN)
-  // - We assume each threadgroup has (threadsN, threadsM, 1) threads
-  //
-  // 1. A thread loads TN elements each from mat along TM contiguous rows
-  //    and the corresponding scalar from the vector
-  // 2. The thread then accumulates its local result for the block
-  // 3. At the end, each thread has accumulated results over all blocks across
-  //    the rows. These are then summed up across the threadgroup
-  // 4. Each threadgroup writes its accumulated BN * TN outputs
-  //
-  // Edge case handling:
-  // - The threadgroup with the largest tid has blocks that exceed the matrix
-  //   * The blocks that start outside the matrix are never read (thread results
-  //     remain zero)
-  //   * The last thread that partially overlaps with the matrix is shifted
-  //     inwards such that the thread block fits exactly in the matrix
-
-  MTL_CONST short tgp_mem_size = BM > 1 ? BM*(blockN + TN) : 0;
-  MTL_CONST bool needs_tgp_reduction = BM > 1;
-
-  static METAL_FUNC void run(
-      const device T* mat [[buffer(0)]],
-      const device T* in_vec [[buffer(1)]],
-      const device T* bias [[buffer(2)]],
-      device T* out_vec [[buffer(3)]],
-      const constant int& in_vec_size [[buffer(4)]],
-      const constant int& out_vec_size [[buffer(5)]],
-      const constant int& marix_ld [[buffer(6)]],
-      const constant float& alpha [[buffer(7)]],
-      const constant float& beta [[buffer(8)]],
-      const constant int& bias_stride [[buffer(14)]],
-      threadgroup AccT* tgp_memory [[threadgroup(0)]],
-      uint3 tid [[threadgroup_position_in_grid]],
-      uint3 lid [[thread_position_in_threadgroup]],
-      uint simd_gid [[simdgroup_index_in_threadgroup]],
-      uint simd_lid [[thread_index_in_simdgroup]]
-  ) {
-    // Appease compiler
-    (void)lid;
-
-    // Thread local accumulation results
-    AccT result[TN] = {0};
-    T inter[TN];
-    AccT v_coeff[TM];
-    const int thrM = SN != 32 ? simd_lid / SN : 0;
-    const int thrN = SN != 32 ? simd_lid % SN : int(simd_lid);
-
-    const int sgM = BN != 1 ? (simd_gid / BN) : int(simd_gid);
-    const int sgN = BN != 1 ? (simd_gid % BN) : 0;
-
-    const int simdM = SM * sgM;
-    const int simdN = SN * sgN;
-
-    int cm = (simdM + thrM);
-    int cn = (simdN + thrN);
-
-    int bm = cm * TM;
-    int bn = cn * TN;
-
-    int out_col = tid.x * blockN + bn;
-
-    constexpr const uniform<int> loop_stride = make_uniform(blockM);
-    const uniform<int> in_size = make_uniform(in_vec_size);
-    const uniform<int> n_iter = in_size / loop_stride;
-    const uniform<int> last_iter = loop_stride * n_iter;
-    const uniform<int> leftover = in_size - last_iter;
-
-    // Edgecase handling
-    if (out_col < out_vec_size) {
-      out_col = out_col + TN < out_vec_size ? out_col : out_vec_size - TN;
-
-      // Per thread accumulation main loop
-      for (int i = 0; i < n_iter; ++i) {
-        // Adding a threadgroup_barrier improves performance slightly
-        // This is possibly it may help exploit cache better
-        threadgroup_barrier(mem_flags::mem_none);
-
-        MTL_PRAGMA_UNROLL
-        for (int tm = 0; tm < TM; tm++) {
-          v_coeff[tm] = static_cast<AccT>(in_vec[bm + tm]);
-        }
-
-        MTL_PRAGMA_UNROLL
-        for (int tm = 0; tm < TM; tm++) {
-          auto vc = static_cast<AccT>(v_coeff[tm]);
-          for (int tn = 0; tn < TN; tn++) {
-            inter[tn] = mat[(bm + tm) * marix_ld + out_col + tn];
-          }
-          for (int tn = 0; tn < TN; tn++) {
-            result[tn] += vc * inter[tn];
-          }
-        }
-
-        bm += blockM;
-      }
-
-      if (leftover > 0) {
-        for (int tm = 0; tm < TM && bm + tm < in_vec_size; tm++) {
-          v_coeff[tm] = static_cast<AccT>(in_vec[bm + tm]);
-
-          MTL_PRAGMA_UNROLL
-          for (int tn = 0; tn < TN; tn++) {
-            inter[tn] = mat[(bm + tm) * marix_ld + out_col + tn];
-          }
-
-          MTL_PRAGMA_UNROLL
-          for (int tn = 0; tn < TN; tn++) {
-            result[tn] += v_coeff[tm] * inter[tn];
-          }
-        }
-      }
-    }
-
-    // Simdgroup accumulations
-    MTL_PRAGMA_UNROLL
-    for (int tn = 0; tn < TN; tn++) {
-      MTL_PRAGMA_UNROLL
-      for (ushort sm = (SM / 2); sm >= 1; sm >>= 1) {
-        result[tn] += simd_shuffle_down(result[tn], SN * sm);
-      }
-    }
-
-    // Threadgroup accumulation results
-    if (needs_tgp_reduction) {
-      threadgroup AccT* tgp_results = tgp_memory + sgM * (blockN + TN) + bn;
-      if (thrM == 0) {
-        MTL_PRAGMA_UNROLL
-        for (int tn = 0; tn < TN; tn++) {
-          tgp_results[tn] = result[tn];
-        }
-
-        threadgroup_barrier(mem_flags::mem_none);
-
-        if (sgM == 0) {
-          MTL_PRAGMA_UNROLL
-          for (int sgm = 1; sgm < BM; sgm++) {
-            MTL_PRAGMA_UNROLL
-            for (int tn = 0; tn < TN; tn++) {
-              result[tn] += tgp_results[sgm * (blockN + TN) + tn];
-            }
-          }
-        }
-      }
-    }
-
-    // Threadgroup accumulation and writing out results
-    if (cm == 0 && out_col < out_vec_size) {
-      MTL_PRAGMA_UNROLL
-      for (int j = 0; j < TN; j++) {
-        if (kDoAxpby) {
-          out_vec[out_col + j] =
-              static_cast<T>(alpha) * static_cast<T>(result[j]) +
-              static_cast<T>(beta) * bias[(out_col + j) * bias_stride];
-        } else {
-          out_vec[out_col + j] = static_cast<T>(result[j]);
-        }
-      }
-    }
-  }
-};
-
-///////////////////////////////////////////////////////////////////////////////
 /// Matrix vector multiplication
 ///////////////////////////////////////////////////////////////////////////////
 
-template <
-    typename T,
-    const int BM,          /* Threadgroup rows (in simdgroups) */
-    const int BN,          /* Threadgroup cols (in simdgroups) */
-    const int SM,          /* Simdgroup rows (in threads) */
-    const int SN,          /* Simdgroup cols (in threads) */
-    const int TM,          /* Thread rows (in elements) */
-    const int TN,          /* Thread cols (in elements) */
-    const bool kDoNCBatch, /* Batch ndim > 1 */
-    const bool kDoAxpby>   /* Do out = alpha * out + beta * bias */
-[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv(
-    const device T* mat [[buffer(0)]],
-    const device T* in_vec [[buffer(1)]],
-    const device T* bias [[buffer(2)]],
-    device T* out_vec [[buffer(3)]],
-    const constant int& in_vec_size [[buffer(4)]],
-    const constant int& out_vec_size [[buffer(5)]],
-    const constant int& marix_ld [[buffer(6)]],
-    const constant float& alpha [[buffer(7)]],
-    const constant float& beta [[buffer(8)]],
-    const constant int& batch_ndim [[buffer(9)]],
-    const constant int* batch_shape [[buffer(10)]],
-    const constant int64_t* vector_batch_stride [[buffer(11)]],
-    const constant int64_t* matrix_batch_stride [[buffer(12)]],
-    const constant int64_t* bias_batch_stride [[buffer(13)]],
-    const constant int& bias_stride [[buffer(14)]],
-    const constant int& batch_rows [[buffer(15)]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]],
-    uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]
-) {
-  using gemv_kernel = GEMVKernel<T, BM, BN, SM, SN, TM, TN, kDoAxpby, 1>;
-  threadgroup typename gemv_kernel::acc_type tgp_memory
-      [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
-
-  // Batched GEMV: tid.y is the batch row index
-  const int batch_row = tid.y;
-  if (batch_row >= batch_rows) {
-    return;
-  }
-
-  // Update batch offsets
-  if (kDoNCBatch) {
-    in_vec += elem_to_loc(tid.z, batch_shape, vector_batch_stride, batch_ndim);
-    mat += elem_to_loc(tid.z, batch_shape, matrix_batch_stride, batch_ndim);
-
-    if (kDoAxpby) {
-      bias += elem_to_loc(tid.z, batch_shape, bias_batch_stride, batch_ndim);
-    }
-
-  } else {
-    in_vec += tid.z * vector_batch_stride[0];
-    mat += tid.z * matrix_batch_stride[0];
-
-    if (kDoAxpby) {
-      bias += tid.z * bias_batch_stride[0];
-    }
-  }
-
-  const int batch_row_base = batch_row;
-  out_vec += tid.z * batch_rows * out_vec_size;
-
-  gemv_kernel::run(
-      mat,
-      in_vec,
-      bias,
-      out_vec,
-      in_vec_size,
-      out_vec_size,
-      marix_ld,
-      alpha,
-      beta,
-      bias_stride,
-      batch_row_base,
-      gemv_kernel::tgp_mem_size == 0 ? nullptr : tgp_memory,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
-  );
-}
-
-#define instantiate_gemv_bp_helper(                                            \
-    name,                                                                      \
-    itype,                                                                     \
-    bm,                                                                        \
-    bn,                                                                        \
-    sm,                                                                        \
-    sn,                                                                        \
-    tm,                                                                        \
-    nc,                                                                        \
-    axpby,                                                                     \
-    bp                                                                         \
-)                                                                              \
-  instantiate_kernel(                                                          \
-      "gemv_bp_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn "_tm" #tm       \
-      "_tn4_nc" #nc "_axpby" #axpby "_bp" #bp,                                 \
-      gemv_bp,                                                                 \
-      itype,                                                                   \
-      bm,                                                                      \
-      bn,                                                                      \
-      sm,                                                                      \
-      sn,                                                                      \
-      tm,                                                                      \
-      nc,                                                                      \
-      axpby,                                                                   \
-      bp                                                                       \
-  )
-
-template <
-    typename T,
-    const int BM,          /* Threadgroup rows (in simdgroups) */
-    const int BN,          /* Threadgroup cols (in simdgroups) */
-    const int SM,          /* Simdgroup rows (in threads) */
-    const int SN,          /* Simdgroup cols (in threads) */
-    const int TM,          /* Thread rows (in elements) */
-    const bool kDoNCBatch, /* Batch ndim > 1 */
-    const bool kDoAxpby,   /* Do out = alpha * out + beta * bias */
-    const int BP>          /* Batch rows per threadgroup */
-[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_bp(
-    const device T* mat [[buffer(0)]],
-    const device T* in_vec [[buffer(1)]],
-    const device T* bias [[buffer(2)]],
-    device T* out_vec [[buffer(3)]],
-    const constant int& in_vec_size [[buffer(4)]],
-    const constant int& out_vec_size [[buffer(5)]],
-    const constant int& marix_ld [[buffer(6)]],
-    const constant float& alpha [[buffer(7)]],
-    const constant float& beta [[buffer(8)]],
-    const constant int& batch_ndim [[buffer(9)]],
-    const constant int* batch_shape [[buffer(10)]],
-    const constant int64_t* vector_batch_stride [[buffer(11)]],
-    const constant int64_t* matrix_batch_stride [[buffer(12)]],
-    const constant int64_t* bias_batch_stride [[buffer(13)]],
-    const constant int& bias_stride [[buffer(14)]],
-    const constant int& batch_rows [[buffer(15)]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]],
-    uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]
-) {
-  using gemv_kernel = GEMVKernel<T, BM, BN, SM, SN, TM, 4, kDoAxpby, BP>;
-  threadgroup typename gemv_kernel::acc_type tgp_memory
-      [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
-
-  const int batch_row_base = int(tid.y) * BP;
-
-  if (kDoNCBatch) {
-    in_vec += elem_to_loc(tid.z, batch_shape, vector_batch_stride, batch_ndim);
-    mat += elem_to_loc(tid.z, batch_shape, matrix_batch_stride, batch_ndim);
-
-    if (kDoAxpby) {
-      bias += elem_to_loc(tid.z, batch_shape, bias_batch_stride, batch_ndim);
-    }
-
-  } else {
-    in_vec += tid.z * vector_batch_stride[0];
-    mat += tid.z * matrix_batch_stride[0];
-
-    if (kDoAxpby) {
-      bias += tid.z * bias_batch_stride[0];
-    }
-  }
-
-  out_vec += tid.z * batch_rows * out_vec_size;
-
-  gemv_kernel::run(
-      mat,
-      in_vec,
-      bias,
-      out_vec,
-      in_vec_size,
-      out_vec_size,
-      marix_ld,
-      alpha,
-      beta,
-      bias_stride,
-      batch_row_base,
-      gemv_kernel::tgp_mem_size == 0 ? nullptr : tgp_memory,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
-  );
-}
-
-#define instantiate_gemv_helper(                                               \
-    name,                                                                      \
-    itype,                                                                     \
-    bm,                                                                        \
-    bn,                                                                        \
-    sm,                                                                        \
-    sn,                                                                        \
-    tm,                                                                        \
-    tn,                                                                        \
-    nc,                                                                        \
-    axpby                                                                      \
-)                                                                              \
-  instantiate_kernel(                                                          \
-      "gemv_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn "_tm" #tm          \
-      "_tn" #tn "_nc" #nc "_axpby" #axpby,                                     \
-      gemv,                                                                    \
-      itype,                                                                   \
-      bm,                                                                      \
-      bn,                                                                      \
-      sm,                                                                      \
-      sn,                                                                      \
-      tm,                                                                      \
-      tn,                                                                      \
-      nc,                                                                      \
-      axpby                                                                    \
-  )
-
-// clang-format off
-#define instantiate_gemv(name, itype, bm, bn, sm, sn, tm, tn)        \
-  instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 0, 0) \
-  instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 0, 1) \
-  instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 0) \
-  instantiate_gemv_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 1) // clang-format on
-
-#define instantiate_gemv_bp(name, itype, bm, bn, sm, sn, tm, bp)               \
-  instantiate_gemv_bp_helper(                                                  \
-      name,                                                                    \
-      itype,                                                                   \
-      bm,                                                                      \
-      bn,                                                                      \
-      sm,                                                                      \
-      sn,                                                                      \
-      tm,                                                                      \
-      0,                                                                       \
-      0,                                                                       \
-      bp                                                                       \
-  ) instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 0, 1, bp)      \
-      instantiate_gemv_bp_helper(name, itype, bm, bn, sm, sn, tm, 1, 0, bp)    \
-          instantiate_gemv_bp_helper(                                          \
-              name,                                                            \
-              itype,                                                           \
-              bm,                                                              \
-              bn,                                                              \
-              sm,                                                              \
-              sn,                                                              \
-              tm,                                                              \
-              1,                                                               \
-              1,                                                               \
-              bp                                                               \
-          ) // clang-format on
-
-// clang-format off
-#define instantiate_gemv_blocks(name, itype) \
-  instantiate_gemv(name, itype, 1,  8, 1, 32, 4, 4) \
-  instantiate_gemv(name, itype, 1,  8, 1, 32, 1, 4) \
-  instantiate_gemv(name, itype, 1,  1, 8,  4, 4, 4) \
-  instantiate_gemv(name, itype, 1,  1, 8,  4, 1, 4) \
-  instantiate_gemv(name, itype, 4,  1, 1, 32, 1, 4) \
-  instantiate_gemv(name, itype, 4,  1, 1, 32, 4, 4) \
-  instantiate_gemv(name, itype, 8,  1, 1, 32, 4, 4) // clang-format on
-
-#define instantiate_gemv_bp_blocks(name, itype, bp)                            \
-  instantiate_gemv_bp(name, itype, 1, 8, 1, 32, 4, bp)                         \
-      instantiate_gemv_bp(name, itype, 1, 8, 1, 32, 1, bp)                     \
-          instantiate_gemv_bp(name, itype, 1, 1, 8, 4, 4, bp)                  \
-              instantiate_gemv_bp(name, itype, 1, 1, 8, 4, 1, bp)              \
-                  instantiate_gemv_bp(name, itype, 4, 1, 1, 32, 1, bp)         \
-                      instantiate_gemv_bp(name, itype, 4, 1, 1, 32, 4, bp)     \
-                          instantiate_gemv_bp(                                 \
-                              name,                                            \
-                              itype,                                           \
-                              8,                                               \
-                              1,                                               \
-                              1,                                               \
-                              32,                                              \
-                              4,                                               \
-                              bp                                               \
-                          ) // clang-format on
-
-instantiate_gemv_blocks(float32, float);
-instantiate_gemv_blocks(float16, half);
-instantiate_gemv_blocks(bfloat16, bfloat16_t);
-instantiate_gemv_blocks(complex64, complex64_t);
-instantiate_gemv_bp_blocks(float32, float, 2);
-instantiate_gemv_bp_blocks(float16, half, 2);
-instantiate_gemv_bp_blocks(bfloat16, bfloat16_t, 2);
-instantiate_gemv_bp_blocks(float32, float, 4);
-instantiate_gemv_bp_blocks(float16, half, 4);
-instantiate_gemv_bp_blocks(bfloat16, bfloat16_t, 4);
-
-template <
-    typename T,
-    const int BM, /* Threadgroup rows (in simdgroups) */
-    const int BN, /* Threadgroup cols (in simdgroups) */
-    const int SM, /* Simdgroup rows (in threads) */
-    const int SN, /* Simdgroup cols (in threads) */
-    const int TM, /* Thread rows (in elements) */
-    const int TN> /* Thread cols (in elements) */
-[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_gather(
-    const device T* mat [[buffer(0)]],
-    const device T* in_vec [[buffer(1)]],
-    const device T* bias [[buffer(2)]],
-    device T* out_vec [[buffer(3)]],
-    const constant int& in_vec_size [[buffer(4)]],
-    const constant int& out_vec_size [[buffer(5)]],
-    const constant int& marix_ld [[buffer(6)]],
-    const constant float& alpha [[buffer(7)]],
-    const constant float& beta [[buffer(8)]],
-    const constant int& batch_ndim [[buffer(9)]],
-    const constant int* batch_shape [[buffer(10)]],
-    const constant int64_t* index_batch_strides [[buffer(11)]],
-    const constant int& vector_batch_ndim [[buffer(12)]],
-    const constant int* vector_batch_shape [[buffer(13)]],
-    const constant int64_t* vector_batch_stride [[buffer(14)]],
-    const constant int& matrix_batch_ndim [[buffer(15)]],
-    const constant int* matrix_batch_shape [[buffer(16)]],
-    const constant int64_t* matrix_batch_stride [[buffer(17)]],
-    const constant uint32_t* vec_indices [[buffer(18)]],
-    const constant uint32_t* mat_indices [[buffer(19)]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]],
-    uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]
-) {
-  using gemv_kernel = GEMVKernel<T, BM, BN, SM, SN, TM, TN, false, 1>;
-  threadgroup typename gemv_kernel::acc_type tgp_memory
-      [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
-
-  uint32_t indx_vec;
-  uint32_t indx_mat;
-
-  // Update batch offsets
-  if (batch_ndim > 1) {
-    const constant auto* veci_bstrides = index_batch_strides;
-    const constant auto* mati_bstrides = index_batch_strides + batch_ndim;
-
-    ulong2 batch_offsets = elem_to_loc_broadcast(
-        tid.z,
-        batch_shape,
-        veci_bstrides,
-        mati_bstrides,
-        batch_ndim
-    );
-
-    indx_vec = vec_indices[batch_offsets.x];
-    indx_mat = mat_indices[batch_offsets.y];
-
-  } else {
-    indx_vec = vec_indices[index_batch_strides[0] * tid.z];
-    indx_mat = mat_indices[index_batch_strides[batch_ndim] * tid.z];
-  }
-
-  if (vector_batch_ndim > 1) {
-    in_vec += elem_to_loc(
-        indx_vec,
-        vector_batch_shape,
-        vector_batch_stride,
-        vector_batch_ndim
-    );
-  } else {
-    in_vec += indx_vec * vector_batch_stride[0];
-  }
-
-  if (matrix_batch_ndim > 1) {
-    mat += elem_to_loc(
-        indx_mat,
-        matrix_batch_shape,
-        matrix_batch_stride,
-        matrix_batch_ndim
-    );
-  } else {
-    mat += indx_mat * matrix_batch_stride[0];
-  }
-
-  out_vec += tid.z * out_vec_size;
-
-  gemv_kernel::run(
-      mat,
-      in_vec,
-      bias,
-      out_vec,
-      in_vec_size,
-      out_vec_size,
-      marix_ld,
-      alpha,
-      beta,
-      out_vec_size,
-      0,
-      gemv_kernel::tgp_mem_size == 0 ? nullptr : tgp_memory,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
-  );
-}
-
-// clang-format off
-#define instantiate_gemv_bs_helper(nm, itype, bm, bn, sm, sn, tm, tn) \
-  instantiate_kernel(                                                 \
-    "gemv_gather_" #nm "_bm" #bm "_bn" #bn "_sm" #sm                  \
-                       "_sn" #sn "_tm" #tm "_tn" #tn,                 \
-    gemv_gather, itype, bm, bn, sm, sn, tm, tn)
-
-#define instantiate_gemv_bs_blocks(name, itype)              \
-  instantiate_gemv_bs_helper(name, itype, 4, 1, 1, 32, 1, 4) \
-  instantiate_gemv_bs_helper(name, itype, 4, 1, 1, 32, 4, 4) \
-  instantiate_gemv_bs_helper(name, itype, 8, 1, 1, 32, 4, 4) // clang-format on
-
-instantiate_gemv_bs_blocks(float32, float);
-instantiate_gemv_bs_blocks(float16, half);
-instantiate_gemv_bs_blocks(bfloat16, bfloat16_t);
-instantiate_gemv_bs_blocks(complex64, complex64_t);
-
 ///////////////////////////////////////////////////////////////////////////////
-/// Vector matrix multiplication
+/// DSL GEMV kernels
 ///////////////////////////////////////////////////////////////////////////////
 
 template <
     typename T,
-    const int BM,          /* Threadgroup rows (in simdgroups) */
-    const int BN,          /* Threadgroup cols (in simdgroups) */
-    const int SM,          /* Simdgroup rows (in threads) */
-    const int SN,          /* Simdgroup cols (in threads) */
-    const int TM,          /* Thread rows (in elements) */
-    const int TN,          /* Thread cols (in elements) */
-    const bool kDoNCBatch, /* Batch ndim > 1 */
-    const bool kDoAxpby>   /* Do out = alpha * out + beta * bias */
-[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_t(
-    const device T* mat [[buffer(0)]],
-    const device T* in_vec [[buffer(1)]],
-    const device T* bias [[buffer(2)]],
-    device T* out_vec [[buffer(3)]],
-    const constant int& in_vec_size [[buffer(4)]],
-    const constant int& out_vec_size [[buffer(5)]],
-    const constant int& marix_ld [[buffer(6)]],
-    const constant float& alpha [[buffer(7)]],
-    const constant float& beta [[buffer(8)]],
-    const constant int& batch_ndim [[buffer(9)]],
-    const constant int* batch_shape [[buffer(10)]],
-    const constant int64_t* vector_batch_stride [[buffer(11)]],
-    const constant int64_t* matrix_batch_stride [[buffer(12)]],
-    const constant int64_t* bias_batch_stride [[buffer(13)]],
-    const constant int& bias_stride [[buffer(14)]],
-    const constant int& batch_rows [[buffer(15)]],
-    const constant int& output_ld [[buffer(16)]],
-    const constant int& vector_ld [[buffer(17)]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]],
-    uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]
+    const int threadgroup_simd_rows,
+    const int threadgroup_simd_cols,
+    const int simdgroup_thread_rows,
+    const int simdgroup_thread_cols,
+    const int thread_output_rows,
+    const int thread_output_cols,
+    const bool apply_output_scale_and_accumulate>
+inline void run_matmul_gemv_shape(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source,
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    threadgroup typename GEMVKernel<
+        T,
+        threadgroup_simd_rows,
+        threadgroup_simd_cols,
+        simdgroup_thread_rows,
+        simdgroup_thread_cols,
+        thread_output_rows,
+        thread_output_cols,
+        false,
+        1>::acc_type* threadgroup_memory,
+    const uint3 threadgroup_position,
+    const uint3 thread_position,
+    const uint simd_group_index,
+    const uint simd_lane_index
 ) {
-  using gemv_kernel = GEMVTKernel<T, BM, BN, SM, SN, TM, TN, kDoAxpby>;
-  threadgroup typename gemv_kernel::acc_type tgp_memory
-      [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
+  using gemv_kernel = GEMVKernel<
+      T,
+      threadgroup_simd_rows,
+      threadgroup_simd_cols,
+      simdgroup_thread_rows,
+      simdgroup_thread_cols,
+      thread_output_rows,
+      thread_output_cols,
+      apply_output_scale_and_accumulate,
+      1>;
 
-  // Batched GEMV: tid.y is the batch row index
-  const int batch_row = tid.y;
+  const int batch_row = static_cast<int>(threadgroup_position.y);
   if (batch_row >= batch_rows) {
     return;
   }
 
-  // Update batch offsets
-  if (kDoNCBatch) {
-    in_vec += elem_to_loc(tid.z, batch_shape, vector_batch_stride, batch_ndim);
-    mat += elem_to_loc(tid.z, batch_shape, matrix_batch_stride, batch_ndim);
-
-    if (kDoAxpby) {
-      bias += elem_to_loc(tid.z, batch_shape, bias_batch_stride, batch_ndim);
-    }
-
-  } else {
-    in_vec += tid.z * vector_batch_stride[0];
-    mat += tid.z * matrix_batch_stride[0];
-
-    if (kDoAxpby) {
-      bias += tid.z * bias_batch_stride[0];
-    }
+  input_vector += threadgroup_position.z * vector_batch_stride[0];
+  matrix += threadgroup_position.z * matrix_batch_stride[0];
+  IF_CONSTEXPR(apply_output_scale_and_accumulate) {
+    output_source += threadgroup_position.z * output_source_batch_stride[0];
   }
 
-  // Offset by batch row (tid.y)
-  in_vec += batch_row * vector_ld;
-  out_vec += tid.z * batch_rows * output_ld + batch_row * output_ld;
+  output_vector += threadgroup_position.z * batch_rows * output_dimension;
 
   gemv_kernel::run(
-      mat,
-      in_vec,
-      bias,
-      out_vec,
-      in_vec_size,
-      out_vec_size,
-      marix_ld,
-      alpha,
-      beta,
-      bias_stride,
-      gemv_kernel::tgp_mem_size == 0 ? nullptr : tgp_memory,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
+      matrix,
+      input_vector,
+      output_source,
+      output_vector,
+      input_dimension,
+      output_dimension,
+      matrix_leading_dimension,
+      output_scale,
+      output_accumulate_scale,
+      output_source_stride,
+      batch_row,
+      gemv_kernel::tgp_mem_size == 0 ? nullptr : threadgroup_memory,
+      threadgroup_position,
+      thread_position,
+      simd_group_index,
+      simd_lane_index
   );
 }
 
-// clang-format off
-#define instantiate_gemv_t_helper(                          \
-    name, itype, bm, bn, sm, sn, tm, tn, nc, axpby)         \
-  instantiate_kernel(                                       \
-    "gemv_t_" #name "_bm" #bm "_bn" #bn "_sm" #sm "_sn" #sn \
-       "_tm" #tm "_tn" #tn "_nc" #nc "_axpby" #axpby,       \
-  gemv_t, itype, bm, bn, sm, sn, tm, tn, nc, axpby)
-
-#define instantiate_gemv_t(name, itype, bm, bn, sm, sn, tm, tn)        \
-  instantiate_gemv_t_helper(name, itype, bm, bn, sm, sn, tm, tn, 0, 0) \
-  instantiate_gemv_t_helper(name, itype, bm, bn, sm, sn, tm, tn, 0, 1) \
-  instantiate_gemv_t_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 0) \
-  instantiate_gemv_t_helper(name, itype, bm, bn, sm, sn, tm, tn, 1, 1) // clang-format on
-
-// clang-format off
-#define instantiate_gemv_t_blocks(name, itype) \
-  instantiate_gemv_t(name, itype, 1, 2,  8, 4, 4, 1) \
-  instantiate_gemv_t(name, itype, 1, 2,  8, 4, 4, 4) \
-  instantiate_gemv_t(name, itype, 1, 4,  8, 4, 4, 4) \
-  instantiate_gemv_t(name, itype, 1, 16, 8, 4, 4, 4) \
-  instantiate_gemv_t(name, itype, 1, 16, 4, 8, 4, 4) // clang-format on
-
-// clang-format off
-instantiate_gemv_t_blocks(float32, float);
-instantiate_gemv_t_blocks(float16, half);
-instantiate_gemv_t_blocks(bfloat16, bfloat16_t);
-instantiate_gemv_t_blocks(complex64, complex64_t); // clang-format on
-
-template <
-    typename T,
-    const int BM, /* Threadgroup rows (in simdgroups) */
-    const int BN, /* Threadgroup cols (in simdgroups) */
-    const int SM, /* Simdgroup rows (in threads) */
-    const int SN, /* Simdgroup cols (in threads) */
-    const int TM, /* Thread rows (in elements) */
-    const int TN> /* Thread cols (in elements) */
-[[kernel, max_total_threads_per_threadgroup(BM * BN * 32)]] void gemv_t_gather(
-    const device T* mat [[buffer(0)]],
-    const device T* in_vec [[buffer(1)]],
-    const device T* bias [[buffer(2)]],
-    device T* out_vec [[buffer(3)]],
-    const constant int& in_vec_size [[buffer(4)]],
-    const constant int& out_vec_size [[buffer(5)]],
-    const constant int& marix_ld [[buffer(6)]],
-    const constant float& alpha [[buffer(7)]],
-    const constant float& beta [[buffer(8)]],
-    const constant int& batch_ndim [[buffer(9)]],
-    const constant int* batch_shape [[buffer(10)]],
-    const constant int64_t* index_batch_strides [[buffer(11)]],
-    const constant int& vector_batch_ndim [[buffer(12)]],
-    const constant int* vector_batch_shape [[buffer(13)]],
-    const constant int64_t* vector_batch_stride [[buffer(14)]],
-    const constant int& matrix_batch_ndim [[buffer(15)]],
-    const constant int* matrix_batch_shape [[buffer(16)]],
-    const constant int64_t* matrix_batch_stride [[buffer(17)]],
-    const constant uint32_t* vec_indices [[buffer(18)]],
-    const constant uint32_t* mat_indices [[buffer(19)]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]],
-    uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape0)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 1, 8, 1, 32, 4, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 1, 8, 1, 32, 4, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 1, 8, 1, 32, 4, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 4 - 1) / 4),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(8),
+    const uint thread_index_z THREADS(1),
+    const Simd simd
 ) {
-  using gemv_kernel = GEMVTKernel<T, BM, BN, SM, SN, TM, TN, false>;
-  threadgroup typename gemv_kernel::acc_type tgp_memory
-      [gemv_kernel::tgp_mem_size == 0 ? 1 : gemv_kernel::tgp_mem_size];
-
-  uint32_t indx_vec;
-  uint32_t indx_mat;
-
-  // Update batch offsets
-  if (batch_ndim > 1) {
-    const constant auto* veci_bstrides = index_batch_strides;
-    const constant auto* mati_bstrides = index_batch_strides + batch_ndim;
-
-    ulong2 batch_offsets = elem_to_loc_broadcast(
-        tid.z,
-        batch_shape,
-        veci_bstrides,
-        mati_bstrides,
-        batch_ndim
-    );
-
-    indx_vec = vec_indices[batch_offsets.x];
-    indx_mat = mat_indices[batch_offsets.y];
-
-  } else {
-    indx_vec = vec_indices[index_batch_strides[0] * tid.z];
-    indx_mat = mat_indices[index_batch_strides[batch_ndim] * tid.z];
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
   }
-
-  if (vector_batch_ndim > 1) {
-    in_vec += elem_to_loc(
-        indx_vec,
-        vector_batch_shape,
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 1, 8, 1, 32, 4, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
         vector_batch_stride,
-        vector_batch_ndim
-    );
-  } else {
-    in_vec += indx_vec * vector_batch_stride[0];
-  }
-
-  if (matrix_batch_ndim > 1) {
-    mat += elem_to_loc(
-        indx_mat,
-        matrix_batch_shape,
         matrix_batch_stride,
-        matrix_batch_ndim
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
     );
   } else {
-    mat += indx_mat * matrix_batch_stride[0];
+    run_matmul_gemv_shape<T, 1, 8, 1, 32, 4, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
   }
-
-  out_vec += tid.z * out_vec_size;
-
-  gemv_kernel::run(
-      mat,
-      in_vec,
-      bias,
-      out_vec,
-      in_vec_size,
-      out_vec_size,
-      marix_ld,
-      alpha,
-      beta,
-      batch_ndim, // Not used,
-      gemv_kernel::tgp_mem_size == 0 ? nullptr : tgp_memory,
-      tid,
-      lid,
-      simd_gid,
-      simd_lid
-  );
 }
 
-// clang-format off
-#define instantiate_gemv_t_bs_helper(                  \
-    nm, itype, bm, bn, sm, sn, tm, tn)                 \
-  instantiate_kernel(                                  \
-    "gemv_t_gather_" #nm "_bm" #bm "_bn" #bn "_sm" #sm \
-       "_sn" #sn "_tm" #tm "_tn" #tn,                  \
-  gemv_t_gather, itype, bm, bn, sm, sn, tm, tn)
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape1)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 1, 8, 1, 32, 1, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 1, 8, 1, 32, 1, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 1, 8, 1, 32, 1, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 1 - 1) / 1),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(8),
+    const uint thread_index_z THREADS(1),
+    const Simd simd
+) {
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
+  }
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 1, 8, 1, 32, 1, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  } else {
+    run_matmul_gemv_shape<T, 1, 8, 1, 32, 1, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  }
+}
 
-#define instantiate_gemv_t_bs_blocks(name, itype)              \
-  instantiate_gemv_t_bs_helper(name, itype, 1,  2, 8, 4, 4, 1) \
-  instantiate_gemv_t_bs_helper(name, itype, 1,  2, 8, 4, 4, 4) \
-  instantiate_gemv_t_bs_helper(name, itype, 1,  4, 8, 4, 4, 4) \
-  instantiate_gemv_t_bs_helper(name, itype, 1, 16, 8, 4, 4, 4) \
-  instantiate_gemv_t_bs_helper(name, itype, 1, 16, 4, 8, 4, 4) // clang-format on
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape2)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 1, 1, 8, 4, 4, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 1, 1, 8, 4, 4, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 1, 1, 8, 4, 4, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 32 - 1) / 32),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(1),
+    const uint thread_index_z THREADS(1),
+    const Simd simd
+) {
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
+  }
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 1, 1, 8, 4, 4, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  } else {
+    run_matmul_gemv_shape<T, 1, 1, 8, 4, 4, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  }
+}
 
-// clang-format off
-instantiate_gemv_t_bs_blocks(float32, float);
-instantiate_gemv_t_bs_blocks(float16, half);
-instantiate_gemv_t_bs_blocks(bfloat16, bfloat16_t);
-instantiate_gemv_t_bs_blocks(complex64, complex64_t); // clang-format on
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape3)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 1, 1, 8, 4, 1, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 1, 1, 8, 4, 1, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 1, 1, 8, 4, 1, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 8 - 1) / 8),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(1),
+    const uint thread_index_z THREADS(1),
+    const Simd simd
+) {
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
+  }
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 1, 1, 8, 4, 1, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  } else {
+    run_matmul_gemv_shape<T, 1, 1, 8, 4, 1, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape4)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 4, 1, 1, 32, 1, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 4, 1, 1, 32, 1, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 4, 1, 1, 32, 1, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 4 - 1) / 4),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(1),
+    const uint thread_index_z THREADS(4),
+    const Simd simd
+) {
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
+  }
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 4, 1, 1, 32, 1, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  } else {
+    run_matmul_gemv_shape<T, 4, 1, 1, 32, 1, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape5)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 4, 1, 1, 32, 4, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 4, 1, 1, 32, 4, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 4, 1, 1, 32, 4, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 16 - 1) / 16),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(1),
+    const uint thread_index_z THREADS(4),
+    const Simd simd
+) {
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
+  }
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 4, 1, 1, 32, 4, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  } else {
+    run_matmul_gemv_shape<T, 4, 1, 1, 32, 4, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  }
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemvShape6)(
+    const device T* matrix,
+    const device T* input_vector,
+    const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
+    device T* output_vector,
+    const constant int& input_dimension,
+    const constant int& output_dimension,
+    const constant int& matrix_leading_dimension,
+    const constant float& output_scale,
+    const constant float& output_accumulate_scale,
+    const constant int& batch_ndim,
+    const constant int* batch_shape,
+    const constant int* vector_batch_stride,
+    const constant int* matrix_batch_stride,
+    const constant int* output_source_batch_stride,
+    const constant int& output_source_stride,
+    const constant int& batch_rows,
+    const constant int& output_leading_dimension,
+    const constant int& vector_leading_dimension,
+    threadgroup typename GEMVKernel<T, 8, 1, 1, 32, 4, 4, false, 1>::acc_type
+        threadgroup_memory[GEMVKernel<T, 8, 1, 1, 32, 4, 4, false, 1>::tgp_mem_size == 0
+            ? 1
+            : GEMVKernel<T, 8, 1, 1, 32, 4, 4, false, 1>::tgp_mem_size],
+    const bool apply_output_scale_and_accumulate SPECIALIZE,
+    const uint threadgroup_index_x GROUPS((output_dimension + 32 - 1) / 32),
+    const uint threadgroup_index_y GROUPS(batch_rows),
+    const uint threadgroup_index_z GROUPS(batch_shape[0]),
+    const uint thread_index_x THREADS(32),
+    const uint thread_index_y THREADS(1),
+    const uint thread_index_z THREADS(8),
+    const Simd simd
+) {
+  if (batch_ndim == 0 || output_leading_dimension == 0 || vector_leading_dimension == 0) {
+    return;
+  }
+  const uint3 threadgroup_position = uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
+  const uint3 thread_position = uint3(thread_index_x, thread_index_y, thread_index_z);
+  if (apply_output_scale_and_accumulate) {
+    run_matmul_gemv_shape<T, 8, 1, 1, 32, 4, 4, true>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  } else {
+    run_matmul_gemv_shape<T, 8, 1, 1, 32, 4, 4, false>(
+        matrix,
+        input_vector,
+        output_source,
+        output_vector,
+        input_dimension,
+        output_dimension,
+        matrix_leading_dimension,
+        output_scale,
+        output_accumulate_scale,
+        vector_batch_stride,
+        matrix_batch_stride,
+        output_source_batch_stride,
+        output_source_stride,
+        batch_rows,
+        threadgroup_memory,
+        threadgroup_position,
+        thread_position,
+        simd.group_idx,
+        simd.lane_idx
+    );
+  }
+}
+

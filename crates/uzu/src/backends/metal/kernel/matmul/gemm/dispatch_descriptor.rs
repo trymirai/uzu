@@ -5,7 +5,7 @@ use crate::{
     DataType,
     backends::metal::{
         DeviceClass, MetalContext, MetalError,
-        kernel::matmul::common::{GEMMAddMMParams, GEMMParams, MatmulArguments},
+        kernel::matmul::common::{GEMMParams, MatmulArguments},
     },
 };
 
@@ -13,9 +13,7 @@ use crate::{
 pub(crate) struct DispatchDescriptor {
     pub(crate) pipeline_configuration: PipelineConfiguration,
     pub(crate) params: GEMMParams,
-    pub(crate) addmm_params: Option<GEMMAddMMParams>,
     pub(crate) threadgroups: MTLSize,
-    pub(crate) threads_per_threadgroup: MTLSize,
 }
 
 impl DispatchDescriptor {
@@ -79,32 +77,12 @@ impl DispatchDescriptor {
             batch_ndim: 1,
         };
 
-        let addmm_params = if pipeline_configuration.use_out_source {
-            let batch_stride_c = if arguments.batch_count > 1 {
-                (arguments.ldd as i64) * (arguments.output_dim as i64)
-            } else {
-                0
-            };
-            Some(GEMMAddMMParams {
-                ldc: arguments.ldd,
-                fdc: 1,
-                batch_stride_c,
-                alpha: arguments.alpha,
-                beta: arguments.beta,
-            })
-        } else {
-            None
-        };
-
-        let threads_per_threadgroup = MTLSize::new(32, tile.warps_per_col as usize, tile.warps_per_row as usize);
         let threadgroups = MTLSize::new(tn_swizzled as usize, tm_swizzled as usize, arguments.batch_count as usize);
 
         Ok(Self {
             pipeline_configuration,
             params,
-            addmm_params,
             threadgroups,
-            threads_per_threadgroup,
         })
     }
 }

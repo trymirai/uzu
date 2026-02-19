@@ -2,33 +2,210 @@
 
 // clang-format off
 #include "../../../common/utils.h"
+#include "../../../definitions.metal"
 
 #include "../../common/steel/gemm/gemm.h"
 #include "steel_gemm.h"
 
-#define instantiate_gemm(tname, trans_a, trans_b, iname, itype, oname, otype, bm, bn, bk, wm, wn) \
-  instantiate_kernel(                                                                             \
-      "steel_gemm_" #tname "_"  #iname "_" #oname                                                 \
-      "_bm" #bm "_bn" #bn "_bk" #bk "_wm" #wm "_wn" #wn,                                          \
-  gemm, itype, bm, bn, bk, wm, wn, trans_a, trans_b, float)
+namespace uzu {
+namespace matmul {
+using GEMMParams = steel::GEMMParams;
+} // namespace matmul
+} // namespace uzu
 
-#define instantiate_gemm_transpose_helper(iname, itype, oname, otype, bm, bn, bk, wm, wn) \
-    instantiate_gemm(nn, false, false, iname, itype, oname, otype, bm, bn, bk, wm, wn) \
-    instantiate_gemm(nt, false, true , iname, itype, oname, otype, bm, bn, bk, wm, wn) \
-    instantiate_gemm(tn, true , false, iname, itype, oname, otype, bm, bn, bk, wm, wn) \
-    instantiate_gemm(tt, true , true , iname, itype, oname, otype, bm, bn, bk, wm, wn)
+template <typename T, int BM, int BN, int BK, int WM, int WN>
+METAL_FUNC void run_matmul_gemm_shape(
+    const device T* a,
+    const device T* b,
+    device T* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const bool align_m,
+    const bool align_n,
+    const bool align_k,
+    threadgroup T* a_shared,
+    threadgroup T* b_shared,
+    const uint3 threadgroup_position,
+    const uint3 thread_position,
+    const Simd simd
+) {
+  gemm_impl<T, BM, BN, BK, WM, WN, false, true, float>(
+      a,
+      b,
+      (const device T*)nullptr,
+      d,
+      params,
+      (const constant GEMMAddMMParams*)nullptr,
+      (const constant int*)nullptr,
+      (const constant int64_t*)nullptr,
+      false,
+      false,
+      false,
+      align_m,
+      align_n,
+      align_k,
+      a_shared,
+      b_shared,
+      simd.lane_idx,
+      simd.group_idx,
+      threadgroup_position,
+      thread_position
+  );
+}
 
-#define instantiate_gemm_shapes_helper(iname, itype, oname, otype) \
-    instantiate_gemm_transpose_helper(iname, itype, oname, otype, 64, 64, 16, 2, 2) \
-    instantiate_gemm_transpose_helper(iname, itype, oname, otype, 64, 64, 16, 1, 2) \
-    instantiate_gemm_transpose_helper(iname, itype, oname, otype, 64, 32, 32, 2, 2) \
-    instantiate_gemm_transpose_helper(iname, itype, oname, otype, 32, 64, 16, 1, 2) \
-    instantiate_gemm_transpose_helper(iname, itype, oname, otype, 32, 32, 16, 2, 2) \
-    instantiate_gemm_transpose_helper(iname, itype, oname, otype, 64, 32,  8, 4, 1)
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemmTile64x64x16Warp2x2)(
+    const device T* a,
+    const device T* b,
+    device T* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const bool align_m SPECIALIZE,
+    const bool align_n SPECIALIZE,
+    const bool align_k SPECIALIZE,
+    const constant uint& group_count_x,
+    const constant uint& group_count_y,
+    const constant uint& group_count_z,
+    threadgroup T a_shared[GEMMKernel<T, T, 64, 64, 16, 2, 2, false, true, true, true, float>::tgp_mem_size_a],
+    threadgroup T b_shared[GEMMKernel<T, T, 64, 64, 16, 2, 2, false, true, true, true, float>::tgp_mem_size_b],
+    const uint group_x GROUPS(group_count_x),
+    const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
+    const uint thread_x THREADS(32),
+    const uint thread_y THREADS(2),
+    const uint thread_z THREADS(2),
+    const Simd simd
+) {
+  run_matmul_gemm_shape<T, 64, 64, 16, 2, 2>(
+      a,
+      b,
+      d,
+      params,
+      align_m,
+      align_n,
+      align_k,
+      a_shared,
+      b_shared,
+      uint3(group_x, group_y, group_z),
+      uint3(thread_x, thread_y, thread_z),
+      simd
+  );
+}
 
-instantiate_gemm_shapes_helper(float16, half, float16, half);
-instantiate_gemm_shapes_helper(bfloat16, bfloat16_t, bfloat16, bfloat16_t);
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemmTile64x64x16Warp1x2)(
+    const device T* a,
+    const device T* b,
+    device T* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const bool align_m SPECIALIZE,
+    const bool align_n SPECIALIZE,
+    const bool align_k SPECIALIZE,
+    const constant uint& group_count_x,
+    const constant uint& group_count_y,
+    const constant uint& group_count_z,
+    threadgroup T a_shared[GEMMKernel<T, T, 64, 64, 16, 1, 2, false, true, true, true, float>::tgp_mem_size_a],
+    threadgroup T b_shared[GEMMKernel<T, T, 64, 64, 16, 1, 2, false, true, true, true, float>::tgp_mem_size_b],
+    const uint group_x GROUPS(group_count_x),
+    const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
+    const uint thread_x THREADS(32),
+    const uint thread_y THREADS(2),
+    const uint thread_z THREADS(1),
+    const Simd simd
+) {
+  run_matmul_gemm_shape<T, 64, 64, 16, 1, 2>(
+      a,
+      b,
+      d,
+      params,
+      align_m,
+      align_n,
+      align_k,
+      a_shared,
+      b_shared,
+      uint3(group_x, group_y, group_z),
+      uint3(thread_x, thread_y, thread_z),
+      simd
+  );
+}
 
-instantiate_gemm_shapes_helper(float32, float, float32, float);
-instantiate_gemm_shapes_helper(complex64, complex64_t, complex64, complex64_t);
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemmTile64x32x32Warp2x2)(
+    const device T* a,
+    const device T* b,
+    device T* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const bool align_m SPECIALIZE,
+    const bool align_n SPECIALIZE,
+    const bool align_k SPECIALIZE,
+    const constant uint& group_count_x,
+    const constant uint& group_count_y,
+    const constant uint& group_count_z,
+    threadgroup T a_shared[GEMMKernel<T, T, 64, 32, 32, 2, 2, false, true, true, true, float>::tgp_mem_size_a],
+    threadgroup T b_shared[GEMMKernel<T, T, 64, 32, 32, 2, 2, false, true, true, true, float>::tgp_mem_size_b],
+    const uint group_x GROUPS(group_count_x),
+    const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
+    const uint thread_x THREADS(32),
+    const uint thread_y THREADS(2),
+    const uint thread_z THREADS(2),
+    const Simd simd
+) {
+  run_matmul_gemm_shape<T, 64, 32, 32, 2, 2>(
+      a,
+      b,
+      d,
+      params,
+      align_m,
+      align_n,
+      align_k,
+      a_shared,
+      b_shared,
+      uint3(group_x, group_y, group_z),
+      uint3(thread_x, thread_y, thread_z),
+      simd
+  );
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(MatmulGemmTile32x64x16Warp1x2)(
+    const device T* a,
+    const device T* b,
+    device T* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const bool align_m SPECIALIZE,
+    const bool align_n SPECIALIZE,
+    const bool align_k SPECIALIZE,
+    const constant uint& group_count_x,
+    const constant uint& group_count_y,
+    const constant uint& group_count_z,
+    threadgroup T a_shared[GEMMKernel<T, T, 32, 64, 16, 1, 2, false, true, true, true, float>::tgp_mem_size_a],
+    threadgroup T b_shared[GEMMKernel<T, T, 32, 64, 16, 1, 2, false, true, true, true, float>::tgp_mem_size_b],
+    const uint group_x GROUPS(group_count_x),
+    const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
+    const uint thread_x THREADS(32),
+    const uint thread_y THREADS(2),
+    const uint thread_z THREADS(1),
+    const Simd simd
+) {
+  run_matmul_gemm_shape<T, 32, 64, 16, 1, 2>(
+      a,
+      b,
+      d,
+      params,
+      align_m,
+      align_n,
+      align_k,
+      a_shared,
+      b_shared,
+      uint3(group_x, group_y, group_z),
+      uint3(thread_x, thread_y, thread_z),
+      simd
+  );
+}
+
 // clang-format on

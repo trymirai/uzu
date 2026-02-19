@@ -6,15 +6,6 @@ using namespace steel;
 // GEMM kernels
 ///////////////////////////////////////////////////////////////////////////////
 
-constant bool has_batch [[function_constant(10)]];
-
-constant bool use_out_source [[function_constant(100)]];
-constant bool do_axpby [[function_constant(110)]];
-
-constant bool align_M [[function_constant(200)]];
-constant bool align_N [[function_constant(201)]];
-constant bool align_K [[function_constant(202)]];
-
 // clang-format off
 template <
     typename T,
@@ -26,19 +17,27 @@ template <
     bool transpose_a,
     bool transpose_b,
     typename AccumType = float>
-[[kernel, max_total_threads_per_threadgroup(WM* WN * 32)]] void gemm(
-    const device T* A [[buffer(0)]],
-    const device T* B [[buffer(1)]],
-    const device T* C [[buffer(2), function_constant(use_out_source)]],
-    device T* D [[buffer(3)]],
-    const constant GEMMParams* params [[buffer(4)]],
-    const constant GEMMAddMMParams* addmm_params [[buffer(5), function_constant(use_out_source)]],
-    const constant int* batch_shape [[buffer(6), function_constant(has_batch)]],
-    const constant int64_t* batch_strides [[buffer(7), function_constant(has_batch)]],
-    uint simd_lane_id [[thread_index_in_simdgroup]],
-    uint simd_group_id [[simdgroup_index_in_threadgroup]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint3 lid [[thread_position_in_threadgroup]]) { // clang-format on
+METAL_FUNC void gemm_impl(
+    const device T* a,
+    const device T* b,
+    const device T* c,
+    device T* d,
+    const constant GEMMParams* params,
+    const constant GEMMAddMMParams* addmm_params,
+    const constant int* batch_shape,
+    const constant int64_t* batch_strides,
+    const bool has_batch,
+    const bool use_out_source,
+    const bool do_axpby,
+    const bool align_m,
+    const bool align_n,
+    const bool align_k,
+    threadgroup T* a_shared,
+    threadgroup T* b_shared,
+    uint simd_lane_id,
+    uint simd_group_id,
+    uint3 tid,
+    uint3 lid) { // clang-format on
   // Pacifying compiler
   (void)lid;
 
@@ -72,71 +71,67 @@ template <
 
   // Adjust for batch
   if (has_batch) {
-    const constant auto* A_bstrides = batch_strides;
-    const constant auto* B_bstrides = batch_strides + params->batch_ndim;
+    const constant auto* a_bstrides = batch_strides;
+    const constant auto* b_bstrides = batch_strides + params->batch_ndim;
 
     ulong2 batch_offsets = elem_to_loc_broadcast(
         tid.z,
         batch_shape,
-        A_bstrides,
-        B_bstrides,
+        a_bstrides,
+        b_bstrides,
         params->batch_ndim
     );
 
-    A += batch_offsets.x;
-    B += batch_offsets.y;
+    a += batch_offsets.x;
+    b += batch_offsets.y;
 
     if (use_out_source) {
-      const constant auto* C_bstrides = B_bstrides + params->batch_ndim;
-      C += elem_to_loc(tid.z, batch_shape, C_bstrides, params->batch_ndim);
+      const constant auto* c_bstrides = b_bstrides + params->batch_ndim;
+      c += elem_to_loc(tid.z, batch_shape, c_bstrides, params->batch_ndim);
     }
   } else {
-    A += params->batch_stride_a * tid.z;
-    B += params->batch_stride_b * tid.z;
+    a += params->batch_stride_a * tid.z;
+    b += params->batch_stride_b * tid.z;
 
     if (use_out_source) {
-      C += addmm_params->batch_stride_c * tid.z;
+      c += addmm_params->batch_stride_c * tid.z;
     }
   }
 
-  D += params->batch_stride_d * tid.z;
-
-  // Prepare threadgroup memory
-  threadgroup T As[gemm_kernel::tgp_mem_size_a];
-  threadgroup T Bs[gemm_kernel::tgp_mem_size_b];
+  d += params->batch_stride_d * tid.z;
 
   threadgroup_barrier(mem_flags::mem_none);
 
-  // Find block in A, B, C
+  // Find block in a, b, c
   const int c_row = tid_y * BM;
   const int c_col = tid_x * BN;
   const size_t c_row_long = size_t(c_row);
   const size_t c_col_long = size_t(c_col);
 
-  A += transpose_a ? c_row_long : c_row_long * params->lda;
-  B += transpose_b ? c_col_long * params->ldb : c_col_long;
-  D += c_row_long * params->ldd + c_col_long;
+  a += transpose_a ? c_row_long : c_row_long * params->lda;
+  b += transpose_b ? c_col_long * params->ldb : c_col_long;
+  d += c_row_long * params->ldd + c_col_long;
 
   if (use_out_source) {
-    C += c_row_long * addmm_params->ldc + c_col_long * addmm_params->fdc;
+    c += c_row_long * addmm_params->ldc + c_col_long * addmm_params->fdc;
   }
 
   // Prepare threadgroup mma operation
   thread mma_t mma_op(simd_group_id, simd_lane_id);
 
   // Prepare threadgroup loading operations
-  thread loader_a_t loader_a(A, params->lda, As, simd_group_id, simd_lane_id);
-  thread loader_b_t loader_b(B, params->ldb, Bs, simd_group_id, simd_lane_id);
+  thread loader_a_t loader_a(a, params->lda, a_shared, simd_group_id, simd_lane_id);
+  thread loader_b_t loader_b(b, params->ldb, b_shared, simd_group_id, simd_lane_id);
 
   // Prepare threadgroup bounds
-  const short tgp_bm = align_M ? BM : short(min(BM, params->M - c_row));
-  const short tgp_bn = align_N ? BN : short(min(BN, params->N - c_col));
+  const short tgp_bm = align_m ? BM : short(min(BM, params->M - c_row));
+  const short tgp_bn = align_n ? BN : short(min(BN, params->N - c_col));
 
   // Prepare iterations
   int gemm_k_iterations = params->gemm_k_iterations_aligned;
 
   // Do unaligned K iterations first
-  if (!align_K) {
+  if (!align_k) {
     const int k_last = params->gemm_k_iterations_aligned * BK;
     const int k_remain = params->K - k_last;
     const size_t k_jump_a =
@@ -149,18 +144,18 @@ template <
     loader_b.src += k_jump_b;
 
     // Load tile
-    const short2 tile_dims_A =
+    const short2 tile_dims_a =
         transpose_a ? short2(tgp_bm, k_remain) : short2(k_remain, tgp_bm);
-    const short2 tile_dims_B =
+    const short2 tile_dims_b =
         transpose_b ? short2(k_remain, tgp_bn) : short2(tgp_bn, k_remain);
 
-    loader_a.load_safe(tile_dims_A);
-    loader_b.load_safe(tile_dims_B);
+    loader_a.load_safe(tile_dims_a);
+    loader_b.load_safe(tile_dims_b);
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Do matmul
-    mma_op.mma(As, Bs);
+    mma_op.mma(a_shared, b_shared);
 
     // Reset source back to start
     loader_a.src -= k_jump_a;
@@ -178,7 +173,7 @@ template <
 
   ///////////////////////////////////////////////////////////////////////////////
   // MNK aligned loop
-  if (align_M && align_N) {
+  if (align_m && align_n) {
     // Do gemm
     for (int k = 0; k < gemm_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -189,7 +184,7 @@ template <
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       // Multiply and accumulate threadgroup elements
-      mma_op.mma(As, Bs);
+      mma_op.mma(a_shared, b_shared);
 
       // Prepare for next iteration
       loader_a.next();
@@ -202,14 +197,14 @@ template <
     if (use_out_source) {
       if (do_axpby) {
         mma_op.apply_epilogue(
-            C,
+            c,
             addmm_params->ldc,
             addmm_params->fdc,
             epilogue_op_axpby
         );
       } else {
         mma_op.apply_epilogue(
-            C,
+            c,
             addmm_params->ldc,
             addmm_params->fdc,
             epilogue_op_add
@@ -218,7 +213,7 @@ template <
     }
 
     // Store results to device memory
-    return mma_op.store_result(D, params->ldd);
+    return mma_op.store_result(d, params->ldd);
 
   }
   ///////////////////////////////////////////////////////////////////////////////
@@ -226,11 +221,11 @@ template <
   else { // Loop over K - unaligned case
     const int leftover_bk = 0;
 
-    if ((align_M || tgp_bm == BM) && (align_N || tgp_bn == BN)) {
+    if ((align_m || tgp_bm == BM) && (align_n || tgp_bn == BN)) {
       // Do gemm
       gemm_kernel::gemm_loop(
-          As,
-          Bs,
+          a_shared,
+          b_shared,
           gemm_k_iterations,
           loader_a,
           loader_b,
@@ -245,14 +240,14 @@ template <
       if (use_out_source) {
         if (do_axpby) {
           mma_op.apply_epilogue(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               epilogue_op_axpby
           );
         } else {
           mma_op.apply_epilogue(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               epilogue_op_add
@@ -261,12 +256,12 @@ template <
       }
 
       // Store results to device memory
-      return mma_op.store_result(D, params->ldd);
+      return mma_op.store_result(d, params->ldd);
 
-    } else if (align_N || tgp_bn == BN) {
+    } else if (align_n || tgp_bn == BN) {
       gemm_kernel::gemm_loop(
-          As,
-          Bs,
+          a_shared,
+          b_shared,
           gemm_k_iterations,
           loader_a,
           loader_b,
@@ -281,7 +276,7 @@ template <
       if (use_out_source) {
         if (do_axpby) {
           mma_op.apply_epilogue_safe(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
@@ -289,7 +284,7 @@ template <
           );
         } else {
           mma_op.apply_epilogue_safe(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
@@ -299,12 +294,12 @@ template <
       }
 
       // Store results to device memory
-      return mma_op.store_result_safe(D, params->ldd, short2(tgp_bn, tgp_bm));
+      return mma_op.store_result_safe(d, params->ldd, short2(tgp_bn, tgp_bm));
 
-    } else if (align_M || tgp_bm == BM) {
+    } else if (align_m || tgp_bm == BM) {
       gemm_kernel::gemm_loop(
-          As,
-          Bs,
+          a_shared,
+          b_shared,
           gemm_k_iterations,
           loader_a,
           loader_b,
@@ -319,7 +314,7 @@ template <
       if (use_out_source) {
         if (do_axpby) {
           mma_op.apply_epilogue_safe(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
@@ -327,7 +322,7 @@ template <
           );
         } else {
           mma_op.apply_epilogue_safe(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
@@ -337,12 +332,12 @@ template <
       }
 
       // Store results to device memory
-      return mma_op.store_result_safe(D, params->ldd, short2(tgp_bn, tgp_bm));
+      return mma_op.store_result_safe(d, params->ldd, short2(tgp_bn, tgp_bm));
 
     } else {
       gemm_kernel::gemm_loop(
-          As,
-          Bs,
+          a_shared,
+          b_shared,
           gemm_k_iterations,
           loader_a,
           loader_b,
@@ -357,7 +352,7 @@ template <
       if (use_out_source) {
         if (do_axpby) {
           mma_op.apply_epilogue_safe(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
@@ -365,7 +360,7 @@ template <
           );
         } else {
           mma_op.apply_epilogue_safe(
-              C,
+              c,
               addmm_params->ldc,
               addmm_params->fdc,
               short2(tgp_bn, tgp_bm),
@@ -375,7 +370,8 @@ template <
       }
 
       // Store results to device memory
-      return mma_op.store_result_safe(D, params->ldd, short2(tgp_bn, tgp_bm));
+      return mma_op.store_result_safe(d, params->ldd, short2(tgp_bn, tgp_bm));
     }
   }
 }
+

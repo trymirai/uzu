@@ -1,20 +1,80 @@
 use std::collections::HashMap;
 
-use metal::{MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use metal::MTLComputeCommandEncoder;
+use objc2::runtime::ProtocolObject;
 
 use super::{DispatchDescriptor, pipeline_configuration::PipelineConfiguration, tile_configuration::TileConfiguration};
 use crate::{
     DataType,
-    backends::metal::{
-        ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalContext, MetalError,
-        kernel::matmul::common::{MatmulArguments, transpose_configuration},
+    backends::{
+        common::kernel::{
+            MatmulGemmTile32x64x16Warp1x2Kernel, MatmulGemmTile64x32x32Warp2x2Kernel,
+            MatmulGemmTile64x64x16Warp1x2Kernel, MatmulGemmTile64x64x16Warp2x2Kernel,
+        },
+        metal::{
+            MetalContext, MetalError,
+            kernel::{
+                dsl::{
+                    MatmulGemmTile32x64x16Warp1x2MetalKernel, MatmulGemmTile64x32x32Warp2x2MetalKernel,
+                    MatmulGemmTile64x64x16Warp1x2MetalKernel, MatmulGemmTile64x64x16Warp2x2MetalKernel,
+                },
+                matmul::common::MatmulArguments,
+            },
+        },
     },
 };
 
+macro_rules! encode_pipeline {
+    ($kernel:expr, $arguments:expr, $descriptor:expr, $group_count_x:expr, $group_count_y:expr, $group_count_z:expr, $encoder:expr) => {
+        $kernel.encode(
+            ($arguments.a, $arguments.a_offset as usize),
+            $arguments.b,
+            $arguments.d,
+            std::slice::from_ref(&$descriptor.params),
+            $group_count_x,
+            $group_count_y,
+            $group_count_z,
+            $encoder,
+        );
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum GemmShape {
+    Tile64x64x16Warp2x2,
+    Tile64x64x16Warp1x2,
+    Tile64x32x32Warp2x2,
+    Tile32x64x16Warp1x2,
+}
+
+impl GemmShape {
+    fn from_tile(tile: &TileConfiguration) -> Option<Self> {
+        if *tile == TileConfiguration::new(64, 64, 16, 2, 2, tile.swizzle_log2) {
+            return Some(Self::Tile64x64x16Warp2x2);
+        }
+        if *tile == TileConfiguration::new(64, 64, 16, 1, 2, tile.swizzle_log2) {
+            return Some(Self::Tile64x64x16Warp1x2);
+        }
+        if *tile == TileConfiguration::new(64, 32, 32, 2, 2, tile.swizzle_log2) {
+            return Some(Self::Tile64x32x32Warp2x2);
+        }
+        if *tile == TileConfiguration::new(32, 64, 16, 1, 2, tile.swizzle_log2) {
+            return Some(Self::Tile32x64x16Warp1x2);
+        }
+        None
+    }
+}
+
+enum Pipeline {
+    Tile64x64x16Warp2x2(MatmulGemmTile64x64x16Warp2x2MetalKernel),
+    Tile64x64x16Warp1x2(MatmulGemmTile64x64x16Warp1x2MetalKernel),
+    Tile64x32x32Warp2x2(MatmulGemmTile64x32x32Warp2x2MetalKernel),
+    Tile32x64x16Warp1x2(MatmulGemmTile32x64x16Warp1x2MetalKernel),
+}
+
 pub struct Kernel {
     data_type: DataType,
-    pipelines: HashMap<PipelineConfiguration, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    pipelines: HashMap<PipelineConfiguration, Pipeline>,
 }
 
 impl Kernel {
@@ -28,12 +88,11 @@ impl Kernel {
         })
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn precompile(
         &mut self,
         context: &MetalContext,
     ) -> Result<(), MetalError> {
-        let tiles_and_alignments: &[(TileConfiguration, &[(bool, bool, bool)])] = match self.data_type {
+        let precompile_tiles_and_alignments: &[(TileConfiguration, &[(bool, bool, bool)])] = match self.data_type {
             DataType::BF16 => &[
                 (TileConfiguration::new(64, 32, 32, 2, 2, 0), &[(false, true, true), (true, true, true)]),
                 (
@@ -48,12 +107,12 @@ impl Kernel {
             DataType::F32 => {
                 &[(TileConfiguration::new(32, 64, 16, 1, 2, 0), &[(false, true, true), (true, true, true)])]
             },
-            _ => return Ok(()),
+            _ => &[],
         };
 
-        for (tile, alignments) in tiles_and_alignments {
+        for (tile, alignments) in precompile_tiles_and_alignments {
             for &(align_m, align_n, align_k) in *alignments {
-                let config = PipelineConfiguration {
+                let configuration = PipelineConfiguration {
                     tile: *tile,
                     transpose_a: false,
                     transpose_b: true,
@@ -64,75 +123,70 @@ impl Kernel {
                     use_out_source: false,
                     do_axpby: false,
                 };
-                let _ = self.get_or_compile_pipeline(context, &config);
+                let _ = self.get_or_create_pipeline(context, &configuration)?;
             }
         }
 
         Ok(())
     }
 
-    fn type_name(&self) -> &'static str {
-        match self.data_type {
-            DataType::F16 => "float16",
-            DataType::BF16 => "bfloat16",
-            DataType::F32 => "float32",
-            _ => unreachable!(),
-        }
+    fn supports_configuration(configuration: &PipelineConfiguration) -> bool {
+        !configuration.transpose_a
+            && configuration.transpose_b
+            && !configuration.has_batch
+            && !configuration.use_out_source
+            && !configuration.do_axpby
+            && !configuration.tile.is_nax()
     }
 
-    fn kernel_name(
-        &self,
-        configuration: &PipelineConfiguration,
-    ) -> String {
-        let type_name = self.type_name();
-        let transpose_suffix = transpose_configuration(configuration.transpose_a, configuration.transpose_b);
-        let prefix = if configuration.tile.is_nax() {
-            "steel_gemm_nax"
-        } else {
-            "steel_gemm"
-        };
-        format!(
-            "{}_{}_{}_{}_bm{}_bn{}_bk{}_wm{}_wn{}",
-            prefix,
-            transpose_suffix.as_str(),
-            type_name,
-            type_name,
-            configuration.tile.block_rows,
-            configuration.tile.block_cols,
-            configuration.tile.block_depth,
-            configuration.tile.warps_per_row,
-            configuration.tile.warps_per_col
-        )
-    }
-
-    fn get_or_compile_pipeline(
+    fn get_or_create_pipeline(
         &mut self,
         context: &MetalContext,
         configuration: &PipelineConfiguration,
-    ) -> Result<&Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
+    ) -> Result<&Pipeline, MetalError> {
         if !self.pipelines.contains_key(configuration) {
-            let kernel_name = self.kernel_name(configuration);
-            let function_constants = MTLFunctionConstantValues::new();
-            function_constants.set_value(&configuration.has_batch, 10);
-            function_constants.set_value(&configuration.use_out_source, 100);
-            function_constants.set_value(&configuration.do_axpby, 110);
-            function_constants.set_value(&configuration.align_m, 200);
-            function_constants.set_value(&configuration.align_n, 201);
-            function_constants.set_value(&configuration.align_k, 202);
-
-            let cache_key = format!(
-                "{}_am{}_an{}_ak{}_hb{}_uo{}_ax{}",
-                kernel_name,
-                configuration.align_m as u8,
-                configuration.align_n as u8,
-                configuration.align_k as u8,
-                configuration.has_batch as u8,
-                configuration.use_out_source as u8,
-                configuration.do_axpby as u8
-            );
-            let pipeline_state =
-                context.compute_pipeline_state_cached(&cache_key, &kernel_name, Some(&function_constants))?;
-            self.pipelines.insert(configuration.clone(), pipeline_state);
+            let shape = GemmShape::from_tile(&configuration.tile).ok_or_else(|| {
+                MetalError::Generic(format!("Unsupported GEMM tile: {:?}", configuration.tile))
+            })?;
+            let pipeline = match shape {
+                GemmShape::Tile64x64x16Warp2x2 => {
+                    Pipeline::Tile64x64x16Warp2x2(MatmulGemmTile64x64x16Warp2x2MetalKernel::new(
+                        context,
+                        self.data_type,
+                        configuration.align_m,
+                        configuration.align_n,
+                        configuration.align_k,
+                    )?)
+                },
+                GemmShape::Tile64x64x16Warp1x2 => {
+                    Pipeline::Tile64x64x16Warp1x2(MatmulGemmTile64x64x16Warp1x2MetalKernel::new(
+                        context,
+                        self.data_type,
+                        configuration.align_m,
+                        configuration.align_n,
+                        configuration.align_k,
+                    )?)
+                },
+                GemmShape::Tile64x32x32Warp2x2 => {
+                    Pipeline::Tile64x32x32Warp2x2(MatmulGemmTile64x32x32Warp2x2MetalKernel::new(
+                        context,
+                        self.data_type,
+                        configuration.align_m,
+                        configuration.align_n,
+                        configuration.align_k,
+                    )?)
+                },
+                GemmShape::Tile32x64x16Warp1x2 => {
+                    Pipeline::Tile32x64x16Warp1x2(MatmulGemmTile32x64x16Warp1x2MetalKernel::new(
+                        context,
+                        self.data_type,
+                        configuration.align_m,
+                        configuration.align_n,
+                        configuration.align_k,
+                    )?)
+                },
+            };
+            self.pipelines.insert(configuration.clone(), pipeline);
         }
         Ok(self.pipelines.get(configuration).unwrap())
     }
@@ -144,25 +198,80 @@ impl Kernel {
         arguments: &MatmulArguments,
         descriptor: &DispatchDescriptor,
     ) -> Result<bool, MetalError> {
-        let pipeline_state = self.get_or_compile_pipeline(context, &descriptor.pipeline_configuration)?;
-        encoder.set_compute_pipeline_state(pipeline_state);
-
-        encoder.set_buffer(Some(arguments.a), arguments.a_offset as usize, 0);
-        encoder.set_buffer(Some(arguments.b), 0, 1);
-        if descriptor.pipeline_configuration.use_out_source {
-            if let Some(c_buffer) = arguments.c {
-                encoder.set_buffer(Some(c_buffer), 0, 2);
-            }
-        }
-        encoder.set_buffer(Some(arguments.d), 0, 3);
-
-        encoder.set_value(&descriptor.params, 4);
-
-        if let Some(addmm_params) = &descriptor.addmm_params {
-            encoder.set_value(addmm_params, 5);
+        let configuration = &descriptor.pipeline_configuration;
+        if !Self::supports_configuration(configuration) {
+            return Err(MetalError::Generic(format!(
+                "Unsupported GEMM configuration: {configuration:?}"
+            )));
         }
 
-        encoder.dispatch_threadgroups(descriptor.threadgroups, descriptor.threads_per_threadgroup);
+        let group_count_x = u32::try_from(descriptor.threadgroups.width).map_err(|_| {
+            MetalError::Generic(format!(
+                "GEMM group count x overflows u32: {}",
+                descriptor.threadgroups.width
+            ))
+        })?;
+        let group_count_y = u32::try_from(descriptor.threadgroups.height).map_err(|_| {
+            MetalError::Generic(format!(
+                "GEMM group count y overflows u32: {}",
+                descriptor.threadgroups.height
+            ))
+        })?;
+        let group_count_z = u32::try_from(descriptor.threadgroups.depth).map_err(|_| {
+            MetalError::Generic(format!(
+                "GEMM group count z overflows u32: {}",
+                descriptor.threadgroups.depth
+            ))
+        })?;
+
+        let pipeline = self.get_or_create_pipeline(context, configuration)?;
+        match pipeline {
+            Pipeline::Tile64x64x16Warp2x2(kernel) => {
+                encode_pipeline!(
+                    kernel,
+                    arguments,
+                    descriptor,
+                    group_count_x,
+                    group_count_y,
+                    group_count_z,
+                    encoder
+                );
+            },
+            Pipeline::Tile64x64x16Warp1x2(kernel) => {
+                encode_pipeline!(
+                    kernel,
+                    arguments,
+                    descriptor,
+                    group_count_x,
+                    group_count_y,
+                    group_count_z,
+                    encoder
+                );
+            },
+            Pipeline::Tile64x32x32Warp2x2(kernel) => {
+                encode_pipeline!(
+                    kernel,
+                    arguments,
+                    descriptor,
+                    group_count_x,
+                    group_count_y,
+                    group_count_z,
+                    encoder
+                );
+            },
+            Pipeline::Tile32x64x16Warp1x2(kernel) => {
+                encode_pipeline!(
+                    kernel,
+                    arguments,
+                    descriptor,
+                    group_count_x,
+                    group_count_y,
+                    group_count_z,
+                    encoder
+                );
+            },
+        }
+
         Ok(false)
     }
 }

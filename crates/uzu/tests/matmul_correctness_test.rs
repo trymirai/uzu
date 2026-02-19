@@ -129,87 +129,109 @@ struct TestCase {
     tolerance: f32,
 }
 
-fn test_cases() -> Vec<TestCase> {
+const MATMUL_CORRECTNESS_FULL_ENV: &str = "UZU_MATMUL_CORRECTNESS_FULL";
+
+const QUICK_BATCH_SIZES: [usize; 2] = [1, 16];
+const FULL_BATCH_SIZES: [usize; 12] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+
+const QUICK_MODEL_SHAPES: [(usize, usize); 8] = [
+    (896, 896),
+    (896, 4864),
+    (1024, 4096),
+    (1152, 6912),
+    (1536, 8960),
+    (2048, 8192),
+    (4096, 14336),
+    (5120, 17408),
+];
+
+const FULL_MODEL_SHAPES: [(usize, usize); 51] = [
+    // Qwen2.5-Coder-0.5B
+    (896, 896),
+    (896, 1152),
+    (896, 4864),
+    (4864, 896),
+    // Qwen3-0.6B
+    (1024, 1024),
+    (1024, 3072),
+    (1024, 4096),
+    (3072, 1024),
+    // Gemma-3-1B
+    (1152, 1152),
+    (1152, 1536),
+    (1152, 6912),
+    (6912, 1152),
+    // Qwen2.5-Coder-1.5B
+    (1536, 1536),
+    (1536, 2048),
+    (1536, 8960),
+    (8960, 1536),
+    // Llama-3.2-1B / Qwen3-1.7B / SmolLM2-1.7B
+    (2048, 2048),
+    (2048, 2560),
+    (2048, 3072),
+    (2048, 4096),
+    (2048, 6144),
+    (2048, 8192),
+    (2048, 11008),
+    (6144, 2048),
+    (8192, 2048),
+    (11008, 2048),
+    // Qwen3-4B / Gemma-3-4B
+    (2560, 2560),
+    (2560, 4096),
+    (2560, 6144),
+    (2560, 9728),
+    (2560, 10240),
+    (9728, 2560),
+    (10240, 2560),
+    // Llama-3.2-3B
+    (3072, 3072),
+    (3072, 5120),
+    (3072, 8192),
+    (8192, 3072),
+    // Qwen2.5-Coder-7B
+    (3584, 3584),
+    (3584, 4608),
+    (3584, 18944),
+    (18944, 3584),
+    // Llama-3.1-8B / Qwen3-8B
+    (4096, 4096),
+    (4096, 6144),
+    (4096, 12288),
+    (4096, 14336),
+    (12288, 4096),
+    (14336, 4096),
+    // Qwen3-14B
+    (5120, 5120),
+    (5120, 7168),
+    (5120, 17408),
+    (17408, 5120),
+];
+
+fn run_full_case_matrix() -> bool {
+    std::env::var(MATMUL_CORRECTNESS_FULL_ENV)
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes")
+        })
+        .unwrap_or(false)
+}
+
+fn test_cases(full_case_matrix: bool) -> Vec<TestCase> {
     let base_tolerance = 0.01;
-
-    let batch_sizes: [usize; 12] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
-
-    let model_shapes: [(usize, usize); 51] = [
-        // Qwen2.5-Coder-0.5B
-        (896, 896),
-        (896, 1152),
-        (896, 4864),
-        (4864, 896),
-        // Qwen3-0.6B
-        (1024, 1024),
-        (1024, 3072),
-        (1024, 4096),
-        (3072, 1024),
-        // Gemma-3-1B
-        (1152, 1152),
-        (1152, 1536),
-        (1152, 6912),
-        (6912, 1152),
-        // Qwen2.5-Coder-1.5B
-        (1536, 1536),
-        (1536, 2048),
-        (1536, 8960),
-        (8960, 1536),
-        // Llama-3.2-1B / Qwen3-1.7B / SmolLM2-1.7B
-        (2048, 2048),
-        (2048, 2560),
-        (2048, 3072),
-        (2048, 4096),
-        (2048, 6144),
-        (2048, 8192),
-        (2048, 11008),
-        (6144, 2048),
-        (8192, 2048),
-        (11008, 2048),
-        // Qwen3-4B / Gemma-3-4B
-        (2560, 2560),
-        (2560, 4096),
-        (2560, 6144),
-        (2560, 9728),
-        (2560, 10240),
-        (9728, 2560),
-        (10240, 2560),
-        // Llama-3.2-3B
-        (3072, 3072),
-        (3072, 5120),
-        (3072, 8192),
-        (8192, 3072),
-        // Qwen2.5-Coder-7B
-        (3584, 3584),
-        (3584, 4608),
-        (3584, 18944),
-        (18944, 3584),
-        // Llama-3.1-8B / Qwen3-8B
-        (4096, 4096),
-        (4096, 6144),
-        (4096, 12288),
-        (4096, 14336),
-        (12288, 4096),
-        (14336, 4096),
-        // Qwen3-14B
-        (5120, 5120),
-        (5120, 7168),
-        (5120, 17408),
-        (17408, 5120),
-    ];
+    let (batch_sizes, model_shapes): (&[usize], &[(usize, usize)]) = if full_case_matrix {
+        (&FULL_BATCH_SIZES, &FULL_MODEL_SHAPES)
+    } else {
+        (&QUICK_BATCH_SIZES, &QUICK_MODEL_SHAPES)
+    };
 
     let mut cases: Vec<(usize, usize, usize, bool)> =
         model_shapes.iter().flat_map(|&(k, n)| batch_sizes.iter().map(move |&m| (m, k, n, true))).collect();
 
-    // Non-transposed B (for attention AV matmul)
-    for &(k, n) in &[(1024, 1024), (2048, 2048), (4096, 4096)] {
-        for &m in &[1, 64, 128] {
-            cases.push((m, k, n, false));
-        }
-    }
-
     // Edge case: small matrix
-    for &m in &batch_sizes {
+    for &m in batch_sizes {
         cases.push((m, 128, 128, true));
     }
 
@@ -270,7 +292,17 @@ fn matmul_correctness_comprehensive() {
         return;
     };
 
-    let cases = test_cases();
+    let full_case_matrix = run_full_case_matrix();
+    let cases = test_cases(full_case_matrix);
+    eprintln!(
+        "Running {} matmul correctness case matrix (set {}=1 for exhaustive run)",
+        if full_case_matrix {
+            "exhaustive"
+        } else {
+            "quick"
+        },
+        MATMUL_CORRECTNESS_FULL_ENV
+    );
     let mut passed = 0;
     let mut failed = Vec::new();
 

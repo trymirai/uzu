@@ -1,7 +1,5 @@
 use std::sync::OnceLock;
 
-use metal::MTLSize;
-
 use super::pipeline_configuration::{PipelineConfiguration, select_configuration};
 use crate::{
     DataType,
@@ -19,7 +17,7 @@ fn max_gemv_batch_threshold() -> i32 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AxpbySource {
+pub(crate) enum OutputSource {
     None,
     Bias,
     C,
@@ -29,7 +27,7 @@ pub(crate) enum AxpbySource {
 pub(crate) struct DispatchDescriptor {
     pub(crate) pipeline_configuration: PipelineConfiguration,
     pub(crate) matrix_is_rhs: bool,
-    pub(crate) axpby_source: AxpbySource,
+    pub(crate) output_source: OutputSource,
     pub(crate) input_dimension: i32,
     pub(crate) output_dimension: i32,
     pub(crate) matrix_leading_dim: i32,
@@ -47,8 +45,6 @@ pub(crate) struct DispatchDescriptor {
     pub(crate) output_ld: i32,
     /// Leading dimension of input vector (lda)
     pub(crate) vector_ld: i32,
-    pub(crate) threadgroups: MTLSize,
-    pub(crate) threads_per_threadgroup: MTLSize,
 }
 
 impl DispatchDescriptor {
@@ -85,18 +81,18 @@ impl DispatchDescriptor {
             arguments.transpose_a
         };
 
-        let axpby_source = if arguments.c.is_some() {
-            AxpbySource::C
+        let output_source = if arguments.c.is_some() {
+            OutputSource::C
         } else if arguments.bias.is_some() {
-            AxpbySource::Bias
+            OutputSource::Bias
         } else {
-            AxpbySource::None
+            OutputSource::None
         };
 
-        let (do_axpby, alpha, beta, bias_stride) = match axpby_source {
-            AxpbySource::None => (false, 1.0f32, 0.0f32, 0),
-            AxpbySource::Bias => (true, 1.0f32, 1.0f32, 1),
-            AxpbySource::C => (true, arguments.alpha, arguments.beta, arguments.ldd),
+        let (apply_output_scale_and_accumulate, alpha, beta, bias_stride) = match output_source {
+            OutputSource::None => (false, 1.0f32, 0.0f32, 0),
+            OutputSource::Bias => (true, 1.0f32, 1.0f32, 1),
+            OutputSource::C => (true, arguments.alpha, arguments.beta, arguments.ldd),
         };
 
         let output_dimension = if matrix_is_rhs {
@@ -105,28 +101,17 @@ impl DispatchDescriptor {
             arguments.batch
         };
 
-        let mut batch_pack = 1;
-        if m == 4 && arguments.input_dim <= 2048 && (1536..=3072).contains(&output_dimension) {
-            batch_pack = 2;
-        } else if m <= 8 {
-            batch_pack = if m >= 4 && m % 4 == 0 {
-                4
-            } else if m >= 2 && m % 2 == 0 {
-                2
-            } else {
-                1
-            };
-        }
+        let batch_pack = 1_u32;
 
         let pipeline_configuration = select_configuration(
             arguments.transpose_a,
             arguments.transpose_b,
             transpose_matrix,
-            batch_pack as u32,
+            batch_pack,
             arguments.input_dim,
             output_dimension,
             false,
-            do_axpby,
+            apply_output_scale_and_accumulate,
         );
 
         let input_dimension = arguments.input_dim;
@@ -137,7 +122,6 @@ impl DispatchDescriptor {
         };
 
         let batch_ndim = 1i32;
-        let batch_groups = arguments.batch_count.max(1);
         let batch_shape = [if arguments.batch_count > 1 {
             arguments.batch_count
         } else {
@@ -169,17 +153,7 @@ impl DispatchDescriptor {
             0
         }];
 
-        let output_elements_per_threadgroup = pipeline_configuration.output_elements_per_threadgroup();
-        let threadgroup_count_x =
-            ((output_dimension as u32 + output_elements_per_threadgroup - 1) / output_elements_per_threadgroup) as u64;
-        let threadgroup_count_z = batch_groups.max(1) as u64;
-
         let batch_rows = arguments.batch;
-        let threadgroup_count_y = (batch_rows / batch_pack).max(1) as u64;
-
-        let threadgroups =
-            MTLSize::new(threadgroup_count_x as usize, threadgroup_count_y as usize, threadgroup_count_z as usize);
-        let threads_per_threadgroup = pipeline_configuration.threads_per_threadgroup();
 
         let output_ld = arguments.ldd;
         let vector_ld = arguments.lda;
@@ -187,7 +161,7 @@ impl DispatchDescriptor {
         Ok(Some(Self {
             pipeline_configuration,
             matrix_is_rhs,
-            axpby_source,
+            output_source,
             input_dimension,
             output_dimension,
             matrix_leading_dim,
@@ -202,12 +176,10 @@ impl DispatchDescriptor {
             batch_rows,
             output_ld,
             vector_ld,
-            threadgroups,
-            threads_per_threadgroup,
         }))
     }
 
     pub(crate) fn bias_is_fused(&self) -> bool {
-        matches!(self.axpby_source, AxpbySource::Bias)
+        matches!(self.output_source, OutputSource::Bias)
     }
 }
