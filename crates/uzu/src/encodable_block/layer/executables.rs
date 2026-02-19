@@ -4,19 +4,17 @@ use std::rc::Rc;
 
 use objc2::rc::autoreleasepool;
 
-use super::{super::transformer_layer, MixerExecutables};
+use super::MixerExecutables;
 #[cfg(not(feature = "tracing"))]
 use crate::backends::common::CommandBuffer;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::{
-        common::Backend,
-        metal::{Metal, MetalContext},
-    },
+    backends::common::{Backend, kernel::matmul::MatmulKernels},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, EncodableBlock, EncodingParameters, MambaMixer, QKNorm, RMSNorm, ShortConvMixer, TensorAddSwap,
         TensorCopy,
+        transformer_layer::{linear_block, mlp_block},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -35,10 +33,13 @@ pub struct LayerExecutables<B: Backend> {
     pub post_mlp_norm: Option<Box<dyn EncodableBlock<B>>>,
 }
 
-impl LayerExecutables<Metal> {
+impl<B: Backend + 'static> LayerExecutables<B>
+where
+    B::Kernels: MatmulKernels,
+{
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        mtl_context: Rc<MetalContext>,
+        context: Rc<B::Context>,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
         layer_index: usize,
@@ -48,18 +49,18 @@ impl LayerExecutables<Metal> {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
-        decoder_layer_loader: &ParameterTree<MetalContext>,
-        rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
+        decoder_layer_loader: &ParameterTree<B::Context>,
+        rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
     ) -> Self {
         autoreleasepool(|_| {
-            let ctx = mtl_context.as_ref(); // Reference for functions expecting &MetalContext
+            let ctx = context.as_ref(); // Reference for functions expecting &B::Context
             let intermediate_data_type: DataType = match &layer_config.mixer_config {
                 MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
                 MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
                 MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
             };
-            let copy_main_to_shortcut: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorCopy::<Metal>::new(
+            let copy_main_to_shortcut: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorCopy::<B>::new(
                     ctx,
                     intermediate_data_type,
                     vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
@@ -67,7 +68,7 @@ impl LayerExecutables<Metal> {
                 .unwrap(),
             );
 
-            let pre_attention_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
+            let pre_attention_norm: Box<dyn EncodableBlock<B>> = Box::new(
                 RMSNorm::new(
                     ctx,
                     intermediate_data_type,
@@ -81,9 +82,9 @@ impl LayerExecutables<Metal> {
 
             let mixer = match &layer_config.mixer_config {
                 MixerConfig::Attention(attention_config) => {
-                    let rope_block = rope.clone().expect("RoPE encoder missing for attention layer");
+                    let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
-                    let qkv_projection = transformer_layer::linear_block(
+                    let qkv_projection = linear_block(
                         &attention_config.qkv_projection_config,
                         attention_config.has_qkv_biases,
                         model_dim,
@@ -95,7 +96,7 @@ impl LayerExecutables<Metal> {
                     )
                     .expect("Failed to create qkv projection");
 
-                    let qk_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+                    let qk_norm: Option<Box<dyn EncodableBlock<B>>> =
                         if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
                             match QKNorm::new(
                                 ctx,
@@ -108,14 +109,14 @@ impl LayerExecutables<Metal> {
                                 num_groups,
                                 head_dim,
                             ) {
-                                Ok(qk_norm) => Some(Box::new(qk_norm) as Box<dyn EncodableBlock<Metal>>),
+                                Ok(qk_norm) => Some(Box::new(qk_norm) as Box<dyn EncodableBlock<B>>),
                                 Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
                             }
                         } else {
                             None
                         };
 
-                    let out_projection = transformer_layer::linear_block(
+                    let out_projection = linear_block(
                         &attention_config.out_projection_config,
                         attention_config.has_out_biases,
                         num_heads * head_dim,
@@ -137,7 +138,7 @@ impl LayerExecutables<Metal> {
                             attention_config.is_causal.unwrap_or(true),
                             attention_config.sliding_window_size,
                         )
-                        .expect("Failed to create AttentionWrapper with Metal kernel"),
+                        .expect("Failed to create AttentionWrapper kernel"),
                     );
 
                     MixerExecutables::Attention {
@@ -149,7 +150,7 @@ impl LayerExecutables<Metal> {
                     }
                 },
                 MixerConfig::Mamba(mamba_config) => {
-                    let mixer: Box<dyn EncodableBlock<Metal>> = Box::new(MambaMixer::new(
+                    let mixer: Box<dyn EncodableBlock<B>> = Box::new(MambaMixer::new(
                         ctx,
                         layer_type.clone(),
                         mamba_config.clone(),
@@ -165,7 +166,7 @@ impl LayerExecutables<Metal> {
                     }
                 },
                 MixerConfig::ShortConv(short_conv_config) => {
-                    let mixer: Box<dyn EncodableBlock<Metal>> = Box::new(ShortConvMixer::new(
+                    let mixer: Box<dyn EncodableBlock<B>> = Box::new(ShortConvMixer::new(
                         ctx,
                         layer_type.clone(),
                         short_conv_config.clone(),
@@ -179,7 +180,7 @@ impl LayerExecutables<Metal> {
                 },
             };
 
-            let post_attention_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+            let post_attention_norm: Option<Box<dyn EncodableBlock<B>>> =
                 if let Some(norm_config) = &layer_config.post_attention_norm_config {
                     Some(Box::new(
                         RMSNorm::new(
@@ -196,8 +197,8 @@ impl LayerExecutables<Metal> {
                     None
                 };
 
-            let main_shortcut_add_swap: Box<dyn EncodableBlock<Metal>> = Box::new(
-                TensorAddSwap::<Metal>::new(
+            let main_shortcut_add_swap: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorAddSwap::<B>::new(
                     ctx,
                     intermediate_data_type,
                     vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
@@ -205,7 +206,7 @@ impl LayerExecutables<Metal> {
                 .unwrap(),
             );
 
-            let pre_mlp_norm: Box<dyn EncodableBlock<Metal>> = Box::new(
+            let pre_mlp_norm: Box<dyn EncodableBlock<B>> = Box::new(
                 RMSNorm::new(
                     ctx,
                     intermediate_data_type,
@@ -217,16 +218,16 @@ impl LayerExecutables<Metal> {
                 .expect("Failed to create RMS norm kernel"),
             );
 
-            let mlp = transformer_layer::mlp_block(
+            let mlp = mlp_block(
                 &layer_config.mlp_config,
                 model_dim,
                 hidden_dim,
-                &mtl_context,
+                context.as_ref(),
                 &decoder_layer_loader.subtree("mlp").unwrap(),
             )
             .expect("Failed to create mlp block");
 
-            let post_mlp_norm: Option<Box<dyn EncodableBlock<Metal>>> =
+            let post_mlp_norm: Option<Box<dyn EncodableBlock<B>>> =
                 if let Some(norm_config) = &layer_config.post_mlp_norm_config {
                     Some(Box::new(
                         RMSNorm::new(

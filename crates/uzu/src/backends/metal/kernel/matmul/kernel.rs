@@ -12,7 +12,7 @@ use crate::{
     DataType,
     backends::{
         common::kernel::TensorAddBiasKernel,
-        metal::{MetalContext, MetalError, kernel::dsl::TensorAddBiasMetalKernel},
+        metal::{context::MetalContext, error::MetalError, kernel::dsl::TensorAddBiasMetalKernel},
     },
 };
 

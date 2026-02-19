@@ -5,18 +5,16 @@ use std::env;
 use crate::{
     Activation, DataType,
     array::Array,
-    backends::{
-        common::{
-            Backend, CommandBuffer, Kernels,
-            kernel::{
-                Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
-                ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
-            },
+    backends::common::{
+        Backend, CommandBuffer, Kernels,
+        kernel::{
+            Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
+            matmul::MatmulKernels,
+            ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
-        metal::{Metal, encodable_block::transformer_layer},
     },
     config::{DecoderLayerType, Mamba2Config},
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::{EncodableBlock, EncodingParameters, transformer_layer::linear_block},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterTree, resolve_subtree},
 };
@@ -39,10 +37,13 @@ pub(crate) struct MambaMixer<B: Backend> {
     prefill_mode: SSDPrefillMode,
 }
 
-impl MambaMixer<Metal> {
+impl<B: Backend + 'static> MambaMixer<B>
+where
+    B::Kernels: MatmulKernels,
+{
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        context: &<Metal as Backend>::Context,
+        context: &B::Context,
         layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
         layer_index: usize,
@@ -50,7 +51,7 @@ impl MambaMixer<Metal> {
         num_heads: usize,
         head_dim: usize,
         num_groups: usize,
-        decoder_layer_loader: &ParameterTree<<Metal as Backend>::Context>,
+        decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Self {
         let _ = (num_heads, head_dim, num_groups);
         if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
@@ -61,7 +62,7 @@ impl MambaMixer<Metal> {
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
 
-        let in_projection = transformer_layer::linear_block(
+        let in_projection = linear_block(
             &mamba_config.in_projection_config,
             mamba_config.has_in_biases,
             model_dim,
@@ -73,7 +74,7 @@ impl MambaMixer<Metal> {
         )
         .expect("Failed to create in-projection kernel");
 
-        let out_projection = transformer_layer::linear_block(
+        let out_projection = linear_block(
             &mamba_config.out_projection_config,
             mamba_config.has_out_biases,
             mamba_config.inner_dim(),
@@ -94,26 +95,26 @@ impl MambaMixer<Metal> {
         let gate_bias = split_tree.leaf("gate_bias").unwrap().clone();
         let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap().clone();
 
-        let split_inproj = <<Metal as Backend>::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
+        let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
             .expect("Failed to create split in-projection kernel");
-        let conv_scan = <<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel::new(
+        let conv_scan = <B::Kernels as Kernels>::Conv1dScanKernel::new(
             context,
             data_type,
             Self::activation_to_int(&mamba_config.activation),
             mamba_config.conv_config.has_biases,
         )
         .expect("Failed to create conv scan kernel");
-        let conv_decode = <<Metal as Backend>::Kernels as Kernels>::Conv1dDecodeKernel::new(
+        let conv_decode = <B::Kernels as Kernels>::Conv1dDecodeKernel::new(
             context,
             data_type,
             Self::activation_to_int(&mamba_config.activation),
             mamba_config.conv_config.has_biases,
         )
         .expect("Failed to create conv decode kernel");
-        let conv_pack = <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
+        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
             .expect("Failed to create conv pack kernel");
         let ssd_prefill = SSDPrefillKernels::new(context, data_type).expect("Failed to create SSD prefill kernel");
-        let ssd_update = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(context, data_type)
+        let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, data_type)
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
 
@@ -174,29 +175,31 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmZ(self.layer_index),
             ArrayId::SsmDt(self.layer_index),
         ]);
-        let in_proj = arrays[0].borrow_mut();
-        let conv_inputs = arrays[1].borrow_mut();
-        let gate = arrays[2].borrow_mut();
-        let dt = arrays[3].borrow_mut();
 
-        let input_buf = in_proj.buffer().clone();
-        let conv_buf = conv_inputs.buffer().clone();
-        let gate_buf = gate.buffer().clone();
-        let dt_buf = dt.buffer().clone();
-        let gate_bias = self.gate_bias.clone();
-        let bias_buf = gate_bias.buffer().clone();
+        let in_proj = arrays[0].borrow();
+        let input_buf = in_proj.buffer();
 
+        let conv_inputs = arrays[1].borrow();
+        let conv_buf = conv_inputs.buffer();
+
+        let gate = arrays[2].borrow();
+        let gate_buf = gate.buffer();
+
+        let dt = arrays[3].borrow();
+        let dt_buf = dt.buffer();
+
+        let bias_buf = self.gate_bias.buffer();
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
 
         self.split_inproj.encode(
-            &input_buf,
-            &conv_buf,
-            &gate_buf,
-            &dt_buf,
-            &bias_buf,
+            input_buf,
+            conv_buf,
+            gate_buf,
+            dt_buf,
+            bias_buf,
             suffix_length as u32,
             total_dim as u32,
             conv_dim as u32,
@@ -219,39 +222,37 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
         ]);
-        let conv_inputs = arrays[0].borrow_mut();
-        let conv_state = arrays[1].borrow_mut();
-        let x_arr = arrays[2].borrow_mut();
-        let b_arr = arrays[3].borrow_mut();
-        let c_arr = arrays[4].borrow_mut();
+        let conv_inputs = arrays[0].borrow();
+        let conv_state = arrays[1].borrow();
+        let x_arr = arrays[2].borrow();
+        let b_arr = arrays[3].borrow();
+        let c_arr = arrays[4].borrow();
 
-        let input_buf = conv_inputs.buffer().clone();
-        let state_buf = conv_state.buffer().clone();
-        let x_buf = x_arr.buffer().clone();
-        let b_buf = b_arr.buffer().clone();
-        let c_buf = c_arr.buffer().clone();
+        let input_buf = conv_inputs.buffer();
+        let state_buf = conv_state.buffer();
+        let x_buf = x_arr.buffer();
+        let b_buf = b_arr.buffer();
+        let c_buf = c_arr.buffer();
 
-        let weight_storage = self.conv_weight.clone();
-        let weight_buf = weight_storage.buffer().clone();
+        let weight_buf = self.conv_weight.buffer();
         let bias_buf = self.conv_bias.as_ref().map(|arr| arr.buffer());
 
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let proj_dim = self.config.num_groups * self.config.state_dim;
         let state_stride = self.config.kernel_size.saturating_sub(1);
-        drop(conv_state);
 
         if suffix_length == 1 {
             if conv_dim > 0 && self.config.kernel_size > 0 {
                 self.conv_decode.encode(
-                    &input_buf,
-                    &weight_buf,
+                    input_buf,
+                    weight_buf,
                     bias_buf,
-                    &state_buf,
-                    &x_buf,
-                    &b_buf,
-                    &c_buf,
-                    &state_buf,
+                    state_buf,
+                    x_buf,
+                    b_buf,
+                    c_buf,
+                    state_buf,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
                     state_stride as u32,
@@ -265,13 +266,13 @@ impl<B: Backend> MambaMixer<B> {
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state.conv_padded_buffer().expect("Missing conv padded buffer");
-                let borrow = array.borrow_mut();
+                let borrow = array.borrow();
                 let buf = borrow.buffer().clone();
                 drop(borrow);
 
                 self.conv_pack.encode(
-                    &state_buf,
-                    &input_buf,
+                    state_buf,
+                    input_buf,
                     &buf,
                     state_stride as u32,
                     conv_dim as u32,
@@ -286,15 +287,15 @@ impl<B: Backend> MambaMixer<B> {
             };
 
             if conv_dim > 0 && self.config.kernel_size > 0 {
-                let conv_source = padded_buf.as_ref().unwrap_or(&input_buf).clone();
+                let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
                 self.conv_scan.encode(
-                    &conv_source,
-                    &weight_buf,
+                    conv_source,
+                    weight_buf,
                     bias_buf,
-                    &x_buf,
-                    &b_buf,
-                    &c_buf,
-                    &state_buf,
+                    x_buf,
+                    b_buf,
+                    c_buf,
+                    state_buf,
                     suffix_length as u32,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
@@ -323,42 +324,40 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
+
         let x = base_arrays[0].borrow();
-        let x_buf = x.buffer().clone();
-        drop(x);
+        let x_buf = x.buffer();
+
         let b = base_arrays[1].borrow();
-        let b_buf = b.buffer().clone();
-        drop(b);
+        let b_buf = b.buffer();
+
         let c = base_arrays[2].borrow();
-        let c_buf = c.buffer().clone();
-        drop(c);
+        let c_buf = c.buffer();
+
         let dt = base_arrays[3].borrow();
-        let dt_buf = dt.buffer().clone();
-        drop(dt);
+        let dt_buf = dt.buffer();
+
         let z = base_arrays[4].borrow();
-        let z_buf = z.buffer().clone();
-        drop(z);
+        let z_buf = z.buffer();
+
         let state_buf = base_arrays[5].borrow();
-        let state_raw = state_buf.buffer().clone();
-        drop(state_buf);
+        let state_raw = state_buf.buffer();
+
         let out = base_arrays[6].borrow();
-        let out_buf = out.buffer().clone();
-        drop(out);
+        let out_buf = out.buffer();
 
-        let skip_weights = self.skip_connection_weight.clone();
-        let skip = skip_weights.buffer().clone();
-
+        let skip = self.skip_connection_weight.buffer();
         self.ssd_prefill.encode(
             encoder,
             SSDPrefillArguments {
-                x: &x_buf,
-                dt: &dt_buf,
-                b: &b_buf,
-                c: &c_buf,
-                d: &skip,
-                z: &z_buf,
-                state: &state_raw,
-                y: &out_buf,
+                x: x_buf,
+                dt: dt_buf,
+                b: b_buf,
+                c: c_buf,
+                d: skip,
+                z: z_buf,
+                state: state_raw,
+                y: out_buf,
                 suffix_len: suffix_length,
                 group_size: (self.config.num_heads / self.config.num_groups) as i32,
                 state_size: self.config.state_dim as i32,
@@ -389,27 +388,26 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::AttentionOutput,
         ]);
         let x = arrays[0].borrow();
-        let x_buf = x.buffer().clone();
-        drop(x);
+        let x_buf = x.buffer();
+
         let b = arrays[1].borrow();
-        let b_buf = b.buffer().clone();
-        drop(b);
+        let b_buf = b.buffer();
+
         let c = arrays[2].borrow();
-        let c_buf = c.buffer().clone();
-        drop(c);
+        let c_buf = c.buffer();
+
         let dt = arrays[3].borrow();
-        let dt_buf = dt.buffer().clone();
-        drop(dt);
+        let dt_buf = dt.buffer();
+
         let z = arrays[4].borrow();
-        let z_buf = z.buffer().clone();
-        drop(z);
+        let z_buf = z.buffer();
+
         let state_arr = arrays[5].borrow();
-        let state_buf = state_arr.buffer().clone();
-        drop(state_arr);
+        let state_buf = state_arr.buffer();
+
         let y = arrays[6].borrow();
-        let y_buf = y.buffer().clone();
-        let skip_weights = self.skip_connection_weight.clone();
-        let skip_buf = skip_weights.buffer().clone();
+        let y_buf = y.buffer();
+        let skip_buf = self.skip_connection_weight.buffer();
 
         let h = self.config.num_heads as u32;
         let g = self.config.num_groups as u32;
@@ -424,15 +422,15 @@ impl<B: Backend> MambaMixer<B> {
         let state_size = n as i32;
 
         self.ssd_update.encode(
-            &x_buf,
-            &dt_buf,
-            &b_buf,
-            &c_buf,
-            &skip_buf,
-            &z_buf,
-            &state_buf,
-            &y_buf,
-            &state_buf,
+            x_buf,
+            dt_buf,
+            b_buf,
+            c_buf,
+            skip_buf,
+            z_buf,
+            state_buf,
+            y_buf,
+            state_buf,
             group_size as u32,
             state_size as u32,
             x_strides.as_slice(),

@@ -7,7 +7,8 @@ use super::{
 use crate::{
     DataType,
     backends::metal::{
-        MetalContext, MetalError,
+        context::MetalContext,
+        error::MetalError,
         kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
     },
 };

@@ -13,16 +13,19 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
-    backends::metal::kernel::moe::{
-        MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
-        MoeExpertsTwoPassPrefillBlock,
+    backends::{
+        common::kernel::moe::{
+            MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
+            MoeExpertsTwoPassPrefillBlock,
+        },
+        metal::Metal,
     },
 };
 
 #[path = "moe_test_utils.rs"]
 mod test_utils;
 use test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, cpu_tile_counts, cpu_tile_scan, create_ctx};
-use uzu::backends::metal::kernel::moe::MoeExpertsSingleDecodeArguments;
+use uzu::backends::common::kernel::moe::MoeExpertsSingleDecodeArguments;
 
 /// Test data for MoE experts
 struct MoeTestData {
@@ -412,7 +415,7 @@ fn test_two_pass_decode_correctness() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Execute 2-pass decode kernel
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     const K_TILE: usize = 64;
@@ -556,7 +559,7 @@ fn test_two_pass_decode_multi_token() {
     let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(&ctx).expect("kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     experts_kernel.encode(
         &cb,
@@ -658,7 +661,7 @@ fn test_two_pass_prefill_correctness() {
     let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
-    let experts_kernel = MoeExpertsTwoPassPrefillBlock::new(&ctx).expect("kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
@@ -787,7 +790,7 @@ fn test_fused_single_token_decode() {
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     // Run fused decode kernel
-    let fused_kernel = MoeExpertsSingleDecodeKernels::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     fused_kernel.encode(
@@ -911,7 +914,7 @@ fn test_fused_single_token_k4() {
     let hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
-    let fused_kernel = MoeExpertsSingleDecodeKernels::new(&ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("fused kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     fused_kernel.encode(
         &cb,

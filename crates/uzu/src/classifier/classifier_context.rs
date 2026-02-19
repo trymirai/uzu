@@ -1,24 +1,17 @@
 use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
-use metal::MTLCommandBuffer;
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
-use super::{
-    MetalContext,
-    encodable_block::{
-        ClassifierLayer,
-        transformer_layer::{embed_block, linear_block},
-    },
-    kernel::dsl::SigmoidMetalKernel,
-};
 use crate::{
     DataType,
-    backends::{
-        common::{Context, kernel::SigmoidKernel},
-        metal::{Metal, error::ClassifierError},
+    backends::common::{
+        Backend, Context, Kernels,
+        kernel::{SigmoidKernel, matmul::MatmulKernels},
     },
+    classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{Activation, ClassifierPredictionHead, EncodableBlock, Normalization, Pooling, Rope},
+    encodable_block::{
+        Activation, ClassifierLayer, ClassifierPredictionHead, EncodableBlock, Normalization, Pooling, Rope,
+        embed_block, linear_block,
+    },
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
@@ -28,34 +21,37 @@ use crate::{
     session::types::Error,
 };
 
-pub struct ClassifierContext {
-    pub mtl_context: Rc<MetalContext>,
-    pub command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+pub struct ClassifierContext<B: Backend> {
+    pub context: Rc<B::Context>,
+    pub command_buffer: B::CommandBuffer,
 
-    pub shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
-    pub scratch_buffers: ScratchBuffers<Metal>,
+    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    pub scratch_buffers: ScratchBuffers<B>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
 
-    pub embed: Box<dyn EncodableBlock<Metal>>,
-    pub embedding_norm: Normalization<Metal>,
-    pub layers: Box<[ClassifierLayer<Metal>]>,
-    pub output_norm: Normalization<Metal>,
-    pub global_rope: Rc<Box<dyn EncodableBlock<Metal>>>,
-    pub local_rope: Option<Rc<Box<dyn EncodableBlock<Metal>>>>,
+    pub embed: Box<dyn EncodableBlock<B>>,
+    pub embedding_norm: Normalization<B>,
+    pub layers: Box<[ClassifierLayer<B>]>,
+    pub output_norm: Normalization<B>,
+    pub global_rope: Rc<Box<dyn EncodableBlock<B>>>,
+    pub local_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
 
-    pub pooling: Box<dyn EncodableBlock<Metal>>,
-    pub prediction_head: Box<dyn EncodableBlock<Metal>>,
+    pub pooling: Box<dyn EncodableBlock<B>>,
+    pub prediction_head: Box<dyn EncodableBlock<B>>,
 
-    pub sigmoid_kernel: SigmoidMetalKernel,
+    pub sigmoid_kernel: <B::Kernels as Kernels>::SigmoidKernel,
 }
 
-impl ClassifierContext {
+impl<B: Backend + 'static> ClassifierContext<B>
+where
+    B::Kernels: MatmulKernels,
+{
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = MetalContext::new().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
 
-        let command_buffer = context.create_command_buffer().map_err(|_| Error::UnableToCreateMetalContext)?;
+        let command_buffer = context.create_command_buffer().map_err(|_| Error::UnableToCreateBackendContext)?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -103,7 +99,7 @@ impl ClassifierContext {
             .activation_precision()
             .into();
 
-        let embed = embed_block(&decoder_config, &context, &root_loader_view);
+        let embed = embed_block(&decoder_config, context.as_ref(), &root_loader_view);
 
         let global_rope = Self::create_rope_block(&context, data_type, RopeType::Global).map_err(Error::Classifier)?;
         let local_rope = classifier_model_config
@@ -205,19 +201,19 @@ impl ClassifierContext {
         let prediction_head_dense_tree = prediction_head_tree.subtree("dense").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.dense".to_string()))
         })?;
-        let prediction_head_dense = linear_block::<1>(
+        let prediction_head_dense = linear_block::<1, B>(
             &prediction_head_config.dense_config,
             prediction_head_config.use_dense_bias,
             model_dim,
             [model_dim],
-            &context,
+            context.as_ref(),
             &prediction_head_dense_tree,
             ArrayId::ClassifierPooling,
             ArrayId::ClassifierPredictionHeadDense,
         );
 
         let prediction_head_activation = Box::new(
-            Activation::<Metal>::new(
+            Activation::<B>::new(
                 &context,
                 prediction_head_data_type,
                 prediction_head_config.activation.clone(),
@@ -247,12 +243,12 @@ impl ClassifierContext {
         let prediction_head_readout_tree = prediction_head_tree.subtree("readout").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.readout".to_string()))
         })?;
-        let prediction_head_final_linear = linear_block::<1>(
+        let prediction_head_final_linear = linear_block::<1, B>(
             &prediction_head_config.readout_config,
             true,
             model_dim,
             [num_labels],
-            &context,
+            context.as_ref(),
             &prediction_head_readout_tree,
             ArrayId::ClassifierPredictionHeadNorm,
             ArrayId::ClassifierPredictionHeadLogits,
@@ -261,13 +257,13 @@ impl ClassifierContext {
             Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head readout: {:?}", e)))
         })?;
 
-        let sigmoid_kernel = SigmoidMetalKernel::new(&context, data_type.into()).map_err(|e| {
+        let sigmoid_kernel = <B::Kernels as Kernels>::SigmoidKernel::new(&context, data_type.into()).map_err(|e| {
             eprintln!("Failed to create sigmoid kernel: {:?}", e);
-            Error::UnableToCreateMetalContext
+            Error::UnableToCreateBackendContext
         })?;
 
         let pooling = Box::new(
-            Pooling::<Metal>::new(
+            Pooling::<B>::new(
                 context.as_ref(),
                 data_type,
                 classifier_model_config.model_config.classifier_pooling.clone(),
@@ -275,7 +271,7 @@ impl ClassifierContext {
             )
             .map_err(|e| {
                 eprintln!("Failed to create pooling: {:?}", e);
-                Error::UnableToCreateMetalContext
+                Error::UnableToCreateBackendContext
             })?,
         );
 
@@ -290,7 +286,7 @@ impl ClassifierContext {
         ));
 
         Ok(Self {
-            mtl_context: context,
+            context,
             command_buffer,
             shared_buffers,
             scratch_buffers,
@@ -309,18 +305,18 @@ impl ClassifierContext {
     }
 
     fn create_rope_block(
-        mtl_context: &MetalContext,
+        context: &B::Context,
         data_type: DataType,
         rope_type: RopeType,
-    ) -> Result<Rc<Box<dyn EncodableBlock<Metal>>>, ClassifierError> {
-        let rotation: Box<dyn EncodableBlock<Metal>> = Box::new(
-            Rope::<Metal>::new(mtl_context, data_type, rope_type)
+    ) -> Result<Rc<Box<dyn EncodableBlock<B>>>, ClassifierError> {
+        let rotation: Box<dyn EncodableBlock<B>> = Box::new(
+            Rope::<B>::new(context, data_type, rope_type)
                 .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?,
         );
         Ok(Rc::new(rotation))
     }
 
     pub fn reset_command_buffer(&mut self) {
-        self.command_buffer = self.mtl_context.create_command_buffer().expect("Failed to create command buffer");
+        self.command_buffer = self.context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

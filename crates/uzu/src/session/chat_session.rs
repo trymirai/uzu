@@ -438,7 +438,7 @@ impl ChatSession {
             let batch_submitted = batch_end - next_to_submit;
             let accepted_before_batch = results.len();
 
-            let cache_slice = llm.context.cache_layers.borrow().slice(&llm.context.mtl_context, 0..batch_submitted);
+            let cache_slice = llm.context.cache_layers.borrow().slice(&llm.context.context, 0..batch_submitted);
 
             for idx in next_to_submit..batch_end {
                 let batch_sender = sender.clone();
@@ -568,7 +568,7 @@ impl ChatSession {
     fn build_context_from_language_model_generator(&self) -> Result<Context, Error> {
         let language_model_generator = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
         let cache_layers =
-            language_model_generator.context.cache_layers.borrow().clone(&language_model_generator.context.mtl_context);
+            language_model_generator.context.cache_layers.borrow().clone(&language_model_generator.context.context);
         let context = Context::new(
             language_model_generator.tokens.clone(),
             cache_layers,

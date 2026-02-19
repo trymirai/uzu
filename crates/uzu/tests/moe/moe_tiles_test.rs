@@ -2,7 +2,10 @@
 
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::backends::metal::kernel::moe::tiles_map::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments};
+use uzu::backends::{
+    common::kernel::moe::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments},
+    metal::Metal,
+};
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, cpu_tile_counts, cpu_tile_scan, create_ctx};
 
@@ -31,7 +34,7 @@ fn test_tile_counts_correctness() {
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         // Execute kernel using kernel struct
-        let tile_kernel = MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
+        let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_counts(
             &cb,
@@ -76,7 +79,7 @@ fn test_tile_scan_correctness() {
         let total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
 
         // Execute kernel using kernel struct
-        let tile_kernel = MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
+        let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_scan(
             &cb,
@@ -116,7 +119,7 @@ fn test_tile_edge_cases() {
         let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
-        let tile_kernel = MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
+        let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_counts(
             &cb,
@@ -147,7 +150,7 @@ fn test_tile_edge_cases() {
         let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
-        let tile_kernel = MoeTileMapKernels::new(&ctx).expect("MoeTileMapKernel::new");
+        let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_counts(
             &cb,

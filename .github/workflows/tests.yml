@@ -23,12 +23,14 @@ defaults:
 jobs:
   linters:
     name: Linters
-    runs-on: macos-26-xlarge
+    runs-on: [self-hosted, macos, x64, mac, m3max, runner2]
 
     steps:
       - uses: actions/checkout@v6
       - id: setup
         uses: ./.github/actions/setup
+        with:
+          linters: true
 
       - name: Install nightly rustfmt
         if: ${{ always() && steps.setup.outcome == 'success' }}
@@ -50,9 +52,9 @@ jobs:
           cargo metadata --locked --format-version=1 > /dev/null
           git diff --exit-code -- Cargo.lock
 
-  build:
-    name: Build${{ matrix.tracing && ' (tracing)' || '' }}
-    runs-on: macos-26-xlarge
+  tests:
+    name: Tests${{ matrix.tracing && ' (tracing)' || '' }}
+    runs-on: [self-hosted, macos, x64, mac, m3max, runner1]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
     strategy:
@@ -65,11 +67,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          metal: true
+          test_model: true
 
       - name: Build crates
         run: |
           cargo build ${{ matrix.tracing && '--features tracing' || '' }}
 
-      - name: Build tests
+      - name: Run tests
         run: |
-          cargo test ${{ matrix.tracing && '--features tracing' || '' }} --no-run
+          cargo test ${{ matrix.tracing && '--features tracing' || '' }}

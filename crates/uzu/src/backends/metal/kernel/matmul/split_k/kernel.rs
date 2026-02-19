@@ -10,7 +10,8 @@ use crate::{
             kernel::{MatmulSplitKAccumBfloat16Kernel, MatmulSplitKPartialBfloat16Kernel},
         },
         metal::{
-            MetalContext, MetalError,
+            context::MetalContext,
+            error::MetalError,
             kernel::{
                 dsl::{MatmulSplitKAccumBfloat16MetalKernel, MatmulSplitKPartialBfloat16MetalKernel},
                 matmul::common::MatmulArguments,

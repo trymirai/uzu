@@ -1,6 +1,9 @@
 use crate::{
     DataType,
-    backends::metal::{DeviceClass, MetalContext, kernel::matmul::common::MatmulArguments},
+    backends::metal::{
+        context::{DeviceClass, MetalContext},
+        kernel::matmul::common::MatmulArguments,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

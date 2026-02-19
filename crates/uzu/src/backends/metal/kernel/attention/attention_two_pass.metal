@@ -5,7 +5,6 @@
 #define HEAD_BLOCK_SIZE 32
 #define SEQUENCE_BLOCK_SIZE_1 8
 #define SEQUENCE_BLOCK_SIZE_2 32
-#define SIMD_WIDTH 32
 #define TOTAL_BLOCKS_COUNT 32
 
 template <typename T, uint head_dim>
@@ -39,14 +38,13 @@ KERNEL(AttentionTwoPass1)(
     threadgroup float shared_max_scores[SEQUENCE_BLOCK_SIZE_1],
     threadgroup float shared_sum_exp_scores[SEQUENCE_BLOCK_SIZE_1],
     threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE_1 * HEAD_BLOCK_SIZE],
+    const Simd simd,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
     const uint block_idx GROUPS(TOTAL_BLOCKS_COUNT),
     const uint tid THREADS(256)
 ) {
   const uint3 tpg = {num_heads, suffix_length, TOTAL_BLOCKS_COUNT};
-  const uint simd_gid = tid / SIMD_WIDTH;
-  const uint simd_lid = tid % SIMD_WIDTH;
 
   constexpr bool query_transposed = false;
   constexpr uint value_dim = head_dim;
@@ -68,20 +66,21 @@ KERNEL(AttentionTwoPass1)(
           : head_idx * tpg.y + q_seq_idx; // Consistent with single-pass
   const uint kv_head_idx = head_idx / gqa_factor;
 
-  queries += q_offset * head_dim + simd_lid * qk_elements_per_thread;
+  queries += q_offset * head_dim + simd.lane_idx * qk_elements_per_thread;
   keys += kv_head_idx * k_head_stride +
-          (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd_gid) * k_seq_stride +
-          simd_lid * qk_elements_per_thread;
-  values += kv_head_idx * v_head_stride +
-            (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd_gid) * v_seq_stride +
-            simd_lid * value_elements_per_thread;
+          (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * k_seq_stride +
+          simd.lane_idx * qk_elements_per_thread;
+  values +=
+      kv_head_idx * v_head_stride +
+      (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * v_seq_stride +
+      simd.lane_idx * value_elements_per_thread;
   out += o_offset * TOTAL_BLOCKS_COUNT * value_dim + block_idx * value_dim +
-         simd_lid * value_elements_per_thread;
+         simd.lane_idx * value_elements_per_thread;
   if (float_mask) {
-    fmask +=
-        head_idx * mask_head_stride +
-        (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd_gid) * mask_kv_seq_stride +
-        q_seq_idx * mask_q_seq_stride;
+    fmask += head_idx * mask_head_stride +
+             (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) *
+                 mask_kv_seq_stride +
+             q_seq_idx * mask_q_seq_stride;
   }
   sums += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
   maxs += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
@@ -96,7 +95,7 @@ KERNEL(AttentionTwoPass1)(
 
   U max_score = -1e9;
   U sum_exp_score = 0;
-  if (has_sinks && block_idx == 0 && simd_gid == 0) {
+  if (has_sinks && block_idx == 0 && simd.group_idx == 0) {
     const uint num_q_heads = tpg.x;
     int q_head_idx = head_idx % num_q_heads;
     max_score = static_cast<U>(sinks[q_head_idx]);
@@ -104,7 +103,7 @@ KERNEL(AttentionTwoPass1)(
   }
 
   // For each key
-  for (uint i = block_idx * SEQUENCE_BLOCK_SIZE_1 + simd_gid;
+  for (uint i = block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx;
        i < sequence_length;
        i += TOTAL_BLOCKS_COUNT * SEQUENCE_BLOCK_SIZE_1) {
     bool use_key = true;
@@ -151,36 +150,38 @@ KERNEL(AttentionTwoPass1)(
   }
 
   // Each thread has a partial part of the output so we need to combine them.
-  if (simd_lid == 0) {
-    shared_max_scores[simd_gid] = max_score;
-    shared_sum_exp_scores[simd_gid] = sum_exp_score;
+  if (simd.lane_idx == 0) {
+    shared_max_scores[simd.group_idx] = max_score;
+    shared_sum_exp_scores[simd.group_idx] = sum_exp_score;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  max_score =
-      (simd_lid < SEQUENCE_BLOCK_SIZE_1) ? shared_max_scores[simd_lid] : -1e9;
+  max_score = (simd.lane_idx < SEQUENCE_BLOCK_SIZE_1)
+                  ? shared_max_scores[simd.lane_idx]
+                  : -1e9;
   U new_max = simd_max(max_score);
   U factor = fast::exp(max_score - new_max);
-  sum_exp_score =
-      (simd_lid < SEQUENCE_BLOCK_SIZE_1) ? shared_sum_exp_scores[simd_lid] : 0;
+  sum_exp_score = (simd.lane_idx < SEQUENCE_BLOCK_SIZE_1)
+                      ? shared_sum_exp_scores[simd.lane_idx]
+                      : 0;
   sum_exp_score = simd_sum(sum_exp_score * factor);
 
   // Write the sum and new max
-  if (simd_gid == 0) {
+  if (simd.group_idx == 0) {
     sums[0] = sum_exp_score;
     maxs[0] = new_max;
   }
 
   // Now we need to aggregate all the outputs
   for (uint i = 0; i < value_elements_per_thread; i++) {
-    shared_outputs[simd_lid * SEQUENCE_BLOCK_SIZE_1 + simd_gid] =
-        o[i] * fast::exp(shared_max_scores[simd_gid] - new_max);
+    shared_outputs[simd.lane_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx] =
+        o[i] * fast::exp(shared_max_scores[simd.group_idx] - new_max);
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // And write the output
-    if (simd_gid == 0) {
-      U output = shared_outputs[simd_lid * SEQUENCE_BLOCK_SIZE_1];
+    if (simd.group_idx == 0) {
+      U output = shared_outputs[simd.lane_idx * SEQUENCE_BLOCK_SIZE_1];
       for (uint j = 1; j < SEQUENCE_BLOCK_SIZE_1; j++) {
-        output += shared_outputs[simd_lid * SEQUENCE_BLOCK_SIZE_1 + j];
+        output += shared_outputs[simd.lane_idx * SEQUENCE_BLOCK_SIZE_1 + j];
       }
       out[i] = static_cast<T>(output);
     }
@@ -199,14 +200,12 @@ KERNEL(AttentionTwoPass2)(
     const constant uint& num_heads,
     const constant uint& suffix_length,
     threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE_2 * HEAD_BLOCK_SIZE],
+    const Simd simd,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
     const uint tid THREADS(1024)
 ) {
   const uint3 tpg = {num_heads, suffix_length, 1};
-  const uint simd_gid = tid / SIMD_WIDTH;
-  const uint simd_lid = tid % SIMD_WIDTH;
-
   constexpr uint elements_per_thread = head_dim / HEAD_BLOCK_SIZE;
 
   typedef float U;
@@ -214,18 +213,18 @@ KERNEL(AttentionTwoPass2)(
 
   const uint o_offset = q_seq_idx * tpg.x + head_idx; // Our custom layout
 
-  partials += o_offset * TOTAL_BLOCKS_COUNT * head_dim + simd_gid * head_dim +
-              simd_lid * elements_per_thread;
+  partials += o_offset * TOTAL_BLOCKS_COUNT * head_dim +
+              simd.group_idx * head_dim + simd.lane_idx * elements_per_thread;
   sums += o_offset * TOTAL_BLOCKS_COUNT;
   maxs += o_offset * TOTAL_BLOCKS_COUNT;
   out += o_offset * head_dim +
-         simd_gid * elements_per_thread; // Our custom output layout
+         simd.group_idx * elements_per_thread; // Our custom output layout
 
   // First everybody reads the max and sum_exp
-  U max_score = maxs[simd_lid];
+  U max_score = maxs[simd.lane_idx];
   U new_max = simd_max(max_score);
   U factor = fast::exp(max_score - new_max);
-  U sum_exp_score = simd_sum(sums[simd_lid] * factor);
+  U sum_exp_score = simd_sum(sums[simd.lane_idx] * factor);
 
   // Now read the block into registers and then use shared memory to transpose
   // it
@@ -233,17 +232,19 @@ KERNEL(AttentionTwoPass2)(
     o[i] = partials[i];
   }
   for (uint i = 0; i < elements_per_thread; i++) {
-    shared_outputs[simd_lid * HEAD_BLOCK_SIZE + simd_gid] = o[i];
+    shared_outputs[simd.lane_idx * HEAD_BLOCK_SIZE + simd.group_idx] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    o[i] = simd_sum(
-               shared_outputs[simd_gid * HEAD_BLOCK_SIZE + simd_lid] * factor
-           ) /
-           sum_exp_score;
+    o[i] =
+        simd_sum(
+            shared_outputs[simd.group_idx * HEAD_BLOCK_SIZE + simd.lane_idx] *
+            factor
+        ) /
+        sum_exp_score;
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
   // And write the output
-  if (simd_lid == 0) {
+  if (simd.lane_idx == 0) {
     for (uint i = 0; i < elements_per_thread; i++) {
       out[i] = static_cast<T>(o[i]);
     }

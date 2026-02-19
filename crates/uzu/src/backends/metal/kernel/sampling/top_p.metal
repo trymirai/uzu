@@ -15,6 +15,7 @@ KERNEL(TopP) (
     constant uint& batch_size,
     constant uint& vocab_size,
     constant float& top_p,
+    const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE)
 ) {
@@ -36,12 +37,14 @@ KERNEL(TopP) (
   float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
       local_max,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
   float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
       local_min,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
 
   // Find denominator for softmax
@@ -58,7 +61,8 @@ KERNEL(TopP) (
   float total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
       local_sum,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
 
   // Do the binary search on the threshold
@@ -86,12 +90,14 @@ KERNEL(TopP) (
     float sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
         local_sum_above_threshold,
         shared_reduce_buffer,
-        thread_idx
+        thread_idx,
+        simd
     );
     float min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
         local_min_above_threshold,
         shared_reduce_buffer,
-        thread_idx
+        thread_idx,
+        simd
     );
 
     // Early exit

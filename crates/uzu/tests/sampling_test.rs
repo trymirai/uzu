@@ -7,7 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
+            CommandBuffer, Context,
             kernel::{
                 GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel, TopPKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
@@ -18,7 +18,6 @@ use uzu::{
             kernel::dsl::{
                 GumbelMetalKernel, MinPMetalKernel, TemperatureMetalKernel, TopKMetalKernel, TopPMetalKernel,
             },
-            metal_extensions::CommandBufferTimingExt,
         },
     },
     language_model::gumbel::{gumbel_float, revidx},

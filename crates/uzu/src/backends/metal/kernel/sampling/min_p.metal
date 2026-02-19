@@ -13,6 +13,7 @@ KERNEL(MinP) (
     constant uint& batch_size,
     constant uint& vocab_size,
     constant float& min_p,
+    const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE)
 ) {
@@ -28,7 +29,8 @@ KERNEL(MinP) (
   float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
       local_max,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
 
   // Then the threshold is just max_logit + log(min_p), mask everything strictly

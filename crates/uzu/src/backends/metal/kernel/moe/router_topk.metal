@@ -37,10 +37,6 @@ KERNEL(MoeRouterTopK)(
     return;
   }
 
-  const uint simd_lane = simd.lane_idx;
-  const uint simdgroup_idx = simd.group_idx;
-  const uint simdgroups_per_tg = simd.groups_per_threadgroup;
-
   const uint vecs = d_model / 4u;
   const device ScalarT* x_vec = input + (ulong)token_idx * (ulong)vecs * 4;
 
@@ -54,11 +50,11 @@ KERNEL(MoeRouterTopK)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint row = simdgroup_idx; row < e; row += simdgroups_per_tg) {
+  for (uint row = simd.group_idx; row < e; row += simd.groups_per_threadgroup) {
     const device ScalarT* w_vec = weight + (ulong)row * (ulong)vecs * 4;
 
     float4 accum4 = float4(0.0f);
-    for (uint c = simd_lane; c < vecs; c += 32u) {
+    for (uint c = simd.lane_idx; c < vecs; c += 32u) {
       const float4 wv = float4(
           w_vec[c * 4 + 0],
           w_vec[c * 4 + 1],
@@ -100,14 +96,16 @@ KERNEL(MoeRouterTopK)(
     float max_val = threadgroup_cooperative_reduce_max<THREADS_PER_TG>(
         local_best,
         reduce_tmp,
-        lid
+        lid,
+        simd
     );
 
     uint candidate_id = (local_best == max_val) ? local_idx : 0xFFFFFFFFu;
     uint best_idx = threadgroup_cooperative_reduce_min<THREADS_PER_TG>(
         candidate_id,
         reduce_tmp_u,
-        lid
+        lid,
+        simd
     );
 
     if (lid == 0) {

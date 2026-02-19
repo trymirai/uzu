@@ -9,7 +9,8 @@ use crate::{
     backends::{
         common::kernel::MatmulGemmKernel,
         metal::{
-            MetalContext, MetalError,
+            context::MetalContext,
+            error::MetalError,
             kernel::{dsl::MatmulGemmMetalKernel, matmul::common::MatmulArguments},
         },
     },

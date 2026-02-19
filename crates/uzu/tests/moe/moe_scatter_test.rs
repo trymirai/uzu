@@ -6,10 +6,12 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel},
-        metal::kernel::{
-            MoeBlockBasesArguments, MoeScatterArguments, MoeScatterKernels,
-            dsl::{MoeCountsOffsetsFusedMetalKernel, MoeRouterTopKMetalKernel},
+        common::kernel::{
+            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel, MoeScatterBucketsKernel,
+        },
+        metal::kernel::dsl::{
+            MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeRouterTopKMetalKernel,
+            MoeScatterBucketsMetalKernel,
         },
     },
 };
@@ -133,22 +135,26 @@ fn test_scatter_buckets_parity() {
         let entries = num_blocks * num_tiles * 512usize;
         let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
 
-        let scatter = MoeScatterKernels::new(&ctx).expect("scatter kernels");
+        let scatter_bases_kernel = MoeBlockBasesFromPartialsMetalKernel::new(&ctx)
+            .expect("Failed to create MoeBlockBasesFromPartialsMetalKernel");
+        let scatter_kernel = MoeScatterBucketsMetalKernel::new(&ctx, DataType::BF16)
+            .expect("Failed to create MoeScatterBucketsMetalKernel");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
-        scatter
-            .encode_block_bases(
-                &cb,
-                MoeBlockBasesArguments {
-                    partials_buffer: &partials_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    e,
-                    num_blocks,
-                    num_tiles,
-                },
-            )
-            .expect("encode bases");
+
+        let scatter_bases_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_bases_encoder");
+        scatter_bases_kernel.encode(
+            &partials_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            e as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            0u32,
+            &scatter_bases_encoder,
+        );
+        scatter_bases_encoder.end_encoding();
+
         cb.commit();
         cb.wait_until_completed();
 
@@ -157,26 +163,24 @@ fn test_scatter_buckets_parity() {
         let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        scatter
-            .encode_scatter(
-                &cb,
-                MoeScatterArguments {
-                    topk_ids_buffer: &topk_ids_buf,
-                    topk_probs_buffer: &topk_probs_buf,
-                    offsets_buffer: &offsets_buf,
-                    block_bases_buffer: &block_bases_buf,
-                    block_alloc_buffer: &block_alloc_buf,
-                    out_ids_buffer: &out_ids_buf,
-                    out_probs_buffer: &out_probs_buf,
-                    t,
-                    e,
-                    k,
-                    num_blocks,
-                    num_tiles,
-                },
-                DataType::BF16,
-            )
-            .expect("encode scatter");
+        let scatter_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_encoder");
+        scatter_kernel.encode(
+            &topk_ids_buf,
+            &topk_probs_buf,
+            &offsets_buf,
+            &block_bases_buf,
+            &block_alloc_buf,
+            &out_ids_buf,
+            &out_probs_buf,
+            t as u32,
+            e as u32,
+            k as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            &scatter_encoder,
+        );
+        scatter_encoder.end_encoding();
+
         cb.commit();
         cb.wait_until_completed();
 

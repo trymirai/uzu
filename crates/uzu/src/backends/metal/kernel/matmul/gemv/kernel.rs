@@ -12,7 +12,8 @@ use crate::{
     backends::{
         common::kernel::MatmulGemvKernel,
         metal::{
-            MetalContext, MetalError,
+            context::MetalContext,
+            error::MetalError,
             kernel::{dsl::MatmulGemvMetalKernel, matmul::common::MatmulArguments},
         },
     },
