@@ -7,11 +7,12 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::audio::{
-                AudioElementwiseArguments, AudioFsqDecodeArguments, AudioFsqEncodeArguments, AudioKernelRuntime,
-            },
+            kernel::{AudioFsqDecodeKernel, AudioFsqEncodeKernel, AudioLeakyReluKernel},
         },
-        metal::{Metal, MetalContext, kernel::MetalAudioKernelRuntime},
+        metal::{
+            MetalContext,
+            kernel::dsl::{AudioFsqDecodeMetalKernel, AudioFsqEncodeMetalKernel, AudioLeakyReluMetalKernel},
+        },
     },
 };
 
@@ -22,7 +23,7 @@ fn create_test_context() -> std::rc::Rc<MetalContext> {
 #[test]
 fn audio_dsl_leaky_relu_matches_reference() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioLeakyReluMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let input_values: Vec<f32> = vec![-2.0, -0.5, 0.0, 0.5, 3.0];
     let n = input_values.len();
@@ -34,17 +35,7 @@ fn audio_dsl_leaky_relu_matches_reference() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_leaky_relu(
-            &encoder,
-            AudioElementwiseArguments {
-                input: input.buffer(),
-                output: output.buffer(),
-                n,
-            },
-            0.1,
-        )
-        .expect("encode leaky relu");
+    kernel.encode(input.buffer(), output.buffer(), n as i32, 0.1, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -71,7 +62,7 @@ fn audio_dsl_leaky_relu_matches_reference() {
 #[test]
 fn audio_dsl_fsq_decode_matches_reference() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioFsqDecodeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let batch_size = 1usize;
     let num_groups = 2usize;
@@ -94,21 +85,17 @@ fn audio_dsl_fsq_decode_matches_reference() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_fsq_decode(
-            &encoder,
-            AudioFsqDecodeArguments::<Metal> {
-                tokens: tokens.buffer(),
-                lengths: lengths.buffer(),
-                output: output.buffer(),
-                batch_size,
-                num_groups,
-                seq_len,
-                codebook_dim_per_group: codebook_dim,
-                num_levels_per_group: &num_levels,
-            },
-        )
-        .expect("encode fsq decode");
+    kernel.encode(
+        tokens.buffer(),
+        output.buffer(),
+        lengths.buffer(),
+        num_groups as i32,
+        seq_len as i32,
+        codebook_dim as i32,
+        &num_levels,
+        batch_size as i32,
+        &encoder,
+    );
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -127,7 +114,7 @@ fn audio_dsl_fsq_decode_matches_reference() {
 #[test]
 fn audio_dsl_fsq_encode_matches_reference() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioFsqEncodeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let batch_size = 1usize;
     let num_groups = 2usize;
@@ -160,23 +147,19 @@ fn audio_dsl_fsq_encode_matches_reference() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_fsq_encode(
-            &encoder,
-            AudioFsqEncodeArguments::<Metal> {
-                input: input.buffer(),
-                tokens: tokens.buffer(),
-                lengths: lengths.buffer(),
-                batch_size,
-                num_groups,
-                seq_len,
-                codebook_dim_per_group: codebook_dim,
-                num_levels_per_group: &num_levels,
-                dim_base_index: &dim_base_index,
-                eps,
-            },
-        )
-        .expect("encode fsq encode");
+    kernel.encode(
+        input.buffer(),
+        tokens.buffer(),
+        lengths.buffer(),
+        num_groups as i32,
+        seq_len as i32,
+        codebook_dim as i32,
+        &num_levels,
+        &dim_base_index,
+        eps,
+        batch_size as i32,
+        &encoder,
+    );
 
     encoder.end_encoding();
     command_buffer.commit();

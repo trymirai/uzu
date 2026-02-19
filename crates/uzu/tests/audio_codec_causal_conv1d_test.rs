@@ -7,9 +7,9 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::audio::{AudioCausalConv1dArguments, AudioKernelRuntime},
+            kernel::AudioCausalConv1dKernel,
         },
-        metal::{Metal, MetalContext, kernel::MetalAudioKernelRuntime},
+        metal::{MetalContext, kernel::dsl::AudioCausalConv1dMetalKernel},
     },
 };
 
@@ -20,7 +20,7 @@ fn create_test_context() -> std::rc::Rc<MetalContext> {
 #[test]
 fn audio_causal_conv1d_matches_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioCausalConv1dMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let batch_size = 2usize;
     let cin = 3usize;
@@ -87,24 +87,20 @@ fn audio_causal_conv1d_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_causal_conv1d(
-            &encoder,
-            AudioCausalConv1dArguments::<Metal> {
-                input: input.buffer(),
-                weight: weight.buffer(),
-                bias: bias.buffer(),
-                output: output.buffer(),
-                lengths: lengths_array.buffer(),
-                batch_size,
-                cin,
-                cout,
-                seq_len,
-                kernel_size,
-                dilation,
-            },
-        )
-        .expect("encode causal conv1d");
+    kernel.encode(
+        input.buffer(),
+        weight.buffer(),
+        bias.buffer(),
+        output.buffer(),
+        lengths_array.buffer(),
+        cin as i32,
+        cout as i32,
+        seq_len as i32,
+        kernel_size as i32,
+        dilation as i32,
+        batch_size as i32,
+        &encoder,
+    );
 
     encoder.end_encoding();
     command_buffer.commit();

@@ -5,11 +5,9 @@ pub mod dsl {
 }
 pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
-pub mod audio;
 pub mod matmul;
 pub mod moe;
 
-pub use audio::MetalAudioKernelRuntime;
 pub use matmul::{MatmulArguments, MatmulKernel};
 pub use moe::{
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments,

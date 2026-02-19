@@ -7,12 +7,18 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::audio::{
-                AudioAddArguments, AudioClampArguments, AudioElementwiseArguments, AudioHalfSnakeArguments,
-                AudioKernelRuntime, AudioScaleArguments,
+            kernel::{
+                AudioAddKernel, AudioClampKernel, AudioHalfSnakeKernel, AudioLeakyReluKernel, AudioScaleKernel,
+                AudioTanhKernel,
             },
         },
-        metal::{Metal, MetalContext, kernel::MetalAudioKernelRuntime},
+        metal::{
+            MetalContext,
+            kernel::dsl::{
+                AudioAddMetalKernel, AudioClampMetalKernel, AudioHalfSnakeMetalKernel, AudioLeakyReluMetalKernel,
+                AudioScaleMetalKernel, AudioTanhMetalKernel,
+            },
+        },
     },
 };
 
@@ -23,7 +29,7 @@ fn create_test_context() -> std::rc::Rc<MetalContext> {
 #[test]
 fn audio_leaky_relu_matches_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioLeakyReluMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 1024usize;
     let slope = 0.01f32;
@@ -37,17 +43,7 @@ fn audio_leaky_relu_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_leaky_relu(
-            &encoder,
-            AudioElementwiseArguments::<Metal> {
-                input: input.buffer(),
-                output: output.buffer(),
-                n,
-            },
-            slope,
-        )
-        .expect("encode leaky relu");
+    kernel.encode(input.buffer(), output.buffer(), n as i32, slope, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -68,7 +64,7 @@ fn audio_leaky_relu_matches_reference_f32() {
 #[test]
 fn audio_tanh_matches_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioTanhMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 1024usize;
     let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
@@ -81,16 +77,7 @@ fn audio_tanh_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_tanh(
-            &encoder,
-            AudioElementwiseArguments::<Metal> {
-                input: input.buffer(),
-                output: output.buffer(),
-                n,
-            },
-        )
-        .expect("encode tanh");
+    kernel.encode(input.buffer(), output.buffer(), n as i32, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -107,7 +94,8 @@ fn audio_tanh_matches_reference_f32() {
 #[test]
 fn audio_add_and_scale_match_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let add_kernel = AudioAddMetalKernel::new(&context, DataType::F32).expect("audio add kernel");
+    let scale_kernel = AudioScaleMetalKernel::new(&context, DataType::F32).expect("audio scale kernel");
 
     let n = 2048usize;
     let scale_value = 1.0f32 / 3.0f32;
@@ -126,29 +114,9 @@ fn audio_add_and_scale_match_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_add(
-            &encoder,
-            AudioAddArguments::<Metal> {
-                a: a.buffer(),
-                b: b.buffer(),
-                output: sum.buffer(),
-                n,
-            },
-        )
-        .expect("encode add");
+    add_kernel.encode(a.buffer(), b.buffer(), sum.buffer(), n as i32, &encoder);
 
-    runtime
-        .encode_scale(
-            &encoder,
-            AudioScaleArguments::<Metal> {
-                input: sum.buffer(),
-                output: scaled.buffer(),
-                n,
-                scale: scale_value,
-            },
-        )
-        .expect("encode scale");
+    scale_kernel.encode(sum.buffer(), scaled.buffer(), n as i32, scale_value, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -180,7 +148,7 @@ fn audio_add_and_scale_match_reference_f32() {
 #[test]
 fn audio_clamp_matches_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioClampMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 2048usize;
     let min_value = -1.0f32;
@@ -195,18 +163,7 @@ fn audio_clamp_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_clamp(
-            &encoder,
-            AudioClampArguments::<Metal> {
-                input: input.buffer(),
-                output: output.buffer(),
-                n,
-                min_value,
-                max_value,
-            },
-        )
-        .expect("encode clamp");
+    kernel.encode(input.buffer(), output.buffer(), n as i32, min_value, max_value, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -223,7 +180,7 @@ fn audio_clamp_matches_reference_f32() {
 #[test]
 fn audio_half_snake_matches_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioHalfSnakeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let batch_size = 1usize;
     let channels = 6usize;
@@ -248,22 +205,18 @@ fn audio_half_snake_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_half_snake(
-            &encoder,
-            AudioHalfSnakeArguments::<Metal> {
-                input: input.buffer(),
-                alpha: alpha.buffer(),
-                output: output.buffer(),
-                batch_size,
-                channels,
-                seq_len,
-                snake_channels,
-                negative_slope,
-                eps,
-            },
-        )
-        .expect("encode half snake");
+    kernel.encode(
+        input.buffer(),
+        alpha.buffer(),
+        output.buffer(),
+        channels as i32,
+        seq_len as i32,
+        snake_channels as i32,
+        negative_slope,
+        eps,
+        batch_size as i32,
+        &encoder,
+    );
 
     encoder.end_encoding();
     command_buffer.commit();

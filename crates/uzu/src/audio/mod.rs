@@ -6,8 +6,6 @@ mod types;
 
 #[cfg(feature = "audio-runtime")]
 pub mod runtime;
-#[cfg(feature = "audio-tools")]
-pub mod tools;
 
 pub use assembler::{
     DEFAULT_AUDIO_DECODE_CHUNK_FRAMES, InputTokenAdapter, OutputTokenAdapter, TextInputTokenAdapter,

@@ -7,9 +7,9 @@ use uzu::{
     backends::{
         common::{
             Context,
-            kernel::audio::{AudioConv1dArguments, AudioKernelRuntime, AudioPadMode},
+            kernel::AudioConv1dKernel,
         },
-        metal::{Metal, MetalContext, kernel::MetalAudioKernelRuntime},
+        metal::{MetalContext, kernel::dsl::AudioConv1dMetalKernel},
     },
 };
 
@@ -20,7 +20,7 @@ fn create_test_context() -> std::rc::Rc<MetalContext> {
 #[test]
 fn audio_conv1d_replicate_matches_reference_f32() {
     let context = create_test_context();
-    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = AudioConv1dMetalKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let batch_size = 2usize;
     let cin = 3usize;
@@ -96,28 +96,24 @@ fn audio_conv1d_replicate_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    runtime
-        .encode_conv1d(
-            &encoder,
-            AudioConv1dArguments::<Metal> {
-                input: input.buffer(),
-                weight: weight.buffer(),
-                bias: bias.buffer(),
-                output: output.buffer(),
-                lengths: lengths.buffer(),
-                batch_size,
-                cin,
-                cout,
-                seq_len_in,
-                seq_len_out,
-                kernel_size,
-                stride,
-                dilation,
-                padding,
-                pad_mode: AudioPadMode::Replicate,
-            },
-        )
-        .expect("encode conv1d");
+    kernel.encode(
+        input.buffer(),
+        weight.buffer(),
+        bias.buffer(),
+        output.buffer(),
+        lengths.buffer(),
+        cin as i32,
+        cout as i32,
+        seq_len_in as i32,
+        seq_len_out as i32,
+        kernel_size as i32,
+        stride as i32,
+        dilation as i32,
+        padding as i32,
+        1_i32,
+        batch_size as i32,
+        &encoder,
+    );
 
     encoder.end_encoding();
     command_buffer.commit();
