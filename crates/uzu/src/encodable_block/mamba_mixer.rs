@@ -175,17 +175,20 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmZ(self.layer_index),
             ArrayId::SsmDt(self.layer_index),
         ]);
-        let in_proj = arrays[0].borrow_mut();
-        let conv_inputs = arrays[1].borrow_mut();
-        let gate = arrays[2].borrow_mut();
-        let dt = arrays[3].borrow_mut();
 
+        let in_proj = arrays[0].borrow();
         let input_buf = in_proj.buffer();
-        let conv_buf = conv_inputs.buffer();
-        let gate_buf = gate.buffer();
-        let dt_buf = dt.buffer();
-        let bias_buf = self.gate_bias.buffer();
 
+        let conv_inputs = arrays[1].borrow();
+        let conv_buf = conv_inputs.buffer();
+
+        let gate = arrays[2].borrow();
+        let gate_buf = gate.buffer();
+
+        let dt = arrays[3].borrow();
+        let dt_buf = dt.buffer();
+
+        let bias_buf = self.gate_bias.buffer();
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let num_heads = self.config.num_heads;
@@ -219,11 +222,11 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
         ]);
-        let conv_inputs = arrays[0].borrow_mut();
-        let conv_state = arrays[1].borrow_mut();
-        let x_arr = arrays[2].borrow_mut();
-        let b_arr = arrays[3].borrow_mut();
-        let c_arr = arrays[4].borrow_mut();
+        let conv_inputs = arrays[0].borrow();
+        let conv_state = arrays[1].borrow();
+        let x_arr = arrays[2].borrow();
+        let b_arr = arrays[3].borrow();
+        let c_arr = arrays[4].borrow();
 
         let input_buf = conv_inputs.buffer();
         let state_buf = conv_state.buffer();
@@ -263,7 +266,7 @@ impl<B: Backend> MambaMixer<B> {
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state.conv_padded_buffer().expect("Missing conv padded buffer");
-                let borrow = array.borrow_mut();
+                let borrow = array.borrow();
                 let buf = borrow.buffer().clone();
                 drop(borrow);
 
