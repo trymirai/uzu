@@ -5,7 +5,10 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
-    backends::metal::kernel::moe::{MoeGatherArguments, MoeGatherKernels},
+    backends::{
+        common::kernel::moe::{MoeGatherArguments, MoeGatherKernels},
+        metal::Metal,
+    },
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
@@ -74,7 +77,7 @@ fn test_gather_correctness() {
         let sumk_buf = alloc_buffer_with_data(&ctx, &sum_k_u32);
 
         // Execute gather kernel using kernel struct
-        let gather = MoeGatherKernels::new(&ctx).expect("MoeGatherKernel::new");
+        let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("MoeGatherKernel::new");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         gather.encode(
             &cb,

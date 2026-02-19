@@ -5,13 +5,8 @@ pub mod dsl {
 pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
 pub mod matmul;
-pub mod moe;
 
 pub use matmul::{MatmulArguments, MatmulKernel};
-pub use moe::{
-    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments,
-    MoeGatherKernels,
-};
 
 impl MatmulKernels for dsl::MetalKernels {
     type FullPrecisionMatmulKernel = MatmulKernel;

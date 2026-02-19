@@ -5,12 +5,12 @@ use metal::{MTLCommandBuffer, MTLCommandQueue};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
-    backends::metal::{
-        MetalContext,
-        kernel::moe::{
+    backends::{
+        common::kernel::moe::{
             MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
             MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
         },
+        metal::{Metal, MetalContext},
     },
 };
 
@@ -76,7 +76,7 @@ fn run_decode_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(ctx).expect("experts decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(ctx).expect("experts decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -213,7 +213,7 @@ fn run_two_pass_prefill_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassPrefillBlock::new(ctx).expect("experts prefill kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillBlock::<Metal>::new(ctx).expect("experts prefill kernel");
 
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
@@ -339,7 +339,7 @@ fn run_fused_single_token_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
@@ -486,7 +486,7 @@ fn run_indirect_decode_timed(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::new(ctx).expect("decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(ctx).expect("decode kernel");
 
     let x_perm_buf = alloc_buffer_with_data(ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(ctx, &offsets);
@@ -583,7 +583,7 @@ fn run_fused_decode_timed(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernels::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(ctx).expect("fused kernel");
 
     let x_buf = alloc_buffer_with_data(ctx, &x);
     let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
