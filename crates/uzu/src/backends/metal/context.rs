@@ -56,6 +56,7 @@ impl DeviceClass {
 pub struct DeviceArchitecture {
     pub generation: DeviceGeneration,
     pub device_class: DeviceClass,
+    #[allow(dead_code)]
     pub arch_string: String,
 }
 

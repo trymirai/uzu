@@ -15,4 +15,6 @@ pub trait CommandBuffer {
 
     fn submit(&self);
     fn wait_until_completed(&self);
+
+    fn gpu_execution_time_ms(&self) -> Option<f64>;
 }

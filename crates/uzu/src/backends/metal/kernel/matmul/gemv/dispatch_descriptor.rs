@@ -5,7 +5,7 @@ use metal::MTLSize;
 use super::pipeline_configuration::{PipelineConfiguration, select_configuration};
 use crate::{
     DataType,
-    backends::metal::{MetalContext, MetalError, kernel::matmul::common::MatmulArguments},
+    backends::metal::{context::MetalContext, error::MetalError, kernel::matmul::common::MatmulArguments},
 };
 
 const DEFAULT_GEMV_MAX_BATCH: i32 = 8;

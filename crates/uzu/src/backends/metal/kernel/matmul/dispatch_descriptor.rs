@@ -1,7 +1,7 @@
 use super::{common::MatmulArguments, gemm, gemv, split_k};
 use crate::{
     DataType,
-    backends::metal::{MetalContext, MetalError},
+    backends::metal::{context::MetalContext, error::MetalError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

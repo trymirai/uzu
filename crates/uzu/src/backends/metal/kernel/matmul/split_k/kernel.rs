@@ -9,8 +9,10 @@ use crate::{
     backends::{
         common::Context,
         metal::{
-            ComputeEncoderSetValue, MetalContext, MetalError,
+            context::MetalContext,
+            error::MetalError,
             kernel::matmul::common::{MatmulArguments, transpose_configuration},
+            metal_extensions::ComputeEncoderSetValue,
         },
     },
 };

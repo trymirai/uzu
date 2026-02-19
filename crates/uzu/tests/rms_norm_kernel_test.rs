@@ -8,13 +8,12 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
+            CommandBuffer, Context,
             kernel::{QKNormKernel, RMSNormKernel},
         },
         metal::{
             MetalContext,
             kernel::dsl::{QKNormMetalKernel, RMSNormMetalKernel},
-            metal_extensions::CommandBufferTimingExt,
         },
     },
 };
