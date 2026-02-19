@@ -4,7 +4,6 @@
 #include "mma.h"
 #include "params.h"
 #include "transforms.h"
-#include "../utils.h"
 
 using namespace metal;
 
