@@ -70,16 +70,17 @@ KERNEL(AttentionTwoPass1)(
   keys += kv_head_idx * k_head_stride +
           (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * k_seq_stride +
           simd.lane_idx * qk_elements_per_thread;
-  values += kv_head_idx * v_head_stride +
-            (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * v_seq_stride +
-            simd.lane_idx * value_elements_per_thread;
+  values +=
+      kv_head_idx * v_head_stride +
+      (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * v_seq_stride +
+      simd.lane_idx * value_elements_per_thread;
   out += o_offset * TOTAL_BLOCKS_COUNT * value_dim + block_idx * value_dim +
          simd.lane_idx * value_elements_per_thread;
   if (float_mask) {
-    fmask +=
-        head_idx * mask_head_stride +
-        (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * mask_kv_seq_stride +
-        q_seq_idx * mask_q_seq_stride;
+    fmask += head_idx * mask_head_stride +
+             (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) *
+                 mask_kv_seq_stride +
+             q_seq_idx * mask_q_seq_stride;
   }
   sums += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
   maxs += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
@@ -154,12 +155,14 @@ KERNEL(AttentionTwoPass1)(
     shared_sum_exp_scores[simd.group_idx] = sum_exp_score;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  max_score =
-      (simd.lane_idx < SEQUENCE_BLOCK_SIZE_1) ? shared_max_scores[simd.lane_idx] : -1e9;
+  max_score = (simd.lane_idx < SEQUENCE_BLOCK_SIZE_1)
+                  ? shared_max_scores[simd.lane_idx]
+                  : -1e9;
   U new_max = simd_max(max_score);
   U factor = fast::exp(max_score - new_max);
-  sum_exp_score =
-      (simd.lane_idx < SEQUENCE_BLOCK_SIZE_1) ? shared_sum_exp_scores[simd.lane_idx] : 0;
+  sum_exp_score = (simd.lane_idx < SEQUENCE_BLOCK_SIZE_1)
+                      ? shared_sum_exp_scores[simd.lane_idx]
+                      : 0;
   sum_exp_score = simd_sum(sum_exp_score * factor);
 
   // Write the sum and new max
@@ -210,8 +213,8 @@ KERNEL(AttentionTwoPass2)(
 
   const uint o_offset = q_seq_idx * tpg.x + head_idx; // Our custom layout
 
-  partials += o_offset * TOTAL_BLOCKS_COUNT * head_dim + simd.group_idx * head_dim +
-              simd.lane_idx * elements_per_thread;
+  partials += o_offset * TOTAL_BLOCKS_COUNT * head_dim +
+              simd.group_idx * head_dim + simd.lane_idx * elements_per_thread;
   sums += o_offset * TOTAL_BLOCKS_COUNT;
   maxs += o_offset * TOTAL_BLOCKS_COUNT;
   out += o_offset * head_dim +
@@ -231,10 +234,12 @@ KERNEL(AttentionTwoPass2)(
   for (uint i = 0; i < elements_per_thread; i++) {
     shared_outputs[simd.lane_idx * HEAD_BLOCK_SIZE + simd.group_idx] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    o[i] = simd_sum(
-               shared_outputs[simd.group_idx * HEAD_BLOCK_SIZE + simd.lane_idx] * factor
-           ) /
-           sum_exp_score;
+    o[i] =
+        simd_sum(
+            shared_outputs[simd.group_idx * HEAD_BLOCK_SIZE + simd.lane_idx] *
+            factor
+        ) /
+        sum_exp_score;
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 

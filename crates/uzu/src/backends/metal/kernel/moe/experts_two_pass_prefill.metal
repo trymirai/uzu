@@ -562,7 +562,8 @@ KERNEL(MoeExpertsPrefillPassB)(
   // ---- Writeout with fragment extraction ----
   const uint lane_qid = simd.lane_idx >> 2;
   const uint lane_row = (lane_qid & 4u) + ((simd.lane_idx >> 1) & 3u);
-  const uint lane_col_base = ((lane_qid & 2u) << 1) + ((simd.lane_idx & 1u) << 1);
+  const uint lane_col_base =
+      ((lane_qid & 2u) << 1) + ((simd.lane_idx & 1u) << 1);
 
   const uint local_row = row_sg_off + lane_row;
   if (local_row >= m_rows)

@@ -154,7 +154,8 @@ KERNEL(SSDPrefill)(
   const float d_scalar = float(d[h_idx]);
 
   const int max_chunks = SSM_PREFILL_MAX_STATE / simd.group_size;
-  const int chunk_count = (state_dim + int(simd.group_size) - 1) / int(simd.group_size);
+  const int chunk_count =
+      (state_dim + int(simd.group_size) - 1) / int(simd.group_size);
   if (state_dim <= 0 || chunk_count > max_chunks) {
     return;
   }

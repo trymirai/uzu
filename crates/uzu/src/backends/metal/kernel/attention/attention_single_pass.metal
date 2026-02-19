@@ -149,10 +149,12 @@ KERNEL(AttentionSinglePass)(
   for (int i = 0; i < value_elements_per_thread; i++) {
     shared_outputs[simd.lane_idx * HEAD_BLOCK_SIZE + simd.group_idx] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    o[i] = simd_sum(
-               shared_outputs[simd.group_idx * HEAD_BLOCK_SIZE + simd.lane_idx] * factor
-           ) /
-           sum_exp_score;
+    o[i] =
+        simd_sum(
+            shared_outputs[simd.group_idx * HEAD_BLOCK_SIZE + simd.lane_idx] *
+            factor
+        ) /
+        sum_exp_score;
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 

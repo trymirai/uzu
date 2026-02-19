@@ -416,7 +416,8 @@ static T threadgroup_cooperative_reduce_max(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Reduce across simdgroups
-  T total_max = lid < simd.groups_count(BLOCK_SIZE) ? shared[lid] : T(-INFINITY);
+  T total_max =
+      lid < simd.groups_count(BLOCK_SIZE) ? shared[lid] : T(-INFINITY);
   total_max = simd_max(total_max);
 
   // Broadcast the result to all threads
