@@ -7,9 +7,6 @@ edition.workspace = true
 name = "cli"
 path = "src/main.rs"
 
-[features]
-default = []
-
 [dependencies]
 clap.workspace = true
 uzu.workspace = true

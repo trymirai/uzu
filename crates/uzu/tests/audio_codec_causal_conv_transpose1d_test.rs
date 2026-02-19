@@ -5,10 +5,7 @@ use uzu::{
     DataType,
     array::ArrayContextExt,
     backends::{
-        common::{
-            Context,
-            kernel::AudioCausalConvTranspose1dKernel,
-        },
+        common::{Context, kernel::AudioCausalConvTranspose1dKernel},
         metal::{MetalContext, kernel::dsl::AudioCausalConvTranspose1dMetalKernel},
     },
 };

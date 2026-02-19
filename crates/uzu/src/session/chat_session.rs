@@ -472,15 +472,8 @@ impl ChatSession {
                     finish_reason = FinishReason::ContextLimitReached;
                     true
                 } else if let Some(progress_fn) = progress {
-                    let output = Self::build_output(
-                        tokenizer,
-                        output_parser,
-                        run_context,
-                        llm,
-                        &results,
-                        &durations,
-                        None,
-                    )?;
+                    let output =
+                        Self::build_output(tokenizer, output_parser, run_context, llm, &results, &durations, None)?;
                     if !progress_fn(output) {
                         finish_reason = FinishReason::Cancelled;
                         true
@@ -518,15 +511,7 @@ impl ChatSession {
             }
         }
 
-        Self::build_output(
-            tokenizer,
-            output_parser,
-            run_context,
-            llm,
-            &results,
-            &durations,
-            Some(finish_reason),
-        )
+        Self::build_output(tokenizer, output_parser, run_context, llm, &results, &durations, Some(finish_reason))
     }
 
     fn reconfigure_language_model_generator(

@@ -45,12 +45,14 @@ impl ChunkedAudioDecoder {
 
         for chunk_start in (0..frame_major_tokens.frames()).step_by(self.chunk_frames) {
             let chunk_end = (chunk_start + self.chunk_frames).min(frame_major_tokens.frames());
-            let chunk_grid = slice_frame_range(&frame_major_tokens, chunk_start, chunk_end)?;
-            if chunk_grid.lengths().iter().all(|&length| length == 0) {
+            let prefix_grid = slice_frame_range(&frame_major_tokens, 0, chunk_end)?;
+            if prefix_grid.lengths().iter().all(|&length| length == 0) {
                 continue;
             }
 
-            let decoded = self.runtime.decode(&chunk_grid)?;
+            // Decode progressively larger prefixes and append only the new PCM tail.
+            // This preserves temporal context for causal/stateful decoders across chunk boundaries.
+            let decoded = self.runtime.decode(&prefix_grid)?;
             if decoded.batch_size() != batch_size {
                 return Err(AudioError::Runtime(format!(
                     "audio runtime returned batch_size {}, expected {}",
@@ -76,16 +78,28 @@ impl ChunkedAudioDecoder {
 
             let chunk_channels = decoded.channels();
             let mut sample_offset = 0usize;
-            for (batch_index, &length) in decoded.lengths().iter().enumerate() {
-                let sample_count = length * chunk_channels;
+            for (batch_index, &decoded_length) in decoded.lengths().iter().enumerate() {
+                let sample_count = decoded_length * chunk_channels;
                 let next_offset = sample_offset + sample_count;
-                let chunk_samples = decoded
+                let batch_samples = decoded
                     .samples()
                     .get(sample_offset..next_offset)
                     .ok_or_else(|| AudioError::Runtime("audio runtime returned malformed chunk PCM layout".into()))?;
 
-                merged_samples[batch_index].extend_from_slice(chunk_samples);
-                merged_lengths[batch_index] += length;
+                let already_emitted = merged_lengths[batch_index];
+                if decoded_length < already_emitted {
+                    return Err(AudioError::Runtime(format!(
+                        "audio runtime returned non-monotonic PCM length for batch {batch_index}: {decoded_length} < {already_emitted}"
+                    )));
+                }
+
+                let already_emitted_samples = already_emitted * chunk_channels;
+                let new_samples = batch_samples
+                    .get(already_emitted_samples..)
+                    .ok_or_else(|| AudioError::Runtime("audio runtime returned malformed chunk PCM layout".into()))?;
+
+                merged_samples[batch_index].extend_from_slice(new_samples);
+                merged_lengths[batch_index] = decoded_length;
                 sample_offset = next_offset;
             }
 
@@ -188,6 +202,40 @@ mod tests {
         }
     }
 
+    struct CausalContextRuntime;
+
+    impl AudioCodecRuntime for CausalContextRuntime {
+        fn encode(
+            &self,
+            _pcm: &AudioPcmBatch,
+        ) -> AudioResult<AudioTokenGrid> {
+            Err(AudioError::Runtime("encode is not used in chunked decode test".into()))
+        }
+
+        fn decode(
+            &self,
+            tokens: &AudioTokenGrid,
+        ) -> AudioResult<AudioPcmBatch> {
+            let tokens = tokens.to_packing(AudioTokenPacking::FrameMajor);
+            let mut out = Vec::new();
+
+            for batch in 0..tokens.batch_size() {
+                let length = tokens.lengths()[batch];
+                for frame in 0..length {
+                    let current = tokens.get(batch, 0, frame) as f32;
+                    let previous = if frame == 0 {
+                        0.0
+                    } else {
+                        tokens.get(batch, 0, frame - 1) as f32
+                    };
+                    out.push(current + previous);
+                }
+            }
+
+            AudioPcmBatch::new(out.into_boxed_slice(), 24_000, 1, tokens.lengths().to_vec().into_boxed_slice())
+        }
+    }
+
     #[test]
     fn chunked_decode_matches_full_decode() {
         let grid = AudioTokenGrid::new(
@@ -208,6 +256,33 @@ mod tests {
         .expect("valid grid");
 
         let runtime = Arc::new(MockRuntime);
+        let chunked = ChunkedAudioDecoder::new(runtime.clone(), 2).expect("valid decoder");
+        let chunked_pcm = chunked.decode_chunked(&grid).expect("chunked decode should work");
+        let full_pcm = runtime.decode(&grid).expect("full decode should work");
+
+        assert_eq!(chunked_pcm, full_pcm);
+    }
+
+    #[test]
+    fn chunked_decode_preserves_causal_context_across_boundaries() {
+        let grid = AudioTokenGrid::new(
+            vec![
+                1, // b0 f0
+                2, // b0 f1
+                3, // b0 f2
+                4, // b0 f3
+                5, // b0 f4
+            ]
+            .into_boxed_slice(),
+            1,
+            1,
+            5,
+            vec![5].into_boxed_slice(),
+            AudioTokenPacking::FrameMajor,
+        )
+        .expect("valid grid");
+
+        let runtime = Arc::new(CausalContextRuntime);
         let chunked = ChunkedAudioDecoder::new(runtime.clone(), 2).expect("valid decoder");
         let chunked_pcm = chunked.decode_chunked(&grid).expect("chunked decode should work");
         let full_pcm = runtime.decode(&grid).expect("full decode should work");
