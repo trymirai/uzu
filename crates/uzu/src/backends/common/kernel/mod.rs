@@ -3,6 +3,7 @@
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
 pub mod attention;
+pub mod audio;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod mlp_gate_act_mul;

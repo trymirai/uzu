@@ -11,6 +11,7 @@
 // Speculators
 pub use crate::{
     VERSION,
+    audio::{AudioCodecRuntime, AudioIntegration, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, AudioTokenSpace},
     session::{
         ChatSession, ClassificationSession,
         config::{DecodingConfig, RunConfig, SpeculatorConfig},

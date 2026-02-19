@@ -1,3 +1,4 @@
+use crate::audio::AudioError;
 use crate::backends::metal::error::ClassifierError;
 
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +47,8 @@ pub enum Error {
     GrammarReject,
     #[error("Token {0} out of grammar vocabulary range (0..{1})")]
     TokenOutOfGrammarRange(u64, usize),
+    #[error("Audio integration error: {0}")]
+    Audio(#[from] AudioError),
     #[error("Classifier error: {0}")]
     Classifier(#[from] ClassifierError),
 }

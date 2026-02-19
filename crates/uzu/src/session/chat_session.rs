@@ -19,6 +19,7 @@ use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
+    audio::{AudioIntegration, InputTokenAdapter, OutputTokenAdapter, TokenAdapters},
     config::{MixerConfig, ModelMetadata},
     forward_pass::cache_layers::CacheLayer,
     language_model::{
@@ -54,6 +55,8 @@ pub struct ChatSession {
     tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
+    token_adapters: TokenAdapters,
+    audio_integration: Option<AudioIntegration>,
     llm: Option<LanguageModelGenerator>,
     static_context: Option<Context>,
 }
@@ -138,6 +141,8 @@ impl ChatSession {
             tokenizer_info,
             input_processor: Box::new(input_processor),
             output_parser,
+            token_adapters: TokenAdapters::default(),
+            audio_integration: None,
             llm: Some(llm),
             static_context: None,
         })
@@ -198,6 +203,19 @@ impl ChatSession {
         language_model_generator.reset_state();
         Ok(())
     }
+
+    pub fn set_audio_integration(
+        &mut self,
+        audio_integration: Option<AudioIntegration>,
+    ) {
+        self.token_adapters =
+            audio_integration.as_ref().map(|integration| integration.adapters().clone()).unwrap_or_default();
+        self.audio_integration = audio_integration;
+    }
+
+    pub fn audio_integration(&self) -> Option<&AudioIntegration> {
+        self.audio_integration.as_ref()
+    }
 }
 
 impl ChatSession {
@@ -226,14 +244,16 @@ impl ChatSession {
     {
         let run_start = Instant::now();
         let text = self.input_processor.process(&input, config.enable_thinking, config.tokens_limit > 0)?;
-        let tokens: Vec<u64> = self
-            .tokenizer
-            .encode(text.as_str(), false)
-            .map_err(|_| Error::UnableToEncodeText)?
-            .get_ids()
-            .iter()
-            .map(|&id| id as u64)
-            .collect();
+        let use_default_token_pipeline = self.audio_integration.is_none();
+        let input_token_adapter = self.token_adapters.input();
+        let output_token_adapter = self.token_adapters.output();
+        let tokens = Self::assemble_input_tokens(
+            &self.tokenizer,
+            input_token_adapter.as_ref(),
+            use_default_token_pipeline,
+            &input,
+            text.as_str(),
+        )?;
 
         let language_model_config =
             self.model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
@@ -295,6 +315,8 @@ impl ChatSession {
         };
         let prefill_output = Self::build_output(
             &self.tokenizer,
+            output_token_adapter.as_ref(),
+            use_default_token_pipeline,
             &self.output_parser,
             &run_context,
             language_model_generator,
@@ -324,6 +346,8 @@ impl ChatSession {
             let batch_size = language_model_generator.decoding_config.async_batch_size.resolve(&self.model_path);
             Self::run_async_batch(
                 &self.tokenizer,
+                output_token_adapter.as_ref(),
+                use_default_token_pipeline,
                 &self.output_parser,
                 &run_context,
                 language_model_generator,
@@ -334,6 +358,8 @@ impl ChatSession {
         } else {
             Self::run_sync_generate(
                 &self.tokenizer,
+                output_token_adapter.as_ref(),
+                use_default_token_pipeline,
                 &self.output_parser,
                 &run_context,
                 language_model_generator,
@@ -349,6 +375,8 @@ impl ChatSession {
 
     fn run_sync_generate<F>(
         tokenizer: &Tokenizer,
+        output_token_adapter: &dyn OutputTokenAdapter,
+        use_default_token_pipeline: bool,
         output_parser: &OutputParser,
         run_context: &RunContext,
         language_model_generator: &mut LanguageModelGenerator,
@@ -381,6 +409,8 @@ impl ChatSession {
             };
             let generate_output = Self::build_output(
                 tokenizer,
+                output_token_adapter,
+                use_default_token_pipeline,
                 output_parser,
                 run_context,
                 language_model_generator,
@@ -407,6 +437,8 @@ impl ChatSession {
 
     fn run_async_batch<F>(
         tokenizer: &Tokenizer,
+        output_token_adapter: &dyn OutputTokenAdapter,
+        use_default_token_pipeline: bool,
         output_parser: &OutputParser,
         run_context: &RunContext,
         llm: &mut LanguageModelGenerator,
@@ -472,8 +504,17 @@ impl ChatSession {
                     finish_reason = FinishReason::ContextLimitReached;
                     true
                 } else if let Some(progress_fn) = progress {
-                    let output =
-                        Self::build_output(tokenizer, output_parser, run_context, llm, &results, &durations, None)?;
+                    let output = Self::build_output(
+                        tokenizer,
+                        output_token_adapter,
+                        use_default_token_pipeline,
+                        output_parser,
+                        run_context,
+                        llm,
+                        &results,
+                        &durations,
+                        None,
+                    )?;
                     if !progress_fn(output) {
                         finish_reason = FinishReason::Cancelled;
                         true
@@ -500,6 +541,8 @@ impl ChatSession {
                     }
                     return Self::build_output(
                         tokenizer,
+                        output_token_adapter,
+                        use_default_token_pipeline,
                         output_parser,
                         run_context,
                         llm,
@@ -511,7 +554,17 @@ impl ChatSession {
             }
         }
 
-        Self::build_output(tokenizer, output_parser, run_context, llm, &results, &durations, Some(finish_reason))
+        Self::build_output(
+            tokenizer,
+            output_token_adapter,
+            use_default_token_pipeline,
+            output_parser,
+            run_context,
+            llm,
+            &results,
+            &durations,
+            Some(finish_reason),
+        )
     }
 
     fn reconfigure_language_model_generator(
@@ -579,6 +632,22 @@ impl ChatSession {
 }
 
 impl ChatSession {
+    fn assemble_input_tokens(
+        tokenizer: &Tokenizer,
+        input_token_adapter: &dyn InputTokenAdapter,
+        use_default_token_pipeline: bool,
+        input: &Input,
+        processed_text: &str,
+    ) -> Result<Vec<u64>, Error> {
+        if use_default_token_pipeline {
+            let encoding = tokenizer.encode(processed_text, false).map_err(|_| Error::UnableToEncodeText)?;
+
+            Ok(encoding.get_ids().iter().map(|&id| id as u64).collect())
+        } else {
+            input_token_adapter.assemble_tokens(tokenizer, input, processed_text).map_err(Error::from)
+        }
+    }
+
     fn check_finish_reason(
         run_context: &RunContext,
         language_model_generator: &LanguageModelGenerator,
@@ -601,20 +670,26 @@ impl ChatSession {
     }
 
     fn decode_generated_tokens(
+        output_token_adapter: &dyn OutputTokenAdapter,
+        use_default_token_pipeline: bool,
         tokenizer: &Tokenizer,
         prefill_tokens: &[u64],
         generate_results: &[GenerateResult],
     ) -> Result<String, Error> {
-        let generated_tokens: Vec<u32> = prefill_tokens
-            .iter()
-            .chain(generate_results.iter().flat_map(|r| r.tokens.iter()))
-            .map(|&v| v as u32)
-            .collect();
-        tokenizer.decode(&generated_tokens, true).map_err(|_| Error::UnableToDecodeText)
+        let generated_tokens: Vec<u64> =
+            prefill_tokens.iter().chain(generate_results.iter().flat_map(|r| r.tokens.iter())).copied().collect();
+        if use_default_token_pipeline {
+            let generated_tokens_u32: Vec<u32> = generated_tokens.iter().map(|&token| token as u32).collect();
+            tokenizer.decode(&generated_tokens_u32, true).map_err(|_| Error::UnableToDecodeText)
+        } else {
+            output_token_adapter.decode_for_output_parse(tokenizer, &generated_tokens).map_err(Error::from)
+        }
     }
 
     fn build_output(
         tokenizer: &Tokenizer,
+        output_token_adapter: &dyn OutputTokenAdapter,
+        use_default_token_pipeline: bool,
         output_parser: &OutputParser,
         run_context: &RunContext,
         language_model_generator: &LanguageModelGenerator,
@@ -622,7 +697,13 @@ impl ChatSession {
         generate_durations: &[f64],
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
-        let text = Self::decode_generated_tokens(tokenizer, &run_context.prefill_result.tokens, generate_results)?;
+        let text = Self::decode_generated_tokens(
+            output_token_adapter,
+            use_default_token_pipeline,
+            tokenizer,
+            &run_context.prefill_result.tokens,
+            generate_results,
+        )?;
         let parsed = output_parser.parse(text);
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = language_model_generator.tokens.len().saturating_sub(start_idx);
@@ -734,5 +815,158 @@ impl Drop for ChatSession {
         autoreleasepool(|_| {
             self.llm = None;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    use tokenizers::{Tokenizer, models::wordlevel::WordLevel};
+
+    use crate::{
+        audio::{AudioResult, OutputTokenAdapter, TextInputTokenAdapter, TextOutputTokenAdapter},
+        language_model::result::GenerateResult,
+        session::types::Input,
+    };
+
+    use super::ChatSession;
+
+    fn test_tokenizer() -> Tokenizer {
+        let vocab =
+            HashMap::from([("<unk>".to_string(), 0_u32), ("hello".to_string(), 1_u32), ("world".to_string(), 2_u32)])
+                .into_iter()
+                .collect();
+
+        let model = WordLevel::builder().vocab(vocab).unk_token("<unk>".to_string()).build().expect("wordlevel");
+        Tokenizer::new(model)
+    }
+
+    #[test]
+    fn input_adapter_path_matches_default_text_pipeline() {
+        let tokenizer = test_tokenizer();
+        let input = Input::Text("hello".to_string());
+        let text = "hello";
+        let adapter = TextInputTokenAdapter;
+
+        let default_tokens =
+            ChatSession::assemble_input_tokens(&tokenizer, &adapter, true, &input, text).expect("default input tokens");
+        let adapter_tokens = ChatSession::assemble_input_tokens(&tokenizer, &adapter, false, &input, text)
+            .expect("adapter input tokens");
+
+        assert_eq!(adapter_tokens, default_tokens);
+    }
+
+    #[test]
+    fn custom_input_adapter_is_invoked_for_non_default_pipeline() {
+        struct CountingAdapter {
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl crate::audio::InputTokenAdapter for CountingAdapter {
+            fn assemble_tokens(
+                &self,
+                _tokenizer: &Tokenizer,
+                _input: &Input,
+                processed_text: &str,
+            ) -> AudioResult<Vec<u64>> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(processed_text, "hello");
+                Ok(vec![42, 43])
+            }
+        }
+
+        let tokenizer = test_tokenizer();
+        let input = Input::Text("hello".to_string());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let adapter = CountingAdapter {
+            calls: calls.clone(),
+        };
+
+        let tokens =
+            ChatSession::assemble_input_tokens(&tokenizer, &adapter, false, &input, "hello").expect("adapter tokens");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(tokens, vec![42, 43]);
+    }
+
+    #[test]
+    fn output_adapter_path_matches_default_text_pipeline() {
+        let tokenizer = test_tokenizer();
+        let output_adapter = TextOutputTokenAdapter;
+        let prefill_tokens = vec![1_u64];
+        let generate_results = vec![GenerateResult {
+            tokens: vec![2_u64],
+            forwardpass_duration: 0.0,
+        }];
+
+        let default_decoded =
+            ChatSession::decode_generated_tokens(&output_adapter, true, &tokenizer, &prefill_tokens, &generate_results)
+                .expect("default decode");
+        let adapter_decoded = ChatSession::decode_generated_tokens(
+            &output_adapter,
+            false,
+            &tokenizer,
+            &prefill_tokens,
+            &generate_results,
+        )
+        .expect("adapter decode");
+
+        assert_eq!(adapter_decoded, default_decoded);
+        assert_eq!(adapter_decoded, "hello world");
+    }
+
+    #[test]
+    fn custom_output_adapter_is_invoked_for_non_default_pipeline() {
+        struct CountingOutputAdapter {
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl OutputTokenAdapter for CountingOutputAdapter {
+            fn decode_for_output_parse(
+                &self,
+                _tokenizer: &Tokenizer,
+                generated_tokens: &[u64],
+            ) -> AudioResult<String> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(generated_tokens, [7_u64, 8_u64, 9_u64]);
+                Ok("adapter-output".to_string())
+            }
+        }
+
+        let tokenizer = test_tokenizer();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let output_adapter = CountingOutputAdapter {
+            calls: calls.clone(),
+        };
+        let prefill_tokens = vec![7_u64];
+        let generate_results = vec![
+            GenerateResult {
+                tokens: vec![8_u64],
+                forwardpass_duration: 0.0,
+            },
+            GenerateResult {
+                tokens: vec![9_u64],
+                forwardpass_duration: 0.0,
+            },
+        ];
+
+        let decoded = ChatSession::decode_generated_tokens(
+            &output_adapter,
+            false,
+            &tokenizer,
+            &prefill_tokens,
+            &generate_results,
+        )
+        .expect("adapter decode");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(decoded, "adapter-output");
     }
 }

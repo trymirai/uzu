@@ -1,348 +1,297 @@
-#![cfg(target_os = "macos")]
+#![cfg(all(feature = "audio-runtime", target_os = "macos"))]
 
-use metal::{Device, MTLResourceOptions};
-
-use uzu::backends::metal::{
-    KernelDataType, MTLContext,
-    kernel::{AddKernel, ClampKernel, HalfSnakeKernel, LeakyReluKernel, ScaleKernel, TanhKernel},
+use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use uzu::{
+    DataType,
+    array::ArrayContextExt,
+    backends::{
+        common::{
+            Context,
+            kernel::audio::{
+                AudioAddArguments, AudioClampArguments, AudioElementwiseArguments, AudioHalfSnakeArguments,
+                AudioKernelRuntime, AudioScaleArguments,
+            },
+        },
+        metal::{Metal, MetalContext, kernel::MetalAudioKernelRuntime},
+    },
 };
 
-fn create_test_context() -> Result<MTLContext, String> {
-    let device = Device::system_default().ok_or("No Metal device available")?;
-    let command_queue = device.new_command_queue();
-    MTLContext::new(device, command_queue)
-        .map_err(|e| format!("Failed to create MTLContext: {e:?}"))
+fn create_test_context() -> std::rc::Rc<MetalContext> {
+    <MetalContext as Context>::new().expect("MetalContext")
 }
 
 #[test]
 fn audio_leaky_relu_matches_reference_f32() {
-    let context = create_test_context().expect("MTLContext");
-    let device = &context.device;
+    let context = create_test_context();
+    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 1024usize;
     let slope = 0.01f32;
+    let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
 
-    let input_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let output_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let mut input = context.create_array(&[n], DataType::F32, "audio_leaky_relu_input");
+    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let input: Vec<f32> = (0..n)
-        .map(|i| (i as f32) * 0.01 - 5.12)
-        .collect();
-    unsafe {
-        let ptr = input_buf.contents() as *mut f32;
-        for (i, &v) in input.iter().enumerate() {
-            ptr.add(i).write(v);
-        }
-    }
+    let output = context.create_array(&[n], DataType::F32, "audio_leaky_relu_output");
 
-    let kernel = LeakyReluKernel::new(&context, KernelDataType::Float32)
-        .expect("LeakyReluKernel");
-    let command_buffer = context.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode(&encoder, &input_buf, &output_buf, n, slope)
-        .expect("encode");
+    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+
+    runtime
+        .encode_leaky_relu(
+            &encoder,
+            AudioElementwiseArguments::<Metal> {
+                input: input.buffer(),
+                output: output.buffer(),
+                n,
+            },
+            slope,
+        )
+        .expect("encode leaky relu");
+
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    unsafe {
-        let out_ptr = output_buf.contents() as *const f32;
-        let got = std::slice::from_raw_parts(out_ptr, n);
-        for i in 0..n {
-            let x = input[i];
-            let expected = if x >= 0.0 { x } else { slope * x };
-            let diff = (expected - got[i]).abs();
-            assert!(
-                diff <= 1e-6,
-                "Mismatch at i={i}: expected {expected}, got {}, diff={diff}",
-                got[i]
-            );
-        }
+    let got = output.as_slice::<f32>();
+    for index in 0..n {
+        let expected = if input_values[index] >= 0.0 {
+            input_values[index]
+        } else {
+            slope * input_values[index]
+        };
+        let delta = (expected - got[index]).abs();
+        assert!(delta <= 1e-6, "Mismatch at index={index}: expected {expected}, got {}, delta={delta}", got[index]);
     }
 }
 
 #[test]
 fn audio_tanh_matches_reference_f32() {
-    let context = create_test_context().expect("MTLContext");
-    let device = &context.device;
+    let context = create_test_context();
+    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 1024usize;
+    let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
 
-    let input_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let output_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let mut input = context.create_array(&[n], DataType::F32, "audio_tanh_input");
+    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let input: Vec<f32> = (0..n)
-        .map(|i| (i as f32) * 0.01 - 5.12)
-        .collect();
-    unsafe {
-        let ptr = input_buf.contents() as *mut f32;
-        for (i, &v) in input.iter().enumerate() {
-            ptr.add(i).write(v);
-        }
-    }
+    let output = context.create_array(&[n], DataType::F32, "audio_tanh_output");
 
-    let kernel =
-        TanhKernel::new(&context, KernelDataType::Float32).expect("TanhKernel");
-    let command_buffer = context.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode(&encoder, &input_buf, &output_buf, n)
-        .expect("encode");
+    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+
+    runtime
+        .encode_tanh(
+            &encoder,
+            AudioElementwiseArguments::<Metal> {
+                input: input.buffer(),
+                output: output.buffer(),
+                n,
+            },
+        )
+        .expect("encode tanh");
+
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    unsafe {
-        let out_ptr = output_buf.contents() as *const f32;
-        let got = std::slice::from_raw_parts(out_ptr, n);
-        for i in 0..n {
-            let expected = input[i].tanh();
-            let diff = (expected - got[i]).abs();
-            assert!(
-                diff <= 1e-6,
-                "Mismatch at i={i}: expected {expected}, got {}, diff={diff}",
-                got[i]
-            );
-        }
+    let got = output.as_slice::<f32>();
+    for index in 0..n {
+        let expected = input_values[index].tanh();
+        let delta = (expected - got[index]).abs();
+        assert!(delta <= 1e-6, "Mismatch at index={index}: expected {expected}, got {}, delta={delta}", got[index]);
     }
 }
 
 #[test]
 fn audio_add_and_scale_match_reference_f32() {
-    let context = create_test_context().expect("MTLContext");
-    let device = &context.device;
+    let context = create_test_context();
+    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 2048usize;
+    let scale_value = 1.0f32 / 3.0f32;
+    let a_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.001 - 1.0).collect();
+    let b_values: Vec<f32> = (0..n).map(|i| (i as f32 * 0.002).sin()).collect();
 
-    let a_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let b_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let sum_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let scaled_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let mut a = context.create_array(&[n], DataType::F32, "audio_add_a");
+    a.as_slice_mut::<f32>().copy_from_slice(&a_values);
 
-    let a: Vec<f32> = (0..n).map(|i| i as f32 * 0.001 - 1.0).collect();
-    let b: Vec<f32> = (0..n).map(|i| (i as f32 * 0.002).sin()).collect();
+    let mut b = context.create_array(&[n], DataType::F32, "audio_add_b");
+    b.as_slice_mut::<f32>().copy_from_slice(&b_values);
 
-    unsafe {
-        let a_ptr = a_buf.contents() as *mut f32;
-        let b_ptr = b_buf.contents() as *mut f32;
-        for i in 0..n {
-            a_ptr.add(i).write(a[i]);
-            b_ptr.add(i).write(b[i]);
-        }
-    }
+    let sum = context.create_array(&[n], DataType::F32, "audio_add_sum");
+    let scaled = context.create_array(&[n], DataType::F32, "audio_add_scaled");
 
-    let add = AddKernel::new(&context, KernelDataType::Float32)
-        .expect("AddKernel");
-    let scale = ScaleKernel::new(&context, KernelDataType::Float32)
-        .expect("ScaleKernel");
+    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    let command_buffer = context.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    add.encode(&encoder, &a_buf, &b_buf, &sum_buf, n)
-        .expect("add encode");
-    scale
-        .encode(&encoder, &sum_buf, &scaled_buf, n, 1.0 / 3.0)
-        .expect("scale encode");
+    runtime
+        .encode_add(
+            &encoder,
+            AudioAddArguments::<Metal> {
+                a: a.buffer(),
+                b: b.buffer(),
+                output: sum.buffer(),
+                n,
+            },
+        )
+        .expect("encode add");
+
+    runtime
+        .encode_scale(
+            &encoder,
+            AudioScaleArguments::<Metal> {
+                input: sum.buffer(),
+                output: scaled.buffer(),
+                n,
+                scale: scale_value,
+            },
+        )
+        .expect("encode scale");
+
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    unsafe {
-        let sum_ptr = sum_buf.contents() as *const f32;
-        let scaled_ptr = scaled_buf.contents() as *const f32;
-        let sum_got = std::slice::from_raw_parts(sum_ptr, n);
-        let scaled_got = std::slice::from_raw_parts(scaled_ptr, n);
+    let sum_got = sum.as_slice::<f32>();
+    let scaled_got = scaled.as_slice::<f32>();
 
-        for i in 0..n {
-            let exp_sum = a[i] + b[i];
-            let exp_scaled = exp_sum * (1.0 / 3.0);
-            let diff_sum = (exp_sum - sum_got[i]).abs();
-            let diff_scaled = (exp_scaled - scaled_got[i]).abs();
-            assert!(
-                diff_sum <= 1e-6,
-                "Sum mismatch at i={i}: expected {exp_sum}, got {}, diff={diff_sum}",
-                sum_got[i]
-            );
-            assert!(
-                diff_scaled <= 1e-6,
-                "Scale mismatch at i={i}: expected {exp_scaled}, got {}, diff={diff_scaled}",
-                scaled_got[i]
-            );
-        }
+    for index in 0..n {
+        let expected_sum = a_values[index] + b_values[index];
+        let expected_scaled = expected_sum * scale_value;
+
+        let sum_delta = (expected_sum - sum_got[index]).abs();
+        let scaled_delta = (expected_scaled - scaled_got[index]).abs();
+
+        assert!(
+            sum_delta <= 1e-6,
+            "Add mismatch at index={index}: expected {expected_sum}, got {}, delta={sum_delta}",
+            sum_got[index]
+        );
+        assert!(
+            scaled_delta <= 1e-6,
+            "Scale mismatch at index={index}: expected {expected_scaled}, got {}, delta={scaled_delta}",
+            scaled_got[index]
+        );
     }
 }
 
 #[test]
 fn audio_clamp_matches_reference_f32() {
-    let context = create_test_context().expect("MTLContext");
-    let device = &context.device;
+    let context = create_test_context();
+    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 2048usize;
-    let min_v = -1.0f32;
-    let max_v = 1.0f32;
+    let min_value = -1.0f32;
+    let max_value = 1.0f32;
+    let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 10.24).collect();
 
-    let input_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let output_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let mut input = context.create_array(&[n], DataType::F32, "audio_clamp_input");
+    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let input: Vec<f32> = (0..n)
-        .map(|i| (i as f32) * 0.01 - 10.24)
-        .collect();
-    unsafe {
-        let ptr = input_buf.contents() as *mut f32;
-        for (i, &v) in input.iter().enumerate() {
-            ptr.add(i).write(v);
-        }
-    }
+    let output = context.create_array(&[n], DataType::F32, "audio_clamp_output");
 
-    let kernel =
-        ClampKernel::new(&context, KernelDataType::Float32).expect("ClampKernel");
-    let command_buffer = context.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode(&encoder, &input_buf, &output_buf, n, min_v, max_v)
-        .expect("encode");
+    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+
+    runtime
+        .encode_clamp(
+            &encoder,
+            AudioClampArguments::<Metal> {
+                input: input.buffer(),
+                output: output.buffer(),
+                n,
+                min_value,
+                max_value,
+            },
+        )
+        .expect("encode clamp");
+
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    unsafe {
-        let out_ptr = output_buf.contents() as *const f32;
-        let got = std::slice::from_raw_parts(out_ptr, n);
-        for i in 0..n {
-            let expected = input[i].max(min_v).min(max_v);
-            let diff = (expected - got[i]).abs();
-            assert!(
-                diff <= 1e-6,
-                "Mismatch at i={i}: expected {expected}, got {}, diff={diff}",
-                got[i]
-            );
-        }
+    let got = output.as_slice::<f32>();
+    for index in 0..n {
+        let expected = input_values[index].clamp(min_value, max_value);
+        let delta = (expected - got[index]).abs();
+        assert!(delta <= 1e-6, "Mismatch at index={index}: expected {expected}, got {}, delta={delta}", got[index]);
     }
 }
 
 #[test]
 fn audio_half_snake_matches_reference_f32() {
-    let context = create_test_context().expect("MTLContext");
-    let device = &context.device;
+    let context = create_test_context();
+    let runtime = MetalAudioKernelRuntime::new(&context, DataType::F32).expect("audio runtime");
 
     let batch_size = 1usize;
     let channels = 6usize;
     let snake_channels = channels / 2;
     let seq_len = 64usize;
     let n = batch_size * channels * seq_len;
-    let slope = 0.01f32;
+
+    let negative_slope = 0.01f32;
     let eps = 1e-9f32;
 
-    let input_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let alpha_buf = device.new_buffer(
-        (snake_channels * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
-    let output_buf = device.new_buffer(
-        (n * std::mem::size_of::<f32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let input_values: Vec<f32> = (0..n).map(|i| (i as f32 * 0.01 - 3.2).sin()).collect();
+    let alpha_values: Vec<f32> = (0..snake_channels).map(|i| 0.5 + i as f32 * 0.1).collect();
 
-    let input: Vec<f32> = (0..n)
-        .map(|i| (i as f32 * 0.01 - 3.2).sin())
-        .collect();
-    let alpha: Vec<f32> = (0..snake_channels)
-        .map(|i| 0.5 + i as f32 * 0.1)
-        .collect();
+    let mut input = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_input");
+    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    unsafe {
-        let x_ptr = input_buf.contents() as *mut f32;
-        for (i, &v) in input.iter().enumerate() {
-            x_ptr.add(i).write(v);
-        }
-        let a_ptr = alpha_buf.contents() as *mut f32;
-        for (i, &v) in alpha.iter().enumerate() {
-            a_ptr.add(i).write(v);
-        }
-    }
+    let mut alpha = context.create_array(&[snake_channels], DataType::F32, "audio_half_snake_alpha");
+    alpha.as_slice_mut::<f32>().copy_from_slice(&alpha_values);
 
-    let kernel = HalfSnakeKernel::new(&context, KernelDataType::Float32)
-        .expect("HalfSnakeKernel");
-    let command_buffer = context.command_queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    kernel
-        .encode(
+    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_output");
+
+    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+
+    runtime
+        .encode_half_snake(
             &encoder,
-            &input_buf,
-            &alpha_buf,
-            &output_buf,
-            batch_size,
-            channels,
-            seq_len,
-            snake_channels,
-            slope,
-            eps,
+            AudioHalfSnakeArguments::<Metal> {
+                input: input.buffer(),
+                alpha: alpha.buffer(),
+                output: output.buffer(),
+                batch_size,
+                channels,
+                seq_len,
+                snake_channels,
+                negative_slope,
+                eps,
+            },
         )
-        .expect("encode");
+        .expect("encode half snake");
+
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    unsafe {
-        let out_ptr = output_buf.contents() as *const f32;
-        let got = std::slice::from_raw_parts(out_ptr, n);
-        for b in 0..batch_size {
-            for c in 0..channels {
-                for t in 0..seq_len {
-                    let idx = (b * channels + c) * seq_len + t;
-                    let x = input[idx];
-                    let expected = if c < snake_channels {
-                        let a = alpha[c];
-                        let s = (a * x).sin();
-                        x + (s * s) / (a + eps)
-                    } else if x >= 0.0 {
-                        x
-                    } else {
-                        slope * x
-                    };
-                    let diff = (expected - got[idx]).abs();
-                    assert!(
-                        diff <= 1e-5,
-                        "Mismatch at b={b} c={c} t={t}: expected {expected}, got {}, diff={diff}",
-                        got[idx]
-                    );
-                }
+    let got = output.as_slice::<f32>();
+    for batch in 0..batch_size {
+        for channel in 0..channels {
+            for time in 0..seq_len {
+                let index = (batch * channels + channel) * seq_len + time;
+                let x = input_values[index];
+                let expected = if channel < snake_channels {
+                    let alpha = alpha_values[channel];
+                    let sine = (alpha * x).sin();
+                    x + (sine * sine) / (alpha + eps)
+                } else if x >= 0.0 {
+                    x
+                } else {
+                    negative_slope * x
+                };
+
+                let delta = (expected - got[index]).abs();
+                assert!(
+                    delta <= 1e-5,
+                    "Mismatch at index={index}: expected {expected}, got {}, delta={delta}",
+                    got[index]
+                );
             }
         }
     }
 }
-

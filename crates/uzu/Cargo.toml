@@ -31,10 +31,10 @@ objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
 block2 = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
-tar = "0.4.44"
-zip = "7.2.0"
-serde_yaml = "0.9.34"
-tempfile.workspace = true
+tar = { version = "0.4.44", optional = true }
+zip = { version = "7.2.0", optional = true }
+serde_yaml = { version = "0.9.34", optional = true }
+tempfile = { workspace = true, optional = true }
 
 # macos requires objc2 even on non-metal (but shouldn't)
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -82,6 +82,9 @@ metal = [
 metal-nax = []
 
 tracing = []
+audio-runtime = []
+audio-tools = ["dep:serde_yaml", "dep:tar", "dep:tempfile", "dep:zip"]
+audio-prototype-cli = ["audio-runtime", "audio-tools"]
 
 [[test]]
 name = "moe"

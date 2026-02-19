@@ -27,7 +27,9 @@ pub enum TorchCheckpointError {
         shape: Box<[usize]>,
         stride: Box<[usize]>,
     },
-    #[error("Tensor \"{name}\" data out of bounds (storage bytes {storage_bytes}, need {need_bytes} at offset {offset_bytes})")]
+    #[error(
+        "Tensor \"{name}\" data out of bounds (storage bytes {storage_bytes}, need {need_bytes} at offset {offset_bytes})"
+    )]
     TensorOutOfBounds {
         name: String,
         storage_bytes: usize,
@@ -87,9 +89,7 @@ pub struct TorchCheckpoint<R: Read + Seek> {
 }
 
 impl TorchCheckpoint<File> {
-    pub fn open_from_path(
-        path: &Path,
-    ) -> Result<Self, TorchCheckpointError> {
+    pub fn open_from_path(path: &Path) -> Result<Self, TorchCheckpointError> {
         let file = File::open(path)?;
         let archive = ZipArchive::new(file)?;
         Self::open_from_archive(archive)
@@ -97,9 +97,7 @@ impl TorchCheckpoint<File> {
 }
 
 impl<R: Read + Seek> TorchCheckpoint<R> {
-    pub fn open_from_archive(
-        mut archive: ZipArchive<R>,
-    ) -> Result<Self, TorchCheckpointError> {
+    pub fn open_from_archive(mut archive: ZipArchive<R>) -> Result<Self, TorchCheckpointError> {
         // Validate byteorder (PyTorch uses a zip member for this).
         if let Ok(mut f) = archive.by_name("model_weights/byteorder") {
             let mut s = String::new();
@@ -113,9 +111,7 @@ impl<R: Read + Seek> TorchCheckpoint<R> {
         }
 
         let mut pkl = Vec::new();
-        archive
-            .by_name("model_weights/data.pkl")?
-            .read_to_end(&mut pkl)?;
+        archive.by_name("model_weights/data.pkl")?.read_to_end(&mut pkl)?;
 
         let state_dict = PickleMachine::new(&pkl).parse_root_state_dict()?;
 
@@ -131,21 +127,24 @@ impl<R: Read + Seek> TorchCheckpoint<R> {
         name: &str,
     ) -> Result<TorchTensor, TorchCheckpointError> {
         let spec = match module {
-            TorchModule::AudioEncoder => self.state_dict.audio_encoder.get(name).cloned().ok_or_else(|| {
-                TorchCheckpointError::Pickle(format!(
-                    "Missing audio_encoder tensor {name}"
-                ))
-            })?,
-            TorchModule::AudioDecoder => self.state_dict.audio_decoder.get(name).cloned().ok_or_else(|| {
-                TorchCheckpointError::Pickle(format!(
-                    "Missing audio_decoder tensor {name}"
-                ))
-            })?,
-            TorchModule::VectorQuantizer => self.state_dict.vector_quantizer.get(name).cloned().ok_or_else(|| {
-                TorchCheckpointError::Pickle(format!(
-                    "Missing vector_quantizer tensor {name}"
-                ))
-            })?,
+            TorchModule::AudioEncoder => self
+                .state_dict
+                .audio_encoder
+                .get(name)
+                .cloned()
+                .ok_or_else(|| TorchCheckpointError::Pickle(format!("Missing audio_encoder tensor {name}")))?,
+            TorchModule::AudioDecoder => self
+                .state_dict
+                .audio_decoder
+                .get(name)
+                .cloned()
+                .ok_or_else(|| TorchCheckpointError::Pickle(format!("Missing audio_decoder tensor {name}")))?,
+            TorchModule::VectorQuantizer => self
+                .state_dict
+                .vector_quantizer
+                .get(name)
+                .cloned()
+                .ok_or_else(|| TorchCheckpointError::Pickle(format!("Missing vector_quantizer tensor {name}")))?,
         };
         self.load_tensor_from_spec(name, &spec)
     }
@@ -221,6 +220,7 @@ struct StorageRef {
     _numel: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 enum Value {
     Int(i64),
@@ -257,9 +257,7 @@ impl<'a> PickleMachine<'a> {
         }
     }
 
-    fn parse_root_state_dict(
-        mut self,
-    ) -> Result<TorchStateDict, TorchCheckpointError> {
+    fn parse_root_state_dict(mut self) -> Result<TorchStateDict, TorchCheckpointError> {
         while self.pos < self.bytes.len() {
             let op = self.read_u8()?;
             match op {
@@ -271,7 +269,10 @@ impl<'a> PickleMachine<'a> {
                     // GLOBAL: module\\nname\\n
                     let module = self.read_line()?;
                     let name = self.read_line()?;
-                    self.stack.push(Value::Global(GlobalRef { module, name }));
+                    self.stack.push(Value::Global(GlobalRef {
+                        module,
+                        name,
+                    }));
                 },
                 b'(' => {
                     // MARK
@@ -312,10 +313,8 @@ impl<'a> PickleMachine<'a> {
                 },
                 b't' => {
                     // TUPLE (MARK ... items)
-                    let mark = self
-                        .marks
-                        .pop()
-                        .ok_or_else(|| TorchCheckpointError::Pickle("TUPLE without MARK".into()))?;
+                    let mark =
+                        self.marks.pop().ok_or_else(|| TorchCheckpointError::Pickle("TUPLE without MARK".into()))?;
                     let items = self.stack.split_off(mark);
                     self.stack.push(Value::Tuple(items));
                 },
@@ -374,15 +373,11 @@ impl<'a> PickleMachine<'a> {
                 },
                 b'u' => {
                     // SETITEMS
-                    let mark = self
-                        .marks
-                        .pop()
-                        .ok_or_else(|| TorchCheckpointError::Pickle("SETITEMS without MARK".into()))?;
+                    let mark =
+                        self.marks.pop().ok_or_else(|| TorchCheckpointError::Pickle("SETITEMS without MARK".into()))?;
                     let items = self.stack.split_off(mark);
                     if items.len() % 2 != 0 {
-                        return Err(TorchCheckpointError::Pickle(
-                            "SETITEMS expected even number of items".into(),
-                        ));
+                        return Err(TorchCheckpointError::Pickle("SETITEMS expected even number of items".into()));
                     }
                     for pair in items.chunks_exact(2) {
                         let key = pair[0].clone();
@@ -408,9 +403,7 @@ impl<'a> PickleMachine<'a> {
                 },
             }
         }
-        Err(TorchCheckpointError::Pickle(
-            "Unexpected end of pickle stream".into(),
-        ))
+        Err(TorchCheckpointError::Pickle("Unexpected end of pickle stream".into()))
     }
 
     fn dict_set_item(
@@ -418,10 +411,7 @@ impl<'a> PickleMachine<'a> {
         key: Value,
         value: Value,
     ) -> Result<(), TorchCheckpointError> {
-        let dict = self
-            .stack
-            .last()
-            .ok_or_else(|| TorchCheckpointError::Pickle("SETITEM with empty stack".into()))?;
+        let dict = self.stack.last().ok_or_else(|| TorchCheckpointError::Pickle("SETITEM with empty stack".into()))?;
         match dict {
             Value::RootDict => {
                 let key = match key {
@@ -432,17 +422,11 @@ impl<'a> PickleMachine<'a> {
                     return Ok(());
                 };
                 if let Some(stripped) = key.strip_prefix("audio_encoder.") {
-                    self.root
-                        .audio_encoder
-                        .insert(stripped.to_string(), spec);
+                    self.root.audio_encoder.insert(stripped.to_string(), spec);
                 } else if let Some(stripped) = key.strip_prefix("audio_decoder.") {
-                    self.root
-                        .audio_decoder
-                        .insert(stripped.to_string(), spec);
+                    self.root.audio_decoder.insert(stripped.to_string(), spec);
                 } else if let Some(stripped) = key.strip_prefix("vector_quantizer.") {
-                    self.root
-                        .vector_quantizer
-                        .insert(stripped.to_string(), spec);
+                    self.root.vector_quantizer.insert(stripped.to_string(), spec);
                 }
                 Ok(())
             },
@@ -460,14 +444,10 @@ impl<'a> PickleMachine<'a> {
         args: Value,
     ) -> Result<Value, TorchCheckpointError> {
         let Value::Global(global) = callable else {
-            return Err(TorchCheckpointError::Pickle(
-                "REDUCE expected GLOBAL callable".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("REDUCE expected GLOBAL callable".into()));
         };
         let Value::Tuple(args) = args else {
-            return Err(TorchCheckpointError::Pickle(
-                "REDUCE expected tuple args".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("REDUCE expected tuple args".into()));
         };
 
         match (global.module.as_str(), global.name.as_str()) {
@@ -489,9 +469,7 @@ impl<'a> PickleMachine<'a> {
                 }
 
                 let Value::Storage(storage) = args[0].clone() else {
-                    return Err(TorchCheckpointError::Pickle(
-                        "_rebuild_tensor_v2 arg0 must be Storage".into(),
-                    ));
+                    return Err(TorchCheckpointError::Pickle("_rebuild_tensor_v2 arg0 must be Storage".into()));
                 };
                 let storage_offset_elems = as_usize(&args[1])?;
                 let shape = tuple_usizes(&args[2])?;
@@ -517,9 +495,7 @@ impl<'a> PickleMachine<'a> {
         pid: Value,
     ) -> Result<Value, TorchCheckpointError> {
         let Value::Tuple(items) = pid else {
-            return Err(TorchCheckpointError::Pickle(
-                "BINPERSID expected tuple pid".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("BINPERSID expected tuple pid".into()));
         };
         if items.len() != 5 {
             return Err(TorchCheckpointError::Pickle(format!(
@@ -528,19 +504,13 @@ impl<'a> PickleMachine<'a> {
             )));
         }
         let Value::String(kind) = &items[0] else {
-            return Err(TorchCheckpointError::Pickle(
-                "persistent id kind must be string".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("persistent id kind must be string".into()));
         };
         if kind != "storage" {
-            return Err(TorchCheckpointError::Pickle(format!(
-                "Unsupported persistent id kind {kind:?}"
-            )));
+            return Err(TorchCheckpointError::Pickle(format!("Unsupported persistent id kind {kind:?}")));
         }
         let Value::Global(storage_type) = &items[1] else {
-            return Err(TorchCheckpointError::Pickle(
-                "persistent id storage type must be GLOBAL".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("persistent id storage type must be GLOBAL".into()));
         };
         let dtype = match (storage_type.module.as_str(), storage_type.name.as_str()) {
             ("torch", "FloatStorage") => TorchDType::F32,
@@ -553,9 +523,7 @@ impl<'a> PickleMachine<'a> {
             },
         };
         let Value::String(key) = &items[2] else {
-            return Err(TorchCheckpointError::Pickle(
-                "persistent id storage key must be string".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("persistent id storage key must be string".into()));
         };
         let numel = as_usize(&items[4])?;
         Ok(Value::Storage(StorageRef {
@@ -569,11 +537,8 @@ impl<'a> PickleMachine<'a> {
         &mut self,
         idx: usize,
     ) -> Result<(), TorchCheckpointError> {
-        let v = self
-            .stack
-            .last()
-            .cloned()
-            .ok_or_else(|| TorchCheckpointError::Pickle("BINPUT with empty stack".into()))?;
+        let v =
+            self.stack.last().cloned().ok_or_else(|| TorchCheckpointError::Pickle("BINPUT with empty stack".into()))?;
         if self.memo.len() <= idx {
             self.memo.resize_with(idx + 1, || None);
         }
@@ -592,16 +557,11 @@ impl<'a> PickleMachine<'a> {
     }
 
     fn pop(&mut self) -> Result<Value, TorchCheckpointError> {
-        self.stack
-            .pop()
-            .ok_or_else(|| TorchCheckpointError::Pickle("Unexpected empty stack".into()))
+        self.stack.pop().ok_or_else(|| TorchCheckpointError::Pickle("Unexpected empty stack".into()))
     }
 
     fn read_u8(&mut self) -> Result<u8, TorchCheckpointError> {
-        let b = *self
-            .bytes
-            .get(self.pos)
-            .ok_or_else(|| TorchCheckpointError::Pickle("Unexpected EOF".into()))?;
+        let b = *self.bytes.get(self.pos).ok_or_else(|| TorchCheckpointError::Pickle("Unexpected EOF".into()))?;
         self.pos += 1;
         Ok(b)
     }
@@ -630,9 +590,7 @@ impl<'a> PickleMachine<'a> {
             self.pos += 1;
         }
         if self.pos >= self.bytes.len() {
-            return Err(TorchCheckpointError::Pickle(
-                "GLOBAL missing newline".into(),
-            ));
+            return Err(TorchCheckpointError::Pickle("GLOBAL missing newline".into()));
         }
         let line = std::str::from_utf8(&self.bytes[start..self.pos])
             .map_err(|e| TorchCheckpointError::Pickle(format!("Invalid UTF-8: {e}")))?;
@@ -645,9 +603,10 @@ impl<'a> PickleMachine<'a> {
         len: usize,
     ) -> Result<String, TorchCheckpointError> {
         let end = self.pos + len;
-        let slice = self.bytes.get(self.pos..end).ok_or_else(|| {
-            TorchCheckpointError::Pickle("BINUNICODE out of bounds".into())
-        })?;
+        let slice = self
+            .bytes
+            .get(self.pos..end)
+            .ok_or_else(|| TorchCheckpointError::Pickle("BINUNICODE out of bounds".into()))?;
         self.pos = end;
         std::str::from_utf8(slice)
             .map(|s| s.to_string())
@@ -657,25 +616,14 @@ impl<'a> PickleMachine<'a> {
 
 fn as_usize(v: &Value) -> Result<usize, TorchCheckpointError> {
     match v {
-        Value::Int(i) => (*i)
-            .try_into()
-            .map_err(|_| TorchCheckpointError::Pickle("negative int".into())),
-        _ => Err(TorchCheckpointError::Pickle(
-            "Expected integer".into(),
-        )),
+        Value::Int(i) => (*i).try_into().map_err(|_| TorchCheckpointError::Pickle("negative int".into())),
+        _ => Err(TorchCheckpointError::Pickle("Expected integer".into())),
     }
 }
 
 fn tuple_usizes(v: &Value) -> Result<Box<[usize]>, TorchCheckpointError> {
     let Value::Tuple(items) = v else {
-        return Err(TorchCheckpointError::Pickle(
-            "Expected tuple".into(),
-        ));
+        return Err(TorchCheckpointError::Pickle("Expected tuple".into()));
     };
-    items
-        .iter()
-        .map(as_usize)
-        .collect::<Result<Vec<_>, _>>()
-        .map(Vec::into_boxed_slice)
+    items.iter().map(as_usize).collect::<Result<Vec<_>, _>>().map(Vec::into_boxed_slice)
 }
-

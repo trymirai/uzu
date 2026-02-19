@@ -658,3 +658,254 @@ generateKernels(256, fsq_encode)
 #undef outerArguments
 #undef innerArguments
 
+// === DSL kernel wrappers ===
+//
+// Keep the scalar helper implementations above and expose a DSL-annotated surface
+// so audio kernels are integrated through the same generated wrapper path as other kernels.
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioFsqDecode)(
+    device const int* tokens,
+    device T* out,
+    device const int* lengths,
+    const constant int& num_groups,
+    const constant int& seq_len,
+    const constant int& codebook_dim,
+    const constant int* num_levels,
+    const constant int& batch_size,
+    uint t AXIS(seq_len, 32),
+    uint g AXIS(num_groups, 1),
+    uint b AXIS(batch_size, 1)
+) {
+  fsq_decode<T>(tokens, out, lengths, num_groups, seq_len, codebook_dim, num_levels, uint3(t, g, b));
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioLeakyRelu)(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const constant float& negative_slope,
+    uint tid AXIS(n, 256)
+) {
+  audio_codec_leaky_relu<T>(input, output, n, negative_slope, tid);
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioTanh)(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    uint tid AXIS(n, 256)
+) {
+  audio_codec_tanh<T>(input, output, n, tid);
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioAdd)(
+    device const T* a,
+    device const T* b,
+    device T* out,
+    const constant int& n,
+    uint tid AXIS(n, 256)
+) {
+  audio_codec_add<T>(a, b, out, n, tid);
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioScale)(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const constant float& scale,
+    uint tid AXIS(n, 256)
+) {
+  audio_codec_scale<T>(input, output, n, scale, tid);
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioCausalConv1d)(
+    device const T* input,
+    device const T* weight,
+    device const T* bias,
+    device T* output,
+    device const int* lengths,
+    const constant int& cin,
+    const constant int& cout,
+    const constant int& seq_len,
+    const constant int& kernel_size,
+    const constant int& dilation,
+    const constant int& batch_size,
+    uint t AXIS(seq_len, 32),
+    uint oc AXIS(cout, 1),
+    uint b AXIS(batch_size, 1)
+) {
+  audio_codec_causal_conv1d<T>(
+      input,
+      weight,
+      bias,
+      output,
+      lengths,
+      cin,
+      cout,
+      seq_len,
+      kernel_size,
+      dilation,
+      uint3(t, oc, b)
+  );
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioCausalConvTranspose1d)(
+    device const T* input,
+    device const T* weight,
+    device const T* bias,
+    device T* output,
+    device const int* lengths,
+    const constant int& cin,
+    const constant int& cout,
+    const constant int& seq_len_in,
+    const constant int& seq_len_out,
+    const constant int& stride,
+    const constant int& groups,
+    const constant int& batch_size,
+    uint t_out AXIS(seq_len_out, 32),
+    uint oc AXIS(cout, 1),
+    uint b AXIS(batch_size, 1)
+) {
+  audio_codec_causal_conv_transpose1d<T>(
+      input,
+      weight,
+      bias,
+      output,
+      lengths,
+      cin,
+      cout,
+      seq_len_in,
+      seq_len_out,
+      stride,
+      groups,
+      uint3(t_out, oc, b)
+  );
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioHalfSnake)(
+    device const T* input,
+    device const T* alpha,
+    device T* output,
+    const constant int& channels,
+    const constant int& seq_len,
+    const constant int& snake_channels,
+    const constant float& negative_slope,
+    const constant float& eps,
+    const constant int& batch_size,
+    uint t AXIS(seq_len, 32),
+    uint c AXIS(channels, 1),
+    uint b AXIS(batch_size, 1)
+) {
+  audio_codec_half_snake<T>(
+      input,
+      alpha,
+      output,
+      channels,
+      seq_len,
+      snake_channels,
+      negative_slope,
+      eps,
+      uint3(t, c, b)
+  );
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioClamp)(
+    device const T* input,
+    device T* output,
+    const constant int& n,
+    const constant float& min_value,
+    const constant float& max_value,
+    uint tid AXIS(n, 256)
+) {
+  audio_codec_clamp<T>(input, output, n, min_value, max_value, tid);
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioConv1d)(
+    device const T* input,
+    device const T* weight,
+    device const T* bias,
+    device T* output,
+    device const int* lengths,
+    const constant int& cin,
+    const constant int& cout,
+    const constant int& seq_len_in,
+    const constant int& seq_len_out,
+    const constant int& kernel_size,
+    const constant int& stride,
+    const constant int& dilation,
+    const constant int& padding,
+    const constant int& pad_mode,
+    const constant int& batch_size,
+    uint t_out AXIS(seq_len_out, 32),
+    uint oc AXIS(cout, 1),
+    uint b AXIS(batch_size, 1)
+) {
+  audio_codec_conv1d<T>(
+      input,
+      weight,
+      bias,
+      output,
+      lengths,
+      cin,
+      cout,
+      seq_len_in,
+      seq_len_out,
+      kernel_size,
+      stride,
+      dilation,
+      padding,
+      pad_mode,
+      uint3(t_out, oc, b)
+  );
+}
+
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(AudioFsqEncode)(
+    device const T* input,
+    device int* tokens,
+    device const int* lengths,
+    const constant int& num_groups,
+    const constant int& seq_len,
+    const constant int& codebook_dim,
+    const constant int* num_levels,
+    const constant int* dim_base_index,
+    const constant float& eps,
+    const constant int& batch_size,
+    uint t AXIS(seq_len, 32),
+    uint g AXIS(num_groups, 1),
+    uint b AXIS(batch_size, 1)
+) {
+  fsq_encode<T>(
+      input,
+      tokens,
+      lengths,
+      num_groups,
+      seq_len,
+      codebook_dim,
+      num_levels,
+      dim_base_index,
+      eps,
+      uint3(t, g, b)
+  );
+}

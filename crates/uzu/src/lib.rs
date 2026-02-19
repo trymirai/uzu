@@ -1,6 +1,6 @@
 pub mod array;
+pub mod audio;
 pub mod backends;
-pub mod audio_codec;
 pub mod classifier;
 pub mod config;
 pub mod data_type;

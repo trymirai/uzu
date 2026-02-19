@@ -13,9 +13,7 @@ use crate::{
     parameters::{Dtype, HashMetadata, TensorInfo},
 };
 
-use super::torch_checkpoint::{
-    TorchCheckpoint, TorchCheckpointError, TorchModule, TorchTensorSpec,
-};
+use super::torch_checkpoint::{TorchCheckpoint, TorchCheckpointError, TorchModule, TorchTensorSpec};
 
 #[derive(Debug, Error)]
 pub enum NemoNanoCodecError {
@@ -84,8 +82,7 @@ pub fn export_nanocodec_from_nemo(
     let config_json = export_dir.join("nanocodec_config.json");
     let audio_encoder_safetensors = export_dir.join("audio_encoder.safetensors");
     let audio_decoder_safetensors = export_dir.join("audio_decoder.safetensors");
-    let vector_quantizer_safetensors =
-        export_dir.join("vector_quantizer.safetensors");
+    let vector_quantizer_safetensors = export_dir.join("vector_quantizer.safetensors");
 
     let nemo_file = File::open(nemo_path)?;
     let mut archive = tar::Archive::new(nemo_file);
@@ -106,8 +103,7 @@ pub fn export_nanocodec_from_nemo(
         }
     }
 
-    let yaml_bytes = model_config_yaml
-        .ok_or(NemoNanoCodecError::MissingArchiveMember("model_config.yaml"))?;
+    let yaml_bytes = model_config_yaml.ok_or(NemoNanoCodecError::MissingArchiveMember("model_config.yaml"))?;
     let config: NemoNanoCodecConfig = serde_yaml::from_slice(&yaml_bytes)?;
     std::fs::write(&config_json, serde_json::to_vec_pretty(&config)?)?;
 
@@ -120,18 +116,8 @@ pub fn export_nanocodec_from_nemo(
     let audio_decoder = ckpt.state_dict.audio_decoder.clone();
     let vector_quantizer = ckpt.state_dict.vector_quantizer.clone();
 
-    write_safetensors_from_torch_map(
-        &audio_encoder_safetensors,
-        &mut ckpt,
-        TorchModule::AudioEncoder,
-        &audio_encoder,
-    )?;
-    write_safetensors_from_torch_map(
-        &audio_decoder_safetensors,
-        &mut ckpt,
-        TorchModule::AudioDecoder,
-        &audio_decoder,
-    )?;
+    write_safetensors_from_torch_map(&audio_encoder_safetensors, &mut ckpt, TorchModule::AudioEncoder, &audio_encoder)?;
+    write_safetensors_from_torch_map(&audio_decoder_safetensors, &mut ckpt, TorchModule::AudioDecoder, &audio_decoder)?;
     write_safetensors_from_torch_map(
         &vector_quantizer_safetensors,
         &mut ckpt,
@@ -192,10 +178,7 @@ fn write_safetensors_from_torch_map(
         header_bytes.extend(std::iter::repeat(b' ').take(padding));
     }
 
-    let header_len: u64 = header_bytes
-        .len()
-        .try_into()
-        .expect("header too large for u64");
+    let header_len: u64 = header_bytes.len().try_into().expect("header too large for u64");
 
     let file = File::create(path)?;
     let mut w = BufWriter::new(file);
@@ -209,4 +192,3 @@ fn write_safetensors_from_torch_map(
     w.flush()?;
     Ok(())
 }
-
