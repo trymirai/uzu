@@ -701,6 +701,57 @@ struct TestConfig {
     group_size: usize,
 }
 
+type ModelShapes = (&'static str, TestConfig, Vec<(&'static str, usize, usize)>);
+
+fn decode_perf_model_shapes() -> Vec<ModelShapes> {
+    // Hardcoded from model configs in project:
+    // - models/0.1.7/Qwen3-1.7B-MLX-4bit/config.json
+    //   model_dim=2048, hidden_dim=6144, vocab_size=151936,
+    //   num_heads=16, num_groups=8, head_dim=128 => qkv=(16+2*8)*128=4096.
+    // - models/0.1.7/LFM2-1.2B-4bit/config.json
+    //   model_dim=2048, hidden_dim=8192, vocab_size=65536,
+    //   num_heads=32, num_groups=8, head_dim=64 => qkv=(32+2*8)*64=3072.
+    let qwen_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 128,
+    };
+    let lfm_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 64,
+    };
+
+    vec![
+        (
+            "Qwen3-1.7B",
+            qwen_config,
+            vec![
+                ("attn_qkv", 4096, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 12288, 2048),
+                ("mlp_down", 2048, 6144),
+                ("embed", 2048, 151936),
+                ("readout", 151936, 2048),
+            ],
+        ),
+        (
+            "LFM2-1.2B",
+            lfm_config,
+            vec![
+                ("attn_qkv", 3072, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 16384, 2048),
+                ("mlp_down", 2048, 8192),
+                ("embed", 2048, 65536),
+                ("readout", 65536, 2048),
+            ],
+        ),
+    ]
+}
+
 const QMV_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QVM_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QMM_DIMS: &[(usize, usize, usize)] = &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
@@ -1117,45 +1168,7 @@ fn test_quant_matmul_batch_decode_suffix_perf() {
         },
     };
 
-    // Shapes selected from downloaded model configs:
-    // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
-    //   attention heads=(16 q, 8 kv) with head_dim=128 => qkv out dim=4096.
-    // - LFM2-1.2B-4bit: model_dim=2048, hidden_dim=8192,
-    //   attention heads=(32 q, 8 kv) with head_dim=64 => qkv out dim=3072.
-    let qwen_config = TestConfig {
-        quant_type: QuantizationType::Mlx,
-        bits: 4,
-        data_type: DataType::BF16,
-        group_size: 128,
-    };
-    let lfm_config = TestConfig {
-        quant_type: QuantizationType::Mlx,
-        bits: 4,
-        data_type: DataType::BF16,
-        group_size: 64,
-    };
-    let model_shapes = vec![
-        (
-            "Qwen3-1.7B",
-            qwen_config,
-            vec![
-                ("attn_qkv", 4096, 2048),
-                ("attn_out", 2048, 2048),
-                ("mlp_up_gate", 12288, 2048),
-                ("mlp_down", 2048, 6144),
-            ],
-        ),
-        (
-            "LFM2-1.2B",
-            lfm_config,
-            vec![
-                ("attn_qkv", 3072, 2048),
-                ("attn_out", 2048, 2048),
-                ("mlp_up_gate", 16384, 2048),
-                ("mlp_down", 2048, 8192),
-            ],
-        ),
-    ];
+    let model_shapes = decode_perf_model_shapes();
     let iterations = 30;
     let threshold = std::env::var("UZU_QMM_BATCH_THRESHOLD")
         .unwrap_or_else(|_| "32(default)".to_string());
@@ -1219,45 +1232,7 @@ fn test_quant_matmul_batch_decode_suffix_1_2_4_total_perf() {
     let _qmm_batch_threshold_guard = EnvVarGuard::set("UZU_QMM_BATCH_THRESHOLD", Some("32"));
     let _batched_qmv_mode_guard = EnvVarGuard::set("UZU_DISABLE_BATCHED_QMV", None);
 
-    // Shapes selected from downloaded model configs:
-    // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
-    //   attention heads=(16 q, 8 kv) with head_dim=128 => qkv out dim=4096.
-    // - LFM2-1.2B-4bit: model_dim=2048, hidden_dim=8192,
-    //   attention heads=(32 q, 8 kv) with head_dim=64 => qkv out dim=3072.
-    let qwen_config = TestConfig {
-        quant_type: QuantizationType::Mlx,
-        bits: 4,
-        data_type: DataType::BF16,
-        group_size: 128,
-    };
-    let lfm_config = TestConfig {
-        quant_type: QuantizationType::Mlx,
-        bits: 4,
-        data_type: DataType::BF16,
-        group_size: 64,
-    };
-    let model_shapes = vec![
-        (
-            "Qwen3-1.7B",
-            qwen_config,
-            vec![
-                ("attn_qkv", 4096, 2048),
-                ("attn_out", 2048, 2048),
-                ("mlp_up_gate", 12288, 2048),
-                ("mlp_down", 2048, 6144),
-            ],
-        ),
-        (
-            "LFM2-1.2B",
-            lfm_config,
-            vec![
-                ("attn_qkv", 3072, 2048),
-                ("attn_out", 2048, 2048),
-                ("mlp_up_gate", 16384, 2048),
-                ("mlp_down", 2048, 8192),
-            ],
-        ),
-    ];
+    let model_shapes = decode_perf_model_shapes();
 
     const SAMPLE_ROUNDS: usize = 24;
     const SAMPLE_ITERATIONS: usize = 40;
@@ -1365,45 +1340,7 @@ fn test_quant_matmul_suffix4_batched_vs_nonbatched_definitive() {
 
     let _qmm_batch_threshold_guard = EnvVarGuard::set("UZU_QMM_BATCH_THRESHOLD", Some(QMM_BATCH_THRESHOLD));
 
-    // Shapes selected from downloaded model configs:
-    // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
-    //   attention heads=(16 q, 8 kv) with head_dim=128 => qkv out dim=4096.
-    // - LFM2-1.2B-4bit: model_dim=2048, hidden_dim=8192,
-    //   attention heads=(32 q, 8 kv) with head_dim=64 => qkv out dim=3072.
-    let qwen_config = TestConfig {
-        quant_type: QuantizationType::Mlx,
-        bits: 4,
-        data_type: DataType::BF16,
-        group_size: 128,
-    };
-    let lfm_config = TestConfig {
-        quant_type: QuantizationType::Mlx,
-        bits: 4,
-        data_type: DataType::BF16,
-        group_size: 64,
-    };
-    let model_shapes = vec![
-        (
-            "Qwen3-1.7B",
-            qwen_config,
-            vec![
-                ("attn_qkv", 4096, 2048),
-                ("attn_out", 2048, 2048),
-                ("mlp_up_gate", 12288, 2048),
-                ("mlp_down", 2048, 6144),
-            ],
-        ),
-        (
-            "LFM2-1.2B",
-            lfm_config,
-            vec![
-                ("attn_qkv", 3072, 2048),
-                ("attn_out", 2048, 2048),
-                ("mlp_up_gate", 16384, 2048),
-                ("mlp_down", 2048, 8192),
-            ],
-        ),
-    ];
+    let model_shapes = decode_perf_model_shapes();
 
     println!("Forced UZU_QMM_BATCH_THRESHOLD={}", QMM_BATCH_THRESHOLD);
     println!(
