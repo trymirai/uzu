@@ -840,7 +840,7 @@ fn test_quant_gmm_transposed() {
 
 #[test]
 fn test_quant_qmv_batched_correctness() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping batched QMV test");
@@ -915,7 +915,7 @@ fn test_quant_qmv_batched_correctness() {
 
 #[test]
 fn test_quant_qmv_bf16_suffix1_correctness() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping BF16 suffix-1 QMV test");
@@ -1013,7 +1013,7 @@ fn test_quant_matmul_perf() {
 #[test]
 #[ignore]
 fn test_quant_matmul_batch_decode_suffix_perf() {
-    let ctx = match MTLContext::new() {
+    let ctx = match MetalContext::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping batch decode perf test");
@@ -1106,6 +1106,155 @@ fn test_quant_matmul_batch_decode_suffix_perf() {
                     per_token_us
                 );
             }
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_quant_matmul_batch_decode_suffix_1_2_4_total_perf() {
+    let ctx = match MetalContext::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping batch decode 1/2/4 perf test");
+            return;
+        },
+    };
+
+    // Shapes selected from downloaded model configs:
+    // - Qwen3-1.7B-MLX-4bit: model_dim=2048, hidden_dim=6144,
+    //   attention heads=(16 q, 8 kv) with head_dim=128 => qkv out dim=4096.
+    // - LFM2-1.2B-4bit: model_dim=2048, hidden_dim=8192,
+    //   attention heads=(32 q, 8 kv) with head_dim=64 => qkv out dim=3072.
+    let qwen_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 128,
+    };
+    let lfm_config = TestConfig {
+        quant_type: QuantizationType::Mlx,
+        bits: 4,
+        data_type: DataType::BF16,
+        group_size: 64,
+    };
+    let model_shapes = vec![
+        (
+            "Qwen3-1.7B",
+            qwen_config,
+            vec![
+                ("attn_qkv", 4096, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 12288, 2048),
+                ("mlp_down", 2048, 6144),
+            ],
+        ),
+        (
+            "LFM2-1.2B",
+            lfm_config,
+            vec![
+                ("attn_qkv", 3072, 2048),
+                ("attn_out", 2048, 2048),
+                ("mlp_up_gate", 16384, 2048),
+                ("mlp_down", 2048, 8192),
+            ],
+        ),
+    ];
+
+    let iterations = std::env::var("UZU_SUFFIX_COMPARE_ITERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(30);
+    let warmup_rounds = std::env::var("UZU_SUFFIX_COMPARE_WARMUP_ROUNDS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2);
+    let warmup_iterations = std::env::var("UZU_SUFFIX_COMPARE_WARMUP_ITERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let threshold = std::env::var("UZU_QMM_BATCH_THRESHOLD")
+        .unwrap_or_else(|_| "32(default)".to_string());
+
+    println!("Using UZU_QMM_BATCH_THRESHOLD={}", threshold);
+    println!(
+        "Comparing total latency for suffix lengths [1, 2, 4] (iterations={}, warmup_rounds={}, warmup_iters={})",
+        iterations, warmup_rounds, warmup_iterations
+    );
+    println!(
+        "{:<12} | {:<12} | {:<12} | {:<12} | {:<12} | {:<12}",
+        "Model", "Block", "N x K", "1 tok total", "2 tok total", "4 tok total"
+    );
+    println!("{}", "-".repeat(98));
+
+    for (model_name, config, shapes) in &model_shapes {
+        for &(block_name, output_dim, input_dim) in shapes {
+            for _ in 0..warmup_rounds {
+                for suffix_length in [1usize, 2, 4] {
+                    let _ = run_kernel_test(
+                        &ctx,
+                        suffix_length,
+                        output_dim,
+                        input_dim,
+                        true,
+                        config,
+                        false,
+                        warmup_iterations,
+                    );
+                }
+            }
+
+            let avg_ms_1tok = (run_kernel_test(
+                &ctx,
+                1,
+                output_dim,
+                input_dim,
+                true,
+                config,
+                false,
+                iterations,
+            )
+            .elapsed
+                / iterations as f64)
+                * 1000.0;
+
+            let avg_ms_2tok = (run_kernel_test(
+                &ctx,
+                2,
+                output_dim,
+                input_dim,
+                true,
+                config,
+                false,
+                iterations,
+            )
+            .elapsed
+                / iterations as f64)
+                * 1000.0;
+
+            let avg_ms_4tok = (run_kernel_test(
+                &ctx,
+                4,
+                output_dim,
+                input_dim,
+                true,
+                config,
+                false,
+                iterations,
+            )
+            .elapsed
+                / iterations as f64)
+                * 1000.0;
+
+            println!(
+                "{:<12} | {:<12} | {:<12} | {:>8.4} ms | {:>8.4} ms | {:>8.4} ms",
+                model_name,
+                block_name,
+                format!("{}x{}", output_dim, input_dim),
+                avg_ms_1tok,
+                avg_ms_2tok,
+                avg_ms_4tok
+            );
         }
     }
 }
