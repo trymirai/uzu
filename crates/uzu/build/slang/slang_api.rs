@@ -6,12 +6,10 @@ use shader_slang::{
     reflection::{Decl, Generic, Shader, Type},
 };
 use shader_slang_sys::{
-    IBlobVtable, ISessionVtable, ISlangBlob, ISlangUnknown__bindgen_vtable,
-    spReflectionDecl_castToGeneric, spReflectionGeneric_GetTypeParameter,
-    spReflectionGeneric_GetTypeParameterConstraintCount,
-    spReflectionGeneric_GetTypeParameterConstraintType,
-    spReflectionGeneric_GetTypeParameterCount, spReflectionType_GetName,
-    spReflectionVariable_GetName,
+    IBlobVtable, ISessionVtable, ISlangBlob, ISlangUnknown__bindgen_vtable, spReflectionDecl_castToGeneric,
+    spReflectionGeneric_GetTypeParameter, spReflectionGeneric_GetTypeParameterConstraintCount,
+    spReflectionGeneric_GetTypeParameterConstraintType, spReflectionGeneric_GetTypeParameterCount,
+    spReflectionType_GetName, spReflectionVariable_GetName,
 };
 
 unsafe fn blob_to_string(blob: *mut ISlangBlob) -> String {
@@ -19,8 +17,7 @@ unsafe fn blob_to_string(blob: *mut ISlangBlob) -> String {
         let vtable = *(blob as *const *const IBlobVtable);
         let size = ((*vtable).getBufferSize)(blob as _);
         let buffer = ((*vtable).getBufferPointer)(blob as _) as *const u8;
-        String::from_utf8_lossy(std::slice::from_raw_parts(buffer, size))
-            .into_owned()
+        String::from_utf8_lossy(std::slice::from_raw_parts(buffer, size)).into_owned()
     }
 }
 
@@ -37,14 +34,9 @@ pub fn load_module(
     let mut diagnostics: *mut ISlangBlob = null_mut();
 
     let module_ptr = unsafe {
-        let session_ptr =
-            std::mem::transmute_copy::<_, *mut std::ffi::c_void>(session);
+        let session_ptr = std::mem::transmute_copy::<_, *mut std::ffi::c_void>(session);
         let vtable = *(session_ptr as *const *const ISessionVtable);
-        ((*vtable).loadModule)(
-            session_ptr,
-            name_cstr.as_ptr(),
-            &mut diagnostics,
-        )
+        ((*vtable).loadModule)(session_ptr, name_cstr.as_ptr(), &mut diagnostics)
     };
 
     let diagnostics_str = if !diagnostics.is_null() {
@@ -61,14 +53,11 @@ pub fn load_module(
     }
 
     unsafe {
-        let vtable =
-            *(module_ptr as *const *const ISlangUnknown__bindgen_vtable);
+        let vtable = *(module_ptr as *const *const ISlangUnknown__bindgen_vtable);
         ((*vtable).ISlangUnknown_addRef)(module_ptr as _);
     }
 
-    let module = unsafe {
-        std::mem::transmute(std::ptr::NonNull::new(module_ptr).unwrap())
-    };
+    let module = unsafe { std::mem::transmute(std::ptr::NonNull::new(module_ptr).unwrap()) };
 
     Ok(ModuleWithDiagnostics {
         module,
@@ -87,17 +76,11 @@ pub fn create_specialized_generic<'a>(
 
     let type_ptrs: Vec<&Type> = concrete_types
         .iter()
-        .map(|name| {
-            layout
-                .find_type_by_name(name)
-                .ok_or_else(|| anyhow::anyhow!("type '{}' not found", name))
-        })
+        .map(|name| layout.find_type_by_name(name).ok_or_else(|| anyhow::anyhow!("type '{}' not found", name)))
         .collect::<anyhow::Result<_>>()?;
 
     let arg_types: Vec<GenericArgType> =
-        std::iter::repeat(GenericArgType::SlangGenericArgType)
-            .take(type_ptrs.len())
-            .collect();
+        std::iter::repeat(GenericArgType::SlangGenericArgType).take(type_ptrs.len()).collect();
     let args: Vec<GenericArg> = type_ptrs
         .iter()
         .map(|t| GenericArg {
@@ -105,9 +88,7 @@ pub fn create_specialized_generic<'a>(
         })
         .collect();
 
-    layout
-        .specialize_generic(generic, &arg_types, &args)
-        .ok_or_else(|| anyhow::anyhow!("failed to specialize generic"))
+    layout.specialize_generic(generic, &arg_types, &args).ok_or_else(|| anyhow::anyhow!("failed to specialize generic"))
 }
 
 pub struct TypeParameterInfo {
@@ -117,16 +98,14 @@ pub struct TypeParameterInfo {
 
 pub fn get_generic_type_parameters(decl: &Decl) -> Vec<TypeParameterInfo> {
     unsafe {
-        let generic_ptr =
-            spReflectionDecl_castToGeneric(decl as *const _ as *mut _);
+        let generic_ptr = spReflectionDecl_castToGeneric(decl as *const _ as *mut _);
         if generic_ptr.is_null() {
             return Vec::new();
         }
         let count = spReflectionGeneric_GetTypeParameterCount(generic_ptr);
         (0..count)
             .filter_map(|i| {
-                let type_param =
-                    spReflectionGeneric_GetTypeParameter(generic_ptr, i);
+                let type_param = spReflectionGeneric_GetTypeParameter(generic_ptr, i);
                 if type_param.is_null() {
                     return None;
                 }
@@ -134,36 +113,21 @@ pub fn get_generic_type_parameters(decl: &Decl) -> Vec<TypeParameterInfo> {
                 if name_ptr.is_null() {
                     return None;
                 }
-                let name = std::ffi::CStr::from_ptr(name_ptr)
-                    .to_string_lossy()
-                    .into_owned();
+                let name = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
 
-                let constraint_count =
-                    spReflectionGeneric_GetTypeParameterConstraintCount(
-                        generic_ptr,
-                        type_param,
-                    );
+                let constraint_count = spReflectionGeneric_GetTypeParameterConstraintCount(generic_ptr, type_param);
                 let constraints = (0..constraint_count)
                     .filter_map(|j| {
                         let constraint_type =
-                            spReflectionGeneric_GetTypeParameterConstraintType(
-                                generic_ptr,
-                                type_param,
-                                j,
-                            );
+                            spReflectionGeneric_GetTypeParameterConstraintType(generic_ptr, type_param, j);
                         if constraint_type.is_null() {
                             return None;
                         }
-                        let constraint_name_ptr =
-                            spReflectionType_GetName(constraint_type);
+                        let constraint_name_ptr = spReflectionType_GetName(constraint_type);
                         if constraint_name_ptr.is_null() {
                             return None;
                         }
-                        Some(
-                            std::ffi::CStr::from_ptr(constraint_name_ptr)
-                                .to_string_lossy()
-                                .into_owned(),
-                        )
+                        Some(std::ffi::CStr::from_ptr(constraint_name_ptr).to_string_lossy().into_owned())
                     })
                     .collect();
 

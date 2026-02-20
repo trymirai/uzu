@@ -1,19 +1,19 @@
-use std::sync::Arc;
-use ash::vk;
 use crate::backends::vulkan::context::VkContext;
+use ash::vk;
+use std::sync::Arc;
 
 pub struct VkCommandBuffers {
     device: Arc<ash::Device>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    primary: bool
+    primary: bool,
 }
 
 impl VkCommandBuffers {
     pub fn new(
         ctx: &VkContext,
         primary: bool,
-        count: u32
+        count: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let command_pool = ctx.command_pool();
         let level = if primary {
@@ -32,7 +32,7 @@ impl VkCommandBuffers {
             device: ctx.device(),
             command_pool,
             command_buffers,
-            primary
+            primary,
         })
     }
 

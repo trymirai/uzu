@@ -4,7 +4,9 @@
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 64
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(Temperature) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(Temperature) (
     device const T* logits,
     device T* processed_logits,
     constant uint& batch_size,

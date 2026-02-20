@@ -1,0 +1,40 @@
+name: setup
+description: Setup dependencies
+
+inputs:
+  linters:
+    description: "Install linters"
+    required: false
+    default: 'false'
+  metal:
+    description: "Install metal toolchain"
+    required: false
+    default: 'false'
+  test_model:
+    description: "Download test model"
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+    - if: inputs.linters == 'true'
+      run: |
+        arch -arm64 brew install clang-format
+      shell: bash
+    - if: inputs.metal == 'true'
+      run: |
+        arch -arm64 brew install cmake
+        xcodebuild -downloadComponent MetalToolchain
+      shell: bash
+    - if: inputs.test_model == 'true'
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+    - if: inputs.test_model == 'true'
+      run: |
+        mkdir -p ~/.cache/ci-uzu/models
+        ln -sf ~/.cache/ci-uzu/models models
+        ./scripts/download_test_model.sh
+      shell: bash

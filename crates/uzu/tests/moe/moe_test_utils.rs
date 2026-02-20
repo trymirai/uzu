@@ -5,38 +5,40 @@
 
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
+use std::rc::Rc;
+
+use bytemuck;
 use half::bf16;
-use metal::{Buffer as MTLBuffer, Device, MTLResourceOptions};
-use uzu::backends::metal::MTLContext;
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use uzu::backends::{common::Context, metal::MetalContext};
 
 /// Create Metal context for testing
-pub fn create_ctx() -> MTLContext {
-    let device = Device::system_default().expect("No Metal device");
-    let queue = device.new_command_queue();
-    MTLContext::new(device, queue).expect("Failed to create MTLContext")
+pub fn create_ctx() -> Rc<MetalContext> {
+    MetalContext::new().expect("Failed to create MetalContext")
 }
 
 /// Helper to allocate buffer with data
-pub fn alloc_buffer_with_data<T>(
-    ctx: &MTLContext,
+pub fn alloc_buffer_with_data<T: bytemuck::NoUninit>(
+    ctx: &MetalContext,
     data: &[T],
-) -> MTLBuffer {
-    ctx.device.new_buffer_with_data(
-        data.as_ptr() as *const _,
-        (data.len() * std::mem::size_of::<T>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    )
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    if data.is_empty() {
+        // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
+        ctx.create_buffer(1).expect("Failed to create empty buffer")
+    } else {
+        ctx.device
+            .new_buffer_with_data(bytemuck::cast_slice(data), MTLResourceOptions::STORAGE_MODE_SHARED)
+            .expect("Failed to create buffer")
+    }
 }
 
 /// Helper to allocate empty buffer
 pub fn alloc_buffer<T>(
-    ctx: &MTLContext,
+    ctx: &MetalContext,
     count: usize,
-) -> MTLBuffer {
-    ctx.device.new_buffer(
-        (count * std::mem::size_of::<T>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-    )
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    ctx.create_buffer(count * size_of::<T>()).expect("Failed to create buffer")
 }
 
 /// Compare two bf16 slices with tolerance

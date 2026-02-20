@@ -1,0 +1,426 @@
+use std::rc::Rc;
+
+use objc2::rc::autoreleasepool;
+
+#[cfg(not(feature = "tracing"))]
+use crate::backends::common::CommandBuffer;
+use crate::{
+    DataType,
+    backends::common::{Backend, kernel::matmul::MatmulKernels},
+    config::TransformerLayerConfig,
+    encodable_block::{
+        Attention, EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy,
+        transformer_layer::{linear_block, mlp_block},
+    },
+    forward_pass::state::{ArrayId, ForwardPassState},
+    parameters::ParameterTree,
+};
+
+pub struct ClassifierLayer<B: Backend> {
+    #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
+    layer_index: usize,
+    copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<B>>,
+    pre_attention_norm: Option<Box<dyn EncodableBlock<B>>>,
+    qkv_projection: Box<dyn EncodableBlock<B>>,
+    qk_norm: Option<Box<dyn EncodableBlock<B>>>,
+    rope: Rc<Box<dyn EncodableBlock<B>>>,
+    attention: Box<dyn EncodableBlock<B>>,
+    out_projection: Box<dyn EncodableBlock<B>>,
+    post_attention_norm: Option<Box<dyn EncodableBlock<B>>>,
+    mixer_residual_add: Box<dyn EncodableBlock<B>>,
+    copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<B>>,
+    pre_mlp_norm: Box<dyn EncodableBlock<B>>,
+    mlp: Box<dyn EncodableBlock<B>>,
+    post_mlp_norm: Option<Box<dyn EncodableBlock<B>>>,
+    mlp_residual_add: Box<dyn EncodableBlock<B>>,
+}
+
+impl<B: Backend + 'static> ClassifierLayer<B>
+where
+    B::Kernels: MatmulKernels,
+{
+    pub fn new(
+        context: Rc<B::Context>,
+        layer_config: &TransformerLayerConfig,
+        layer_index: usize,
+        model_dim: usize,
+        hidden_dim: usize,
+        num_heads: usize,
+        head_dim: usize,
+        num_groups: usize,
+        attention_scale: Option<f32>,
+        layer_loader: &ParameterTree<B::Context>,
+        rope: Rc<Box<dyn EncodableBlock<B>>>,
+    ) -> Self {
+        autoreleasepool(|_| {
+            let ctx = context.as_ref(); // Reference for functions expecting &B::Context
+            let attention_config =
+                layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
+            let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
+
+            let copy_main_to_shortcut_mixer: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorCopy::<B>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
+            );
+
+            let pre_attention_norm: Option<Box<dyn EncodableBlock<B>>> =
+                if let Some(norm_config) = &layer_config.pre_attention_norm_config {
+                    if layer_loader.subtree("pre_mixer_norm").is_ok() {
+                        Some(Box::new(
+                            Normalization::new(
+                                ctx,
+                                intermediate_data_type,
+                                norm_config.clone(),
+                                ArrayId::Main,
+                                ArrayId::Main,
+                                &layer_loader.subtree("pre_mixer_norm").unwrap(),
+                            )
+                            .expect("Failed to create pre-attention norm kernel"),
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            let qkv_projection = linear_block(
+                &attention_config.qkv_projection_config,
+                attention_config.has_qkv_biases,
+                model_dim,
+                [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
+                ctx,
+                &layer_loader.subtree("mixer.qkv_projection").unwrap(),
+                ArrayId::Main,
+                ArrayId::QKV,
+            )
+            .expect("Failed to create qkv projection");
+
+            let qk_norm: Option<Box<dyn EncodableBlock<B>>> =
+                if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
+                    match QKNorm::new(
+                        ctx,
+                        intermediate_data_type,
+                        attention_config.query_norm_config.clone(),
+                        attention_config.key_norm_config.clone(),
+                        ArrayId::QKV,
+                        &layer_loader.subtree("mixer").unwrap(),
+                        num_heads,
+                        num_groups,
+                        head_dim,
+                    ) {
+                        Ok(norm) => Some(Box::new(norm)),
+                        Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
+                    }
+                } else {
+                    None
+                };
+
+            let out_projection = linear_block(
+                &attention_config.out_projection_config,
+                attention_config.has_out_biases,
+                num_heads * head_dim,
+                [model_dim],
+                ctx,
+                &layer_loader.subtree("mixer.out_projection").unwrap(),
+                ArrayId::AttentionOutput,
+                ArrayId::Main,
+            )
+            .expect("Failed to create out projection");
+
+            let post_attention_norm: Option<Box<dyn EncodableBlock<B>>> =
+                if let Some(norm_config) = &layer_config.post_attention_norm_config {
+                    Some(Box::new(
+                        Normalization::new(
+                            ctx,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &layer_loader.subtree("post_mixer_norm").unwrap(),
+                        )
+                        .expect("Failed to create post-attention norm kernel"),
+                    ))
+                } else {
+                    None
+                };
+
+            let mixer_residual_add: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorAddSwap::<B>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
+            );
+
+            let copy_main_to_shortcut_mlp: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorCopy::<B>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+                )
+                .unwrap(),
+            );
+
+            let pre_mlp_norm: Box<dyn EncodableBlock<B>> = Box::new(
+                Normalization::new(
+                    ctx,
+                    intermediate_data_type,
+                    layer_config.pre_mlp_norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &layer_loader.subtree("pre_mlp_norm").unwrap(),
+                )
+                .expect("Failed to create pre-MLP norm kernel"),
+            );
+
+            let mlp = mlp_block(
+                &layer_config.mlp_config,
+                model_dim,
+                hidden_dim,
+                context.as_ref(),
+                &layer_loader.subtree("mlp").unwrap(),
+            )
+            .expect("Failed to create mlp block");
+
+            let post_mlp_norm: Option<Box<dyn EncodableBlock<B>>> =
+                if let Some(norm_config) = &layer_config.post_mlp_norm_config {
+                    Some(Box::new(
+                        Normalization::new(
+                            ctx,
+                            intermediate_data_type,
+                            norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &layer_loader.subtree("post_mlp_norm").unwrap(),
+                        )
+                        .expect("Failed to create post-MLP norm kernel"),
+                    ))
+                } else {
+                    None
+                };
+
+            let attention: Box<dyn EncodableBlock<B>> = Box::new(
+                Attention::new(
+                    ctx,
+                    intermediate_data_type,
+                    layer_index,
+                    attention_scale,
+                    attention_config.has_sinks,
+                    false,
+                    attention_config.sliding_window_size,
+                )
+                .expect("Failed to create attention kernel"),
+            );
+
+            let mlp_residual_add: Box<dyn EncodableBlock<B>> = Box::new(
+                TensorAddSwap::<B>::new(
+                    ctx,
+                    intermediate_data_type,
+                    vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                )
+                .unwrap(),
+            );
+
+            Self {
+                layer_index,
+                copy_main_to_shortcut_mixer,
+                pre_attention_norm,
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+                post_attention_norm,
+                mixer_residual_add,
+                copy_main_to_shortcut_mlp,
+                pre_mlp_norm,
+                mlp,
+                post_mlp_norm,
+                mlp_residual_add,
+            }
+        })
+    }
+}
+
+impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
+    fn encode(
+        &self,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        command_buffer: &B::CommandBuffer,
+    ) {
+        #[cfg(not(feature = "tracing"))]
+        {
+            if self.supports_shared_encoder() {
+                command_buffer
+                    .with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
+                return;
+            }
+        }
+
+        #[cfg(feature = "tracing")]
+        let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
+
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
+        }
+
+        self.copy_main_to_shortcut_mixer.encode(state, parameters, command_buffer);
+
+        if let Some(ref pre_attn_norm) = self.pre_attention_norm {
+            pre_attn_norm.encode(state, parameters, command_buffer);
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().pre_attention_norm.clone(),
+                );
+            }
+        } else {
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().pre_attention_norm.clone(),
+                );
+            }
+        }
+
+        self.qkv_projection.encode(state, parameters, command_buffer);
+        if let Some(ref qk_norm) = self.qk_norm {
+            qk_norm.encode(state, parameters, command_buffer);
+        }
+        self.rope.encode(state, parameters, command_buffer);
+        self.attention.encode(state, parameters, command_buffer);
+        self.out_projection.encode(state, parameters, command_buffer);
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+        }
+
+        if let Some(ref post_attn_norm) = self.post_attention_norm {
+            post_attn_norm.encode(state, parameters, command_buffer);
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().post_attention_norm.clone(),
+                );
+            }
+        }
+
+        self.mixer_residual_add.encode(state, parameters, command_buffer);
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
+        }
+
+        self.copy_main_to_shortcut_mlp.encode(state, parameters, command_buffer);
+
+        self.pre_mlp_norm.encode(state, parameters, command_buffer);
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
+        }
+
+        self.mlp.encode(state, parameters, command_buffer);
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
+        }
+
+        if let Some(ref post_mlp_norm) = self.post_mlp_norm {
+            post_mlp_norm.encode(state, parameters, command_buffer);
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+            }
+        }
+
+        self.mlp_residual_add.encode(state, parameters, command_buffer);
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
+        }
+
+        let _ = parameters;
+    }
+
+    fn supports_shared_encoder(&self) -> bool {
+        #[cfg(feature = "tracing")]
+        {
+            false
+        }
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            self.copy_main_to_shortcut_mixer.supports_shared_encoder()
+                && self.pre_attention_norm.as_ref().map(|b| b.supports_shared_encoder()).unwrap_or(true)
+                && self.qkv_projection.supports_shared_encoder()
+                && self.qk_norm.as_ref().map(|b| b.supports_shared_encoder()).unwrap_or(true)
+                && self.rope.supports_shared_encoder()
+                && self.attention.supports_shared_encoder()
+                && self.out_projection.supports_shared_encoder()
+                && self.post_attention_norm.as_ref().map(|b| b.supports_shared_encoder()).unwrap_or(true)
+                && self.mixer_residual_add.supports_shared_encoder()
+                && self.copy_main_to_shortcut_mlp.supports_shared_encoder()
+                && self.pre_mlp_norm.supports_shared_encoder()
+                && self.mlp.supports_shared_encoder()
+                && self.post_mlp_norm.as_ref().map(|b| b.supports_shared_encoder()).unwrap_or(true)
+                && self.mlp_residual_add.supports_shared_encoder()
+        }
+    }
+
+    fn encode_with_shared_encoder(
+        &self,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
+        encoder: &B::ComputeEncoder,
+    ) {
+        debug_assert!(
+            self.supports_shared_encoder(),
+            "encode_with_shared_encoder called on unsupported ClassifierLayer"
+        );
+
+        self.copy_main_to_shortcut_mixer.encode_with_shared_encoder(state, parameters, encoder);
+
+        if let Some(ref pre_attn_norm) = self.pre_attention_norm {
+            pre_attn_norm.encode_with_shared_encoder(state, parameters, encoder);
+        }
+
+        self.qkv_projection.encode_with_shared_encoder(state, parameters, encoder);
+        if let Some(ref qk_norm) = self.qk_norm {
+            qk_norm.encode_with_shared_encoder(state, parameters, encoder);
+        }
+        self.rope.encode_with_shared_encoder(state, parameters, encoder);
+        self.attention.encode_with_shared_encoder(state, parameters, encoder);
+        self.out_projection.encode_with_shared_encoder(state, parameters, encoder);
+
+        if let Some(ref post_attn_norm) = self.post_attention_norm {
+            post_attn_norm.encode_with_shared_encoder(state, parameters, encoder);
+        }
+
+        self.mixer_residual_add.encode_with_shared_encoder(state, parameters, encoder);
+
+        self.copy_main_to_shortcut_mlp.encode_with_shared_encoder(state, parameters, encoder);
+
+        self.pre_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
+        self.mlp.encode_with_shared_encoder(state, parameters, encoder);
+
+        if let Some(ref post_mlp_norm) = self.post_mlp_norm {
+            post_mlp_norm.encode_with_shared_encoder(state, parameters, encoder);
+        }
+
+        self.mlp_residual_add.encode_with_shared_encoder(state, parameters, encoder);
+    }
+}

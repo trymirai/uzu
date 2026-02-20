@@ -1,4 +1,4 @@
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 
 pub fn c_char_slice_to_string(raw_string_array: &[c_char]) -> String {
     unsafe { CStr::from_ptr(raw_string_array.as_ptr()) }

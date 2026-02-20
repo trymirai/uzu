@@ -16,10 +16,7 @@ pub fn get_test_model_path() -> PathBuf {
         .join(VERSION)
         .join(MODEL_DIR_NAME);
     if !path.exists() {
-        panic!(
-            "Test model not found at {:?}. Run `./scripts/download_test_model.sh` to fetch it.",
-            path
-        );
+        panic!("Test model not found at {:?}. Run `./scripts/download_test_model.sh` to fetch it.", path);
     }
     path
 }
@@ -58,11 +55,7 @@ impl Speculator for StaticSpeculator {
         &self,
         prefix: &[u64],
     ) -> HashMap<u64, f32> {
-        self.responses
-            .get(prefix)
-            .cloned()
-            .or_else(|| self.default_response.clone())
-            .unwrap_or_default()
+        self.responses.get(prefix).cloned().or_else(|| self.default_response.clone()).unwrap_or_default()
     }
 }
 

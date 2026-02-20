@@ -1,8 +1,6 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 
-using namespace metal;
-
 #define BLOCK_SIZE 1024
 #define SIMD_SIZE 32
 #define GRAIN_SIZE 4
@@ -19,7 +17,8 @@ void layer_norm_core(
     threadgroup AccumT* shared_mean,
     threadgroup AccumT* shared_variance,
     uint thread_in_row,
-    bool full_layer
+    bool full_layer,
+    const thread Simd& simd
 ) {
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
@@ -38,7 +37,8 @@ void layer_norm_core(
   AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
       partial_sum,
       shared_mean,
-      thread_in_row
+      thread_in_row,
+      simd
   );
   AccumT mean = total_sum / static_cast<AccumT>(element_count);
 
@@ -59,7 +59,8 @@ void layer_norm_core(
   AccumT total_var = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
       partial_var_sum,
       shared_variance,
-      thread_in_row
+      thread_in_row,
+      simd
   );
   AccumT variance = total_var / static_cast<AccumT>(element_count);
   AccumT inv_std = rsqrt(variance + static_cast<AccumT>(epsilon));
@@ -112,54 +113,38 @@ void layer_norm_core(
   }
 }
 
-// X-macro table defining all supported type combinations (same as RMSNorm)
-#define FOREACH_LAYER_NORM_COMBO(_)                                            \
-  /* bfloat combinations most commonly used */                                 \
-  _(bfloat, bfloat, bfloat, float, false, bf16_bf16_bf16_f32_norm)             \
-  _(bfloat, bfloat, bfloat, float, true, bf16_bf16_bf16_f32_full)              \
-  _(bfloat, float, bfloat, float, false, bf16_f32_bf16_f32_norm)               \
-  _(bfloat, float, bfloat, float, true, bf16_f32_bf16_f32_full)                \
-  /* float combinations */                                                     \
-  _(float, float, float, float, false, f32_f32_f32_f32_norm)                   \
-  _(float, float, float, float, true, f32_f32_f32_f32_full)                    \
-  /* half combinations */                                                      \
-  _(half, half, half, float, false, f16_f16_f16_f32_norm)                      \
-  _(half, half, half, float, true, f16_f16_f16_f32_full)
-
-// Generate LayerNorm kernels
-#define DEFINE_LAYER_NORM_KERNEL(IN, SC, OUT, ACC, FULL_LAYER, SUF)            \
-  [[max_total_threads_per_threadgroup(1024)]]                                  \
-  kernel void layer_norm_##SUF(                                                \
-      const device IN* input [[buffer(0)]],                                    \
-      const device SC* scales [[buffer(1)]],                                   \
-      device OUT* output [[buffer(2)]],                                        \
-      constant uint& batch_size [[buffer(3)]],                                 \
-      constant uint& model_dim [[buffer(4)]],                                  \
-      constant float& epsilon [[buffer(5)]],                                   \
-      constant float& scale_offset [[buffer(6)]],                              \
-      uint batch_idx [[threadgroup_position_in_grid]],                         \
-      uint thread_in_row [[thread_position_in_threadgroup]]                    \
-  ) {                                                                          \
-    if (batch_idx >= batch_size)                                               \
-      return;                                                                  \
-                                                                               \
-    threadgroup ACC shared_mean[SIMD_SIZE];                                    \
-    threadgroup ACC shared_variance[SIMD_SIZE];                                \
-    const uint input_offset = batch_idx * model_dim;                           \
-                                                                               \
-    layer_norm_core<IN, SC, OUT, ACC>(                                         \
-        input + input_offset,                                                  \
-        scales,                                                                \
-        output + input_offset,                                                 \
-        model_dim,                                                             \
-        epsilon,                                                               \
-        scale_offset,                                                          \
-        shared_mean,                                                           \
-        shared_variance,                                                       \
-        thread_in_row,                                                         \
-        FULL_LAYER                                                             \
-    );                                                                         \
-  }
-
-FOREACH_LAYER_NORM_COMBO(DEFINE_LAYER_NORM_KERNEL)
-#undef DEFINE_LAYER_NORM_KERNEL
+template <typename IN, typename SC, typename OUT, typename ACC>
+VARIANTS(IN, float, half, bfloat)
+VARIANTS(SC, float, half, bfloat)
+VARIANTS(OUT, float, half, bfloat)
+VARIANTS(ACC, float)
+KERNEL(LayerNorm) (
+    const device IN* input,
+    const device SC* scales,
+    device OUT* output,
+    constant uint& batch_size,
+    constant uint& model_dim,
+    constant float& epsilon,
+    constant float& scale_offset,
+    constant uint& full_layer,
+    threadgroup ACC shared_mean[SIMD_SIZE],
+    threadgroup ACC shared_variance[SIMD_SIZE],
+    const Simd simd,
+    uint batch_idx GROUPS(batch_size),
+    uint thread_in_row THREADS(BLOCK_SIZE)
+) {
+  const uint input_offset = batch_idx * model_dim;
+  layer_norm_core<IN, SC, OUT, ACC>(
+      input + input_offset,
+      scales,
+      output + input_offset,
+      model_dim,
+      epsilon,
+      scale_offset,
+      shared_mean,
+      shared_variance,
+      thread_in_row,
+      full_layer,
+      simd
+  );
+}

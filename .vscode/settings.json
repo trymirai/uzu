@@ -1,9 +1,26 @@
 {
+  "metal-analyzer.diagnostics.onType": true,
+  "metal-analyzer.diagnostics.onSave": true,
+  "metal-analyzer.diagnostics.debounceMs": 300,
+  "metal-analyzer.indexing.enabled": true,
+  "metal-analyzer.indexing.concurrency": 8,
+  "metal-analyzer.indexing.maxFileSizeKb": 1024,
+  "metal-analyzer.formatting.enabled": true,
+  "metal-analyzer.formatting.command": "clang-format",
+  "metal-analyzer.formatting.args": [],
+  "metal-analyzer.diagnostics.scope": "workspace",
+  "metal-analyzer.indexing.excludePaths": [
+    "external/uzu-plus"
+  ],
+  "metal-analyzer.compiler.includePaths": [],
+  "metal-analyzer.compiler.extraFlags": [],
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit",
   },
-  "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+  "rust-analyzer.rustfmt.extraArgs": [
+    "+nightly"
+  ],
   "rust-analyzer.check.workspace": false,
   "rust-analyzer.cargo.allTargets": false,
   "rust-analyzer.check.noDefaultFeatures": true,
@@ -17,23 +34,11 @@
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml",
   },
-  // Treat Metal headers/sources as C++ for clang-format
+  "[metal]": {
+    "editor.defaultFormatter": "eugenebokhan.metal-analyzer",
+    "editor.formatOnSave": true,
+  },
   "files.associations": {
-    "*.metal": "cpp",
-    "*.h": "cpp",
-    "*.hpp": "cpp",
-  },
-  // Use repository .clang-format
-  "clang-format.style": "file",
-  "C_Cpp.formatting": "clangFormat",
-  "C_Cpp.clang_format_style": "file",
-  // Default to MS C/C++ extension formatter for C/C++ (clang-format backend)
-  "[cpp]": {
-    "editor.defaultFormatter": "ms-vscode.cpptools",
-    "editor.formatOnSave": true,
-  },
-  "[c]": {
-    "editor.defaultFormatter": "ms-vscode.cpptools",
-    "editor.formatOnSave": true,
+    "*.h": "metal",
   },
 }

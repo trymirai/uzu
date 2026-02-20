@@ -120,8 +120,7 @@ mod tests {
             activation_precision: ConfigDataType::BFloat16,
         };
 
-        let deserialized_config: EmbeddingConfig =
-            from_str(config_str).unwrap();
+        let deserialized_config: EmbeddingConfig = from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);
 
         let semi_config_str = r#"
@@ -173,8 +172,7 @@ mod tests {
             activation_precision: ConfigDataType::BFloat16,
         };
 
-        let deserialized: EmbeddingConfig =
-            from_str(mlx_quant_untied_str).unwrap();
+        let deserialized: EmbeddingConfig = from_str(mlx_quant_untied_str).unwrap();
         assert_eq!(deserialized, mlx_quant_untied);
     }
 }

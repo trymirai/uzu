@@ -126,6 +126,17 @@ struct TensorView4D {
   }
 };
 
+struct Simd {
+  uint lane_idx;
+  uint group_idx;
+  uint group_size;
+  uint groups_per_threadgroup;
+
+  uint groups_count(const uint threads_count) const {
+    return (threads_count + this->group_size - 1) / this->group_size;
+  }
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 //  MARK: - Thread Functions
 ///////////////////////////////////////////////////////////////////////////////
@@ -351,17 +362,15 @@ template <ushort BLOCK_SIZE, typename T>
 static T threadgroup_cooperative_reduce_sum(
     T value,
     threadgroup T* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup
   T local_sum = simd_sum(value);
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_sum;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_sum;
   }
 
   // Synchronize across the threadgroup
@@ -369,7 +378,7 @@ static T threadgroup_cooperative_reduce_sum(
 
   // Reduce across simdgroups
   T total_sum = T(0);
-  const ushort num_simd_groups = (BLOCK_SIZE + 31) / 32;
+  const ushort num_simd_groups = simd.groups_count(BLOCK_SIZE);
   if (lid < num_simd_groups) {
     total_sum = shared[lid];
   }
@@ -392,24 +401,23 @@ template <ushort BLOCK_SIZE, typename T>
 static T threadgroup_cooperative_reduce_max(
     T value,
     threadgroup T* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup
   T local_max = simd_max(value);
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_max;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_max;
   }
 
   // Synchronize across the threadgroup
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Reduce across simdgroups
-  T total_max = (lid < ((BLOCK_SIZE + 31) / 32)) ? shared[lid] : T(-INFINITY);
+  T total_max =
+      lid < simd.groups_count(BLOCK_SIZE) ? shared[lid] : T(-INFINITY);
   total_max = simd_max(total_max);
 
   // Broadcast the result to all threads
@@ -429,24 +437,22 @@ template <ushort BLOCK_SIZE, typename T>
 static T threadgroup_cooperative_reduce_min(
     T value,
     threadgroup T* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup
   T local_min = simd_min(value);
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_min;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_min;
   }
 
   // Synchronize across the threadgroup
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // Reduce across simdgroups
-  T total_min = (lid < ((BLOCK_SIZE + 31) / 32)) ? shared[lid] : T(INFINITY);
+  T total_min = lid < simd.groups_count(BLOCK_SIZE) ? shared[lid] : T(INFINITY);
   total_min = simd_min(total_min);
 
   // Broadcast the result to all threads
@@ -460,6 +466,13 @@ static T threadgroup_cooperative_reduce_min(
   return result;
 }
 
+// warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+#if defined(__cpp_if_constexpr)
+#define IF_CONSTEXPR(cond) if constexpr (cond)
+#else
+#define IF_CONSTEXPR(cond) if (cond)
+#endif
+
 // MARK: - DSL Annotation Helpers
 
 #ifdef DSL_ANALYZE
@@ -471,10 +484,12 @@ static T threadgroup_cooperative_reduce_min(
 #define DSL_STR(X) #X
 #define DSL_XSTR(X) DSL_STR(X)
 
-#define SPECIALIZE(TYPENAME, ...)                                              \
-  template <typename TYPENAME>                                                 \
-  DSL_META("dsl.specialize", #TYPENAME, #__VA_ARGS__)
+#define VARIANTS(TYPENAME, ...)                                                \
+  DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
+
+#define SPECIALIZE DSL_META("dsl.specialize")
+#define OPTIONAL(EXPR) DSL_META("dsl.optional", DSL_XSTR(EXPR))
 
 #define AXIS(TDS, TPG) DSL_META("dsl.axis", DSL_XSTR(TDS), DSL_XSTR(TPG))
 #define GROUPS(EXPR) DSL_META("dsl.groups", DSL_XSTR(EXPR))
@@ -482,12 +497,26 @@ static T threadgroup_cooperative_reduce_min(
 
 // MARK: - Generate Template Kernels
 
-#define generateKernel(max_threads, functionName, scalarType, outerArgs, innerArgs) \
+#define generateKernel(                                                        \
+    max_threads,                                                               \
+    functionName,                                                              \
+    scalarType,                                                                \
+    outerArgs,                                                                 \
+    innerArgs                                                                  \
+)                                                                              \
   [[max_total_threads_per_threadgroup(max_threads)]]                           \
-  kernel void functionName##_##scalarType outerArgs { functionName innerArgs; }
+  kernel void functionName##_##scalarType outerArgs {                          \
+    functionName innerArgs;                                                    \
+  }
 
 #define generateKernels(max_threads, functionName)                             \
-  generateKernel(max_threads, functionName, float, outerArguments(float), innerArguments);  \
+  generateKernel(                                                              \
+      max_threads,                                                             \
+      functionName,                                                            \
+      float,                                                                   \
+      outerArguments(float),                                                   \
+      innerArguments                                                           \
+  );                                                                           \
   generateKernel(                                                              \
       max_threads,                                                             \
       functionName,                                                            \
@@ -495,6 +524,12 @@ static T threadgroup_cooperative_reduce_min(
       outerArguments(bfloat),                                                  \
       innerArguments                                                           \
   );                                                                           \
-  generateKernel(max_threads, functionName, half, outerArguments(half), innerArguments);
+  generateKernel(                                                              \
+      max_threads,                                                             \
+      functionName,                                                            \
+      half,                                                                    \
+      outerArguments(half),                                                    \
+      innerArguments                                                           \
+  );
 
 #endif /* definitions_metal */

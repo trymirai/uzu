@@ -26,11 +26,9 @@ template <ushort BLOCK_SIZE_PARAM>
 static ArgmaxPair threadgroup_cooperative_argmax(
     ArgmaxPair value,
     threadgroup ArgmaxPair* shared,
-    const ushort lid
+    const ushort lid,
+    const thread Simd& simd
 ) {
-  const ushort simd_group_id = lid / 32;
-  const ushort simd_lane_id = lid % 32;
-
   // Reduce within simdgroup using manual shuffle operations
   ArgmaxPair local_result = value;
   for (ushort offset = 16; offset > 0; offset /= 2) {
@@ -42,8 +40,8 @@ static ArgmaxPair threadgroup_cooperative_argmax(
   }
 
   // First thread in each simdgroup writes to shared memory
-  if (simd_lane_id == 0) {
-    shared[simd_group_id] = local_result;
+  if (simd.lane_idx == 0) {
+    shared[simd.group_idx] = local_result;
   }
 
   // Synchronize across the threadgroup
@@ -155,7 +153,9 @@ static ArgmaxPair threadgroup_raking_argmax(
 
 // Single-pass argmax
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxSingle)(
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(ArgmaxSingle)(
   const device T* logits_data,
   device uint* final_tokens,
   constant uint& batch_size,
@@ -195,12 +195,15 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxSingle)(
 
 // Two-pass argmax
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxMain)(
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(ArgmaxMain)(
     const device T* logits_data,
     device ArgmaxPair* partial_results,
     constant uint& batch_size,
     constant uint& vocab_size,
     threadgroup ArgmaxPair shared[BLOCK_SIZE],
+    const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint vocab_group_idx GROUPS(vocab_size.div_ceil(BLOCK_SIZE * GRAIN_SIZE)),
     ushort local_id THREADS(BLOCK_SIZE)
@@ -226,7 +229,8 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(ArgmaxMain)(
   ArgmaxPair group_result = threadgroup_cooperative_argmax<BLOCK_SIZE>(
       thread_result,
       shared,
-      local_id
+      local_id,
+      simd
   );
 
   if (local_id == 0) {
@@ -243,6 +247,7 @@ KERNEL(ArgmaxFinal)(
     constant uint& batch_size,
     constant uint& vocab_size,
     threadgroup ArgmaxPair shared[BLOCK_SIZE],
+    const Simd simd,
     uint batch_idx GROUPS(batch_size),
     ushort local_id THREADS(BLOCK_SIZE)
 ) {
@@ -265,7 +270,8 @@ KERNEL(ArgmaxFinal)(
   ArgmaxPair result = threadgroup_cooperative_argmax<BLOCK_SIZE>(
       thread_result,
       shared,
-      local_id
+      local_id,
+      simd
   );
 
   if (local_id == 0) {

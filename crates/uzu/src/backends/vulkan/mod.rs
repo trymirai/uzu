@@ -1,12 +1,12 @@
+mod array;
 pub mod buffer;
 pub mod command_buffers;
 pub mod context;
+mod device_context;
+mod ffi;
 pub mod layout;
 pub mod logger;
 pub mod physical_device;
 pub mod pipeline;
 pub mod shader;
 pub mod timestamp_query_pool;
-mod array;
-mod device_context;
-mod ffi;

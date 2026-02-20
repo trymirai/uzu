@@ -10,9 +10,7 @@ use shader_slang::{
 
 use crate::slang::slang_api;
 
-fn variants_for_constraint(
-    constraint: &str
-) -> Option<&'static [&'static str]> {
+fn variants_for_constraint(constraint: &str) -> Option<&'static [&'static str]> {
     match constraint {
         "__BuiltinFloatingPointType" => Some(&["float", "half", "double"]),
         _ => None,
@@ -60,9 +58,7 @@ impl<'a> SlangArgument<'a> {
         specialized_generic: &Generic,
     ) -> String {
         let ty = self.variable.ty();
-        if let Some(specialized_ty) =
-            ty.apply_specializations(specialized_generic)
-        {
+        if let Some(specialized_ty) = ty.apply_specializations(specialized_generic) {
             specialized_ty
                 .full_name()
                 .ok()
@@ -80,30 +76,17 @@ impl<'a> SlangArgument<'a> {
     pub fn argument_type(&self) -> anyhow::Result<SlangArgumentType> {
         let ty = self.variable.ty();
 
-        let attrs: HashMap<&str, &UserAttribute> =
-            self.variable.user_attributes().map(|ua| (ua.name(), ua)).collect();
+        let attrs: HashMap<&str, &UserAttribute> = self.variable.user_attributes().map(|ua| (ua.name(), ua)).collect();
 
         if let Some(axis) = attrs.get("Axis") {
-            let total = axis
-                .argument_value_string(0)
-                .context("Axis missing arg 0")?
-                .into();
-            let per_group = axis
-                .argument_value_string(1)
-                .context("Axis missing arg 1")?
-                .into();
+            let total = axis.argument_value_string(0).context("Axis missing arg 0")?.into();
+            let per_group = axis.argument_value_string(1).context("Axis missing arg 1")?.into();
             Ok(SlangArgumentType::Axis(total, per_group))
         } else if let Some(groups) = attrs.get("Groups") {
-            let expr = groups
-                .argument_value_string(0)
-                .context("Groups missing arg")?
-                .into();
+            let expr = groups.argument_value_string(0).context("Groups missing arg")?.into();
             Ok(SlangArgumentType::Groups(expr))
         } else if let Some(threads) = attrs.get("Threads") {
-            let expr = threads
-                .argument_value_string(0)
-                .context("Threads missing arg")?
-                .into();
+            let expr = threads.argument_value_string(0).context("Threads missing arg")?.into();
             Ok(SlangArgumentType::Threads(expr))
         } else {
             match ty.kind() {
@@ -144,12 +127,11 @@ pub struct SlangKernelInfo<'a> {
 
 impl<'a> SlangKernelInfo<'a> {
     pub fn from_reflection(decl: &'a Decl) -> anyhow::Result<Option<Self>> {
-        let (generic_decl, function_decl) =
-            if let DeclKind::Generic = decl.kind() {
-                (Some(decl), decl.as_generic().inner_decl())
-            } else {
-                (None, decl)
-            };
+        let (generic_decl, function_decl) = if let DeclKind::Generic = decl.kind() {
+            (Some(decl), decl.as_generic().inner_decl())
+        } else {
+            (None, decl)
+        };
 
         if !matches!(function_decl.kind(), DeclKind::Func) {
             return Ok(None);
@@ -163,10 +145,7 @@ impl<'a> SlangKernelInfo<'a> {
 
         if let Some(gd) = generic_decl {
             for param in slang_api::get_generic_type_parameters(gd) {
-                let has_known_constraint = param
-                    .constraints
-                    .iter()
-                    .any(|c| variants_for_constraint(c).is_some());
+                let has_known_constraint = param.constraints.iter().any(|c| variants_for_constraint(c).is_some());
 
                 if !has_known_constraint {
                     bail!(
@@ -205,22 +184,14 @@ impl<'a> SlangKernelInfo<'a> {
         self.function_decl().as_function().parameters().map(SlangArgument::new)
     }
 
-    pub fn type_parameters(
-        &self
-    ) -> impl Iterator<Item = SlangTypeParameter> + '_ {
-        self.generic_decl
-            .into_iter()
-            .flat_map(|gd| slang_api::get_generic_type_parameters(gd))
-            .filter_map(|param| {
-                let variants = param
-                    .constraints
-                    .iter()
-                    .find_map(|c| variants_for_constraint(c))?;
-                Some(SlangTypeParameter {
-                    name: param.name,
-                    variants,
-                })
+    pub fn type_parameters(&self) -> impl Iterator<Item = SlangTypeParameter> + '_ {
+        self.generic_decl.into_iter().flat_map(|gd| slang_api::get_generic_type_parameters(gd)).filter_map(|param| {
+            let variants = param.constraints.iter().find_map(|c| variants_for_constraint(c))?;
+            Some(SlangTypeParameter {
+                name: param.name,
+                variants,
             })
+        })
     }
 
     pub fn is_generic(&self) -> bool {

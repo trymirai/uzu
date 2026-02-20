@@ -6,4 +6,4 @@ imports_granularity = "Crate"
 fn_params_layout = "Vertical"
 match_block_trailing_comma = true
 use_small_heuristics = "Off"
-max_width = 80
+max_width = 120

@@ -1,5 +1,5 @@
 use crate::backends::vulkan::buffer::VkBuffer;
-use crate::{array_size_in_bytes, Array, DataType};
+use crate::{Array, DataType, array_size_in_bytes};
 
 pub struct VkArray {
     buffer: VkBuffer,
@@ -16,10 +16,17 @@ impl VkArray {
         shape: &[usize],
         data_type: DataType,
         offset: usize,
-        label: String
+        label: String,
     ) -> Self {
         let size = array_size_in_bytes(&shape, data_type);
-        Self { buffer, shape: shape.into(), data_type, size, offset, label }
+        Self {
+            buffer,
+            shape: shape.into(),
+            data_type,
+            size,
+            offset,
+            label,
+        }
     }
 }
 
@@ -43,7 +50,7 @@ impl Array for VkArray {
     }
 
     fn buffer_mut(&mut self) -> &mut [u8] {
-        self.buffer.get_bytes_mut().unwrap()   
+        self.buffer.get_bytes_mut().unwrap()
     }
 
     fn backend_buffer(&self) -> &Self::BackendBuffer {

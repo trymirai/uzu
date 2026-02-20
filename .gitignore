@@ -3,6 +3,7 @@
 
 .idea/
 *.DS_Store
+.idea/
 
 # Metal traces
 *.gputrace
@@ -17,9 +18,8 @@
 *__pycache__
 
 # AI tools
-.github/*.md
 .cursor
-.claude
+.claude/settings.local.json
 
 # Models
 /models/

@@ -26,10 +26,10 @@ sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
 
-# metal feature requires objc2, block (for callbacks) and metal
-objc2 = { workspace = true, optional = true}
-objc2-foundation = { workspace = true, optional = true}
-block = { workspace = true, optional = true }
+# metal feature requires objc2, block2 (for callbacks) and metal
+objc2 = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+block2 = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
 # vulkan feature
@@ -68,6 +68,7 @@ proc-macro2.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
+cbindgen.workspace = true
 
 # metal feature requires clang-ast
 clang-ast = { workspace = true, optional = true }
@@ -79,12 +80,19 @@ shader-slang-sys = { workspace = true, optional = true }
 [features]
 default = ["metal", "vulkan"]
 
-metal = ["dep:clang-ast", "dep:objc2", "dep:objc2-foundation", "dep:block", "dep:metal"]
+metal = [
+    "dep:clang-ast",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:block2",
+    "dep:metal",
+]
 metal-nax = []
 
 vulkan = ["dep:ash", "dep:shader-slang", "dep:shader-slang-sys", "dep:vk-mem"]
 
 tracing = []
+audio-runtime = []
 
 [[test]]
 name = "moe"

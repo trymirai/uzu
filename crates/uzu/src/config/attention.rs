@@ -108,8 +108,7 @@ mod tests {
             has_out_biases: false,
         };
 
-        let deserialized_config: AttentionConfig =
-            from_str(config_str).unwrap();
+        let deserialized_config: AttentionConfig = from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);
     }
 }

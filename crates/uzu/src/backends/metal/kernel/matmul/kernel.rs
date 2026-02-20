@@ -1,18 +1,19 @@
-use metal::ComputeCommandEncoderRef;
+use metal::{MTLBuffer, MTLComputeCommandEncoder};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
-    super::{KernelDataType, TensorAddBias},
     common::MatmulArguments,
-    dispatch_descriptor::{
-        MatmulDispatchDescriptor, choose_dispatch_descriptor,
-    },
+    dispatch_descriptor::{MatmulDispatchDescriptor, choose_dispatch_descriptor},
     gemm,
     gemv::GemvKernel,
     split_k::SplitKGemm,
 };
 use crate::{
     DataType,
-    backends::metal::{MTLContext, MTLError},
+    backends::{
+        common::kernel::TensorAddBiasKernel,
+        metal::{context::MetalContext, error::MetalError, kernel::dsl::TensorAddBiasMetalKernel},
+    },
 };
 
 pub struct MatmulKernel {
@@ -20,16 +21,13 @@ pub struct MatmulKernel {
     gemm: Option<gemm::GemmKernel>,
     gemv: Option<GemvKernel>,
     splitk: Option<SplitKGemm>,
-    bias_add: Option<TensorAddBias>,
+    bias_add: Option<TensorAddBiasMetalKernel>,
 }
 
 impl MatmulKernel {
-    pub fn new(data_type: DataType) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for MatmulKernel: {data_type:?}"
-            )));
+    pub fn new(data_type: DataType) -> Result<Self, MetalError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MetalError::Generic(format!("Unsupported dtype for MatmulKernel: {data_type:?}")));
         }
 
         Ok(Self {
@@ -43,8 +41,8 @@ impl MatmulKernel {
 
     pub fn precompile(
         &mut self,
-        context: &MTLContext,
-    ) -> Result<(), MTLError> {
+        context: &MetalContext,
+    ) -> Result<(), MetalError> {
         let gemm = self.get_or_create_gemm()?;
         gemm.precompile(context)?;
 
@@ -57,23 +55,21 @@ impl MatmulKernel {
         Ok(())
     }
 
-    fn get_or_create_gemm(
-        &mut self
-    ) -> Result<&mut gemm::GemmKernel, MTLError> {
+    fn get_or_create_gemm(&mut self) -> Result<&mut gemm::GemmKernel, MetalError> {
         if self.gemm.is_none() {
             self.gemm = Some(gemm::GemmKernel::new(self.data_type)?);
         }
         Ok(self.gemm.as_mut().unwrap())
     }
 
-    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel, MTLError> {
+    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel, MetalError> {
         if self.gemv.is_none() {
             self.gemv = Some(GemvKernel::new(self.data_type)?);
         }
         Ok(self.gemv.as_mut().unwrap())
     }
 
-    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKGemm, MTLError> {
+    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKGemm, MetalError> {
         if self.splitk.is_none() {
             self.splitk = Some(SplitKGemm::new(self.data_type)?);
         }
@@ -82,11 +78,11 @@ impl MatmulKernel {
 
     fn encode_dispatch_descriptor(
         &mut self,
-        context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        context: &MetalContext,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
         descriptor: &MatmulDispatchDescriptor,
-    ) -> Result<bool, MTLError> {
+    ) -> Result<bool, MetalError> {
         match descriptor {
             MatmulDispatchDescriptor::Gemv(descriptor) => {
                 let gemv = self.get_or_create_gemv()?;
@@ -94,8 +90,7 @@ impl MatmulKernel {
             },
             MatmulDispatchDescriptor::SplitK(descriptor) => {
                 let splitk = self.get_or_create_splitk()?;
-                splitk
-                    .encode_descriptor(context, encoder, arguments, descriptor)
+                splitk.encode_descriptor(context, encoder, arguments, descriptor)
             },
             MatmulDispatchDescriptor::Gemm(descriptor) => {
                 let gemm = self.get_or_create_gemm()?;
@@ -106,21 +101,15 @@ impl MatmulKernel {
 
     pub fn encode(
         &mut self,
-        context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        context: &MetalContext,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         mut arguments: MatmulArguments,
-    ) -> Result<(), MTLError> {
+    ) -> Result<(), MetalError> {
         Self::apply_batch_collapse(&mut arguments);
 
-        let descriptor =
-            choose_dispatch_descriptor(context, self.data_type, &arguments)?;
+        let descriptor = choose_dispatch_descriptor(context, self.data_type, &arguments)?;
 
-        let bias_fused = self.encode_dispatch_descriptor(
-            context,
-            encoder,
-            &arguments,
-            &descriptor,
-        )?;
+        let bias_fused = self.encode_dispatch_descriptor(context, encoder, &arguments, &descriptor)?;
 
         if let Some(bias) = arguments.bias {
             if !bias_fused {
@@ -133,11 +122,11 @@ impl MatmulKernel {
 
     fn apply_bias_add(
         &mut self,
-        context: &MTLContext,
-        encoder: &ComputeCommandEncoderRef,
+        context: &MetalContext,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         arguments: &MatmulArguments,
-        bias: &metal::Buffer,
-    ) -> Result<(), MTLError> {
+        bias: &Retained<ProtocolObject<dyn MTLBuffer>>,
+    ) -> Result<(), MetalError> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
         let batch_count = arguments.batch_count as usize;
@@ -147,21 +136,10 @@ impl MatmulKernel {
         }
 
         if self.bias_add.is_none() {
-            self.bias_add = Some(TensorAddBias::new(
-                context,
-                KernelDataType::from(self.data_type),
-            )?);
+            self.bias_add = Some(TensorAddBiasMetalKernel::new(context, self.data_type)?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
-        bias_add.encode_with_encoder(
-            arguments.d,
-            bias,
-            arguments.d,
-            n,
-            total_len,
-            encoder,
-            None,
-        );
+        bias_add.encode(arguments.d, bias, arguments.d, n as u32, total_len as u32, encoder);
         Ok(())
     }
 

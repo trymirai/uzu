@@ -1,3 +1,5 @@
+use metal::{MTLDevice, MTLDeviceExt};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceClass {
     Ultra,
@@ -10,8 +12,8 @@ pub enum DeviceClass {
 
 impl DeviceClass {
     pub fn detect() -> Self {
-        let device = match metal::Device::system_default() {
-            Some(d) => d,
+        let device = match <dyn MTLDevice>::system_default() {
+            Some(dev) => dev,
             None => return DeviceClass::Unknown,
         };
 

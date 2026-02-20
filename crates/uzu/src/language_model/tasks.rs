@@ -1,30 +1,30 @@
 use std::mem::size_of;
 
-use metal::{Buffer, MTLResourceOptions};
+use metal::{BufferExt, MTLBuffer};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::LanguageModelGeneratorContext;
-use crate::backends::metal::forward_pass::{
-    EncodableBlock, EncodingParameters, ForwardPassState,
+use crate::{
+    backends::{common::Context, metal::Metal},
+    encodable_block::{EncodableBlock, EncodingParameters},
+    forward_pass::state::ForwardPassState,
 };
 
 pub struct LanguageModelGeneratorEncodedTask {
     pub key: String,
-    predicate_buffer: Buffer,
+    predicate_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl LanguageModelGeneratorEncodedTask {
-    pub fn predicate_buffer(&self) -> &Buffer {
+    pub fn predicate_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.predicate_buffer
     }
 
     pub fn disable_execution(&self) {
         unsafe {
-            let ptr = self.predicate_buffer.contents() as *mut u32;
+            let ptr = self.predicate_buffer.contents().as_ptr() as *mut u32;
             *ptr = 1;
-            self.predicate_buffer.did_modify_range(metal::NSRange::new(
-                0,
-                size_of::<u32>() as u64,
-            ));
+            self.predicate_buffer.did_modify_range(0..size_of::<u32>());
         }
     }
 }
@@ -83,12 +83,12 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
 
     pub fn create_state(
         &self,
-        context: &mut LanguageModelGeneratorContext,
+        context: &mut LanguageModelGeneratorContext<Metal>,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        skip_attention_bias_fill: bool,
-    ) -> ForwardPassState {
+        should_fill_attention_bias: bool,
+    ) -> ForwardPassState<Metal> {
         ForwardPassState::new_llm(
-            context.mtl_context.clone(),
+            context.context.clone(),
             &context.decoder_config,
             &context.model_shape,
             &context.scratch_buffers,
@@ -104,7 +104,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
             self.is_prefilling,
             external_bias_fn,
             false,
-            skip_attention_bias_fill,
+            should_fill_attention_bias,
             None,
             None,
         )
@@ -112,19 +112,19 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
 
     pub fn build_encoded_task(
         &self,
-        context: &LanguageModelGeneratorContext,
-        state: &mut ForwardPassState,
-        parameters: &EncodingParameters,
+        context: &LanguageModelGeneratorContext<Metal>,
+        state: &mut ForwardPassState<Metal>,
+        parameters: &EncodingParameters<Metal>,
         key: String,
     ) -> LanguageModelGeneratorEncodedTask {
-        context.executables.encode(state, &context.command_buffer, parameters);
+        context.executables.encode(state, parameters, &context.command_buffer);
 
         LanguageModelGeneratorEncodedTask {
             key,
-            predicate_buffer: context.mtl_context.device.new_buffer(
-                size_of::<u32>() as u64,
-                MTLResourceOptions::StorageModeShared,
-            ),
+            predicate_buffer: context
+                .context
+                .create_buffer(size_of::<u32>())
+                .expect("Failed to create predicate buffer"),
         }
     }
 }

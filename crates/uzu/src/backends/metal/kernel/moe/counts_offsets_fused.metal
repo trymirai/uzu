@@ -1,6 +1,5 @@
 #include <metal_stdlib>
 #include <metal_atomic>
-using namespace metal;
 
 #include "../definitions.metal"
 
@@ -9,19 +8,25 @@ using namespace metal;
 
 // Single-kernel fused: count all experts + scan to offsets
 // This kernel is launched with SINGLE threadgroup
-[[max_total_threads_per_threadgroup(128)]]
-kernel void moe_counts_offsets_fused(
-    device const int* topk_ids [[buffer(0)]],
-    device uint* offsets [[buffer(1)]],   // output: exclusive scan [E+1]
-    device uint* sum_k_out [[buffer(2)]], // output: total count [1]
-    device uint* partials
-    [[buffer(3)]], // output: partials [num_tiles * TILE_E] (for block_bases)
-    constant uint& T [[buffer(4)]],
-    constant uint& E [[buffer(5)]],
-    constant uint& K [[buffer(6)]],
-    uint lid [[thread_index_in_threadgroup]]
+KERNEL(MoeCountsOffsetsFused)(
+    device const int* topk_ids,
+    device uint* offsets,   // output: exclusive scan [E+1]
+    device uint* sum_k_out, // output: total count [1]
+    device uint*
+        partials, // output: partials [num_tiles * TILE_E] (for block_bases)
+    constant uint& t_input,
+    constant uint& e_input,
+    constant uint& k_input,
+    threadgroup _atomic<uint> tg_hist[TILE_E],
+    threadgroup uint scan_shared[BLOCK_SIZE],
+    threadgroup uint reduce_shared[BLOCK_SIZE],
+    threadgroup uint
+        counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
+    threadgroup uint& carry,
+    const Simd simd,
+    const uint lid THREADS(128)
 ) {
-  if (E == 0) {
+  if (e_input == 0) {
     if (lid == 0) {
       offsets[0] = 0u;
       sum_k_out[0] = 0u;
@@ -29,18 +34,12 @@ kernel void moe_counts_offsets_fused(
     return;
   }
 
-  threadgroup _atomic<uint> tg_hist[TILE_E];
-  threadgroup uint scan_shared[BLOCK_SIZE];
-  threadgroup uint reduce_shared[BLOCK_SIZE];
-  threadgroup uint
-      counts_shared[BLOCK_SIZE]; // Cache counts in threadgroup memory
-
   // ═══════════════════════════════════════════════════════════
   // PHASE 1: Count tokens per expert using tiled histogram
   // ═══════════════════════════════════════════════════════════
   // Tile over E dimension
-  for (uint e0 = 0; e0 < E; e0 += TILE_E) {
-    const uint tile_e = (e0 + TILE_E <= E) ? TILE_E : (E - e0);
+  for (uint e0 = 0; e0 < e_input; e0 += TILE_E) {
+    const uint tile_e = (e0 + TILE_E <= e_input) ? TILE_E : (e_input - e0);
 
     // Zero threadgroup histogram
     for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
@@ -50,9 +49,9 @@ kernel void moe_counts_offsets_fused(
 
     // Process all tokens in strided fashion
     // Since we have only 1 threadgroup, we need to cover all T tokens
-    for (uint t = lid; t < T; t += BLOCK_SIZE) {
-      const uint base = t * K;
-      for (uint k = 0; k < K; ++k) {
+    for (uint t = lid; t < t_input; t += BLOCK_SIZE) {
+      const uint base = t * k_input;
+      for (uint k = 0; k < k_input; ++k) {
         int eid = topk_ids[base + k];
         if (eid >= 0) {
           uint ue = uint(eid);
@@ -78,14 +77,13 @@ kernel void moe_counts_offsets_fused(
   // ═══════════════════════════════════════════════════════════
   // PHASE 2: Compute exclusive prefix scan on counts
   // ═══════════════════════════════════════════════════════════
-  threadgroup uint carry;
   if (lid == 0) {
     carry = 0u;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint base = 0; base < E; base += BLOCK_SIZE) {
-    uint remaining = E - base;
+  for (uint base = 0; base < e_input; base += BLOCK_SIZE) {
+    uint remaining = e_input - base;
     uint chunk_n = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
 
     uint v = (lid < chunk_n) ? counts_shared[lid] : 0u;
@@ -103,7 +101,8 @@ kernel void moe_counts_offsets_fused(
     uint block_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
         v,
         reduce_shared,
-        (ushort)lid
+        (ushort)lid,
+        simd
     );
     if (lid == 0) {
       carry += block_sum;
@@ -113,7 +112,7 @@ kernel void moe_counts_offsets_fused(
 
   // Write final offset and total
   if (lid == 0) {
-    offsets[E] = carry;
+    offsets[e_input] = carry;
     sum_k_out[0] = carry;
   }
 }

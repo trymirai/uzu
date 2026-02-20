@@ -6,11 +6,12 @@ use std::{
 
 use thiserror::Error;
 
-use super::safetensors_metadata::{
-    HashMetadata as STMetadata, HeaderLoadingError,
-    read_metadata as read_st_metadata,
+use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError, read_metadata as read_st_metadata};
+use crate::{
+    DataType,
+    array::{Array, ArrayContextExt},
+    backends::common::Context,
 };
-use crate::{Array, DataType, DeviceContext};
 
 pub struct ParameterMetadata {
     shape: Box<[usize]>,
@@ -61,7 +62,7 @@ pub enum ParameterLoaderError {
     ArrayLoadingError(#[from] std::io::Error),
 }
 
-pub struct ParameterLoader<'context, 'file, C: DeviceContext>
+pub struct ParameterLoader<'context, 'file, C: Context>
 where
     'file: 'context,
 {
@@ -70,7 +71,7 @@ where
     file: &'file File,
 }
 
-impl<'file, 'context, C: DeviceContext> ParameterLoader<'file, 'context, C>
+impl<'file, 'context, C: Context> ParameterLoader<'file, 'context, C>
 where
     'file: 'context,
 {
@@ -94,20 +95,13 @@ where
     pub fn get(
         &self,
         key: &str,
-    ) -> Result<C::DeviceArray, ParameterLoaderError> {
-        let metadata_entry = self
-            .index
-            .get(key)
-            .ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
+    ) -> Result<Array<C::Backend>, ParameterLoaderError> {
+        let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
         let (offset, size) = (metadata_entry.offset, metadata_entry.size);
         let array_key = key.replace(".", "_");
         let array_label = format!("parameter_loader_{array_key}");
-        let mut array = self.context.array(
-            &metadata_entry.shape,
-            metadata_entry.data_type,
-            array_label,
-        );
-        let expected_size = array.size_in_bytes();
+        let mut array = self.context.create_array(&metadata_entry.shape, metadata_entry.data_type, &array_label);
+        let expected_size = array.size();
         if expected_size != size {
             return Err(ParameterLoaderError::SizeMismatch {
                 data_type: metadata_entry.data_type,
@@ -116,7 +110,7 @@ where
                 actual_size: size,
             });
         }
-        self.file.read_exact_at(array.buffer_mut(), offset as u64)?;
+        self.file.read_exact_at(array.as_bytes_mut(), offset as u64)?;
         Ok(array)
     }
 
@@ -127,10 +121,7 @@ where
         shape: &mut Box<[usize]>,
         data_type: &mut DataType,
     ) -> Result<(), ParameterLoaderError> {
-        let metadata_entry = self
-            .index
-            .get(key)
-            .ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
+        let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
         self.file.read_exact_at(buf, metadata_entry.offset as u64)?;
         *shape = metadata_entry.shape.to_owned();
         *data_type = metadata_entry.data_type;
@@ -145,12 +136,12 @@ where
     }
 }
 
-pub struct ParameterTree<'loader, C: DeviceContext> {
+pub struct ParameterTree<'loader, C: Context> {
     loader: &'loader ParameterLoader<'loader, 'loader, C>,
     prefix: Option<String>,
 }
 
-impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
+impl<'loader, C: Context> ParameterTree<'loader, C> {
     pub fn new(loader: &'loader ParameterLoader<'loader, 'loader, C>) -> Self {
         Self {
             loader,
@@ -166,9 +157,7 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
         &self,
         name: &str,
     ) -> String {
-        self.prefix
-            .as_ref()
-            .map_or_else(|| name.to_string(), |p| format!("{p}.{name}"))
+        self.prefix.as_ref().map_or_else(|| name.to_string(), |p| format!("{p}.{name}"))
     }
 
     pub fn subtree(
@@ -176,11 +165,7 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
         name: &str,
     ) -> Result<Self, ParameterLoaderError> {
         let new_prefix = self.join_prefix(name);
-        let num_suffixes = self
-            .loader
-            .keys()
-            .filter_map(|suffix| suffix.strip_prefix(&new_prefix))
-            .count();
+        let num_suffixes = self.loader.keys().filter_map(|suffix| suffix.strip_prefix(&new_prefix)).count();
         if num_suffixes > 0 {
             Ok(Self {
                 loader: self.loader,
@@ -194,7 +179,7 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
     pub fn leaf(
         &self,
         name: &str,
-    ) -> Result<C::DeviceArray, ParameterLoaderError> {
+    ) -> Result<Array<C::Backend>, ParameterLoaderError> {
         self.loader.get(&self.join_prefix(name))
     }
 
@@ -205,11 +190,18 @@ impl<'loader, C: DeviceContext> ParameterTree<'loader, C> {
         shape: &mut Box<[usize]>,
         data_type: &mut DataType,
     ) -> Result<(), ParameterLoaderError> {
-        self.loader.read_extract_at(
-            &self.join_prefix(name),
-            buf,
-            shape,
-            data_type,
-        )
+        self.loader.read_extract_at(&self.join_prefix(name), buf, shape, data_type)
     }
+}
+
+pub fn resolve_subtree<'tree, C: Context>(
+    tree: &'tree ParameterTree<C>,
+    candidates: &[&str],
+) -> ParameterTree<'tree, C> {
+    for candidate in candidates {
+        if let Ok(subtree) = tree.subtree(candidate) {
+            return subtree;
+        }
+    }
+    panic!("Could not find any of {:?} in parameter tree", candidates);
 }

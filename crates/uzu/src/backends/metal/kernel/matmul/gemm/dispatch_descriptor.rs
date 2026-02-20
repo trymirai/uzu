@@ -1,16 +1,12 @@
 use metal::MTLSize;
 
-use super::{
-    pipeline_configuration::PipelineConfiguration,
-    tile_configuration::TileConfiguration,
-};
+use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::TileConfiguration};
 use crate::{
     DataType,
     backends::metal::{
-        DeviceClass, MTLContext, MTLError,
-        kernel::matmul::common::{
-            GEMMAddMMParams, GEMMParams, MatmulArguments,
-        },
+        context::{DeviceClass, MetalContext},
+        error::MetalError,
+        kernel::matmul::common::{GEMMAddMMParams, GEMMParams, MatmulArguments},
     },
 };
 
@@ -25,15 +21,12 @@ pub(crate) struct DispatchDescriptor {
 
 impl DispatchDescriptor {
     pub(crate) fn new(
-        context: &MTLContext,
+        context: &MetalContext,
         data_type: DataType,
         arguments: &MatmulArguments,
-    ) -> Result<Self, MTLError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)
-        {
-            return Err(MTLError::Generic(format!(
-                "Unsupported dtype for GEMM: {data_type:?}"
-            )));
+    ) -> Result<Self, MetalError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(MetalError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
         }
 
         let tile = select_tile(context, data_type, arguments);
@@ -51,8 +44,7 @@ impl DispatchDescriptor {
             align_k: (k % tile.block_depth) == 0,
             has_batch: arguments.batch_count > 1,
             use_out_source: arguments.c.is_some(),
-            do_axpby: arguments.c.is_some()
-                && (arguments.alpha != 1.0 || arguments.beta != 0.0),
+            do_axpby: arguments.c.is_some() && (arguments.alpha != 1.0 || arguments.beta != 0.0),
         };
 
         let tiles_n = (n + tile.block_cols - 1) / tile.block_cols;
@@ -63,15 +55,13 @@ impl DispatchDescriptor {
         let tm_swizzled = (tiles_m + tile_swizzle - 1) / tile_swizzle;
         let tn_swizzled = tiles_n * tile_swizzle;
 
-        let elements_per_matrix_a =
-            (arguments.batch as i64) * (arguments.lda as i64);
+        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.lda as i64);
         let elements_per_matrix_b = if arguments.transpose_b {
             (arguments.output_dim as i64) * (arguments.ldb as i64)
         } else {
             (arguments.input_dim as i64) * (arguments.ldb as i64)
         };
-        let elements_per_matrix_d =
-            (arguments.batch as i64) * (arguments.ldd as i64);
+        let elements_per_matrix_d = (arguments.batch as i64) * (arguments.ldd as i64);
 
         let params = GEMMParams {
             M: m,
@@ -107,13 +97,8 @@ impl DispatchDescriptor {
             None
         };
 
-        let threads_per_threadgroup =
-            MTLSize::new(32, tile.warps_per_col, tile.warps_per_row);
-        let threadgroups = MTLSize::new(
-            tn_swizzled as u64,
-            tm_swizzled as u64,
-            arguments.batch_count as u64,
-        );
+        let threads_per_threadgroup = MTLSize::new(32, tile.warps_per_col as usize, tile.warps_per_row as usize);
+        let threadgroups = MTLSize::new(tn_swizzled as usize, tm_swizzled as usize, arguments.batch_count as usize);
 
         Ok(Self {
             pipeline_configuration,
@@ -126,20 +111,18 @@ impl DispatchDescriptor {
 }
 
 fn select_tile(
-    context: &MTLContext,
+    context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments,
 ) -> TileConfiguration {
-    let overall_work_elements = (arguments.batch_count as i64)
-        * (arguments.batch as i64)
-        * (arguments.output_dim as i64);
+    let overall_work_elements =
+        (arguments.batch_count as i64) * (arguments.batch as i64) * (arguments.output_dim as i64);
     let is_float32 = matches!(data_type, DataType::F32);
     let prefer_half_or_tf32 = !is_float32 || context.tf32_enabled();
 
     if context.is_nax_available() && prefer_half_or_tf32 {
         let base_tile = TileConfiguration::new(128, 128, 512, 4, 4, 0);
-        let tile_rows =
-            (arguments.batch + base_tile.block_rows - 1) / base_tile.block_rows;
+        let tile_rows = (arguments.batch + base_tile.block_rows - 1) / base_tile.block_rows;
         let swizzle_log2 = if tile_rows <= 3 {
             0
         } else {
@@ -151,10 +134,8 @@ fn select_tile(
         };
     }
 
-    match context.architecture.device_class {
-        DeviceClass::Integrated
-        | DeviceClass::Phone
-        | DeviceClass::Unknown(_) => {
+    match context.device_class() {
+        DeviceClass::Integrated | DeviceClass::Phone | DeviceClass::Unknown(_) => {
             if prefer_half_or_tf32 {
                 if !arguments.transpose_a && arguments.transpose_b {
                     TileConfiguration::new(64, 32, 32, 2, 2, 0)
@@ -170,9 +151,7 @@ fn select_tile(
         DeviceClass::Desktop => {
             if overall_work_elements >= (1_i64 << 20) {
                 if prefer_half_or_tf32 {
-                    if 2 * std::cmp::max(arguments.batch, arguments.output_dim)
-                        > arguments.input_dim
-                    {
+                    if 2 * std::cmp::max(arguments.batch, arguments.output_dim) > arguments.input_dim {
                         TileConfiguration::new(64, 64, 16, 2, 2, 0)
                     } else if !arguments.transpose_a && arguments.transpose_b {
                         TileConfiguration::new(64, 32, 32, 2, 2, 0)

@@ -5,13 +5,16 @@
 #define BLOCK_SIZE_IN_SIMDS (BLOCK_SIZE / 32)
 #define MAX_ITERS 16
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(TopK) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(TopK)(
     device const T* logits,
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],
     constant uint& batch_size,
     constant uint& vocab_size,
     constant uint& top_k,
+    const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE)
 ) {
@@ -33,12 +36,14 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(TopK) (
   float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
       local_max,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
   float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
       local_min,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
   // Do the binary search on the threshold
   float low = min_logit;
@@ -56,7 +61,8 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(TopK) (
     uint num_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
         local_num_above_threshold,
         (threadgroup uint*)shared_reduce_buffer,
-        thread_idx
+        thread_idx,
+        simd
     );
 
     // Update binary search

@@ -13,42 +13,27 @@ pub fn generate_wrappers(
 
     let type_params: Vec<_> = kernel.type_parameters().collect();
 
-    let specialization_variants: Vec<Option<Vec<&str>>> =
-        if type_params.is_empty() {
-            vec![None]
-        } else {
-            type_params
-                .iter()
-                .map(|p| p.variants.iter().copied())
-                .multi_cartesian_product()
-                .map(Some)
-                .collect()
-        };
+    let specialization_variants: Vec<Option<Vec<&str>>> = if type_params.is_empty() {
+        vec![None]
+    } else {
+        type_params.iter().map(|p| p.variants.iter().copied()).multi_cartesian_product().map(Some).collect()
+    };
 
     for specialization_variant in specialization_variants {
-        let (wrapper_name, underlying_call, specialized_generic) =
-            if let Some(ref type_args) = specialization_variant {
-                let type_args_str = type_args.join(", ");
-                let specialized_generic = kernel
-                    .generic_decl()
-                    .map(|gd| {
-                        slang_api::create_specialized_generic(
-                            module, gd, type_args,
-                        )
-                    })
-                    .transpose()?;
-                (
-                    mangle_name(kernel.name(), type_args),
-                    format!("{}<{}>", kernel.name(), type_args_str),
-                    specialized_generic,
-                )
-            } else {
-                (
-                    mangle_name(kernel.name(), &[]),
-                    kernel.name().to_string(),
-                    None,
-                )
-            };
+        let (wrapper_name, underlying_call, specialized_generic) = if let Some(ref type_args) = specialization_variant {
+            let type_args_str = type_args.join(", ");
+            let specialized_generic = kernel
+                .generic_decl()
+                .map(|gd| slang_api::create_specialized_generic(module, gd, type_args))
+                .transpose()?;
+            (
+                mangle_name(kernel.name(), type_args),
+                format!("{}<{}>", kernel.name(), type_args_str),
+                specialized_generic,
+            )
+        } else {
+            (mangle_name(kernel.name(), &[]), kernel.name().to_string(), None)
+        };
 
         let arguments: Vec<_> = kernel
             .arguments()
@@ -63,15 +48,9 @@ pub fn generate_wrappers(
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let has_axis = arguments
-            .iter()
-            .any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_, _)));
-        let has_groups = arguments
-            .iter()
-            .any(|(_, t, _)| matches!(t, SlangArgumentType::Groups(_)));
-        let has_threads = arguments
-            .iter()
-            .any(|(_, t, _)| matches!(t, SlangArgumentType::Threads(_)));
+        let has_axis = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_, _)));
+        let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups(_)));
+        let has_threads = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Threads(_)));
 
         if has_axis && (has_groups || has_threads) {
             bail!("mixing groups/threads and axis is not supported");
@@ -80,26 +59,20 @@ pub fn generate_wrappers(
         let mut wrapper_arguments: Vec<String> = arguments
             .iter()
             .filter_map(|(name, arg_type, slang_type)| match arg_type {
-                SlangArgumentType::Ptr => {
-                    Some(format!("{} {}", slang_type, name))
-                },
-                SlangArgumentType::Constant(_) => {
-                    Some(format!("uniform {} {}", slang_type, name))
-                },
+                SlangArgumentType::Ptr => Some(format!("{} {}", slang_type, name)),
+                SlangArgumentType::Constant(_) => Some(format!("uniform {} {}", slang_type, name)),
                 _ => None,
             })
             .collect();
 
         if has_axis {
-            wrapper_arguments
-                .push("uint3 __dsl_axis_idx : SV_DispatchThreadID".into());
+            wrapper_arguments.push("uint3 __dsl_axis_idx : SV_DispatchThreadID".into());
         }
         if has_groups {
             wrapper_arguments.push("uint3 __dsl_group_idx : SV_GroupID".into());
         }
         if has_threads {
-            wrapper_arguments
-                .push("uint3 __dsl_thread_idx : SV_GroupThreadID".into());
+            wrapper_arguments.push("uint3 __dsl_thread_idx : SV_GroupThreadID".into());
         }
 
         let wrapper_arguments_str = wrapper_arguments.join(", ");
@@ -112,26 +85,15 @@ pub fn generate_wrappers(
             arguments
                 .iter()
                 .map(|(name, arg_type, _)| match arg_type {
-                    SlangArgumentType::Ptr | SlangArgumentType::Constant(_) => {
-                        name.clone()
-                    },
+                    SlangArgumentType::Ptr | SlangArgumentType::Constant(_) => name.clone(),
                     SlangArgumentType::Axis(_, _) => {
-                        format!(
-                            "__dsl_axis_idx.{}",
-                            axis_letters.next().unwrap()
-                        )
+                        format!("__dsl_axis_idx.{}", axis_letters.next().unwrap())
                     },
                     SlangArgumentType::Groups(_) => {
-                        format!(
-                            "__dsl_group_idx.{}",
-                            group_letters.next().unwrap()
-                        )
+                        format!("__dsl_group_idx.{}", group_letters.next().unwrap())
                     },
                     SlangArgumentType::Threads(_) => {
-                        format!(
-                            "__dsl_thread_idx.{}",
-                            thread_letters.next().unwrap()
-                        )
+                        format!("__dsl_thread_idx.{}", thread_letters.next().unwrap())
                     },
                 })
                 .collect::<Vec<_>>()
@@ -164,15 +126,11 @@ fn mangle_name(
     result
 }
 
-fn calculate_numthreads(
-    arguments: &[(String, SlangArgumentType, String)]
-) -> anyhow::Result<String> {
+fn calculate_numthreads(arguments: &[(String, SlangArgumentType, String)]) -> anyhow::Result<String> {
     let threads: Vec<&str> = arguments
         .iter()
         .filter_map(|(_, arg_type, _)| match arg_type {
-            SlangArgumentType::Axis(_, threads_per_group) => {
-                Some(threads_per_group.as_ref())
-            },
+            SlangArgumentType::Axis(_, threads_per_group) => Some(threads_per_group.as_ref()),
             SlangArgumentType::Threads(threads) => Some(threads.as_ref()),
             _ => None,
         })

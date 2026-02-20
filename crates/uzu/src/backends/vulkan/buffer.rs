@@ -1,10 +1,10 @@
+use crate::backends::vulkan::context::VkContext;
+use ash::vk;
+use bytemuck::AnyBitPattern;
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::Arc;
-use ash::vk;
-use bytemuck::AnyBitPattern;
 use vk_mem::Alloc;
-use crate::backends::vulkan::context::VkContext;
 
 pub struct VkBuffer {
     context: Arc<VkContext>,
@@ -15,7 +15,7 @@ pub struct VkBuffer {
 impl VkBuffer {
     pub fn new_with_info(
         context: Arc<VkContext>,
-        info: &VkBufferCreateInfo
+        info: &VkBufferCreateInfo,
     ) -> Result<Self, VkBufferError> {
         Self::new(context, &info.allocation_info, &info.buffer_info)
     }
@@ -26,11 +26,9 @@ impl VkBuffer {
         buffer_info: &vk::BufferCreateInfo,
     ) -> Result<Self, VkBufferError> {
         let allocator = context.memory_allocator();
-        let (buffer, allocation) = match unsafe {
-            allocator.create_buffer(&buffer_info, &allocation_info)
-        } {
+        let (buffer, allocation) = match unsafe { allocator.create_buffer(&buffer_info, &allocation_info) } {
             Ok((buffer, allocation)) => (buffer, allocation),
-            Err(err) => return Err(VkBufferError::Allocation(err))
+            Err(err) => return Err(VkBufferError::Allocation(err)),
         };
 
         Ok(Self {
@@ -44,26 +42,29 @@ impl VkBuffer {
         self.buffer
     }
 
-    pub fn map_action_unmap<F>(&self, mut action: F) -> Result<(), VkBufferError>
-        where F: FnMut(*mut u8) -> ()
+    pub fn map_action_unmap<F>(
+        &self,
+        mut action: F,
+    ) -> Result<(), VkBufferError>
+    where
+        F: FnMut(*mut u8) -> (),
     {
         let mut alloc_cell = RefCell::new(self.allocation);
-        let ptr = match unsafe {
-            self.context.memory_allocator().map_memory(alloc_cell.get_mut())
-        } {
+        let ptr = match unsafe { self.context.memory_allocator().map_memory(alloc_cell.get_mut()) } {
             Ok(ptr) => Ok(ptr),
-            Err(err) => Err(VkBufferError::MemoryMap(err))
+            Err(err) => Err(VkBufferError::MemoryMap(err)),
         };
 
         action(ptr?);
 
-        unsafe {
-            self.context.memory_allocator().unmap_memory(alloc_cell.get_mut())
-        }
+        unsafe { self.context.memory_allocator().unmap_memory(alloc_cell.get_mut()) }
         Ok(())
     }
 
-    pub fn fill(&mut self, data: &[u8]) -> Result<(), VkBufferError> {
+    pub fn fill(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(), VkBufferError> {
         self.map_action_unmap(|ptr| {
             let slice = unsafe { std::slice::from_raw_parts_mut(ptr, data.len()) };
             slice.copy_from_slice(data);
@@ -96,7 +97,7 @@ impl VkBuffer {
     pub fn get_memory_barrier(
         &self,
         src_access_mask: vk::AccessFlags,
-        dst_access_mask: vk::AccessFlags
+        dst_access_mask: vk::AccessFlags,
     ) -> vk::BufferMemoryBarrier<'_> {
         vk::BufferMemoryBarrier::default()
             .src_access_mask(src_access_mask)
@@ -125,7 +126,10 @@ impl VkBuffer {
             .size(vk::WHOLE_SIZE)
     }
 
-    pub fn set_name(&mut self, name: &str) {
+    pub fn set_name(
+        &mut self,
+        name: &str,
+    ) {
         unsafe {
             self.context.memory_allocator().set_allocation_user_data(&mut self.allocation, name.as_ptr() as *mut c_void)
         }
@@ -134,9 +138,7 @@ impl VkBuffer {
 
 impl Drop for VkBuffer {
     fn drop(&mut self) {
-        unsafe {
-            self.context.memory_allocator().destroy_buffer(self.buffer, &mut self.allocation)
-        }
+        unsafe { self.context.memory_allocator().destroy_buffer(self.buffer, &mut self.allocation) }
     }
 }
 
@@ -149,7 +151,7 @@ pub enum VkBufferError {
     MemoryMap(vk::Result),
 
     #[error("Memory type index not found")]
-    MemoryTypeIndexNotFound
+    MemoryTypeIndexNotFound,
 }
 
 pub struct VkBufferCreateInfo<'a> {
@@ -157,7 +159,7 @@ pub struct VkBufferCreateInfo<'a> {
     pub buffer_info: vk::BufferCreateInfo<'a>,
 }
 
-impl <'a> VkBufferCreateInfo<'a> {
+impl<'a> VkBufferCreateInfo<'a> {
     pub fn new(
         size: vk::DeviceSize,
         host_readable: bool,
@@ -168,9 +170,7 @@ impl <'a> VkBufferCreateInfo<'a> {
             ..Default::default()
         };
 
-        let mut buffer_info = vk::BufferCreateInfo::default()
-            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
-            .size(size);
+        let mut buffer_info = vk::BufferCreateInfo::default().usage(vk::BufferUsageFlags::STORAGE_BUFFER).size(size);
 
         if host_writeable {
             allocation_info.flags |= vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM;
@@ -181,12 +181,16 @@ impl <'a> VkBufferCreateInfo<'a> {
             buffer_info.usage |= vk::BufferUsageFlags::TRANSFER_DST;
         }
 
-        Self { allocation_info, buffer_info }
+        Self {
+            allocation_info,
+            buffer_info,
+        }
     }
 }
 
 pub fn bytes_to_slice<T>(bytes: &[u8]) -> &[T]
-    where T: AnyBitPattern
+where
+    T: AnyBitPattern,
 {
     unsafe {
         let slice = core::slice::from_raw_parts(bytes.as_ptr(), bytes.len());

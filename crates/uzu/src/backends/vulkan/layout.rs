@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use ash::vk;
 use crate::backends::vulkan::buffer::VkBuffer;
 use crate::backends::vulkan::context::VkContext;
+use ash::vk;
+use std::sync::Arc;
 
 pub struct VkComputeShaderLayoutSet {
     device: Arc<ash::Device>,
@@ -13,9 +13,10 @@ pub struct VkComputeShaderLayoutSet {
 impl VkComputeShaderLayoutSet {
     pub fn new(
         ctx: &VkContext,
-        layout_buffers: &[VkComputeShaderLayoutBuffer]
+        layout_buffers: &[VkComputeShaderLayoutBuffer],
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let layout_bindings = layout_buffers.iter()
+        let layout_bindings = layout_buffers
+            .iter()
             .map(|buffer| {
                 vk::DescriptorSetLayoutBinding::default()
                     .binding(buffer.binding)
@@ -27,19 +28,14 @@ impl VkComputeShaderLayoutSet {
 
         // descriptor set
         let descriptor_set_layout = {
-            let info = vk::DescriptorSetLayoutCreateInfo::default()
-                .bindings(&layout_bindings);
+            let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout_bindings);
             unsafe { ctx.device().create_descriptor_set_layout(&info, None)? }
         };
-        let descriptor_pool_sizes = [
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(layout_buffers.len() as u32)
-        ];
+        let descriptor_pool_sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(layout_buffers.len() as u32)];
         let descriptor_pool = {
-            let info = vk::DescriptorPoolCreateInfo::default()
-                .max_sets(1)
-                .pool_sizes(&descriptor_pool_sizes);
+            let info = vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&descriptor_pool_sizes);
             unsafe { ctx.device().create_descriptor_pool(&info, None)? }
         };
         let descriptor_set = {
@@ -50,7 +46,8 @@ impl VkComputeShaderLayoutSet {
         }[0];
 
         // writes
-        let buffer_infos = layout_buffers.iter()
+        let buffer_infos = layout_buffers
+            .iter()
             .map(|layout_buffer| {
                 vk::DescriptorBufferInfo::default()
                     .buffer(layout_buffer.buffer.buffer())
@@ -58,7 +55,8 @@ impl VkComputeShaderLayoutSet {
                     .range(layout_buffer.buffer.size() as vk::DeviceSize)
             })
             .collect::<Vec<_>>();
-        let writes = layout_buffers.iter()
+        let writes = layout_buffers
+            .iter()
             .zip(&buffer_infos)
             .map(|(layout_buffer, buffer_info)| {
                 vk::WriteDescriptorSet::default()
@@ -68,13 +66,15 @@ impl VkComputeShaderLayoutSet {
                     .buffer_info(std::slice::from_ref(&buffer_info))
             })
             .collect::<Vec<_>>();
-        unsafe { ctx.device().update_descriptor_sets(&writes, &[]); }
+        unsafe {
+            ctx.device().update_descriptor_sets(&writes, &[]);
+        }
 
         Ok(Self {
             device: ctx.device(),
             descriptor_set_layout,
             descriptor_set,
-            descriptor_pool
+            descriptor_pool,
         })
     }
 

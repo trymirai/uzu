@@ -1,5 +1,5 @@
-use std::ffi::CStr;
 use ash::vk;
+use std::ffi::CStr;
 
 pub struct VkPhysicalDevice {
     pub device: vk::PhysicalDevice,
@@ -7,13 +7,13 @@ pub struct VkPhysicalDevice {
     pub properties: vk::PhysicalDeviceProperties,
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub features: VkPhysicalDeviceFeatures,
-    pub subgroup_properties: VkPhysicalDeviceSubgroupProperties
+    pub subgroup_properties: VkPhysicalDeviceSubgroupProperties,
 }
 
 impl VkPhysicalDevice {
     pub fn new(
         instance: &ash::Instance,
-        physical_device: vk::PhysicalDevice
+        physical_device: vk::PhysicalDevice,
     ) -> Self {
         // extensions
         let mut extensions = Vec::new();
@@ -35,7 +35,8 @@ impl VkPhysicalDevice {
             .push_next(&mut vk12_properties)
             .push_next(&mut vk13_properties);
         let (properties, subgroup_properties) = {
-            unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) } (
+            unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) }
+            (
                 properties2.properties,
                 VkPhysicalDeviceSubgroupProperties {
                     size: device_subgroup_properties.subgroup_size,
@@ -46,9 +47,7 @@ impl VkPhysicalDevice {
         };
 
         // memory properties
-        let memory_properties = unsafe {
-            instance.get_physical_device_memory_properties(physical_device)
-        };
+        let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
         // features
         let mut vk11features = vk::PhysicalDeviceVulkan11Features::default();
@@ -64,7 +63,7 @@ impl VkPhysicalDevice {
             storage_buffer16_bit_access: vk11features.storage_buffer16_bit_access == 1,
             storage_push_constant16: vk11features.storage_push_constant16 == 1,
             shader_float16: vk12features.shader_float16 == 1,
-            shader_subgroup_extended_types: vk12features.shader_subgroup_extended_types == 1
+            shader_subgroup_extended_types: vk12features.shader_subgroup_extended_types == 1,
         };
 
         Self {
@@ -73,13 +72,19 @@ impl VkPhysicalDevice {
             properties,
             features,
             subgroup_properties,
-            memory_properties
+            memory_properties,
         }
     }
 
-    pub fn get_memory_type(&self, type_filter: u32, properties: vk::MemoryPropertyFlags) -> Option<u32> {
+    pub fn get_memory_type(
+        &self,
+        type_filter: u32,
+        properties: vk::MemoryPropertyFlags,
+    ) -> Option<u32> {
         for i in 0..self.memory_properties.memory_type_count {
-            if (type_filter & (1 << i)) != 0 && self.memory_properties.memory_types[i as usize].property_flags.contains(properties) {
+            if (type_filter & (1 << i)) != 0
+                && self.memory_properties.memory_types[i as usize].property_flags.contains(properties)
+            {
                 return Some(i as u32);
             }
         }
@@ -114,16 +119,19 @@ pub struct VkPhysicalDeviceFeatures {
 
     // Version 1.2
     pub shader_float16: bool,
-    pub shader_subgroup_extended_types: bool
+    pub shader_subgroup_extended_types: bool,
 }
 
 impl VkPhysicalDeviceFeatures {
-    pub fn contains(&self, other: &Self) -> bool {
-            (self.shader_int16 || !other.shader_int16) &&
-            (self.storage_buffer16_bit_access || !other.storage_buffer16_bit_access) &&
-            (self.storage_push_constant16 || !other.storage_push_constant16) &&
-            (self.shader_float16 || !other.shader_float16) &&
-            (self.shader_subgroup_extended_types || !other.shader_subgroup_extended_types)
+    pub fn contains(
+        &self,
+        other: &Self,
+    ) -> bool {
+        (self.shader_int16 || !other.shader_int16)
+            && (self.storage_buffer16_bit_access || !other.storage_buffer16_bit_access)
+            && (self.storage_push_constant16 || !other.storage_push_constant16)
+            && (self.shader_float16 || !other.shader_float16)
+            && (self.shader_subgroup_extended_types || !other.shader_subgroup_extended_types)
     }
 }
 

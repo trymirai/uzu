@@ -96,9 +96,8 @@ struct BaseMMAFrag<T, 8, 8> {
       STEEL_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         if ((off_x + i) < lim_x && (off_y + j) < lim_y) {
-          dst[i * kElemCols + j] = static_cast<T>(
-              src[(off_x + i) * str_x + (off_y + j) * str_y]
-          );
+          dst[i * kElemCols + j] =
+              static_cast<T>(src[(off_x + i) * str_x + (off_y + j) * str_y]);
         } else {
           dst[i * kElemCols + j] = T(0);
         }

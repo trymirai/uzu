@@ -6,13 +6,16 @@
 
 #define MAX_ITERS 16
 
-SPECIALIZE(T, float, half, bfloat) KERNEL(TopP) (
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+KERNEL(TopP) (
     device const T* logits,
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],
     constant uint& batch_size,
     constant uint& vocab_size,
     constant float& top_p,
+    const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE)
 ) {
@@ -34,12 +37,14 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(TopP) (
   float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
       local_max,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
   float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
       local_min,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
 
   // Find denominator for softmax
@@ -56,7 +61,8 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(TopP) (
   float total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
       local_sum,
       shared_reduce_buffer,
-      thread_idx
+      thread_idx,
+      simd
   );
 
   // Do the binary search on the threshold
@@ -84,12 +90,14 @@ SPECIALIZE(T, float, half, bfloat) KERNEL(TopP) (
     float sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
         local_sum_above_threshold,
         shared_reduce_buffer,
-        thread_idx
+        thread_idx,
+        simd
     );
     float min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
         local_min_above_threshold,
         shared_reduce_buffer,
-        thread_idx
+        thread_idx,
+        simd
     );
 
     // Early exit

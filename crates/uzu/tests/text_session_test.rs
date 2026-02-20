@@ -29,17 +29,13 @@ fn test_text_session_base() {
 #[test]
 fn test_text_session_scenario() {
     let system_prompt = String::from("You are a helpful assistant.");
-    let user_prompts = vec![
-        String::from("Tell about London"),
-        String::from("Compare with New York"),
-    ];
+    let user_prompts = vec![String::from("Tell about London"), String::from("Compare with New York")];
     run_scenario(Some(system_prompt), user_prompts);
 }
 
 #[test]
 fn test_text_session_stability() {
-    let mut session =
-        Session::new(build_model_path(), build_decoding_config()).unwrap();
+    let mut session = Session::new(build_model_path(), build_decoding_config()).unwrap();
     println!("Index | TTFT, s | Prompt t/s | Generate t/s");
     for index in 0..10 {
         let input = Input::Text(build_default_text());
@@ -67,8 +63,7 @@ fn run(
     decoding_config: DecodingConfig,
     tokens_limit: u64,
 ) {
-    let mut session =
-        Session::new(build_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(build_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
     let output = session
         .run(
@@ -83,15 +78,9 @@ fn run(
     let empty_response = String::from("None");
 
     println!("-------------------------");
-    println!(
-        "{}",
-        output.text.parsed.chain_of_thought.unwrap_or(empty_response.clone())
-    );
+    println!("{}", output.text.parsed.chain_of_thought.unwrap_or(empty_response.clone()));
     println!("-------------------------");
-    println!(
-        "{}",
-        output.text.parsed.response.unwrap_or(empty_response.clone())
-    );
+    println!("{}", output.text.parsed.response.unwrap_or(empty_response.clone()));
     println!("-------------------------");
     println!("{:#?}", output.stats);
     println!("-------------------------");
@@ -103,8 +92,7 @@ fn run_scenario(
     system_prompt: Option<String>,
     user_prompts: Vec<String>,
 ) {
-    let mut session =
-        Session::new(build_model_path(), build_decoding_config()).unwrap();
+    let mut session = Session::new(build_model_path(), build_decoding_config()).unwrap();
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {

@@ -133,9 +133,7 @@ mod tests {
                     quantization: QuantizationConfig {
                         group_size: 32,
                         weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(
-                            QuantizationMode::Int8,
-                        ),
+                        activation_quantization_mode: Some(QuantizationMode::Int8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
@@ -145,9 +143,7 @@ mod tests {
                     quantization: QuantizationConfig {
                         group_size: 32,
                         weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(
-                            QuantizationMode::Int8,
-                        ),
+                        activation_quantization_mode: Some(QuantizationMode::Int8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
@@ -171,9 +167,7 @@ mod tests {
                     quantization: QuantizationConfig {
                         group_size: 32,
                         weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(
-                            QuantizationMode::Int8,
-                        ),
+                        activation_quantization_mode: Some(QuantizationMode::Int8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
@@ -192,8 +186,7 @@ mod tests {
             post_mlp_norm_config: None,
         };
 
-        let deserialized_config: TransformerLayerConfig =
-            from_str(config_str).unwrap();
+        let deserialized_config: TransformerLayerConfig = from_str(config_str).unwrap();
         assert_eq!(deserialized_config, ground_truth_config);
     }
 }

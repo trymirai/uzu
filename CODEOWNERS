@@ -1,0 +1,17 @@
+/.github @uuuvn
+/crates/benchmarks @alexxale
+/crates/cli @alexxale
+/crates/uzu/build @uuuvn
+/crates/uzu/examples @alexxale
+/crates/uzu/src/backends/cpu @uuuvn
+/crates/uzu/src/backends/metal @LuckyIYI @eugenebokhan @uuuvn
+/crates/uzu/src/classifier @eugenebokhan
+/crates/uzu/src/config @uuuvn
+/crates/uzu/src/device @uuuvn
+/crates/uzu/src/language_model @alexxale @LuckyIYI @eugenebokhan
+/crates/uzu/src/session @alexxale @LuckyIYI
+/crates/uzu/src/parameters @uuuvn
+/crates/uzu/src/speculators @uuuvn
+/crates/uzu/src/tracer @alexxale
+/scripts @alexxale
+/tools @alexxale

@@ -1,11 +1,15 @@
+import base64
 import json
+import os
 from dataclasses import asdict
+from itertools import chain
 from pathlib import Path
 from typing import Annotated
 
+import google_crc32c
 import requests
 import tomllib
-from model import BenchmarkTask, Message, Model, Registry, Role
+from model import BenchmarkTask, File, Message, Model, Registry, Role
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -32,6 +36,14 @@ app = Typer(
     add_completion=False,
     pretty_exceptions_show_locals=False,
 )
+
+
+def crc32c_file(path, chunk_size=8 * 1024 * 1024):
+    checksum = google_crc32c.Checksum()
+    with open(path, "rb") as file:
+        for chunk in iter(lambda: file.read(chunk_size), b""):
+            checksum.update(chunk)
+    return base64.b64encode(checksum.digest()).decode("ascii")
 
 
 def get_uzu_version() -> str:
@@ -120,12 +132,38 @@ def download_model(
         console.print(f"[green]✓[/green] {benchmark_task_name} generated")
 
         files_to_download = []
+
+        def need_to_download(file: File, file_path: Path) -> bool:
+            if file_path.exists():
+                if file.crc32c != crc32c_file(file_path):
+                    os.remove(file_path)
+                else:
+                    return False
+            return True
+
         for file in model.files:
             file_path = model_path / file.name
-            if file_path.exists():
+            need_to_download_file = need_to_download(file, file_path)
+            if not need_to_download_file:
                 console.print(f"[green]✓[/green] {file.name} already exists")
             else:
                 files_to_download.append((file, file_path))
+
+        speculators_path = model_path / "speculators"
+        speculators_path.mkdir(parents=True, exist_ok=True)
+
+        for speculator in model.speculators:
+            speculator_path = speculators_path / speculator.use_case
+            speculator_path.mkdir(parents=True, exist_ok=True)
+
+            for file in speculator.files:
+                file_path = speculator_path / file.name
+                need_to_download_file = need_to_download(file, file_path)
+                if not need_to_download_file:
+                    console.print(f"[green]✓[/green] {file.name} already exists")
+                else:
+                    files_to_download.append((file, file_path))
+
         if not files_to_download:
             console.print("[green]All files already downloaded![/green]")
             return

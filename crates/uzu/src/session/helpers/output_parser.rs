@@ -31,12 +31,8 @@ impl OutputParser {
         let parsed_text = match &self.regex {
             Some(regex) => match regex.captures(&text) {
                 Some(captures) => {
-                    let chain_of_thought = captures
-                        .name("chain_of_thought")
-                        .map(|m| m.as_str().to_string());
-                    let response = captures
-                        .name("response")
-                        .map(|m| m.as_str().to_string());
+                    let chain_of_thought = captures.name("chain_of_thought").map(|m| m.as_str().to_string());
+                    let response = captures.name("response").map(|m| m.as_str().to_string());
                     ParsedText {
                         chain_of_thought,
                         response,
