@@ -1,10 +1,7 @@
 use std::sync::OnceLock;
 
-use super::pipeline_configuration::PipelineConfiguration;
-use crate::{
-    DataType,
-    backends::metal::{context::MetalContext, error::MetalError, kernel::matmul::common::MatmulArguments},
-};
+use super::{super::matmul_arguments::MatmulArguments, specialization::Specialization};
+use crate::{DataType, backends::common::Backend};
 
 const DEFAULT_GEMV_MAX_BATCH: i32 = 8;
 
@@ -17,38 +14,40 @@ fn max_gemv_batch_threshold() -> i32 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OutputSource {
+pub enum OutputSource {
     None,
     Bias,
     C,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DispatchDescriptor {
-    pub(crate) pipeline_configuration: PipelineConfiguration,
-    pub(crate) matrix_is_rhs: bool,
-    pub(crate) output_source: OutputSource,
-    pub(crate) input_dimension: i32,
-    pub(crate) output_dimension: i32,
-    pub(crate) matrix_leading_dim: i32,
-    pub(crate) alpha: f32,
-    pub(crate) beta: f32,
-    pub(crate) batch_shape: [i32; 1],
-    pub(crate) vector_batch_stride: [i64; 1],
-    pub(crate) matrix_batch_stride: [i64; 1],
-    pub(crate) bias_batch_stride: [i64; 1],
-    pub(crate) bias_stride: i32,
-    pub(crate) batch_rows: i32,
+pub struct DispatchDescriptor {
+    pub specialization: Specialization,
+    pub matrix_is_rhs: bool,
+    pub output_source: OutputSource,
+    pub input_dimension: i32,
+    pub output_dimension: i32,
+    pub matrix_leading_dim: i32,
+    pub alpha: f32,
+    pub beta: f32,
+    pub batch_shape: [i32; 1],
+    pub vector_batch_stride: [i64; 1],
+    pub matrix_batch_stride: [i64; 1],
+    pub bias_batch_stride: [i64; 1],
+    pub bias_stride: i32,
+    pub batch_rows: i32,
 }
 
 impl DispatchDescriptor {
-    pub(crate) fn try_new(
-        _context: &MetalContext,
+    pub fn try_new<B: Backend>(
         data_type: DataType,
-        arguments: &MatmulArguments,
-    ) -> Result<Option<Self>, MetalError> {
+        arguments: &MatmulArguments<B>,
+    ) -> Result<Option<Self>, B::Error>
+    where
+        B::Error: From<String>,
+    {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MetalError::Generic(format!("Unsupported data type for GEMV: {data_type:?}")));
+            return Err(B::Error::from(format!("Unsupported data type for GEMV: {data_type:?}")));
         }
 
         if arguments.transpose_a || !arguments.transpose_b {
@@ -95,7 +94,7 @@ impl DispatchDescriptor {
             arguments.batch
         };
 
-        let pipeline_configuration = PipelineConfiguration::select(
+        let specialization = Specialization::select(
             transpose_matrix,
             arguments.input_dim,
             output_dimension,
@@ -143,7 +142,7 @@ impl DispatchDescriptor {
         let batch_rows = arguments.batch;
 
         Ok(Some(Self {
-            pipeline_configuration,
+            specialization,
             matrix_is_rhs,
             output_source,
             input_dimension,
@@ -160,7 +159,7 @@ impl DispatchDescriptor {
         }))
     }
 
-    pub(crate) fn bias_is_fused(&self) -> bool {
+    pub fn bias_is_fused(&self) -> bool {
         matches!(self.output_source, OutputSource::Bias)
     }
 }

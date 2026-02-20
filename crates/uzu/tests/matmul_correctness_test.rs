@@ -7,11 +7,11 @@ use ndarray::Array2;
 use uzu::{
     DataType,
     backends::{
-        common::Context,
-        metal::{
-            MetalContext,
-            kernel::{MatmulArguments, MatmulKernel},
+        common::{
+            Context,
+            kernel::matmul::{MatmulArguments, MatmulKernel},
         },
+        metal::{Metal, MetalContext, kernel::matmul::choose_dispatch_descriptor},
     },
 };
 
@@ -43,33 +43,32 @@ fn run_metal_matmul(
         n
     };
 
-    let mut kernel = MatmulKernel::new(DataType::BF16).expect("kernel");
+    let mut kernel = MatmulKernel::<Metal>::new(DataType::BF16).expect("kernel");
 
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
     let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
-    let encode_result = kernel.encode(
-        ctx,
-        &enc,
-        MatmulArguments {
-            a: &a_buf,
-            a_offset: 0,
-            b: &b_buf,
-            c: None,
-            d: &d_buf,
-            bias: None,
-            batch: m as i32,
-            input_dim: k as i32,
-            output_dim: n as i32,
-            lda: k as i32,
-            ldb: ldb as i32,
-            ldd: n as i32,
-            batch_count: 1,
-            alpha: 1.0,
-            beta: 0.0,
-            transpose_a: false,
-            transpose_b,
-        },
-    );
+    let mut arguments = MatmulArguments {
+        a: &a_buf,
+        a_offset: 0,
+        b: &b_buf,
+        c: None,
+        d: &d_buf,
+        bias: None,
+        batch: m as i32,
+        input_dim: k as i32,
+        output_dim: n as i32,
+        lda: k as i32,
+        ldb: ldb as i32,
+        ldd: n as i32,
+        batch_count: 1,
+        alpha: 1.0,
+        beta: 0.0,
+        transpose_a: false,
+        transpose_b,
+    };
+    MatmulKernel::<Metal>::apply_batch_collapse(&mut arguments);
+    let descriptor = choose_dispatch_descriptor(ctx, DataType::BF16, &arguments).expect("dispatch descriptor");
+    let encode_result = kernel.encode_with_descriptor(ctx, arguments, &descriptor, &enc);
     enc.end_encoding();
     encode_result.expect("encode");
     cb.commit();

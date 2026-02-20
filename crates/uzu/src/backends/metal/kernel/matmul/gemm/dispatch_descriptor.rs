@@ -1,33 +1,27 @@
-use metal::MTLSize;
-
-use super::pipeline_configuration::PipelineConfiguration;
+// Re-export the common DispatchDescriptor type — we add a constructor here
+pub use crate::backends::common::kernel::matmul::gemm::DispatchDescriptor;
 use crate::{
     DataType,
-    backends::metal::{
-        context::MetalContext,
-        error::MetalError,
-        kernel::matmul::common::{GEMMParams, MatmulArguments},
+    backends::{
+        common::{
+            gpu_types::GEMMParams,
+            kernel::matmul::{GridSize, MatmulArguments, gemm::Specialization},
+        },
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
 };
 
-#[derive(Debug, Clone)]
-pub(crate) struct DispatchDescriptor {
-    pub(crate) pipeline_configuration: PipelineConfiguration,
-    pub(crate) params: GEMMParams,
-    pub(crate) threadgroups: MTLSize,
-}
-
 impl DispatchDescriptor {
-    pub(crate) fn new(
+    pub fn new(
         context: &MetalContext,
         data_type: DataType,
-        arguments: &MatmulArguments,
+        arguments: &MatmulArguments<Metal>,
     ) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MetalError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
         }
 
-        let config = PipelineConfiguration::select(context, data_type, arguments);
+        let config = Specialization::select(context, data_type, arguments);
 
         let m = arguments.batch;
         let n = arguments.output_dim;
@@ -66,10 +60,14 @@ impl DispatchDescriptor {
             batch_ndim: 1,
         };
 
-        let threadgroups = MTLSize::new(tn_swizzled as usize, tm_swizzled as usize, arguments.batch_count as usize);
+        let threadgroups = GridSize {
+            x: tn_swizzled as usize,
+            y: tm_swizzled as usize,
+            z: arguments.batch_count as usize,
+        };
 
         Ok(Self {
-            pipeline_configuration: config,
+            specialization: config,
             params,
             threadgroups,
         })

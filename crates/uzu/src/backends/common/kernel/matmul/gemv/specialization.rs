@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PipelineConfiguration {
+pub struct Specialization {
     pub threadgroup_rows: u32,
     pub threadgroup_cols: u32,
     pub threads_per_simdgroup_row: u32,
@@ -9,7 +9,70 @@ pub struct PipelineConfiguration {
     pub apply_output_scale_and_accumulate: bool,
 }
 
-impl PipelineConfiguration {
+impl Specialization {
+    pub fn precompile_configs(data_type: crate::DataType) -> &'static [Self] {
+        use crate::DataType;
+        match data_type {
+            DataType::BF16 => &[
+                Self {
+                    threadgroup_rows: 4,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: false,
+                },
+                Self {
+                    threadgroup_rows: 4,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: true,
+                },
+                Self {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: false,
+                },
+                Self {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    apply_output_scale_and_accumulate: true,
+                },
+            ],
+            DataType::F16 => &[Self {
+                threadgroup_rows: 8,
+                threadgroup_cols: 1,
+                threads_per_simdgroup_row: 1,
+                threads_per_simdgroup_col: 32,
+                elements_per_thread_row: 4,
+                elements_per_thread_col: 4,
+                apply_output_scale_and_accumulate: false,
+            }],
+            DataType::F32 => &[Self {
+                threadgroup_rows: 8,
+                threadgroup_cols: 1,
+                threads_per_simdgroup_row: 1,
+                threads_per_simdgroup_col: 32,
+                elements_per_thread_row: 4,
+                elements_per_thread_col: 4,
+                apply_output_scale_and_accumulate: false,
+            }],
+            _ => &[],
+        }
+    }
+
     pub fn output_rows_per_threadgroup(&self) -> u32 {
         self.threadgroup_rows * self.threads_per_simdgroup_row * self.elements_per_thread_row
     }

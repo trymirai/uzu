@@ -1,34 +1,28 @@
-use metal::MTLSize;
-
 use super::{
-    pipeline_configuration::PipelineConfiguration,
+    super::{grid_size::GridSize, matmul_arguments::MatmulArguments},
+    specialization::Specialization,
     tile_configuration::{TileConfiguration, select_tile_configuration},
 };
 use crate::{
     DataType,
-    backends::metal::{
-        context::MetalContext,
-        error::MetalError,
-        kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
-    },
+    backends::common::{Backend, gpu_types::GEMMSpiltKParams as SplitKGEMMParams},
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct DispatchDescriptor {
-    pub(crate) params: SplitKGEMMParams,
-    pub(crate) partition_count: i32,
-    pub(crate) output_elements_per_partition: i32,
-    pub(crate) accumulator_bytes: usize,
-    pub(crate) partial_threadgroups: MTLSize,
-    pub(crate) accum_total_threads: MTLSize,
+pub struct DispatchDescriptor {
+    pub params: SplitKGEMMParams,
+    pub partition_count: i32,
+    pub output_elements_per_partition: i32,
+    pub accumulator_bytes: usize,
+    pub partial_threadgroups: GridSize,
+    pub accum_total_threads: GridSize,
 }
 
 impl DispatchDescriptor {
-    pub(crate) fn try_new(
-        _context: &MetalContext,
+    pub fn try_new<B: Backend>(
         data_type: DataType,
-        arguments: &MatmulArguments,
-    ) -> Result<Option<Self>, MetalError> {
+        arguments: &MatmulArguments<B>,
+    ) -> Result<Option<Self>, B::Error> {
         if !matches!(data_type, DataType::BF16) {
             return Ok(None);
         }
@@ -51,7 +45,7 @@ impl DispatchDescriptor {
         let mn_aligned = (m % tile.tile_rows) == 0 && (n % tile.tile_cols) == 0;
         let k_aligned = (k % tile.tile_depth) == 0;
 
-        let pipeline_configuration = PipelineConfiguration {
+        let specialization = Specialization {
             tile,
             transpose_a: arguments.transpose_a,
             transpose_b: arguments.transpose_b,
@@ -59,7 +53,7 @@ impl DispatchDescriptor {
             k_aligned,
         };
 
-        if !is_supported_pipeline_configuration(&pipeline_configuration) {
+        if !is_supported_specialization(&specialization) {
             return Ok(None);
         }
 
@@ -88,9 +82,17 @@ impl DispatchDescriptor {
             gemm_k_iterations_aligned: gemm_k_iterations,
         };
 
-        let partial_threadgroups = MTLSize::new(tile_count_n as usize, tile_count_m as usize, partition_count as usize);
+        let partial_threadgroups = GridSize {
+            x: tile_count_n as usize,
+            y: tile_count_m as usize,
+            z: partition_count as usize,
+        };
 
-        let accum_total_threads = MTLSize::new(n as usize, m as usize, 1);
+        let accum_total_threads = GridSize {
+            x: n as usize,
+            y: m as usize,
+            z: 1,
+        };
 
         Ok(Some(Self {
             params,
@@ -134,7 +136,7 @@ fn should_use_splitk(
     (m_tiles * n_tiles) <= 32 && k_tiles >= 8
 }
 
-fn is_supported_pipeline_configuration(config: &PipelineConfiguration) -> bool {
+fn is_supported_specialization(config: &Specialization) -> bool {
     let supported_tile = TileConfiguration {
         tile_rows: 16,
         tile_cols: 32,
