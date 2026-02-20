@@ -42,4 +42,3 @@ pub struct GEMMSpiltKParams {
     pub split_k_partition_size: i32,
     pub gemm_k_iterations_aligned: i32,
 }
-
