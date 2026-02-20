@@ -2,6 +2,10 @@ use std::sync::Arc;
 use ash::vk;
 use crate::backends::vulkan::context::VkContext;
 
+use ash::vk;
+
+use crate::backends::vulkan::context::VkContext;
+
 pub struct VkTimestampQueryPool {
     device: Arc<ash::Device>,
     timestamp_period: f64,

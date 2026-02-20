@@ -1,5 +1,5 @@
-use std::ffi::CStr;
-use std::os::raw::c_void;
+use std::{ffi::CStr, os::raw::c_void};
+
 use ash::vk;
 
 pub unsafe extern "system" fn debug_message_callback(
@@ -9,7 +9,7 @@ pub unsafe extern "system" fn debug_message_callback(
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
     if _p_user_data.is_null() {
-        return vk::FALSE
+        return vk::FALSE;
     }
 
     let types = match message_type {
@@ -27,17 +27,22 @@ pub unsafe extern "system" fn debug_message_callback(
         vk::DebugUtilsMessageSeverityFlagsEXT::INFO => logger.i(log_message.as_str()),
         vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => logger.w(log_message.as_str()),
         vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => logger.e(log_message.as_str()),
-        _ => logger.d(log_message.as_str())
+        _ => logger.d(log_message.as_str()),
     }
 
     vk::FALSE
 }
 
+#[rustfmt::skip]
 pub trait VkLogger {
     fn v(&self, msg: &str);
+
     fn i(&self, msg: &str);
+
     fn d(&self, msg: &str);
+
     fn w(&self, msg: &str);
+
     fn e(&self, msg: &str);
 }
 
@@ -49,8 +54,9 @@ impl VkPrintlnLogger {
     }
 }
 
+#[rustfmt::skip]
 impl VkLogger for VkPrintlnLogger {
-    fn v(&self, msg: &str) {
+    fn v(&self,msg: &str) {
         println!("[Verbose]: {msg}")
     }
 
