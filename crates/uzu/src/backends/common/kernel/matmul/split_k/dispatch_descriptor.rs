@@ -27,10 +27,6 @@ impl DispatchDescriptor {
             return Ok(None);
         }
 
-        if arguments.c.is_some() {
-            return Ok(None);
-        }
-
         let m = arguments.batch;
         let n = arguments.output_dim;
         let k = arguments.input_dim;
@@ -47,7 +43,6 @@ impl DispatchDescriptor {
 
         let specialization = Specialization {
             tile,
-            transpose_a: arguments.transpose_a,
             transpose_b: arguments.transpose_b,
             mn_aligned,
             k_aligned,
@@ -145,5 +140,5 @@ fn is_supported_specialization(config: &Specialization) -> bool {
         warps_per_col: 2,
     };
 
-    config.tile == supported_tile && !config.transpose_a && config.transpose_b && !config.mn_aligned && config.k_aligned
+    config.tile == supported_tile && config.transpose_b && !config.mn_aligned && config.k_aligned
 }

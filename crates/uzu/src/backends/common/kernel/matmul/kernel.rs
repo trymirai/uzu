@@ -135,9 +135,6 @@ where
     }
 
     pub fn apply_batch_collapse(arguments: &mut MatmulArguments<B>) {
-        if arguments.transpose_a {
-            return;
-        }
         if arguments.batch_count <= 1 {
             return;
         }

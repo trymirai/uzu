@@ -33,12 +33,12 @@ impl Specialization {
                 match context.device_class() {
                     DeviceClass::Integrated | DeviceClass::Phone | DeviceClass::Unknown(_) => {
                         if prefer_half_or_tf32 {
-                            if !arguments.transpose_a && arguments.transpose_b {
+                            if arguments.transpose_b {
                                 (64, 32, 32, 2, 2, 0)
                             } else {
                                 (64, 64, 16, 1, 2, 0)
                             }
-                        } else if !arguments.transpose_a && arguments.transpose_b {
+                        } else if arguments.transpose_b {
                             (32, 64, 16, 1, 2, 0)
                         } else {
                             (64, 32, 32, 2, 2, 0)
@@ -49,23 +49,23 @@ impl Specialization {
                             if prefer_half_or_tf32 {
                                 if 2 * std::cmp::max(arguments.batch, arguments.output_dim) > arguments.input_dim {
                                     (64, 64, 16, 2, 2, 0)
-                                } else if !arguments.transpose_a && arguments.transpose_b {
+                                } else if arguments.transpose_b {
                                     (64, 32, 32, 2, 2, 0)
                                 } else {
                                     (32, 64, 16, 1, 2, 0)
                                 }
-                            } else if !arguments.transpose_a && arguments.transpose_b {
+                            } else if arguments.transpose_b {
                                 (32, 64, 16, 1, 2, 0)
                             } else {
                                 (64, 32, 32, 2, 2, 0)
                             }
                         } else if prefer_half_or_tf32 {
-                            if !arguments.transpose_a && arguments.transpose_b {
+                            if arguments.transpose_b {
                                 (64, 32, 32, 2, 2, 0)
                             } else {
                                 (64, 64, 16, 1, 2, 0)
                             }
-                        } else if !arguments.transpose_a && arguments.transpose_b {
+                        } else if arguments.transpose_b {
                             (32, 64, 16, 1, 2, 0)
                         } else {
                             (64, 32, 32, 2, 2, 0)

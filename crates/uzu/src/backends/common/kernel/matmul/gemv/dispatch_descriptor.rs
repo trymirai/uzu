@@ -17,7 +17,6 @@ fn max_gemv_batch_threshold() -> i32 {
 pub enum OutputSource {
     None,
     Bias,
-    C,
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +49,7 @@ impl DispatchDescriptor {
             return Err(B::Error::from(format!("Unsupported data type for GEMV: {data_type:?}")));
         }
 
-        if arguments.transpose_a || !arguments.transpose_b {
+        if !arguments.transpose_b {
             return Ok(None);
         }
 
@@ -71,12 +70,10 @@ impl DispatchDescriptor {
         let transpose_matrix = if matrix_is_rhs {
             !arguments.transpose_b
         } else {
-            arguments.transpose_a
+            false
         };
 
-        let output_source = if arguments.c.is_some() {
-            OutputSource::C
-        } else if arguments.bias.is_some() {
+        let output_source = if arguments.bias.is_some() {
             OutputSource::Bias
         } else {
             OutputSource::None
@@ -85,7 +82,6 @@ impl DispatchDescriptor {
         let (apply_output_scale_and_accumulate, alpha, beta, bias_stride) = match output_source {
             OutputSource::None => (false, 1.0f32, 0.0f32, 0),
             OutputSource::Bias => (true, 1.0f32, 1.0f32, 1),
-            OutputSource::C => (true, arguments.alpha, arguments.beta, arguments.ldd),
         };
 
         let output_dimension = if matrix_is_rhs {

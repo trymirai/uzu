@@ -1,1 +1,1 @@
-pub use crate::backends::common::gpu_types::{GEMMAddMMParams, GEMMParams, GEMMSpiltKMlpFusedParams, GEMMSpiltKParams};
+pub use crate::backends::common::gpu_types::{GEMMParams, GEMMSpiltKParams};

@@ -37,7 +37,6 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
             a: arguments.a,
             a_offset: arguments.a_offset as u64,
             b: arguments.b,
-            c: None,
             d: arguments.output,
             bias: arguments.bias,
             batch: arguments.batch as i32,
@@ -47,9 +46,6 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
             ldb: arguments.input_dim as i32,
             ldd: arguments.output_dim as i32,
             batch_count: 1,
-            alpha: 1.0,
-            beta: 0.0,
-            transpose_a: false,
             transpose_b: true,
         };
 

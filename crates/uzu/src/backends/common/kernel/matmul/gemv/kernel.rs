@@ -93,9 +93,6 @@ where
                 OutputSource::Bias => Some(
                     arguments.bias.ok_or_else(|| B::Error::from("GEMV descriptor requires bias buffer".to_owned()))?,
                 ),
-                OutputSource::C => {
-                    Some(arguments.c.ok_or_else(|| B::Error::from("GEMV descriptor requires C buffer".to_owned()))?)
-                },
             }
         } else {
             None

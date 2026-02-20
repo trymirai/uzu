@@ -6,7 +6,6 @@ pub struct MatmulArguments<'a, B: Backend> {
     /// Byte offset into `a` (used for slicing the batch dimension).
     pub a_offset: u64,
     pub b: &'a B::NativeBuffer,
-    pub c: Option<&'a B::NativeBuffer>,
     pub d: &'a B::NativeBuffer,
     pub bias: Option<&'a B::NativeBuffer>,
     /// M dimension - batch/number of tokens (rows of A, rows of D)
@@ -20,9 +19,5 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub ldd: i32,
     /// Number of batched matrix multiplications (z-dimension)
     pub batch_count: i32,
-    /// Scaling factors for fused addmm (alpha * A @ B + beta * C)
-    pub alpha: f32,
-    pub beta: f32,
-    pub transpose_a: bool,
     pub transpose_b: bool,
 }
