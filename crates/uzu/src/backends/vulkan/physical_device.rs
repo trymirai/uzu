@@ -1,6 +1,8 @@
 use std::ffi::CStr;
 use ash::vk;
 
+use ash::vk;
+
 pub struct VkPhysicalDevice {
     pub device: vk::PhysicalDevice,
     pub supported_extensions: Vec<String>,
