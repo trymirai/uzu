@@ -1,6 +1,6 @@
+use std::{ffi::CStr, os::raw::c_void};
+
 use ash::vk;
-use std::ffi::CStr;
-use std::os::raw::c_void;
 
 pub unsafe extern "system" fn debug_message_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -33,27 +33,17 @@ pub unsafe extern "system" fn debug_message_callback(
     vk::FALSE
 }
 
+#[rustfmt::skip]
 pub trait VkLogger {
-    fn v(
-        &self,
-        msg: &str,
-    );
-    fn i(
-        &self,
-        msg: &str,
-    );
-    fn d(
-        &self,
-        msg: &str,
-    );
-    fn w(
-        &self,
-        msg: &str,
-    );
-    fn e(
-        &self,
-        msg: &str,
-    );
+    fn v(&self, msg: &str);
+
+    fn i(&self, msg: &str);
+
+    fn d(&self, msg: &str);
+
+    fn w(&self, msg: &str);
+
+    fn e(&self, msg: &str);
 }
 
 pub struct VkPrintlnLogger {}
@@ -64,39 +54,25 @@ impl VkPrintlnLogger {
     }
 }
 
+#[rustfmt::skip]
 impl VkLogger for VkPrintlnLogger {
-    fn v(
-        &self,
-        msg: &str,
-    ) {
+    fn v(&self,msg: &str) {
         println!("[Verbose]: {msg}")
     }
 
-    fn i(
-        &self,
-        msg: &str,
-    ) {
+    fn i(&self, msg: &str) {
         println!("[Info]: {msg}")
     }
 
-    fn d(
-        &self,
-        msg: &str,
-    ) {
+    fn d(&self, msg: &str) {
         println!("[Debug]: {msg}")
     }
 
-    fn w(
-        &self,
-        msg: &str,
-    ) {
+    fn w(&self, msg: &str) {
         println!("[Warning]: {msg}")
     }
 
-    fn e(
-        &self,
-        msg: &str,
-    ) {
+    fn e(&self, msg: &str) {
         eprintln!("[Error]: {msg}")
     }
 }

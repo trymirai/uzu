@@ -1,9 +1,15 @@
-use crate::backends::vulkan::array::VkArray;
-use crate::backends::vulkan::buffer::{VkBuffer, VkBufferCreateInfo};
-use crate::backends::vulkan::context::VkContext;
-use crate::{DataType, DeviceContext, array_size_in_bytes};
-use ash::vk;
 use std::sync::Arc;
+
+use ash::vk;
+
+use crate::{
+    DataType, DeviceContext, array_size_in_bytes,
+    backends::vulkan::{
+        array::VkArray,
+        buffer::{VkBuffer, VkBufferCreateInfo},
+        context::VkContext,
+    },
+};
 
 pub struct VkDeviceContext {
     context: Arc<VkContext>,

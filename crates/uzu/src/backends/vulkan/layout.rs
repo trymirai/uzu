@@ -1,7 +1,8 @@
-use crate::backends::vulkan::buffer::VkBuffer;
-use crate::backends::vulkan::context::VkContext;
-use ash::vk;
 use std::sync::Arc;
+
+use ash::vk;
+
+use crate::backends::vulkan::{buffer::VkBuffer, context::VkContext};
 
 pub struct VkComputeShaderLayoutSet {
     device: Arc<ash::Device>,

@@ -1,5 +1,6 @@
-use ash::vk;
 use std::sync::Arc;
+
+use ash::vk;
 
 pub struct VkShader {
     device: Arc<ash::Device>,

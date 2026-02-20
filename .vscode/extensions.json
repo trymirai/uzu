@@ -1,8 +1,9 @@
 {
     "recommendations": [
-        "vadimcn.vscode-lldb",
-        "tamasfe.even-better-toml",
+        "eugenebokhan.metal-analyzer",
         "rust-lang.rust-analyzer",
-        "eugenebokhan.metal-analyzer"
+        "shader-slang.slang-language-extension",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb"
     ]
 }

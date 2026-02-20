@@ -1,7 +1,11 @@
+use std::{
+    ffi::{CStr, CString},
+    sync::Arc,
+};
+
+use ash::{vk, vk::SpecializationInfo};
+
 use crate::backends::vulkan::context::VkContext;
-use ash::vk;
-use std::ffi::{CStr, CString};
-use std::sync::Arc;
 
 const MAIN: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"main\0") };
 
@@ -17,6 +21,7 @@ impl VkComputePipeline {
         shader_module: vk::ShaderModule,
         descriptor_set_layout: vk::DescriptorSetLayout,
         entry_point: &str,
+        specialization_info: &SpecializationInfo,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let pipeline_layout = {
             let info =
@@ -29,7 +34,8 @@ impl VkComputePipeline {
             let stage_info = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader_module)
-                .name(entry_cstring.as_c_str());
+                .name(entry_cstring.as_c_str())
+                .specialization_info(specialization_info);
             let info = vk::ComputePipelineCreateInfo::default().stage(stage_info).layout(pipeline_layout);
             unsafe {
                 ctx.device()

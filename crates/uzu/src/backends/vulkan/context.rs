@@ -1,9 +1,15 @@
-use crate::backends::vulkan::ffi;
-use crate::backends::vulkan::logger::{VkLogger, VkPrintlnLogger};
-use crate::backends::vulkan::physical_device::{VkPhysicalDevice, VkPhysicalDeviceFeatures};
+use std::{
+    os::raw::{c_char, c_void},
+    sync::Arc,
+};
+
 use ash::{khr, vk};
-use std::os::raw::{c_char, c_void};
-use std::sync::Arc;
+
+use crate::backends::vulkan::{
+    ffi,
+    logger::{VkLogger, VkPrintlnLogger},
+    physical_device::{VkPhysicalDevice, VkPhysicalDeviceFeatures},
+};
 
 const VK_LAYER_KHRONOS_VALIDATION: &str = "VK_LAYER_KHRONOS_validation";
 

@@ -1,5 +1,4 @@
-use crate::backends::vulkan::buffer::VkBuffer;
-use crate::{Array, DataType, array_size_in_bytes};
+use crate::{Array, DataType, array_size_in_bytes, backends::vulkan::buffer::VkBuffer};
 
 pub struct VkArray {
     buffer: VkBuffer,

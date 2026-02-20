@@ -1,5 +1,6 @@
-use ash::vk;
 use std::ffi::CStr;
+
+use ash::vk;
 
 pub struct VkPhysicalDevice {
     pub device: vk::PhysicalDevice,

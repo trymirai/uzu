@@ -1,10 +1,10 @@
-use crate::backends::vulkan::context::VkContext;
+use std::{cell::RefCell, ffi::c_void, sync::Arc};
+
 use ash::vk;
 use bytemuck::AnyBitPattern;
-use std::cell::RefCell;
-use std::ffi::c_void;
-use std::sync::Arc;
 use vk_mem::Alloc;
+
+use crate::backends::vulkan::context::VkContext;
 
 pub struct VkBuffer {
     context: Arc<VkContext>,
