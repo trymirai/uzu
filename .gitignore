@@ -1,5 +1,7 @@
 *.pdb
 **/mutants.out*/
+
+.idea/
 *.DS_Store
 .idea/
 

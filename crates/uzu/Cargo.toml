@@ -32,10 +32,18 @@ objc2-foundation = { workspace = true, optional = true }
 block2 = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
-# macos requires objc2 even on non-metal (but shouldn't)
+# vulkan feature
+ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+# macos requires objc2 even on non-metal (but shouldn't)
 objc2.workspace = true
 objc2-foundation.workspace = true
+# "linked" link the Vulkan loader at compile time
+# without "linked" device.device_fn_1_0.allocate_command_buffers have error
+# "read memory from 0x1026f98b4 failed (0 of 8 bytes read)" on macOS
+ash = { workspace = true, optional = true, features = ["linked"] }
 
 [dev-dependencies]
 is_close.workspace = true
@@ -65,8 +73,12 @@ cbindgen.workspace = true
 # metal feature requires clang-ast
 clang-ast = { workspace = true, optional = true }
 
+# vulkan feature requires shader-slang
+shader-slang = { workspace = true, optional = true }
+shader-slang-sys = { workspace = true, optional = true }
+
 [features]
-default = ["metal"]
+default = ["metal", "vulkan"]
 
 metal = [
     "dep:clang-ast",
@@ -76,6 +88,8 @@ metal = [
     "dep:metal",
 ]
 metal-nax = []
+
+vulkan = ["dep:ash", "dep:shader-slang", "dep:shader-slang-sys", "dep:vk-mem"]
 
 tracing = []
 audio-runtime = []

@@ -66,6 +66,10 @@ autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
+ash = "0.38.0"
+shader-slang = "0.1.0"
+shader-slang-sys = "0.1.0"
+vk-mem = "0.5.0"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
