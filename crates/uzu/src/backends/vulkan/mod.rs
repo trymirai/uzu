@@ -1,9 +1,9 @@
-mod array;
+mod device_context;
+mod ffi;
+
 pub mod buffer;
 pub mod command_buffers;
 pub mod context;
-mod device_context;
-mod ffi;
 pub mod layout;
 pub mod logger;
 pub mod physical_device;
