@@ -157,18 +157,6 @@ impl MetalContext {
 
     pub fn compute_pipeline_state(
         &self,
-        function_name: &str,
-        constants: Option<&MTLFunctionConstantValues>,
-    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, MetalError> {
-        // Only cache pipelines without constants
-        if constants.is_some() {
-            return self.library.compute_pipeline_state(function_name, constants);
-        }
-        self.compute_pipeline_state_cached(function_name, function_name, None)
-    }
-
-    pub fn compute_pipeline_state_cached(
-        &self,
         cache_key: &str,
         function_name: &str,
         constants: Option<&MTLFunctionConstantValues>,

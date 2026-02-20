@@ -1,29 +1,21 @@
 pub mod common;
 mod dispatch_descriptor;
 mod gemm;
-mod gemv;
-mod kernel;
-mod split_k;
 
-pub use common::MatmulArguments;
-pub use dispatch_descriptor::{MatmulKernelVariant, determine_kernel_variant};
-pub use gemv::GemvKernel;
-pub use kernel::MatmulKernel;
-use metal::MTLComputeCommandEncoder;
-use objc2::runtime::ProtocolObject;
-pub use split_k::SplitKGemm;
+pub use dispatch_descriptor::choose_dispatch_descriptor;
 
 use crate::{
     DataType,
     backends::{
         common::kernel::matmul::{
-            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait,
+            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulArguments,
+            MatmulKernel,
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
 };
 
-impl FullPrecisionMatmulKernelTrait for MatmulKernel {
+impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
     type Backend = Metal;
 
     fn new(
@@ -38,14 +30,13 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel {
     fn encode(
         &mut self,
         context: &MetalContext,
-        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        encoder: &<Metal as crate::backends::common::Backend>::ComputeEncoder,
         arguments: FullPrecisionMatmulArguments<Metal>,
     ) {
-        let matmul_arguments = MatmulArguments {
+        let mut matmul_arguments = MatmulArguments {
             a: arguments.a,
             a_offset: arguments.a_offset as u64,
             b: arguments.b,
-            c: None,
             d: arguments.output,
             bias: arguments.bias,
             batch: arguments.batch as i32,
@@ -55,13 +46,15 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel {
             ldb: arguments.input_dim as i32,
             ldd: arguments.output_dim as i32,
             batch_count: 1,
-            alpha: 1.0,
-            beta: 0.0,
-            transpose_a: false,
             transpose_b: true,
         };
 
-        MatmulKernel::encode(self, context, encoder, matmul_arguments)
+        MatmulKernel::<Metal>::apply_batch_collapse(&mut matmul_arguments);
+
+        let descriptor = choose_dispatch_descriptor(context, self.data_type, &matmul_arguments)
+            .expect("Failed to create dispatch descriptor for full precision matmul");
+
+        self.encode_with_descriptor(context, matmul_arguments, &descriptor, encoder)
             .expect("Failed to encode full precision matmul kernel");
     }
 }
