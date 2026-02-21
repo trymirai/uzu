@@ -1,0 +1,28 @@
+based_on_style = "LLVM"
+indent_width = 2
+column_limit = 80
+
+# Indentation
+continuation_indent_width = 4
+
+# Keep return type with function name
+always_break_after_return_type = "None"
+penalty_return_type_on_its_own_line = 1000000
+
+# One parameter/argument per line
+bin_pack_parameters = false
+bin_pack_arguments = false
+allow_all_parameters_of_declaration_on_next_line = false
+allow_all_arguments_on_next_line = false
+align_after_open_bracket = "BlockIndent"
+
+# Template closing bracket on own line
+break_template_declarations = "Yes"
+cpp11_braced_list_style = true
+
+# Brace and pointer/reference style
+break_before_braces = "Attach"
+derive_pointer_alignment = false
+pointer_alignment = "Left"
+
+sort_includes = false
