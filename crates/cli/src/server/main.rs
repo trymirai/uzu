@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use log::LevelFilter;
 use rocket::{Config, config::LogLevel, log::private as log, routes};
 
-use crate::server::{SessionState, SessionWrapper, handle_chat_completions, load_session};
+use crate::server::{SessionState, SessionWrapper, handle_chat_completions, handle_models, load_session};
 
 struct SilentLogger;
 static SILENT_LOGGER: SilentLogger = SilentLogger;
@@ -49,5 +49,5 @@ pub async fn run_server(
         session_wrapper: SessionWrapper::new(session),
     };
 
-    let _ = rocket::custom(config).manage(state).mount("/", routes![handle_chat_completions]).launch().await;
+    let _ = rocket::custom(config).manage(state).mount("/", routes![handle_chat_completions, handle_models]).launch().await;
 }
