@@ -1,16 +1,16 @@
 #[derive(Copy, Clone, Debug)]
-pub enum MetalEnvVar {
+pub enum EnvVar {
     DeviceWrapperType,
     CaptureFirstDecode,
     CaptureFirstPrefill,
 }
 
-impl MetalEnvVar {
+impl EnvVar {
     pub fn key(&self) -> &'static str {
         match self {
-            MetalEnvVar::DeviceWrapperType => "METAL_DEVICE_WRAPPER_TYPE",
-            MetalEnvVar::CaptureFirstDecode => "UZU_CAPTURE_FIRST_DECODE",
-            MetalEnvVar::CaptureFirstPrefill => "UZU_CAPTURE_FIRST_PREFILL",
+            EnvVar::DeviceWrapperType => "UZU_DEVICE_WRAPPER_TYPE",
+            EnvVar::CaptureFirstDecode => "UZU_CAPTURE_FIRST_DECODE",
+            EnvVar::CaptureFirstPrefill => "UZU_CAPTURE_FIRST_PREFILL",
         }
     }
 

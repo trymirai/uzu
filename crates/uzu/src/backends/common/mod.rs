@@ -15,7 +15,7 @@ pub use backend::Backend;
 pub use buffer::Buffer;
 pub use buffer_lifetime::BufferLifetime;
 pub use command_buffer::CommandBuffer;
-pub use context::Context;
+pub use context::{Context, DeviceClass};
 pub use copy_encoder::CopyEncoder;
 pub use event::Event;
 pub use kernel::Kernels;

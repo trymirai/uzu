@@ -1,13 +1,14 @@
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
-    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions,
+    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer, MTLCommandQueue,
+    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
+    MTLLibrary, MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{Metal, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions};
-use crate::backends::common::{Allocator, Context};
+use crate::backends::common::{Allocator, Context, DeviceClass as CommonDeviceClass};
 
 /// Apple GPU architecture generation.
 /// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
@@ -200,6 +201,22 @@ impl Context for MetalContext {
         }))
     }
 
+    fn device_class(&self) -> CommonDeviceClass {
+        let name = self.device.name().to_lowercase();
+
+        if name.contains("ultra") {
+            CommonDeviceClass::Ultra
+        } else if name.contains("max") {
+            CommonDeviceClass::Max
+        } else if name.contains("pro") {
+            CommonDeviceClass::Pro
+        } else if name.contains("iphone") || name.contains("a1") {
+            CommonDeviceClass::IPhone
+        } else {
+            CommonDeviceClass::Base
+        }
+    }
+
     fn allocator(&self) -> &Allocator<Metal> {
         &self.allocator
     }
@@ -219,5 +236,36 @@ impl Context for MetalContext {
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
         self.device.new_event().ok_or(MetalError::Generic("cannot create event".into()))
+    }
+
+    fn enable_capture() {
+        unsafe {
+            std::env::set_var("METAL_CAPTURE_ENABLED", "1");
+        }
+    }
+
+    fn start_capture(
+        &self,
+        trace_path: &std::path::Path,
+    ) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+        let capture_manager = MTLCaptureManager::shared_capture_manager();
+        let capture_descriptor = MTLCaptureDescriptor::new();
+        capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
+        capture_descriptor.set_output_path(Some(trace_path));
+
+        self.command_queue.set_label(Some("uzu_command_queue"));
+        capture_descriptor.set_capture_object(Some(self.command_queue.as_ref()));
+
+        capture_manager
+            .start_capture_with_descriptor_error(&capture_descriptor)
+            .map_err(|e| format!("Failed to start GPU capture: {}", e))?;
+
+        Ok(())
+    }
+
+    fn stop_capture(&self) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+        MTLCaptureManager::shared_capture_manager().stop_capture();
+
+        Ok(())
     }
 }

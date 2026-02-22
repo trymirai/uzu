@@ -85,7 +85,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         );
         let d_model_u32 = args.d_model as u32;
         let d_ff_u32 = args.d_ff as u32;
-        const COL_TILE_FF: u32 = 32; // Must match PASSA_BN in Metal kernel
+        const COL_TILE_FF: u32 = 32; // Must match PASSA_BN in kernel
         const COL_TILE_MODEL: u32 = 64;
         let n_tiles_ff = if d_ff_u32 == 0 {
             0

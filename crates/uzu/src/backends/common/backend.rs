@@ -11,4 +11,6 @@ pub trait Backend: Debug + Clone {
     type Event: Event<Backend = Self>;
     type Kernels: Kernels<Backend = Self>;
     type Error: Error + Debug;
+
+    const MAX_INLINE_BYTES: usize;
 }

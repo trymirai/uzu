@@ -38,10 +38,6 @@ pub enum KVCacheUpdateError<B: Backend> {
 }
 
 impl<B: Backend> KVCacheUpdate<B> {
-    // Metal's set_bytes supports up to 4KB per bound value.
-    // https://developer.apple.com/documentation/metal/mtlcomputecommandencoder/setbytes(_:length:index:)?language=objc
-    const MAX_INLINE_BYTES: usize = 4096;
-
     pub fn new(
         context: &B::Context,
         data_type: DataType,
@@ -84,7 +80,7 @@ impl<B: Backend> KVCacheUpdate<B> {
         if swaps.len() > self.max_sequence_length {
             return Err(KVCacheUpdateError::MaxSequenceLengthExceeded);
         }
-        let max_inline_swaps = (Self::MAX_INLINE_BYTES / size_of::<Swap>()).max(1);
+        let max_inline_swaps = (B::MAX_INLINE_BYTES / size_of::<Swap>()).max(1);
 
         for layer_data in in_place_data {
             if layer_data.key_shape != layer_data.value_shape {
