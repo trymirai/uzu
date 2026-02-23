@@ -22,7 +22,7 @@ pub enum DeviceGeneration {
     Gen15, // M3 family
     Gen16, // M3 Pro/Max with enhanced features
     Gen17, // M4 family
-    Gen18, // M5 family (NAX capable)
+    Gen18, // M5 family (MPP capable)
     Unknown(u8),
 }
 
@@ -110,11 +110,11 @@ impl DeviceArchitecture {
         (generation, device_class)
     }
 
-    /// Returns true if NAX (New Accelerator eXtensions) is available.
-    /// NAX requires M5 or later (generation >= 18) and macOS 26.2+.
+    /// Returns true if MPP (MetalPerformancePrimitives) is available.
+    /// MPP requires M5 or later (generation >= 18) and macOS 26.2+.
     /// Since we can't check macOS version at compile time in Rust,
     /// we check generation only - the kernels will fail gracefully if unavailable.
-    pub fn is_nax_available(&self) -> bool {
+    pub fn is_mpp_available(&self) -> bool {
         self.generation.generation_number() >= 18
     }
 
@@ -133,9 +133,9 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
-    /// Returns true if NAX kernels are available on this device.
-    pub fn is_nax_available(&self) -> bool {
-        cfg!(feature = "metal-nax") && self.architecture.is_nax_available()
+    /// Returns true if MPP (MetalPerformancePrimitives) kernels are available on this device.
+    pub fn is_mpp_available(&self) -> bool {
+        self.architecture.is_mpp_available()
     }
 
     /// Returns true if this is a high-performance device (Pro/Max class).
