@@ -10,6 +10,8 @@ mod pooling;
 mod quantized_matmul;
 mod rope;
 mod sampling;
+mod sigmoid;
+mod split_in_proj;
 mod ssd;
 mod tensor;
 

@@ -1,0 +1,23 @@
+mod fsq_decode;
+mod leaky_relu;
+mod tanh;
+mod add;
+mod scale;
+mod causal_conv1d;
+mod causal_conv_transpose1d;
+mod half_snake;
+mod clamp;
+mod conv1d;
+mod fsq_encode;
+
+pub use fsq_decode::AudioFsqDecodeCpuKernel;
+pub use leaky_relu::AudioLeakyReluCpuKernel;
+pub use tanh::AudioTanhCpuKernel;
+pub use add::AudioAddCpuKernel;
+pub use scale::AudioScaleCpuKernel;
+pub use causal_conv1d::AudioCausalConv1dCpuKernel;
+pub use causal_conv_transpose1d::AudioCausalConvTranspose1dCpuKernel;
+pub use half_snake::AudioHalfSnakeCpuKernel;
+pub use clamp::AudioClampCpuKernel;
+pub use conv1d::AudioConv1dCpuKernel;
+pub use fsq_encode::AudioFsqEncodeCpuKernel;

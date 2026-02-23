@@ -1,0 +1,5 @@
+mod full_precision_embedding_lookup;
+mod quantized_embedding_lookup;
+
+pub use full_precision_embedding_lookup::FullPrecisionEmbeddingLookupCpuKernel;
+pub use quantized_embedding_lookup::QuantizedEmbeddingLookupCpuKernel;

@@ -1,0 +1,46 @@
+use crate::{
+    DataType,
+    backends::{
+        common::{
+            Backend,
+            kernel::{BufferArg, ArgmaxMainKernel},
+        },
+        cpu::backend::Cpu,
+    },
+};
+
+pub struct ArgmaxMainCpuKernel;
+
+impl ArgmaxMainKernel for ArgmaxMainCpuKernel {
+    type Backend = Cpu;
+
+    fn new(
+        _context: &<Self::Backend as Backend>::Context,
+        _T: DataType,
+    ) -> Result<Self, <Self::Backend as Backend>::Error> {
+        todo!()
+    }
+
+    fn encode<'logits_data, 'partial_results, 'encoder>(
+        &self,
+        _logits_data: impl BufferArg<'logits_data, <Self::Backend as Backend>::NativeBuffer>,
+        _partial_results: impl BufferArg<'partial_results, <Self::Backend as Backend>::NativeBuffer>,
+        _batch_size: u32,
+        _vocab_size: u32,
+        _encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder,
+    ) {
+        todo!()
+    }
+
+    fn encode_if<'logits_data, 'partial_results, 'encoder, 'predicate>(
+        &self,
+        _logits_data: impl BufferArg<'logits_data, <Self::Backend as Backend>::NativeBuffer>,
+        _partial_results: impl BufferArg<'partial_results, <Self::Backend as Backend>::NativeBuffer>,
+        _batch_size: u32,
+        _vocab_size: u32,
+        _encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder,
+        _predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>,
+    ) {
+        todo!()
+    }
+}
