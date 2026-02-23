@@ -12,13 +12,13 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
+            Backend, Context, Kernels,
             kernel::{
                 Conv1dScanKernel,
                 ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
             },
         },
-        metal::{Metal, MetalContext, kernel::dsl::Conv1dScanMetalKernel},
+        metal::Metal,
     },
 };
 
@@ -198,7 +198,7 @@ impl SSDPrefillFixture {
 }
 
 fn run_prefill_kernel_mode(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     kernel: &SSDPrefillKernels<Metal>,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
@@ -261,8 +261,8 @@ fn run_prefill_kernel_mode(
 }
 
 fn run_conv_scan_once(
-    ctx: &MetalContext,
-    kernel: &Conv1dScanMetalKernel,
+    ctx: &<Metal as Backend>::Context,
+    kernel: &<<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel,
     suffix_len: usize,
     channels: usize,
     kernel_size: i32,
@@ -359,7 +359,7 @@ fn run_conv_scan_once(
 }
 
 fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
-    let Some(ctx) = MetalContext::new().ok() else {
+    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
@@ -374,7 +374,7 @@ fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
 }
 
 fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
-    let Some(ctx) = MetalContext::new().ok() else {
+    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
@@ -460,11 +460,12 @@ fn ssd_prefill_single_pass_matches_cpu_reference() {
 
 #[test]
 fn conv1d_scan_is_deterministic() {
-    let Some(ctx) = MetalContext::new().ok() else {
+    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };
-    let kernel = Conv1dScanMetalKernel::new(&ctx, DataType::F32, 0u32, true).unwrap();
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel::new(&ctx, DataType::F32, 0u32, true).unwrap();
 
     let suffix_len = 192usize;
     let channels = 8usize;

@@ -12,16 +12,13 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            CommandBuffer, Context,
+            Backend, CommandBuffer, Context, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
             },
         },
-        metal::{
-            Metal, MetalContext,
-            kernel::dsl::{AttentionSinglePassMetalKernel, AttentionTwoPass1MetalKernel, AttentionTwoPass2MetalKernel},
-        },
+        metal::Metal,
     },
 };
 
@@ -148,7 +145,7 @@ fn create_test_data(
 /// Convert ndarray to Metal buffer layout expected by our kernel
 fn create_query_buffer(
     queries: &Array4<f32>,
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_heads, seq_len, head_dim) = queries.dim();
 
@@ -173,7 +170,7 @@ fn create_query_buffer(
 fn create_key_cache_buffer(
     keys: &Array4<f32>,
     max_seq_len: usize,
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
@@ -198,7 +195,7 @@ fn create_key_cache_buffer(
 fn create_value_cache_buffer(
     values: &Array4<f32>,
     max_seq_len: usize,
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
@@ -223,7 +220,7 @@ fn create_value_cache_buffer(
 fn create_mask_buffer(
     mask: &Array3<f32>,
     num_heads: usize,
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
@@ -246,7 +243,7 @@ fn create_mask_buffer(
 
 fn create_mask_2d_buffer(
     mask: &Array3<f32>,
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, seq_len, _) = mask.dim();
 
@@ -265,7 +262,7 @@ fn create_mask_2d_buffer(
 
 fn create_sinks_buffer(
     sinks: &[f32],
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     context
         .device
@@ -295,8 +292,8 @@ fn convert_kernel_output(
 }
 
 fn run_single_pass_attention(
-    kernel: &AttentionSinglePassMetalKernel,
-    context: &MetalContext,
+    kernel: &<<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel,
+    context: &<Metal as Backend>::Context,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -366,8 +363,8 @@ fn run_single_pass_attention(
 }
 
 fn run_single_pass_attention_with_is_causal(
-    kernel: &AttentionSinglePassMetalKernel,
-    context: &MetalContext,
+    kernel: &<<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel,
+    context: &<Metal as Backend>::Context,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -439,7 +436,7 @@ fn run_single_pass_attention_with_is_causal(
 
 fn run_gemm_attention(
     kernel: &AttentionGemmBlock<Metal>,
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -549,7 +546,7 @@ fn compare_results(
 
 #[test]
 fn test_single_pass_attention_basic() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -569,9 +566,16 @@ fn test_single_pass_attention_basic() {
     println!("Reference sample values: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
 
     let is_causal = false; // Non-causal attention for this test
-    let kernel =
-        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, false, is_causal)
-            .expect("Failed to create attention single pass metal");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        false,
+        is_causal,
+    )
+    .expect("Failed to create attention single pass metal");
 
     let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
     {
@@ -589,7 +593,7 @@ fn test_single_pass_attention_basic() {
 
 #[test]
 fn test_gemm_attention_basic() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -616,7 +620,7 @@ fn test_gemm_attention_basic() {
 
 #[test]
 fn test_gemm_attention_f32_head_dim_128() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -643,7 +647,7 @@ fn test_gemm_attention_f32_head_dim_128() {
 
 #[test]
 fn test_matrix_attention_matches_vector_and_cpu_seq256() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -659,9 +663,16 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
 
     // vector attention path (single-pass)
-    let kernel =
-        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, true, true, false, is_causal)
-            .expect("Failed to create attention single pass metal");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        true,
+        true,
+        false,
+        is_causal,
+    )
+    .expect("Failed to create attention single pass metal");
     let vector_output = run_single_pass_attention_with_is_causal(
         &kernel,
         &context,
@@ -700,7 +711,7 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 
 #[test]
 fn test_single_pass_attention_with_mask() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -711,9 +722,16 @@ fn test_single_pass_attention_with_mask() {
 
     let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let kernel =
-        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, true, true, false, false)
-            .expect("Failed to create AttentionSinglePassMetalKernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        true,
+        true,
+        false,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
     let kernel_output =
         match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, Some(&mask), None, scale) {
             Ok(output) => output,
@@ -740,7 +758,7 @@ fn test_single_pass_attention_with_mask() {
 
 #[test]
 fn test_single_pass_attention_with_sinks() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -754,9 +772,16 @@ fn test_single_pass_attention_with_sinks() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25).collect();
     println!("Using sinks: {:?}", sinks);
 
-    let kernel =
-        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, true, false)
-            .expect("Failed to create AttentionSinglePassMetalKernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        true,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
 
@@ -776,7 +801,7 @@ fn test_single_pass_attention_with_sinks() {
 
 #[test]
 fn test_single_pass_attention_with_sinks_long_sequence() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 4;
@@ -790,9 +815,16 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
     println!("Long sequence sinks: {:?}", sinks);
 
-    let kernel =
-        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, true, false)
-            .expect("Failed to create AttentionSinglePassMetalKernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        true,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
 
     let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
 
@@ -817,7 +849,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
 
 #[test]
 fn test_single_pass_attention_gqa() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -829,9 +861,16 @@ fn test_single_pass_attention_gqa() {
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     let is_causal = false; // Non-causal attention for this test
-    let kernel =
-        AttentionSinglePassMetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, false, is_causal)
-            .expect("Failed to create AttentionSinglePassMetalKernel");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        false,
+        is_causal,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
 
     let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
     {
@@ -850,9 +889,9 @@ fn test_single_pass_attention_gqa() {
 }
 
 fn run_two_pass_attention(
-    kernel_pass1: &AttentionTwoPass1MetalKernel,
-    kernel_pass2: &AttentionTwoPass2MetalKernel,
-    context: &MetalContext,
+    kernel_pass1: &<<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel,
+    kernel_pass2: &<<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel,
+    context: &<Metal as Backend>::Context,
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
@@ -954,7 +993,7 @@ fn run_two_pass_attention(
 
 #[test]
 fn test_two_pass_attention() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -968,11 +1007,22 @@ fn test_two_pass_attention() {
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_pass1 =
-        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, false, false, false, is_causal)
-            .expect("Failed to create AttentionTwoPass1MetalKernel");
-    let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
-        .expect("Failed to create AttentionTwoPass2MetalKernel");
+    let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        false,
+        is_causal,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel");
+    let kernel_pass2 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel");
     let kernel_output = match run_two_pass_attention(
         &kernel_pass1,
         &kernel_pass2,
@@ -998,7 +1048,7 @@ fn test_two_pass_attention() {
 
 #[test]
 fn test_two_pass_attention_gqa() {
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     let batch_size = 1;
     let num_heads = 8;
@@ -1012,11 +1062,22 @@ fn test_two_pass_attention_gqa() {
 
     let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
 
-    let kernel_pass1 =
-        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, is_causal, false, false, false)
-            .expect("Failed to create AttentionTwoPass1MetalKernel");
-    let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
-        .expect("Failed to create AttentionTwoPass2MetalKernel");
+    let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        is_causal,
+        false,
+        false,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel");
+    let kernel_pass2 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel");
     let kernel_output = match run_two_pass_attention(
         &kernel_pass1,
         &kernel_pass2,
@@ -1044,7 +1105,7 @@ fn test_two_pass_attention_gqa() {
 fn perf_two_pass_attention() {
     use std::time::Instant;
 
-    let context = MetalContext::new().expect("Failed to create MetalContext");
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
     // ---- Problem sizes requiring two-pass ----
     let batch_size = 1;
@@ -1063,11 +1124,22 @@ fn perf_two_pass_attention() {
     );
     let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
-    let kernel_pass1 =
-        AttentionTwoPass1MetalKernel::new(&context, DataType::F32, head_dim as u32, is_causal, false, false, false)
-            .expect("Failed to create AttentionTwoPass1MetalKernel");
-    let kernel_pass2 = AttentionTwoPass2MetalKernel::new(&context, DataType::F32, head_dim as u32)
-        .expect("Failed to create AttentionTwoPass2MetalKernel");
+    let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        is_causal,
+        false,
+        false,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel");
+    let kernel_pass2 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel");
 
     // ---- Create buffers ----
     // For realistic inference, we only process queries for the suffix (new tokens)

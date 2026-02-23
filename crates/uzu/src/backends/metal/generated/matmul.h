@@ -14,7 +14,7 @@ namespace matmul {
 #include <stdint.h>
 #endif
 
-/**Main GEMM parameters passed to Metal kernels as constant buffer. */
+/**Main GEMM parameters passed to backend kernels as constant buffer. */
 typedef struct {
   int32_t M;
   int32_t N;

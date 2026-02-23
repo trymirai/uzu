@@ -1,4 +1,3 @@
-pub mod common;
 mod dispatch_descriptor;
 mod gemm;
 

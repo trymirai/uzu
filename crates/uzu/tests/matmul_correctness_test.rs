@@ -8,15 +8,15 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
+            Backend, Context,
             kernel::matmul::{MatmulArguments, MatmulKernel},
         },
-        metal::{Metal, MetalContext, kernel::matmul::choose_dispatch_descriptor},
+        metal::{Metal, choose_dispatch_descriptor},
     },
 };
 
 fn run_metal_matmul(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     a_data: &[bf16],
     b_data: &[bf16],
     m: usize,
@@ -274,7 +274,7 @@ fn compare_results(
 #[test]
 #[ignore]
 fn matmul_correctness_comprehensive() {
-    let Some(ctx) = MetalContext::new().ok() else {
+    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
         eprintln!("No Metal device available, skipping test");
         return;
     };

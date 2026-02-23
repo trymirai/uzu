@@ -4,18 +4,17 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{
-            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
-            MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels},
-        },
-        metal::{
-            Metal, MetalContext,
-            kernel::dsl::{
-                MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
-                MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
+        common::{
+            Backend, Kernels,
+            kernel::{
+                MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
+                MoeScatterBucketsMapKernel,
+                moe::{
+                    MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels,
+                },
             },
         },
+        metal::Metal,
     },
 };
 
@@ -169,7 +168,7 @@ fn moe_cpu_reference(
 
 // Main entry point - automatically tests both modes for T>1
 fn run_moe_parity_test(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     t: usize,
     e: usize,
     k: usize,
@@ -233,7 +232,7 @@ fn run_moe_parity_test(
 }
 
 fn run_moe_parity_test_internal(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     t: usize,
     e: usize,
     k: usize,
@@ -350,7 +349,8 @@ fn run_moe_parity_test_internal(
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     // Router + TopK (fused kernel)
-    let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk");
+    let router_topk =
+        <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16).expect("router+topk");
     let router_topk_encoder = cb.new_compute_command_encoder().expect("router+topk_encoder");
     router_topk.encode(
         &x_buf,
@@ -367,13 +367,15 @@ fn run_moe_parity_test_internal(
     );
     router_topk_encoder.end_encoding();
 
-    let fused_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+    let fused_kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
     fused_kernel.encode(&topk_ids_buf, &offsets_buf, &sumk_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);
     encoder.end_encoding();
 
     let scatter_bases_encoder = cb.new_compute_command_encoder().expect("scatter_bases_encoder");
-    let scatter_bases_kernel = MoeBlockBasesFromPartialsMetalKernel::new(&ctx).expect("scatter bases kernel");
+    let scatter_bases_kernel = <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx)
+        .expect("scatter bases kernel");
     scatter_bases_kernel.encode(
         &partials_buf,
         &block_bases_buf,
@@ -387,8 +389,9 @@ fn run_moe_parity_test_internal(
     scatter_bases_encoder.end_encoding();
 
     let scatter_encoder = cb.new_compute_command_encoder().expect("scatter encoder");
-    let scatter_map_kernel = MoeScatterBucketsMapMetalKernel::new(&ctx, DataType::BF16)
-        .expect("Failed to create MoeScatterBucketsMapMetalKernel");
+    let scatter_map_kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
+            .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
     scatter_map_kernel.encode(
         &topk_ids_buf,
         &topk_probs_buf,
@@ -459,7 +462,8 @@ fn run_moe_parity_test_internal(
     };
     experts.encode(&cb, &args);
 
-    let finalize = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
+    let finalize =
+        <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
     finalize.encode(
         &tok2row_buf,

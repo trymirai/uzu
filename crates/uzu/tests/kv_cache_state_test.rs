@@ -5,8 +5,8 @@ use uzu::{
     DataType,
     array::ArrayContextExt,
     backends::{
-        common::{Context, kernel::kv_cache_update::KVCacheUpdate},
-        metal::{Metal, MetalContext},
+        common::{Backend, Context, kernel::kv_cache_update::KVCacheUpdate},
+        metal::Metal,
     },
     forward_pass::kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
 };
@@ -31,7 +31,7 @@ struct Scenario {
 }
 
 fn make_test_layer(
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
     state: KVCacheLayerState,
     prefix_capacity: usize,
     suffix_capacity: usize,
@@ -148,7 +148,7 @@ fn collect_mask(
 }
 
 fn run_scenario(
-    context: &MetalContext,
+    context: &<Metal as Backend>::Context,
     scenario: &Scenario,
 ) {
     let mut layer =
@@ -249,7 +249,7 @@ fn run_scenario(
 
 #[test]
 fn kv_cache_state_and_mask_scenarios() {
-    let Some(context) = MetalContext::new().ok() else {
+    let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
     };
 
@@ -357,7 +357,7 @@ fn kv_cache_state_and_mask_scenarios() {
 
 #[test]
 fn kv_cache_slice_apply_contiguous_window() {
-    let Some(context) = MetalContext::new().ok() else {
+    let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
     };
 
@@ -403,7 +403,7 @@ fn kv_cache_slice_apply_contiguous_window() {
 
 #[test]
 fn kv_cache_slice_apply_wrap_window() {
-    let Some(context) = MetalContext::new().ok() else {
+    let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
     };
 
@@ -445,7 +445,7 @@ fn kv_cache_slice_apply_wrap_window() {
 
 #[test]
 fn kv_cache_slice_apply_full_restores_metadata() {
-    let Some(context) = MetalContext::new().ok() else {
+    let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
     };
 

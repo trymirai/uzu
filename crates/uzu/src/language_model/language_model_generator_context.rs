@@ -227,7 +227,7 @@ where
             None
         };
 
-        let async_batch_size = decoding_config.async_batch_size.resolve(model_path);
+        let async_batch_size = decoding_config.async_batch_size.resolve::<B>(model_path, context.as_ref());
         let async_buffers = AsyncBuffers::new(context.as_ref(), max_prefix_length, async_batch_size);
 
         let seed = PRng::new(decoding_config.sampling_seed.resolve());

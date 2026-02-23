@@ -6,32 +6,26 @@ use uzu::{
     array::ArrayContextExt,
     backends::{
         common::{
-            Context,
+            Backend, Context, Kernels,
             kernel::{
                 AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dKernel, AudioClampKernel,
                 AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel, AudioHalfSnakeKernel,
                 AudioLeakyReluKernel, AudioScaleKernel, AudioTanhKernel,
             },
         },
-        metal::{
-            MetalContext,
-            kernel::dsl::{
-                AudioAddMetalKernel, AudioCausalConv1dMetalKernel, AudioCausalConvTranspose1dMetalKernel,
-                AudioClampMetalKernel, AudioConv1dMetalKernel, AudioFsqDecodeMetalKernel, AudioFsqEncodeMetalKernel,
-                AudioHalfSnakeMetalKernel, AudioLeakyReluMetalKernel, AudioScaleMetalKernel, AudioTanhMetalKernel,
-            },
-        },
+        metal::Metal,
     },
 };
 
-fn create_test_context() -> std::rc::Rc<MetalContext> {
-    <MetalContext as Context>::new().expect("MetalContext")
+fn create_test_context() -> std::rc::Rc<<Metal as Backend>::Context> {
+    <Metal as Backend>::Context::new().expect("MetalContext")
 }
 
 #[test]
 fn audio_conv1d_replicate_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioConv1dMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let batch_size = 2usize;
     let cin = 3usize;
@@ -145,7 +139,8 @@ fn audio_conv1d_replicate_matches_reference_f32() {
 #[test]
 fn audio_causal_conv1d_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioCausalConv1dMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let batch_size = 2usize;
     let cin = 3usize;
@@ -246,7 +241,9 @@ fn audio_causal_conv1d_matches_reference_f32() {
 #[test]
 fn audio_causal_conv_transpose1d_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioCausalConvTranspose1dMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dKernel::new(&context, DataType::F32)
+            .expect("audio runtime");
 
     let batch_size = 2usize;
     let cin = 4usize;
@@ -360,7 +357,8 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
 #[test]
 fn audio_leaky_relu_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioLeakyReluMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioLeakyReluKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let n = 1024usize;
     let slope = 0.01f32;
@@ -395,7 +393,8 @@ fn audio_leaky_relu_matches_reference_f32() {
 #[test]
 fn audio_tanh_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioTanhMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::AudioTanhKernel::new(&context, DataType::F32).expect("audio runtime");
 
     let n = 1024usize;
     let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
@@ -425,8 +424,10 @@ fn audio_tanh_matches_reference_f32() {
 #[test]
 fn audio_add_and_scale_match_reference_f32() {
     let context = create_test_context();
-    let add_kernel = AudioAddMetalKernel::new(&context, DataType::F32).expect("audio add kernel");
-    let scale_kernel = AudioScaleMetalKernel::new(&context, DataType::F32).expect("audio scale kernel");
+    let add_kernel = <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(&context, DataType::F32)
+        .expect("audio add kernel");
+    let scale_kernel = <<Metal as Backend>::Kernels as Kernels>::AudioScaleKernel::new(&context, DataType::F32)
+        .expect("audio scale kernel");
 
     let n = 2048usize;
     let scale_value = 1.0f32 / 3.0f32;
@@ -479,7 +480,8 @@ fn audio_add_and_scale_match_reference_f32() {
 #[test]
 fn audio_clamp_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioClampMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioClampKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let n = 2048usize;
     let min_value = -1.0f32;
@@ -511,7 +513,8 @@ fn audio_clamp_matches_reference_f32() {
 #[test]
 fn audio_half_snake_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = AudioHalfSnakeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let batch_size = 1usize;
     let channels = 6usize;
@@ -583,7 +586,8 @@ fn audio_half_snake_matches_reference_f32() {
 #[test]
 fn audio_fsq_decode_matches_reference() {
     let context = create_test_context();
-    let kernel = AudioFsqDecodeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqDecodeKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let batch_size = 1usize;
     let num_groups = 2usize;
@@ -635,7 +639,8 @@ fn audio_fsq_decode_matches_reference() {
 #[test]
 fn audio_fsq_encode_matches_reference() {
     let context = create_test_context();
-    let kernel = AudioFsqEncodeMetalKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqEncodeKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let batch_size = 1usize;
     let num_groups = 2usize;

@@ -8,13 +8,13 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
+            Backend, Context,
             kernel::quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
                 QuantizedMatmulType,
             },
         },
-        metal::{Metal, MetalContext},
+        metal::Metal,
     },
     config::QuantizationMode,
 };
@@ -389,7 +389,7 @@ fn generate_test_quant_params(
 }
 
 fn buffer_from_f32_slice(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     dtype: DataType,
     values: &[f32],
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
@@ -417,7 +417,7 @@ fn buffer_from_f32_slice(
 }
 
 fn execute_quantized_matmul(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     batch: usize,
     input_dim: usize,
     output_dim: usize,
@@ -636,7 +636,7 @@ const QVM_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QMM_DIMS: &[(usize, usize, usize)] = &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
 
 fn run_kernel_test(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     batch: usize,
     output_dim: usize,
     input_dim: usize,
@@ -665,7 +665,7 @@ fn run_kernel_test(
 
 #[test]
 fn test_quant_gmv() {
-    let ctx = match MetalContext::new() {
+    let ctx = match <Metal as Backend>::Context::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QMV test");
@@ -709,7 +709,7 @@ fn test_quant_gmv() {
 
 #[test]
 fn test_quant_qvm() {
-    let ctx = match MetalContext::new() {
+    let ctx = match <Metal as Backend>::Context::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QVM test");
@@ -753,7 +753,7 @@ fn test_quant_qvm() {
 
 #[test]
 fn test_quant_gmm() {
-    let ctx = match MetalContext::new() {
+    let ctx = match <Metal as Backend>::Context::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QMM test");
@@ -797,7 +797,7 @@ fn test_quant_gmm() {
 
 #[test]
 fn test_quant_gmm_transposed() {
-    let ctx = match MetalContext::new() {
+    let ctx = match <Metal as Backend>::Context::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping QMM transposed test");
@@ -842,7 +842,7 @@ fn test_quant_gmm_transposed() {
 #[test]
 #[ignore]
 fn test_quant_matmul_perf() {
-    let ctx = match MetalContext::new() {
+    let ctx = match <Metal as Backend>::Context::new() {
         Ok(c) => c,
         Err(_) => {
             println!("Metal not available — skipping Perf test");

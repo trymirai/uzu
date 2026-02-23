@@ -6,18 +6,15 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{
-            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
-            MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels},
-        },
-        metal::{
-            Metal,
-            kernel::dsl::{
-                MoeBlockBasesFromPartialsMetalKernel, MoeCountsOffsetsFusedMetalKernel, MoeFinalizeMetalKernel,
-                MoeRouterTopKMetalKernel, MoeScatterBucketsMapMetalKernel,
+        common::{
+            Backend, Kernels,
+            kernel::{
+                MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
+                MoeScatterBucketsMapKernel,
+                moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels},
             },
         },
+        metal::Metal,
     },
 };
 
@@ -119,7 +116,8 @@ fn test_moe_e2e_decode_perf() {
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused kernel");
+        let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
+            .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
@@ -179,7 +177,8 @@ fn test_moe_e2e_prefill_perf() {
         let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
         let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
-        let router_topk = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused kernel");
+        let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
+            .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
@@ -295,15 +294,20 @@ fn test_moe_pipeline_breakdown_decode() {
     let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
     // Create kernel structs (use production-validated encoding logic)
-    let counts_offsets_kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("counts+offsets fused");
-    let scatter_bases_kernel =
-        MoeBlockBasesFromPartialsMetalKernel::new(&ctx).expect("MoeBlockBasesFromPartialsMetalKernel");
+    let counts_offsets_kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("counts+offsets fused");
+    let scatter_bases_kernel = <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx)
+        .expect("<<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel");
     let scatter_map_kernel =
-        MoeScatterBucketsMapMetalKernel::new(&ctx, DataType::BF16).expect("MoeScatterBucketsMapMetalKernel");
+        <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
+            .expect("<<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
     let gather_kernel = MoeGatherKernels::<Metal>::new(&ctx).expect("gather");
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("experts two-pass decode");
-    let finalize_kernel = MoeFinalizeMetalKernel::new(&ctx, DataType::BF16).expect("finalize");
-    let router_topk_fused_kernel = MoeRouterTopKMetalKernel::new(&ctx, DataType::BF16).expect("router+topk fused");
+    let finalize_kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
+    let router_topk_fused_kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
+            .expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
     let router_topk_fused_perf = time_kernel("Router+TopK (FUSED)", 2, 5, || {
