@@ -2,6 +2,7 @@ mod dispatch_descriptor;
 mod full_precision;
 pub mod gemm;
 pub mod gemm_mpp;
+pub mod gemm_scalar_int;
 pub mod gemv;
 mod grid_size;
 mod kernel;

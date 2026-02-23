@@ -2,7 +2,8 @@ use std::ops::DerefMut;
 
 use super::{
     dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
-    gemv::GemvKernel, matmul_arguments::MatmulArguments, split_k::SplitKKernel,
+    gemm_scalar_int::GemmScalarIntKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments,
+    split_k::SplitKKernel,
 };
 use crate::{
     DataType,
@@ -16,8 +17,9 @@ fn is_valid_dtype_combo(a: DataType, b: DataType, out: DataType) -> bool {
             | (DataType::BF16, DataType::BF16, DataType::BF16)
             | (DataType::F32, DataType::F32, DataType::F32)
             | (DataType::I8, DataType::I8, DataType::I32)
+            | (DataType::I8, DataType::I16, DataType::I16)
             | (DataType::I8, DataType::BF16, DataType::BF16)
-            | (DataType::BF16, DataType::BF16, DataType::BF16)
+            | (DataType::I16, DataType::I16, DataType::F32)
     )
 }
 
@@ -29,6 +31,7 @@ pub struct MatmulKernel<B: Backend> {
     gemv: Option<GemvKernel<B>>,
     splitk: Option<SplitKKernel<B>>,
     gemm_mpp: Option<GemmMppKernel<B>>,
+    gemm_scalar_int: Option<GemmScalarIntKernel<B>>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
@@ -55,6 +58,7 @@ where
             gemv: None,
             splitk: None,
             gemm_mpp: None,
+            gemm_scalar_int: None,
             bias_add: None,
         })
     }
@@ -103,6 +107,13 @@ where
         Ok(self.gemm_mpp.as_mut().unwrap())
     }
 
+    fn get_or_create_gemm_scalar_int(&mut self) -> Result<&mut GemmScalarIntKernel<B>, B::Error> {
+        if self.gemm_scalar_int.is_none() {
+            self.gemm_scalar_int = Some(GemmScalarIntKernel::<B>::new(self.a_dtype, self.b_dtype)?);
+        }
+        Ok(self.gemm_scalar_int.as_mut().unwrap())
+    }
+
     fn encode_dispatch_descriptor(
         &mut self,
         context: &B::Context,
@@ -126,6 +137,10 @@ where
             MatmulDispatchDescriptor::GemmMpp(d) => {
                 let gemm_mpp = self.get_or_create_gemm_mpp()?;
                 gemm_mpp.encode(context, arguments, d, encoder)
+            },
+            MatmulDispatchDescriptor::GemmScalarInt(d) => {
+                let gemm_scalar_int = self.get_or_create_gemm_scalar_int()?;
+                gemm_scalar_int.encode(context, arguments, d, encoder)
             },
         }
     }

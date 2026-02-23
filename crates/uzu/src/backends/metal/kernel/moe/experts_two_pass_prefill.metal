@@ -4,9 +4,9 @@
 #include "moe_commons.h"
 
 // ------------------------ helpers ------------------------
-static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
+inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
 
-static inline uint linear_tid(uint3 tid, uint3 tpg) {
+inline uint linear_tid(uint3 tid, uint3 tpg) {
   return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x;
 }
 
