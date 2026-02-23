@@ -1,4 +1,4 @@
-use super::{gemm, gemm_mpp};
+use super::{gemm, gemm_mpp, gemm_scalar_int};
 use crate::{
     DataType,
     backends::{
@@ -12,15 +12,15 @@ pub fn choose_dispatch_descriptor(
     data_type: DataType,
     arguments: &MatmulArguments<Metal>,
 ) -> Result<MatmulDispatchDescriptor, MetalError> {
-    let requires_mpp = matches!(data_type, DataType::I8 | DataType::I32);
-    if requires_mpp {
-        if !context.is_mpp_available() {
-            return Err(MetalError::Generic(format!(
-                "Integer matmul requires MPP (M5+ hardware), got dtype {data_type:?}"
-            )));
+    let is_int_dtype = matches!(data_type, DataType::I8 | DataType::I16 | DataType::I32);
+    if is_int_dtype {
+        if context.is_mpp_available() {
+            return Ok(MatmulDispatchDescriptor::GemmMpp(
+                gemm_mpp::DispatchDescriptor::new(data_type, arguments)?,
+            ));
         }
-        return Ok(MatmulDispatchDescriptor::GemmMpp(
-            gemm_mpp::DispatchDescriptor::new(data_type, arguments)?,
+        return Ok(MatmulDispatchDescriptor::GemmScalarInt(
+            gemm_scalar_int::DispatchDescriptor::new(data_type, arguments)?,
         ));
     }
 

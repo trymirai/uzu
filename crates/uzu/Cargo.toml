@@ -46,6 +46,8 @@ is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
 mpsgraph.workspace = true
+indicatif.workspace = true
+comfy-table.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
