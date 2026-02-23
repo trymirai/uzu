@@ -18,4 +18,6 @@ impl Backend for Cpu {
     type Event = CpuEvent;
     type Kernels = CpuKernels;
     type Error = CpuError;
+
+    const MAX_INLINE_BYTES: usize = usize::MAX;
 }

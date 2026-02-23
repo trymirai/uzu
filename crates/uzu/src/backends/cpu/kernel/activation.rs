@@ -15,31 +15,31 @@ impl ActivationKernel for ActivationCpuKernel {
     type Backend = Cpu;
 
     fn new(
-        context: &<Self::Backend as Backend>::Context,
-        T: DataType,
+        _context: &<Self::Backend as Backend>::Context,
+        _T: DataType,
     ) -> Result<Self, <Self::Backend as Backend>::Error> {
         todo!()
     }
 
     fn encode<'input, 'output, 'encoder>(
         &self,
-        input: impl BufferArg<'input, <Self::Backend as Backend>::NativeBuffer>,
-        output: impl BufferArg<'output, <Self::Backend as Backend>::NativeBuffer>,
-        n: u32,
-        act_type: u32,
-        encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder,
+        _input: impl BufferArg<'input, <Self::Backend as Backend>::NativeBuffer>,
+        _output: impl BufferArg<'output, <Self::Backend as Backend>::NativeBuffer>,
+        _n: u32,
+        _act_type: u32,
+        _encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder,
     ) {
         todo!()
     }
 
     fn encode_if<'input, 'output, 'encoder, 'predicate>(
         &self,
-        input: impl BufferArg<'input, <Self::Backend as Backend>::NativeBuffer>,
-        output: impl BufferArg<'output, <Self::Backend as Backend>::NativeBuffer>,
-        n: u32,
-        act_type: u32,
-        encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder,
-        predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>,
+        _input: impl BufferArg<'input, <Self::Backend as Backend>::NativeBuffer>,
+        _output: impl BufferArg<'output, <Self::Backend as Backend>::NativeBuffer>,
+        _n: u32,
+        _act_type: u32,
+        _encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder,
+        _predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>,
     ) {
         todo!()
     }

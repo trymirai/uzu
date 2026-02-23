@@ -7,6 +7,7 @@ mod matmul;
 mod moe;
 mod norm;
 mod pooling;
+mod quantized_matmul;
 mod rope;
 mod sampling;
 mod ssd;
@@ -23,52 +24,50 @@ use crate::backends::{
                 AttentionTwoPass2CpuKernel, AttentionUpdateKVCacheCpuKernel,
             },
             audio::{
-                AudioAddCpuKernel, AudioCausalConv1dCpuKernel,
-                AudioCausalConvTranspose1dCpuKernel, AudioClampCpuKernel, AudioConv1dCpuKernel,
-                AudioFsqDecodeCpuKernel, AudioFsqEncodeCpuKernel, AudioHalfSnakeCpuKernel,
-                AudioLeakyReluCpuKernel, AudioScaleCpuKernel, AudioTanhCpuKernel,
+                AudioAddCpuKernel, AudioCausalConv1dCpuKernel, AudioCausalConvTranspose1dCpuKernel,
+                AudioClampCpuKernel, AudioConv1dCpuKernel, AudioFsqDecodeCpuKernel, AudioFsqEncodeCpuKernel,
+                AudioHalfSnakeCpuKernel, AudioLeakyReluCpuKernel, AudioScaleCpuKernel, AudioTanhCpuKernel,
             },
             conv::{
-                Conv1dDecodeCpuKernel, Conv1dPackCpuKernel, Conv1dScanCpuKernel,
-                ShortConvDecodeCpuKernel, ShortConvPackCpuKernel, ShortConvPrefillCpuKernel,
-                ShortConvTrieCpuKernel, SigmoidCpuKernel, SplitInProjCpuKernel,
+                Conv1dDecodeCpuKernel, Conv1dPackCpuKernel, Conv1dScanCpuKernel, ShortConvDecodeCpuKernel,
+                ShortConvPackCpuKernel, ShortConvPrefillCpuKernel, ShortConvTrieCpuKernel, SigmoidCpuKernel,
+                SplitInProjCpuKernel,
             },
             embedding::{FullPrecisionEmbeddingLookupCpuKernel, QuantizedEmbeddingLookupCpuKernel},
             matmul::{
-                QuantizedMatmulQmmCpuKernel, QuantizedMatmulQmmTransposed64x64CpuKernel,
-                QuantizedMatmulQmmTransposedCpuKernel, QuantizedMatmulQmvCpuKernel,
-                QuantizedMatmulQmvFastCpuKernel, QuantizedMatmulQvmCpuKernel,
+                MatmulGemmCpuKernel, MatmulGemvCpuKernel, MatmulSplitKAccumBfloat16CpuKernel,
+                MatmulSplitKPartialBfloat16CpuKernel,
             },
             moe::{
-                MoeBuildTileMapCpuKernel, MoeBlockBasesFromPartialsCpuKernel,
-                MoeCountsOffsetsFusedCpuKernel, MoeExpertsDecodeDownFused2DCpuKernel,
-                MoeExpertsDecodePassACpuKernel, MoeExpertsDecodeSinglePassACpuKernel,
-                MoeExpertsDecodeSinglePassBCpuKernel, MoeExpertsPrefillPassACpuKernel,
-                MoeExpertsPrefillPassBCpuKernel, MoeFinalizeCpuKernel, MoeGatherXPerm1DCpuKernel,
-                MoeGatherXPerm2DCpuKernel, MoePassABuildRowMapCpuKernel,
-                MoePassABuildTileMapCpuKernel, MoePassATileCountsCpuKernel,
-                MoePassATileScanCpuKernel, MoePassAWriteDispatchArgsCpuKernel,
-                MoeRouterTopKCpuKernel, MoeScatterBucketsCpuKernel, MoeScatterBucketsMapCpuKernel,
-                MoeTileCountsCpuKernel, MoeTileScanCpuKernel, MoeWriteDispatchArgsCpuKernel,
+                MoeBlockBasesFromPartialsCpuKernel, MoeBuildTileMapCpuKernel, MoeCountsOffsetsFusedCpuKernel,
+                MoeExpertsDecodeDownFused2DCpuKernel, MoeExpertsDecodePassACpuKernel,
+                MoeExpertsDecodeSinglePassACpuKernel, MoeExpertsDecodeSinglePassBCpuKernel,
+                MoeExpertsPrefillPassACpuKernel, MoeExpertsPrefillPassBCpuKernel, MoeFinalizeCpuKernel,
+                MoeGatherXPerm1DCpuKernel, MoeGatherXPerm2DCpuKernel, MoePassABuildRowMapCpuKernel,
+                MoePassABuildTileMapCpuKernel, MoePassATileCountsCpuKernel, MoePassATileScanCpuKernel,
+                MoePassAWriteDispatchArgsCpuKernel, MoeRouterTopKCpuKernel, MoeScatterBucketsCpuKernel,
+                MoeScatterBucketsMapCpuKernel, MoeTileCountsCpuKernel, MoeTileScanCpuKernel,
+                MoeWriteDispatchArgsCpuKernel,
             },
             norm::{
-                KVCacheUpdateCpuKernel, LayerNormCpuKernel, MaskUpdateCpuKernel,
-                MlpGateActMulCpuKernel, QKNormCpuKernel, RMSNormCpuKernel,
+                KVCacheUpdateCpuKernel, LayerNormCpuKernel, MaskUpdateCpuKernel, MlpGateActMulCpuKernel,
+                QKNormCpuKernel, RMSNormCpuKernel,
             },
             pooling::{PoolingClsCpuKernel, PoolingMeanCpuKernel},
+            quantized_matmul::{
+                QuantizedMatmulQmmCpuKernel, QuantizedMatmulQmmTransposed64x64CpuKernel,
+                QuantizedMatmulQmmTransposedCpuKernel, QuantizedMatmulQmvCpuKernel, QuantizedMatmulQmvFastCpuKernel,
+                QuantizedMatmulQvmCpuKernel,
+            },
             rope::RopeCpuKernel,
             sampling::{
-                ArgmaxFinalCpuKernel, ArgmaxMainCpuKernel, ArgmaxSingleCpuKernel, BitmaskCpuKernel,
-                GumbelCpuKernel, MinPCpuKernel, TemperatureCpuKernel, TopKCpuKernel,
-                TopPCpuKernel,
+                ArgmaxFinalCpuKernel, ArgmaxMainCpuKernel, ArgmaxSingleCpuKernel, BitmaskCpuKernel, GumbelCpuKernel,
+                MinPCpuKernel, TemperatureCpuKernel, TopKCpuKernel, TopPCpuKernel,
             },
-            ssd::{
-                SSDPrefill64CpuKernel, SSDPrefillCpuKernel, SSDPrefillSequentialCpuKernel,
-                SSDUpdateCpuKernel,
-            },
+            ssd::{SSDPrefill64CpuKernel, SSDPrefillCpuKernel, SSDPrefillSequentialCpuKernel, SSDUpdateCpuKernel},
             tensor::{
-                TensorAddBiasCpuKernel, TensorAddSwapCpuKernel, TensorCopyCpuKernel,
-                TokenCopySampledCpuKernel, TokenCopyToResultsCpuKernel,
+                TensorAddBiasCpuKernel, TensorAddSwapCpuKernel, TensorCopyCpuKernel, TokenCopySampledCpuKernel,
+                TokenCopyToResultsCpuKernel,
             },
         },
     },
@@ -100,6 +99,10 @@ impl Kernels for CpuKernels {
     type KVCacheUpdateKernel = KVCacheUpdateCpuKernel;
     type LayerNormKernel = LayerNormCpuKernel;
     type MaskUpdateKernel = MaskUpdateCpuKernel;
+    type MatmulGemmKernel = MatmulGemmCpuKernel;
+    type MatmulGemvKernel = MatmulGemvCpuKernel;
+    type MatmulSplitKPartialBfloat16Kernel = MatmulSplitKPartialBfloat16CpuKernel;
+    type MatmulSplitKAccumBfloat16Kernel = MatmulSplitKAccumBfloat16CpuKernel;
     type MlpGateActMulKernel = MlpGateActMulCpuKernel;
     type MoeCountsOffsetsFusedKernel = MoeCountsOffsetsFusedCpuKernel;
     type MoeExpertsDecodeSinglePassAKernel = MoeExpertsDecodeSinglePassACpuKernel;

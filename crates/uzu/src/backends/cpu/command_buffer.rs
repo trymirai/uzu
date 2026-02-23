@@ -3,7 +3,8 @@ use crate::backends::{
     cpu::backend::Cpu,
 };
 
-pub struct CpuCommandBuffer;
+#[derive(Clone)]
+pub struct CpuCommandBuffer {}
 
 impl CommandBuffer for CpuCommandBuffer {
     type Backend = Cpu;
@@ -19,6 +20,29 @@ impl CommandBuffer for CpuCommandBuffer {
         &self,
         callback: impl FnOnce(&<Self::Backend as Backend>::CopyEncoder) -> T,
     ) -> T {
+        todo!()
+    }
+
+    fn encode_wait_for_event(
+        &self,
+        event: &<Self::Backend as Backend>::Event,
+        value: u64,
+    ) {
+        todo!()
+    }
+
+    fn encode_signal_event(
+        &self,
+        event: &<Self::Backend as Backend>::Event,
+        value: u64,
+    ) {
+        todo!()
+    }
+
+    fn add_completed_handler(
+        &self,
+        handler: impl Fn() + 'static,
+    ) {
         todo!()
     }
 

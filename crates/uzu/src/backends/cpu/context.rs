@@ -1,37 +1,62 @@
-use std::rc::Rc;
+use std::{path::Path, rc::Rc};
 
 use crate::backends::{
-    common::{Allocator, Backend, Context},
-    cpu::backend::Cpu,
+    common::{Allocator, Backend, Context, DeviceClass},
+    cpu::{backend::Cpu, buffer::CpuBuffer, command_buffer::CpuCommandBuffer, event::CpuEvent},
 };
 
-pub struct CpuContext {}
+pub struct CpuContext {
+    allocator: Allocator<Cpu>,
+}
 
 impl Context for CpuContext {
     type Backend = Cpu;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error> {
-        todo!()
+        Ok(Rc::new_cyclic(|weak_self| Self {
+            allocator: Allocator::new(weak_self.clone()),
+        }))
+    }
+
+    fn device_class(&self) -> DeviceClass {
+        DeviceClass::Base
+    }
+
+    fn debug_active(&self) -> bool {
+        false
     }
 
     fn allocator(&self) -> &Allocator<Self::Backend> {
-        todo!()
+        &self.allocator
     }
 
     fn create_buffer(
         &self,
         size: usize,
     ) -> Result<<Self::Backend as Backend>::NativeBuffer, <Self::Backend as Backend>::Error> {
-        todo!()
+        Ok(CpuBuffer::new(size))
     }
 
     fn create_command_buffer(
         &self
     ) -> Result<<Self::Backend as Backend>::CommandBuffer, <Self::Backend as Backend>::Error> {
-        todo!()
+        Ok(CpuCommandBuffer {})
     }
 
     fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error> {
-        todo!()
+        Ok(CpuEvent {})
+    }
+
+    fn enable_capture() {}
+
+    fn start_capture(
+        &self,
+        _trace_path: &Path,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        Ok(())
+    }
+
+    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error> {
+        Ok(())
     }
 }
