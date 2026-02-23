@@ -5,6 +5,7 @@ use std::time::Instant;
 use comfy_table::{CellAlignment, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
@@ -45,17 +46,38 @@ impl std::fmt::Display for DtypeCombo {
     }
 }
 
+#[derive(Serialize)]
 struct PerfResult {
-    combo: DtypeCombo,
-    shape: TestShape,
+    combo: String,
+    shape: String,
+    dispatch_path: String,
     duration_ms: f64,
     gflops: f64,
-    status: PerfStatus,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
-enum PerfStatus {
-    Ok,
-    Error(String),
+fn dispatch_path_name(descriptor: &MatmulDispatchDescriptor) -> &'static str {
+    match descriptor {
+        MatmulDispatchDescriptor::Gemv(_) => "Gemv",
+        MatmulDispatchDescriptor::SplitK(_) => "SplitK",
+        MatmulDispatchDescriptor::Gemm(_) => "Gemm",
+        MatmulDispatchDescriptor::GemmMpp(_) => "GemmMpp",
+        MatmulDispatchDescriptor::GemmScalarInt(_) => "GemmScalarInt",
+    }
+}
+
+fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+    if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
+        let path = std::path::Path::new(&dir);
+        std::fs::create_dir_all(path).expect("create results dir");
+        let file = path.join(format!("{test_name}.json"));
+        let wrapper = serde_json::json!({ "device": device, "mpp_available": mpp, "results": results });
+        let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
+        std::fs::write(&file, json).expect("write results");
+        eprintln!("Results written to {}", file.display());
+    }
 }
 
 fn test_shapes() -> Vec<TestShape> {
@@ -119,11 +141,13 @@ fn encode_and_run(
 
 fn benchmark_single(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -> PerfResult {
     let error_result = |msg: String| PerfResult {
-        combo: combo.clone(),
-        shape: shape.clone(),
+        combo: format!("{}", combo),
+        shape: format!("{}", shape),
+        dispatch_path: String::new(),
         duration_ms: 0.0,
         gflops: 0.0,
-        status: PerfStatus::Error(msg),
+        status: "error".into(),
+        error: Some(msg),
     };
 
     let mut kernel = match MatmulKernel::<Metal>::new_mixed(combo.a_dtype, combo.b_dtype, combo.output_dtype) {
@@ -168,6 +192,8 @@ fn benchmark_single(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -
         Ok(d) => d,
         Err(e) => return error_result(format!("dispatch: {e}")),
     };
+
+    let path = dispatch_path_name(&descriptor).to_owned();
 
     for i in 0..WARMUP_ITERATIONS {
         let args = MatmulArguments {
@@ -218,11 +244,13 @@ fn benchmark_single(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -
     let gflops = flops / (duration_ms / 1000.0) / 1e9;
 
     PerfResult {
-        combo: combo.clone(),
-        shape: shape.clone(),
+        combo: format!("{}", combo),
+        shape: format!("{}", shape),
+        dispatch_path: path,
         duration_ms,
         gflops,
-        status: PerfStatus::Ok,
+        status: "ok".into(),
+        error: None,
     }
 }
 
@@ -232,17 +260,25 @@ fn print_results_table(results: &[PerfResult]) {
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Dtype Combo", "Shape (BxKxN)", "GFLOPS", "ms/iter", "Status"]);
+        .set_header(vec!["Dtype Combo", "Shape (BxKxN)", "Dispatch", "GFLOPS", "ms/iter", "Status"]);
 
     for r in results {
-        let (gflops_str, ms_str, status_str) = match &r.status {
-            PerfStatus::Ok => (format!("{:.1}", r.gflops), format!("{:.3}", r.duration_ms), "ok".into()),
-            PerfStatus::Error(msg) => ("-".into(), "-".into(), format!("ERR: {msg}")),
+        let (gflops_str, ms_str, status_str) = if r.status == "ok" {
+            (format!("{:.1}", r.gflops), format!("{:.3}", r.duration_ms), "ok".into())
+        } else {
+            ("-".into(), "-".into(), format!("ERR: {}", r.error.as_deref().unwrap_or("?")))
         };
-        table.add_row(vec![format!("{}", r.combo), format!("{}", r.shape), gflops_str, ms_str, status_str]);
+        table.add_row(vec![
+            r.combo.clone(),
+            r.shape.clone(),
+            r.dispatch_path.clone(),
+            gflops_str,
+            ms_str,
+            status_str,
+        ]);
     }
 
-    for col in [2, 3] {
+    for col in [3, 4] {
         if let Some(column) = table.column_mut(col) {
             column.set_cell_alignment(CellAlignment::Right);
         }
@@ -256,21 +292,15 @@ fn print_results_table(results: &[PerfResult]) {
 fn matmul_perf() {
     let ctx = MetalContext::new().expect("Metal context required");
 
-    let mut combos = vec![DtypeCombo {
-        a_dtype: DataType::BF16,
-        b_dtype: DataType::BF16,
-        output_dtype: DataType::BF16,
-    }];
+    eprintln!("MPP available: {}", ctx.is_mpp_available());
 
-    let mpp_combos = [
+    let combos = vec![
+        DtypeCombo { a_dtype: DataType::BF16, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I8, output_dtype: DataType::I32 },
+        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I16, output_dtype: DataType::I16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
+        DtypeCombo { a_dtype: DataType::I16, b_dtype: DataType::I16, output_dtype: DataType::F32 },
     ];
-    if ctx.is_mpp_available() {
-        combos.extend(mpp_combos);
-    } else {
-        eprintln!("MPP not available, skipping I8 combos");
-    }
 
     let shapes = test_shapes();
     let total = combos.len() * shapes.len();
@@ -303,8 +333,9 @@ fn matmul_perf() {
 
     pb.finish_with_message("done");
     print_results_table(&results);
+    write_json_results("matmul_perf", &ctx.device.name(), ctx.is_mpp_available(), &results);
 
-    let errors: Vec<_> = results.iter().filter(|r| matches!(r.status, PerfStatus::Error(_))).collect();
+    let errors: Vec<_> = results.iter().filter(|r| r.status != "ok").collect();
     if !errors.is_empty() {
         eprintln!("{} / {} cases had errors", errors.len(), results.len());
     }

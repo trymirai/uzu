@@ -5,6 +5,7 @@ use std::time::Instant;
 use comfy_table::{CellAlignment, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
@@ -54,17 +55,32 @@ impl std::fmt::Display for TestShape {
     }
 }
 
+#[derive(Serialize)]
 struct PerfResult {
-    config: QuantConfig,
-    shape: TestShape,
+    config: String,
+    shape: String,
+    dispatch_path: String,
     duration_ms: f64,
     gflops: f64,
-    status: PerfStatus,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
-enum PerfStatus {
-    Ok,
-    Error(String),
+fn quant_dispatch_path(batch: usize, output_dim: usize) -> &'static str {
+    if batch < 32 || output_dim == 1 { "MatrixVector" } else { "MatrixMatrix" }
+}
+
+fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+    if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
+        let path = std::path::Path::new(&dir);
+        std::fs::create_dir_all(path).expect("create results dir");
+        let file = path.join(format!("{test_name}.json"));
+        let wrapper = serde_json::json!({ "device": device, "mpp_available": mpp, "results": results });
+        let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
+        std::fs::write(&file, json).expect("write results");
+        eprintln!("Results written to {}", file.display());
+    }
 }
 
 fn test_configs() -> Vec<QuantConfig> {
@@ -126,11 +142,13 @@ fn benchmark_single(
     shape: &TestShape,
 ) -> PerfResult {
     let error_result = |msg: String| PerfResult {
-        config: config.clone(),
-        shape: shape.clone(),
+        config: format!("{}", config),
+        shape: format!("{}", shape),
+        dispatch_path: String::new(),
         duration_ms: 0.0,
         gflops: 0.0,
-        status: PerfStatus::Error(msg),
+        status: "error".into(),
+        error: Some(msg),
     };
 
     let quant_mode = match config.bits {
@@ -234,11 +252,13 @@ fn benchmark_single(
     let gflops = flops / (duration_ms / 1000.0) / 1e9;
 
     PerfResult {
-        config: config.clone(),
-        shape: shape.clone(),
+        config: format!("{}", config),
+        shape: format!("{}", shape),
+        dispatch_path: quant_dispatch_path(shape.batch, shape.output_dim).to_owned(),
         duration_ms,
         gflops,
-        status: PerfStatus::Ok,
+        status: "ok".into(),
+        error: None,
     }
 }
 
@@ -248,17 +268,25 @@ fn print_results_table(results: &[PerfResult]) {
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Config", "Shape (BxKxN)", "GFLOPS", "ms/iter", "Status"]);
+        .set_header(vec!["Config", "Shape (BxKxN)", "Dispatch", "GFLOPS", "ms/iter", "Status"]);
 
     for r in results {
-        let (gflops_str, ms_str, status_str) = match &r.status {
-            PerfStatus::Ok => (format!("{:.1}", r.gflops), format!("{:.3}", r.duration_ms), "ok".into()),
-            PerfStatus::Error(msg) => ("-".into(), "-".into(), format!("ERR: {msg}")),
+        let (gflops_str, ms_str, status_str) = if r.status == "ok" {
+            (format!("{:.1}", r.gflops), format!("{:.3}", r.duration_ms), "ok".into())
+        } else {
+            ("-".into(), "-".into(), format!("ERR: {}", r.error.as_deref().unwrap_or("?")))
         };
-        table.add_row(vec![format!("{}", r.config), format!("{}", r.shape), gflops_str, ms_str, status_str]);
+        table.add_row(vec![
+            r.config.clone(),
+            r.shape.clone(),
+            r.dispatch_path.clone(),
+            gflops_str,
+            ms_str,
+            status_str,
+        ]);
     }
 
-    for col in [2, 3] {
+    for col in [3, 4] {
         if let Some(column) = table.column_mut(col) {
             column.set_cell_alignment(CellAlignment::Right);
         }
@@ -305,8 +333,9 @@ fn quant_matmul_perf() {
 
     pb.finish_with_message("done");
     print_results_table(&results);
+    write_json_results("quant_matmul_perf", &ctx.device.name(), ctx.is_mpp_available(), &results);
 
-    let errors: Vec<_> = results.iter().filter(|r| matches!(r.status, PerfStatus::Error(_))).collect();
+    let errors: Vec<_> = results.iter().filter(|r| r.status != "ok").collect();
     if !errors.is_empty() {
         eprintln!("{} / {} cases had errors", errors.len(), results.len());
     }

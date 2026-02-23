@@ -40,6 +40,7 @@ objc2-foundation.workspace = true
 
 [dev-dependencies]
 is_close.workspace = true
+serde_json.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
 mpsgraph.workspace = true

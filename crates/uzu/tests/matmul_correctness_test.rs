@@ -5,13 +5,14 @@ use comfy_table::{CellAlignment, ContentArrangement, Table, modifiers::UTF8_ROUN
 use half::bf16;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::Array2;
+use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            kernel::matmul::{MatmulArguments, MatmulKernel},
+            kernel::matmul::{MatmulArguments, MatmulDispatchDescriptor, MatmulKernel},
         },
         metal::{Metal, MetalContext, choose_dispatch_descriptor},
     },
@@ -43,12 +44,36 @@ impl std::fmt::Display for DtypeCombo {
     }
 }
 
+#[derive(Serialize)]
 struct TestResult {
-    combo: DtypeCombo,
-    shape: TestShape,
+    combo: String,
+    shape: String,
+    dispatch_path: String,
     passed: bool,
     max_diff: f64,
     tolerance: f64,
+}
+
+fn dispatch_path_name(descriptor: &MatmulDispatchDescriptor) -> &'static str {
+    match descriptor {
+        MatmulDispatchDescriptor::Gemv(_) => "Gemv",
+        MatmulDispatchDescriptor::SplitK(_) => "SplitK",
+        MatmulDispatchDescriptor::Gemm(_) => "Gemm",
+        MatmulDispatchDescriptor::GemmMpp(_) => "GemmMpp",
+        MatmulDispatchDescriptor::GemmScalarInt(_) => "GemmScalarInt",
+    }
+}
+
+fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+    if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
+        let path = std::path::Path::new(&dir);
+        std::fs::create_dir_all(path).expect("create results dir");
+        let file = path.join(format!("{test_name}.json"));
+        let wrapper = serde_json::json!({ "device": device, "mpp_available": mpp, "results": results });
+        let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
+        std::fs::write(&file, json).expect("write results");
+        eprintln!("Results written to {}", file.display());
+    }
 }
 
 fn test_shapes() -> Vec<TestShape> {
@@ -86,6 +111,8 @@ fn test_shapes() -> Vec<TestShape> {
 fn tolerance_for(combo: &DtypeCombo, shape: &TestShape) -> f64 {
     match (combo.a_dtype, combo.b_dtype, combo.output_dtype) {
         (DataType::I8, DataType::I8, DataType::I32) => 0.0,
+        (DataType::I8, DataType::I16, DataType::I16) => 0.0,
+        (DataType::I16, DataType::I16, DataType::F32) => 0.0,
         (DataType::I8, DataType::BF16, DataType::BF16) => {
             0.05 * (shape.input_dim as f64 / 1024.0).sqrt()
         },
@@ -97,47 +124,32 @@ fn tolerance_for(combo: &DtypeCombo, shape: &TestShape) -> f64 {
     }
 }
 
-fn generate_a_data(combo: &DtypeCombo, count: usize) -> Vec<u8> {
-    match combo.a_dtype {
+fn generate_typed_data(dtype: DataType, count: usize, modulus: usize, offset: i64) -> Vec<u8> {
+    match dtype {
         DataType::I8 => {
-            let data: Vec<i8> = (0..count).map(|i| ((i % 13) as i8) - 6).collect();
+            let data: Vec<i8> = (0..count).map(|i| ((i % modulus) as i8).wrapping_add(offset as i8)).collect();
+            bytemuck::cast_slice(&data).to_vec()
+        },
+        DataType::I16 => {
+            let data: Vec<i16> = (0..count).map(|i| ((i % modulus) as i16) + offset as i16).collect();
             bytemuck::cast_slice(&data).to_vec()
         },
         DataType::BF16 => {
-            let data: Vec<bf16> = (0..count).map(|i| bf16::from_f32(((i % 13) as f32) * 0.01 - 0.06)).collect();
+            let data: Vec<bf16> = (0..count)
+                .map(|i| bf16::from_f32(((i % modulus) as f32) * 0.01 + offset as f32 * 0.01))
+                .collect();
             bytemuck::cast_slice(&data).to_vec()
         },
-        _ => panic!("Unsupported a_dtype: {:?}", combo.a_dtype),
+        other => panic!("Unsupported dtype for data generation: {other:?}"),
     }
 }
 
-fn generate_b_data(combo: &DtypeCombo, count: usize) -> Vec<u8> {
-    match combo.b_dtype {
-        DataType::I8 => {
-            let data: Vec<i8> = (0..count).map(|i| ((i % 17) as i8) - 8).collect();
-            bytemuck::cast_slice(&data).to_vec()
-        },
-        DataType::BF16 => {
-            let data: Vec<bf16> = (0..count).map(|i| bf16::from_f32(((i % 17) as f32) * 0.02 - 0.15)).collect();
-            bytemuck::cast_slice(&data).to_vec()
-        },
-        _ => panic!("Unsupported b_dtype: {:?}", combo.b_dtype),
-    }
-}
-
-fn a_bytes_to_f64(combo: &DtypeCombo, bytes: &[u8]) -> Vec<f64> {
-    match combo.a_dtype {
+fn bytes_to_f64(dtype: DataType, bytes: &[u8]) -> Vec<f64> {
+    match dtype {
         DataType::I8 => bytemuck::cast_slice::<u8, i8>(bytes).iter().map(|&x| x as f64).collect(),
+        DataType::I16 => bytemuck::cast_slice::<u8, i16>(bytes).iter().map(|&x| x as f64).collect(),
         DataType::BF16 => bytemuck::cast_slice::<u8, bf16>(bytes).iter().map(|x| x.to_f64()).collect(),
-        _ => panic!("Unsupported a_dtype: {:?}", combo.a_dtype),
-    }
-}
-
-fn b_bytes_to_f64(combo: &DtypeCombo, bytes: &[u8]) -> Vec<f64> {
-    match combo.b_dtype {
-        DataType::I8 => bytemuck::cast_slice::<u8, i8>(bytes).iter().map(|&x| x as f64).collect(),
-        DataType::BF16 => bytemuck::cast_slice::<u8, bf16>(bytes).iter().map(|x| x.to_f64()).collect(),
-        _ => panic!("Unsupported b_dtype: {:?}", combo.b_dtype),
+        other => panic!("Unsupported dtype for conversion: {other:?}"),
     }
 }
 
@@ -145,29 +157,39 @@ fn output_to_f64(combo: &DtypeCombo, buf: &objc2::runtime::ProtocolObject<dyn MT
     unsafe {
         let ptr = buf.contents().as_ptr();
         match combo.output_dtype {
+            DataType::I16 => {
+                let slice = std::slice::from_raw_parts(ptr as *const i16, count);
+                slice.iter().map(|&x| x as f64).collect()
+            },
             DataType::I32 => {
                 let slice = std::slice::from_raw_parts(ptr as *const i32, count);
+                slice.iter().map(|&x| x as f64).collect()
+            },
+            DataType::F32 => {
+                let slice = std::slice::from_raw_parts(ptr as *const f32, count);
                 slice.iter().map(|&x| x as f64).collect()
             },
             DataType::BF16 => {
                 let slice = std::slice::from_raw_parts(ptr as *const bf16, count);
                 slice.iter().map(|x| x.to_f64()).collect()
             },
-            _ => panic!("Unsupported output_dtype: {:?}", combo.output_dtype),
+            other => panic!("Unsupported output_dtype: {other:?}"),
         }
     }
 }
 
 fn ndarray_reference(combo: &DtypeCombo, a_bytes: &[u8], b_bytes: &[u8], shape: &TestShape) -> Vec<f64> {
-    let a_f64 = a_bytes_to_f64(combo, a_bytes);
-    let b_f64 = b_bytes_to_f64(combo, b_bytes);
+    let a_f64 = bytes_to_f64(combo.a_dtype, a_bytes);
+    let b_f64 = bytes_to_f64(combo.b_dtype, b_bytes);
 
     let a_arr = Array2::from_shape_vec((shape.batch, shape.input_dim), a_f64).expect("A shape");
     let b_arr = Array2::from_shape_vec((shape.output_dim, shape.input_dim), b_f64).expect("B shape");
     let result = a_arr.dot(&b_arr.t());
 
     match combo.output_dtype {
+        DataType::I16 => result.iter().map(|&x| (x as i16) as f64).collect(),
         DataType::I32 => result.iter().map(|&x| (x as i32) as f64).collect(),
+        DataType::F32 => result.iter().map(|&x| (x as f32) as f64).collect(),
         DataType::BF16 => result.iter().map(|&x| bf16::from_f64(x).to_f64()).collect(),
         _ => result.iter().copied().collect(),
     }
@@ -179,7 +201,7 @@ fn run_metal_matmul(
     a_bytes: &[u8],
     b_bytes: &[u8],
     shape: &TestShape,
-) -> Vec<f64> {
+) -> (Vec<f64>, String) {
     let a_buf = ctx
         .device
         .new_buffer_with_data(a_bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
@@ -222,14 +244,14 @@ fn run_metal_matmul(
     kernel.encode_with_descriptor(ctx, arguments, &descriptor, &mut command_buffer).expect("encode");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_to_f64(combo, &d_buf, shape.batch * shape.output_dim)
+    (output_to_f64(combo, &d_buf, shape.batch * shape.output_dim), path)
 }
 
 fn run_correctness_case(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -> TestResult {
-    let a_bytes = generate_a_data(combo, shape.batch * shape.input_dim);
-    let b_bytes = generate_b_data(combo, shape.output_dim * shape.input_dim);
+    let a_bytes = generate_typed_data(combo.a_dtype, shape.batch * shape.input_dim, 13, -6);
+    let b_bytes = generate_typed_data(combo.b_dtype, shape.output_dim * shape.input_dim, 17, -8);
 
-    let metal_result = run_metal_matmul(ctx, combo, &a_bytes, &b_bytes, shape);
+    let (metal_result, dispatch_path) = run_metal_matmul(ctx, combo, &a_bytes, &b_bytes, shape);
     let reference = ndarray_reference(combo, &a_bytes, &b_bytes, shape);
 
     let tolerance = tolerance_for(combo, shape);
@@ -240,8 +262,9 @@ fn run_correctness_case(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShap
         .fold(0.0f64, f64::max);
 
     TestResult {
-        combo: combo.clone(),
-        shape: shape.clone(),
+        combo: format!("{}", combo),
+        shape: format!("{}", shape),
+        dispatch_path,
         passed: max_diff <= tolerance,
         max_diff,
         tolerance,
@@ -254,19 +277,20 @@ fn print_results_table(results: &[TestResult]) {
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Dtype Combo", "Shape (BxKxN)", "Status", "Max Diff", "Tolerance"]);
+        .set_header(vec!["Dtype Combo", "Shape (BxKxN)", "Dispatch", "Status", "Max Diff", "Tolerance"]);
 
     for r in results {
         table.add_row(vec![
-            format!("{}", r.combo),
-            format!("{}", r.shape),
+            r.combo.clone(),
+            r.shape.clone(),
+            r.dispatch_path.clone(),
             if r.passed { "PASS".into() } else { "FAIL".into() },
             format!("{:.6}", r.max_diff),
             format!("{:.6}", r.tolerance),
         ]);
     }
 
-    for col in [3, 4] {
+    for col in [4, 5] {
         if let Some(column) = table.column_mut(col) {
             column.set_cell_alignment(CellAlignment::Right);
         }
@@ -280,21 +304,15 @@ fn print_results_table(results: &[TestResult]) {
 fn matmul_correctness() {
     let ctx = MetalContext::new().expect("Metal context required");
 
-    let mut combos = vec![DtypeCombo {
-        a_dtype: DataType::BF16,
-        b_dtype: DataType::BF16,
-        output_dtype: DataType::BF16,
-    }];
+    eprintln!("MPP available: {}", ctx.is_mpp_available());
 
-    let mpp_combos = [
+    let combos = vec![
+        DtypeCombo { a_dtype: DataType::BF16, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I8, output_dtype: DataType::I32 },
+        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I16, output_dtype: DataType::I16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
+        DtypeCombo { a_dtype: DataType::I16, b_dtype: DataType::I16, output_dtype: DataType::F32 },
     ];
-    if ctx.is_mpp_available() {
-        combos.extend(mpp_combos);
-    } else {
-        eprintln!("MPP not available, skipping I8 combos");
-    }
 
     let shapes = test_shapes();
     let total = combos.len() * shapes.len();
@@ -318,12 +336,13 @@ fn matmul_correctness() {
 
     pb.finish_with_message("done");
     print_results_table(&results);
+    write_json_results("matmul_correctness", &ctx.device.name(), ctx.is_mpp_available(), &results);
 
     let failures: Vec<_> = results.iter().filter(|r| !r.passed).collect();
     if !failures.is_empty() {
         eprintln!("\n{} / {} cases failed:", failures.len(), results.len());
         for f in &failures {
-            eprintln!("  {} {} max_diff={:.6} > tol={:.6}", f.combo, f.shape, f.max_diff, f.tolerance);
+            eprintln!("  {} {} [{}] max_diff={:.6} > tol={:.6}", f.combo, f.shape, f.dispatch_path, f.max_diff, f.tolerance);
         }
         panic!("{} matmul correctness cases failed", failures.len());
     }

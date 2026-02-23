@@ -12,7 +12,7 @@ use crate::{
 
 impl DispatchDescriptor {
     pub fn new(
-        data_type: DataType,
+        _data_type: DataType,
         arguments: &MatmulArguments<Metal>,
     ) -> Result<Self, MetalError> {
         let m = arguments.batch;

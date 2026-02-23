@@ -4,6 +4,7 @@ use comfy_table::{ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, pres
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use objc2::rc::Retained;
+use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
@@ -52,12 +53,30 @@ impl std::fmt::Display for TestShape {
     }
 }
 
+#[derive(Serialize)]
 struct TestResult {
-    config: QuantConfig,
-    shape: TestShape,
+    config: String,
+    shape: String,
+    dispatch_path: String,
     passed: bool,
     mismatch_count: usize,
     total_outputs: usize,
+}
+
+fn quant_dispatch_path(batch: usize, output_dim: usize) -> &'static str {
+    if batch < 32 || output_dim == 1 { "MatrixVector" } else { "MatrixMatrix" }
+}
+
+fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+    if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
+        let path = std::path::Path::new(&dir);
+        std::fs::create_dir_all(path).expect("create results dir");
+        let file = path.join(format!("{test_name}.json"));
+        let wrapper = serde_json::json!({ "device": device, "mpp_available": mpp, "results": results });
+        let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
+        std::fs::write(&file, json).expect("write results");
+        eprintln!("Results written to {}", file.display());
+    }
 }
 
 fn test_configs() -> Vec<QuantConfig> {
@@ -416,8 +435,9 @@ fn run_quant_matmul_case(
         .count();
 
     TestResult {
-        config: config.clone(),
-        shape: shape.clone(),
+        config: format!("{}", config),
+        shape: format!("{}", shape),
+        dispatch_path: quant_dispatch_path(shape.batch, shape.output_dim).to_owned(),
         passed: mismatch_count == 0,
         mismatch_count,
         total_outputs: shape.batch * shape.output_dim,
@@ -430,12 +450,13 @@ fn print_results_table(results: &[TestResult]) {
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Config", "Shape (BxKxN)", "Status", "Mismatches"]);
+        .set_header(vec!["Config", "Shape (BxKxN)", "Dispatch", "Status", "Mismatches"]);
 
     for r in results {
         table.add_row(vec![
-            format!("{}", r.config),
-            format!("{}", r.shape),
+            r.config.clone(),
+            r.shape.clone(),
+            r.dispatch_path.clone(),
             if r.passed { "PASS".into() } else { "FAIL".into() },
             format!("{}/{}", r.mismatch_count, r.total_outputs),
         ]);
@@ -475,12 +496,13 @@ fn quant_matmul_correctness() {
 
     pb.finish_with_message("done");
     print_results_table(&results);
+    write_json_results("quant_matmul_correctness", &ctx.device.name(), ctx.is_mpp_available(), &results);
 
     let failures: Vec<_> = results.iter().filter(|r| !r.passed).collect();
     if !failures.is_empty() {
         eprintln!("\n{} / {} cases failed:", failures.len(), results.len());
         for f in &failures {
-            eprintln!("  {} {} mismatches={}/{}", f.config, f.shape, f.mismatch_count, f.total_outputs);
+            eprintln!("  {} {} [{}] mismatches={}/{}", f.config, f.shape, f.dispatch_path, f.mismatch_count, f.total_outputs);
         }
         panic!("{} quant matmul correctness cases failed", failures.len());
     }
