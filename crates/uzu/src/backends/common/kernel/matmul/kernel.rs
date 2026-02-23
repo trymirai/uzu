@@ -17,9 +17,7 @@ fn is_valid_dtype_combo(a: DataType, b: DataType, out: DataType) -> bool {
             | (DataType::BF16, DataType::BF16, DataType::BF16)
             | (DataType::F32, DataType::F32, DataType::F32)
             | (DataType::I8, DataType::I8, DataType::I32)
-            | (DataType::I8, DataType::I16, DataType::I16)
             | (DataType::I8, DataType::BF16, DataType::BF16)
-            | (DataType::I16, DataType::I16, DataType::F32)
     )
 }
 

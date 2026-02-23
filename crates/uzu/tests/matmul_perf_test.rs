@@ -297,9 +297,7 @@ fn matmul_perf() {
     let combos = vec![
         DtypeCombo { a_dtype: DataType::BF16, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I8, output_dtype: DataType::I32 },
-        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I16, output_dtype: DataType::I16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
-        DtypeCombo { a_dtype: DataType::I16, b_dtype: DataType::I16, output_dtype: DataType::F32 },
     ];
 
     let shapes = test_shapes();
