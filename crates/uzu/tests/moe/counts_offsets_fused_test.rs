@@ -7,11 +7,11 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::{MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel},
-        metal::{
-            MetalContext,
-            kernel::dsl::{MoeCountsOffsetsFusedMetalKernel, MoeRouterTopKMetalKernel},
+        common::{
+            Backend, Kernels,
+            kernel::{MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel},
         },
+        metal::Metal,
     },
 };
 
@@ -50,7 +50,7 @@ fn cpu_offsets_from_counts(counts: &[u32]) -> (Vec<u32>, u32) {
 }
 
 fn gen_topk_ids_from_logits(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     t: usize,
     e: usize,
     k: usize,
@@ -77,7 +77,8 @@ fn gen_topk_ids_from_logits(
     // Use fused router+topk kernel
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let router_topk_encoder = cb.new_compute_command_encoder().expect("router_topk encoder");
-    let router_topk = MoeRouterTopKMetalKernel::new(ctx, DataType::BF16).expect("router_topk kernel");
+    let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16)
+        .expect("router_topk kernel");
     router_topk.encode(
         &input_buf,
         &weight_buf,
@@ -123,7 +124,8 @@ fn test_counts_offsets_fused_parity_random() {
             let num_tiles = ((e + 511) / 512).max(1);
             let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-            let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+            let kernel =
+                <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
             let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
             let encoder = cb.new_compute_command_encoder().expect("encoder");
 
@@ -174,7 +176,8 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
     kernel.encode(&topk_ids_buf, &offsets_buf, &sum_k_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);
@@ -197,7 +200,8 @@ fn test_counts_offsets_fused_edge_cases() {
     let num_tiles = ((e + 511) / 512).max(1);
     let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
-    let kernel = MoeCountsOffsetsFusedMetalKernel::new(&ctx).expect("fused kernel");
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let encoder = cb.new_compute_command_encoder().expect("encoder");
     kernel.encode(&topk_ids_buf, &offsets_buf, &sum_k_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);

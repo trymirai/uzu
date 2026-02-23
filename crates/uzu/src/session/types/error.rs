@@ -46,6 +46,8 @@ pub enum Error {
     GrammarReject,
     #[error("Token {0} out of grammar vocabulary range (0..{1})")]
     TokenOutOfGrammarRange(u64, usize),
+    #[error("Capture failed")]
+    CaptureFailed,
     #[error("Classifier error: {0}")]
     Classifier(#[from] ClassifierError),
 }

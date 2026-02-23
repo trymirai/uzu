@@ -49,14 +49,4 @@ struct GEMMSpiltKParams {
   const int gemm_k_iterations_aligned;
 };
 
-struct GEMMAddMMParams {
-  const int ldc;
-  const int fdc;
-
-  const int64_t batch_stride_c;
-
-  const float alpha;
-  const float beta;
-};
-
 } // namespace steel

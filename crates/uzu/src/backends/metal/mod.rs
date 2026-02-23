@@ -4,9 +4,9 @@ mod context;
 mod copy_encoder;
 mod error;
 mod event;
-pub mod kernel;
+mod kernel;
 mod metal_extensions;
 mod native_buffer;
 
 pub use backend::Metal;
-pub use context::MetalContext;
+pub use kernel::matmul::choose_dispatch_descriptor;

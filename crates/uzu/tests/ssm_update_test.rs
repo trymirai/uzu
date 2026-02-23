@@ -6,8 +6,8 @@ use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTL
 use uzu::{
     DataType,
     backends::{
-        common::{Context, kernel::SSDUpdateKernel},
-        metal::{MetalContext, kernel::dsl::SSDUpdateMetalKernel},
+        common::{Backend, Context, Kernels, kernel::SSDUpdateKernel},
+        metal::Metal,
     },
 };
 
@@ -174,7 +174,7 @@ fn ssd_update_ref_bf16(
 
 #[test]
 fn ssd_update_with_z_bf16() {
-    let Some(ctx) = MetalContext::new().ok() else {
+    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
         eprintln!("Skipping: no Metal device");
         return;
     };
@@ -238,7 +238,7 @@ fn ssd_update_with_z_bf16() {
         .new_buffer(bsz * h * dh * n * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let kernel = SSDUpdateMetalKernel::new(&ctx, DataType::BF16).unwrap();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16).unwrap();
     let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
     let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");

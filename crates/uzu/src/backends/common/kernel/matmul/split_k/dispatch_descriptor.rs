@@ -1,39 +1,29 @@
-use metal::MTLSize;
-
-use super::{pipeline_configuration::PipelineConfiguration, tile_configuration::select_tile_configuration};
+use super::{
+    super::{grid_size::GridSize, matmul_arguments::MatmulArguments},
+    specialization::Specialization,
+    tile_configuration::{TileConfiguration, select_tile_configuration},
+};
 use crate::{
     DataType,
-    backends::metal::{
-        context::MetalContext,
-        error::MetalError,
-        kernel::matmul::common::{GEMMSpiltKParams as SplitKGEMMParams, MatmulArguments},
-    },
+    backends::common::{Backend, gpu_types::GEMMSpiltKParams as SplitKGEMMParams},
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct DispatchDescriptor {
-    pub(crate) pipeline_configuration: PipelineConfiguration,
-    pub(crate) params: SplitKGEMMParams,
-    pub(crate) partition_count: i32,
-    pub(crate) output_elements_per_partition: i32,
-    pub(crate) accumulator_bytes: usize,
-    pub(crate) partial_threadgroups: MTLSize,
-    pub(crate) partial_threads_per_threadgroup: MTLSize,
-    pub(crate) accum_total_threads: MTLSize,
-    pub(crate) accum_threads_per_threadgroup: MTLSize,
+pub struct DispatchDescriptor {
+    pub params: SplitKGEMMParams,
+    pub partition_count: i32,
+    pub output_elements_per_partition: i32,
+    pub accumulator_bytes: usize,
+    pub partial_threadgroups: GridSize,
+    pub accum_total_threads: GridSize,
 }
 
 impl DispatchDescriptor {
-    pub(crate) fn try_new(
-        _context: &MetalContext,
+    pub fn try_new<B: Backend>(
         data_type: DataType,
-        arguments: &MatmulArguments,
-    ) -> Result<Option<Self>, MetalError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MetalError::Generic(format!("Unsupported dtype for Split-K: {:?}", data_type)));
-        }
-
-        if arguments.c.is_some() {
+        arguments: &MatmulArguments<B>,
+    ) -> Result<Option<Self>, B::Error> {
+        if !matches!(data_type, DataType::BF16) {
             return Ok(None);
         }
 
@@ -51,13 +41,16 @@ impl DispatchDescriptor {
         let mn_aligned = (m % tile.tile_rows) == 0 && (n % tile.tile_cols) == 0;
         let k_aligned = (k % tile.tile_depth) == 0;
 
-        let pipeline_configuration = PipelineConfiguration {
+        let specialization = Specialization {
             tile,
-            transpose_a: arguments.transpose_a,
             transpose_b: arguments.transpose_b,
             mn_aligned,
             k_aligned,
         };
+
+        if !is_supported_specialization(&specialization) {
+            return Ok(None);
+        }
 
         let tile_count_m = (m + tile.tile_rows - 1) / tile.tile_rows;
         let tile_count_n = (n + tile.tile_cols - 1) / tile.tile_cols;
@@ -84,23 +77,25 @@ impl DispatchDescriptor {
             gemm_k_iterations_aligned: gemm_k_iterations,
         };
 
-        let partial_threads_per_threadgroup =
-            MTLSize::new(32, tile.warps_per_col as usize, tile.warps_per_row as usize);
-        let partial_threadgroups = MTLSize::new(tile_count_n as usize, tile_count_m as usize, partition_count as usize);
+        let partial_threadgroups = GridSize {
+            x: tile_count_n as usize,
+            y: tile_count_m as usize,
+            z: partition_count as usize,
+        };
 
-        let accum_total_threads = MTLSize::new(n as usize, m as usize, 1);
-        let accum_threads_per_threadgroup = MTLSize::new(16.min(n as usize), 16.min(m as usize), 1);
+        let accum_total_threads = GridSize {
+            x: n as usize,
+            y: m as usize,
+            z: 1,
+        };
 
         Ok(Some(Self {
-            pipeline_configuration,
             params,
             partition_count,
             output_elements_per_partition,
             accumulator_bytes,
             partial_threadgroups,
-            partial_threads_per_threadgroup,
             accum_total_threads,
-            accum_threads_per_threadgroup,
         }))
     }
 }
@@ -134,4 +129,16 @@ fn should_use_splitk(
     let n_tiles = n / 16;
     let k_tiles = k / 16;
     (m_tiles * n_tiles) <= 32 && k_tiles >= 8
+}
+
+fn is_supported_specialization(config: &Specialization) -> bool {
+    let supported_tile = TileConfiguration {
+        tile_rows: 16,
+        tile_cols: 32,
+        tile_depth: 16,
+        warps_per_row: 2,
+        warps_per_col: 2,
+    };
+
+    config.tile == supported_tile && config.transpose_b && !config.mn_aligned && config.k_aligned
 }

@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crate::utils::{DeviceClass, ModelSize};
+use crate::{
+    backends::common::{Backend, Context, DeviceClass},
+    utils::ModelSize,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AsyncBatchSize {
@@ -15,15 +18,16 @@ impl Default for AsyncBatchSize {
 }
 
 impl AsyncBatchSize {
-    pub fn resolve(
+    pub fn resolve<B: Backend>(
         &self,
         model_path: &Path,
+        context: &B::Context,
     ) -> usize {
         match self {
             AsyncBatchSize::Default => {
-                let device = DeviceClass::detect();
+                let device_class = context.device_class();
                 let model_size = ModelSize::from_path(model_path);
-                default_batch_size(device, model_size)
+                default_batch_size(device_class, model_size)
             },
             AsyncBatchSize::Custom(value) => *value,
         }

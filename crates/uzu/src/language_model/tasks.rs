@@ -1,30 +1,27 @@
 use std::mem::size_of;
 
-use metal::{BufferExt, MTLBuffer};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-
 use super::LanguageModelGeneratorContext;
 use crate::{
-    backends::{common::Context, metal::Metal},
+    backends::common::{Backend, Context, NativeBuffer},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::ForwardPassState,
 };
 
-pub struct LanguageModelGeneratorEncodedTask {
+pub struct LanguageModelGeneratorEncodedTask<B: Backend> {
     pub key: String,
-    predicate_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    predicate_buffer: B::NativeBuffer,
 }
 
-impl LanguageModelGeneratorEncodedTask {
-    pub fn predicate_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
+impl<B: Backend> LanguageModelGeneratorEncodedTask<B> {
+    pub fn predicate_buffer(&self) -> &B::NativeBuffer {
         &self.predicate_buffer
     }
 
     pub fn disable_execution(&self) {
+        let ptr = self.predicate_buffer.cpu_ptr().as_ptr() as *mut u32;
+
         unsafe {
-            let ptr = self.predicate_buffer.contents().as_ptr() as *mut u32;
             *ptr = 1;
-            self.predicate_buffer.did_modify_range(0..size_of::<u32>());
         }
     }
 }
@@ -81,12 +78,12 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         )
     }
 
-    pub fn create_state(
+    pub fn create_state<B: Backend>(
         &self,
-        context: &mut LanguageModelGeneratorContext<Metal>,
+        context: &mut LanguageModelGeneratorContext<B>,
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         should_fill_attention_bias: bool,
-    ) -> ForwardPassState<Metal> {
+    ) -> ForwardPassState<B> {
         ForwardPassState::new_llm(
             context.context.clone(),
             &context.decoder_config,
@@ -110,13 +107,13 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         )
     }
 
-    pub fn build_encoded_task(
+    pub fn build_encoded_task<B: Backend>(
         &self,
-        context: &LanguageModelGeneratorContext<Metal>,
-        state: &mut ForwardPassState<Metal>,
-        parameters: &EncodingParameters<Metal>,
+        context: &LanguageModelGeneratorContext<B>,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters<B>,
         key: String,
-    ) -> LanguageModelGeneratorEncodedTask {
+    ) -> LanguageModelGeneratorEncodedTask<B> {
         context.executables.encode(state, parameters, &context.command_buffer);
 
         LanguageModelGeneratorEncodedTask {

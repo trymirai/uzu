@@ -16,4 +16,8 @@ impl Backend for Metal {
     type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;
     type Error = MetalError;
+
+    // Metal's set_bytes supports up to 4KB per bound value.
+    // https://developer.apple.com/documentation/metal/mtlcomputecommandencoder/setbytes(_:length:index:)?language=objc
+    const MAX_INLINE_BYTES: usize = 4096;
 }

@@ -6,11 +6,14 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::moe::{
-            MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
-            MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
+        common::{
+            Backend,
+            kernel::moe::{
+                MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
+                MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
+            },
         },
-        metal::{Metal, MetalContext},
+        metal::Metal,
     },
 };
 
@@ -35,7 +38,7 @@ fn build_offsets(
 }
 
 fn run_decode_case(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     name: &str,
     t: usize,
     d_model: usize,
@@ -174,7 +177,7 @@ fn test_two_pass_decode_speed() {
 }
 
 fn run_two_pass_prefill_case(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     name: &str,
     t: usize,
     d_model: usize,
@@ -310,7 +313,7 @@ fn test_two_pass_prefill_speed() {
 }
 
 fn run_fused_single_token_case(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     name: &str,
     d_model: usize,
     d_ff: usize,
@@ -450,7 +453,7 @@ fn test_single_token_indirect_vs_fused() {
 }
 
 fn run_indirect_decode_timed(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     t: usize,
     d_model: usize,
     d_ff: usize,
@@ -557,7 +560,7 @@ fn run_indirect_decode_timed(
 }
 
 fn run_fused_decode_timed(
-    ctx: &MetalContext,
+    ctx: &<Metal as Backend>::Context,
     d_model: usize,
     d_ff: usize,
     e: usize,

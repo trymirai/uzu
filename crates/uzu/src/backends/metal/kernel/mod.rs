@@ -1,5 +1,7 @@
-use crate::backends::common::kernel::matmul::MatmulKernels;
-
+use crate::backends::{
+    common::kernel::matmul::{MatmulKernel, MatmulKernels},
+    metal::Metal,
+};
 pub mod dsl {
     include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 }
@@ -7,8 +9,6 @@ pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default
 
 pub mod matmul;
 
-pub use matmul::{MatmulArguments, MatmulKernel};
-
 impl MatmulKernels for dsl::MetalKernels {
-    type FullPrecisionMatmulKernel = MatmulKernel;
+    type FullPrecisionMatmulKernel = MatmulKernel<Metal>;
 }

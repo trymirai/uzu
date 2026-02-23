@@ -1,11 +1,11 @@
 //! GEMM kernel parameter structs.
 //!
 //! Field names use uppercase for matrix dimensions (M, N, K) to match
-//! standard BLAS/GEMM convention and generated Metal headers.
+//! standard BLAS/GEMM convention and generated shader headers.
 
 #![allow(non_snake_case)]
 
-/// Main GEMM parameters passed to Metal kernels as constant buffer.
+/// Main GEMM parameters passed to backend kernels as constant buffer.
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct GEMMParams {
@@ -41,34 +41,4 @@ pub struct GEMMSpiltKParams {
     pub split_k_partition_stride: i32,
     pub split_k_partition_size: i32,
     pub gemm_k_iterations_aligned: i32,
-}
-
-/// Split-K MLP Fused GEMM parameters.
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct GEMMSpiltKMlpFusedParams {
-    pub M: i32,
-    pub N: i32,
-    pub K: i32,
-    pub lda: i32,
-    pub ldb: i32,
-    pub ldc: i32,
-    pub tiles_n: i32,
-    pub tiles_m: i32,
-    pub split_k_partitions: i32,
-    pub split_k_partition_stride: i32,
-    pub split_k_partition_size: i32,
-    pub gemm_k_iterations_aligned: i32,
-    pub hidden_dim: i32,
-}
-
-/// AddMM parameters (alpha * A @ B + beta * C).
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct GEMMAddMMParams {
-    pub ldc: i32,
-    pub fdc: i32,
-    pub batch_stride_c: i64,
-    pub alpha: f32,
-    pub beta: f32,
 }

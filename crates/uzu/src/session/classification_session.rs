@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tokenizers::Tokenizer;
 
 use crate::{
+    backends::metal::Metal,
     classifier::{ClassificationOutput, Classifier},
     config::ModelMetadata,
     session::{
@@ -17,7 +18,7 @@ pub struct ClassificationSession {
     #[allow(dead_code)]
     model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    classifier: Classifier,
+    classifier: Classifier<Metal>,
     input_processor: Box<dyn InputProcessor>,
 }
 

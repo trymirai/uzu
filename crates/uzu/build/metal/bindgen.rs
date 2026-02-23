@@ -52,7 +52,10 @@ pub fn bindgen(
     let entry_name = dynamic_mangle(kernel.name.as_ref(), variants_kernel_format);
 
     let base_index = specialize_indices.get(&kernel.name).copied();
-    let (specialize_args, specialize_setup): (Vec<TokenStream>, Vec<TokenStream>) = kernel
+    let (specialize_args, (specialize_setup, specialize_arg_names)): (
+        Vec<TokenStream>,
+        (Vec<TokenStream>, Vec<Ident>),
+    ) = kernel
         .arguments
         .iter()
         .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
@@ -68,7 +71,7 @@ pub fn bindgen(
             let setup = quote! {
                 function_constants.set_value(&#arg_name, #idx);
             };
-            (arg_def, setup)
+            (arg_def, (setup, arg_name))
         })
         .unzip();
 
@@ -85,6 +88,12 @@ pub fn bindgen(
         quote! { Some(&function_constants) }
     } else {
         quote! { None }
+    };
+    let cache_key = if has_specialize {
+        let format_str = format!("{{}}{}", repeat_n("_{}", specialize_arg_names.len()).join(""));
+        quote! { &format!(#format_str, &entry_name #(, #specialize_arg_names)*) }
+    } else {
+        quote! { &entry_name }
     };
 
     let mut arg_count: usize = 0;
@@ -305,8 +314,9 @@ pub fn bindgen(
             type Backend = crate::backends::metal::Metal;
 
             fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
+                let entry_name = #entry_name;
                 #function_constants_init
-                let pipeline = context.compute_pipeline_state(&#entry_name, #function_constants_arg)?;
+                let pipeline = context.compute_pipeline_state(#cache_key, &entry_name, #function_constants_arg)?;
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 

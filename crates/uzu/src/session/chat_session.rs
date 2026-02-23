@@ -19,6 +19,7 @@ use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
+    backends::metal::Metal,
     config::{MixerConfig, ModelMetadata},
     forward_pass::cache_layers::CacheLayer,
     language_model::{
@@ -54,8 +55,8 @@ pub struct ChatSession {
     tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
-    llm: Option<LanguageModelGenerator>,
-    static_context: Option<Context>,
+    llm: Option<LanguageModelGenerator<Metal>>,
+    static_context: Option<Context<Metal>>,
 }
 
 impl ChatSession {
@@ -204,9 +205,9 @@ impl ChatSession {
     fn extend(
         &mut self,
         input: Input,
-        context: Option<&Context>,
+        context: Option<&Context<Metal>>,
         config: RunConfig,
-    ) -> Result<(Output, Context), Error> {
+    ) -> Result<(Output, Context<Metal>), Error> {
         self.reconfigure_language_model_generator(context)?;
         let output = self.run_internal(input, config, None::<fn(Output) -> bool>)?;
         let new_context = self.build_context_from_language_model_generator()?;
@@ -321,7 +322,10 @@ impl ChatSession {
             language_model_generator.decoding_config.generate_suffix_length() == 1 && compiled_grammar.is_none();
 
         let generate_output = if can_use_async {
-            let batch_size = language_model_generator.decoding_config.async_batch_size.resolve(&self.model_path);
+            let batch_size = language_model_generator
+                .decoding_config
+                .async_batch_size
+                .resolve::<Metal>(&self.model_path, language_model_generator.context.context.as_ref());
             Self::run_async_batch(
                 &self.tokenizer,
                 &self.output_parser,
@@ -351,7 +355,7 @@ impl ChatSession {
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
         run_context: &RunContext,
-        language_model_generator: &mut LanguageModelGenerator,
+        language_model_generator: &mut LanguageModelGenerator<Metal>,
         compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
@@ -409,7 +413,7 @@ impl ChatSession {
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
         run_context: &RunContext,
-        llm: &mut LanguageModelGenerator,
+        llm: &mut LanguageModelGenerator<Metal>,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
         batch_size: usize,
@@ -516,7 +520,7 @@ impl ChatSession {
 
     fn reconfigure_language_model_generator(
         &mut self,
-        context: Option<&Context>,
+        context: Option<&Context<Metal>>,
     ) -> Result<(), Error> {
         let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
         language_model_generator.reset_state();
@@ -565,7 +569,7 @@ impl ChatSession {
         Ok(())
     }
 
-    fn build_context_from_language_model_generator(&self) -> Result<Context, Error> {
+    fn build_context_from_language_model_generator(&self) -> Result<Context<Metal>, Error> {
         let language_model_generator = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
         let cache_layers =
             language_model_generator.context.cache_layers.borrow().clone(&language_model_generator.context.context);
@@ -581,7 +585,7 @@ impl ChatSession {
 impl ChatSession {
     fn check_finish_reason(
         run_context: &RunContext,
-        language_model_generator: &LanguageModelGenerator,
+        language_model_generator: &LanguageModelGenerator<Metal>,
         new_tokens: &[u64],
     ) -> Option<FinishReason> {
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
@@ -617,7 +621,7 @@ impl ChatSession {
         tokenizer: &Tokenizer,
         output_parser: &OutputParser,
         run_context: &RunContext,
-        language_model_generator: &LanguageModelGenerator,
+        language_model_generator: &LanguageModelGenerator<Metal>,
         generate_results: &[GenerateResult],
         generate_durations: &[f64],
         finish_reason: Option<FinishReason>,
