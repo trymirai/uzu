@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use crate::backends::{
     common::{Allocator, Backend, Context, DeviceClass},
@@ -34,17 +34,17 @@ impl Context for CpuContext {
         &self,
         size: usize,
     ) -> Result<<Self::Backend as Backend>::NativeBuffer, <Self::Backend as Backend>::Error> {
-        Ok(CpuBuffer::new(size))
+        Ok(CpuBuffer::new(Box::from(vec![0; size])))
     }
 
     fn create_command_buffer(
         &self
     ) -> Result<<Self::Backend as Backend>::CommandBuffer, <Self::Backend as Backend>::Error> {
-        Ok(CpuCommandBuffer {})
+        Ok(CpuCommandBuffer::new())
     }
 
     fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error> {
-        Ok(CpuEvent {})
+        Ok(CpuEvent::new(RefCell::new(0)))
     }
 
     fn enable_capture() {}

@@ -1,8 +1,8 @@
 use crate::backends::{
     common::Backend,
     cpu::{
-        buffer::CpuBuffer, command_buffer::CpuCommandBuffer, compute_encoder::CpuComputeEncoder, context::CpuContext,
-        copy_encoder::CpuCopyEncoder, error::CpuError, event::CpuEvent, kernel::CpuKernels,
+        buffer::CpuBuffer, command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, event::CpuEvent,
+        kernel::CpuKernels,
     },
 };
 
@@ -13,8 +13,8 @@ impl Backend for Cpu {
     type Context = CpuContext;
     type NativeBuffer = CpuBuffer;
     type CommandBuffer = CpuCommandBuffer;
-    type ComputeEncoder = CpuComputeEncoder;
-    type CopyEncoder = CpuCopyEncoder;
+    type ComputeEncoder = CpuCommandBuffer;
+    type CopyEncoder = CpuCommandBuffer;
     type Event = CpuEvent;
     type Kernels = CpuKernels;
     type Error = CpuError;
