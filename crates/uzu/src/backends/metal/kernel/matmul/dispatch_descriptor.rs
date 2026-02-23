@@ -12,7 +12,7 @@ pub fn choose_dispatch_descriptor(
     data_type: DataType,
     arguments: &MatmulArguments<Metal>,
 ) -> Result<MatmulDispatchDescriptor, MetalError> {
-    let is_int_dtype = matches!(data_type, DataType::I8 | DataType::I16 | DataType::I32);
+    let is_int_dtype = matches!(data_type, DataType::I8 | DataType::I32);
     if is_int_dtype {
         if context.is_mpp_available() {
             return Ok(MatmulDispatchDescriptor::GemmMpp(

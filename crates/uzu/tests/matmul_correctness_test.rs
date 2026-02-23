@@ -111,8 +111,6 @@ fn test_shapes() -> Vec<TestShape> {
 fn tolerance_for(combo: &DtypeCombo, shape: &TestShape) -> f64 {
     match (combo.a_dtype, combo.b_dtype, combo.output_dtype) {
         (DataType::I8, DataType::I8, DataType::I32) => 0.0,
-        (DataType::I8, DataType::I16, DataType::I16) => 0.0,
-        (DataType::I16, DataType::I16, DataType::F32) => 0.0,
         (DataType::I8, DataType::BF16, DataType::BF16) => {
             0.05 * (shape.input_dim as f64 / 1024.0).sqrt()
         },
@@ -130,10 +128,6 @@ fn generate_typed_data(dtype: DataType, count: usize, modulus: usize, offset: i6
             let data: Vec<i8> = (0..count).map(|i| ((i % modulus) as i8).wrapping_add(offset as i8)).collect();
             bytemuck::cast_slice(&data).to_vec()
         },
-        DataType::I16 => {
-            let data: Vec<i16> = (0..count).map(|i| ((i % modulus) as i16) + offset as i16).collect();
-            bytemuck::cast_slice(&data).to_vec()
-        },
         DataType::BF16 => {
             let data: Vec<bf16> = (0..count)
                 .map(|i| bf16::from_f32(((i % modulus) as f32) * 0.01 + offset as f32 * 0.01))
@@ -147,7 +141,6 @@ fn generate_typed_data(dtype: DataType, count: usize, modulus: usize, offset: i6
 fn bytes_to_f64(dtype: DataType, bytes: &[u8]) -> Vec<f64> {
     match dtype {
         DataType::I8 => bytemuck::cast_slice::<u8, i8>(bytes).iter().map(|&x| x as f64).collect(),
-        DataType::I16 => bytemuck::cast_slice::<u8, i16>(bytes).iter().map(|&x| x as f64).collect(),
         DataType::BF16 => bytemuck::cast_slice::<u8, bf16>(bytes).iter().map(|x| x.to_f64()).collect(),
         other => panic!("Unsupported dtype for conversion: {other:?}"),
     }
@@ -157,10 +150,6 @@ fn output_to_f64(combo: &DtypeCombo, buf: &objc2::runtime::ProtocolObject<dyn MT
     unsafe {
         let ptr = buf.contents().as_ptr();
         match combo.output_dtype {
-            DataType::I16 => {
-                let slice = std::slice::from_raw_parts(ptr as *const i16, count);
-                slice.iter().map(|&x| x as f64).collect()
-            },
             DataType::I32 => {
                 let slice = std::slice::from_raw_parts(ptr as *const i32, count);
                 slice.iter().map(|&x| x as f64).collect()
@@ -187,7 +176,6 @@ fn ndarray_reference(combo: &DtypeCombo, a_bytes: &[u8], b_bytes: &[u8], shape: 
     let result = a_arr.dot(&b_arr.t());
 
     match combo.output_dtype {
-        DataType::I16 => result.iter().map(|&x| (x as i16) as f64).collect(),
         DataType::I32 => result.iter().map(|&x| (x as i32) as f64).collect(),
         DataType::F32 => result.iter().map(|&x| (x as f32) as f64).collect(),
         DataType::BF16 => result.iter().map(|&x| bf16::from_f64(x).to_f64()).collect(),
@@ -309,9 +297,7 @@ fn matmul_correctness() {
     let combos = vec![
         DtypeCombo { a_dtype: DataType::BF16, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I8, output_dtype: DataType::I32 },
-        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I16, output_dtype: DataType::I16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
-        DtypeCombo { a_dtype: DataType::I16, b_dtype: DataType::I16, output_dtype: DataType::F32 },
     ];
 
     let shapes = test_shapes();
