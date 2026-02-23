@@ -568,6 +568,7 @@ dependencies = [
  "comfy-table",
  "console 0.16.2",
  "ctrlc",
+ "futures",
  "indicatif 0.18.3",
  "inquire",
  "rocket",
