@@ -76,8 +76,6 @@ metal = [
     "dep:block2",
     "dep:metal",
 ]
-metal-nax = []
-
 tracing = []
 audio-runtime = []
 

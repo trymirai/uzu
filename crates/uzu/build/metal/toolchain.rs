@@ -90,9 +90,14 @@ impl MetalStd {
     }
 }
 
-impl Default for MetalStd {
-    fn default() -> Self {
-        if cfg!(feature = "metal-nax") {
+impl MetalStd {
+    pub fn for_source(path: &Path) -> Self {
+        let is_mpp = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.contains("_mpp"))
+            .unwrap_or(false);
+        if is_mpp {
             Self::Metal4_0
         } else {
             Self::Metal3_1
@@ -100,10 +105,15 @@ impl Default for MetalStd {
     }
 }
 
+impl Default for MetalStd {
+    fn default() -> Self {
+        Self::Metal3_1
+    }
+}
+
 #[derive(Debug)]
 pub struct MetalToolchain {
     sdk: MetalSdk,
-    std: MetalStd,
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
     include_dirs: Box<[PathBuf]>,
@@ -112,7 +122,6 @@ pub struct MetalToolchain {
 impl MetalToolchain {
     pub fn from_env_with_include_dir(include_dir: Option<PathBuf>) -> anyhow::Result<Self> {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
-        let std = MetalStd::default();
 
         let opt_flags = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
             "0" => {
@@ -128,9 +137,6 @@ impl MetalToolchain {
         };
 
         let extra_options = Box::new([
-            OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os())),
-            // NOTE: Previous build.rs script didn't forward metal compiler warnings to cargo warnings, the new one does.
-            // This is temporary to avoid warning spam without modifying unrelated things in the same pull request as introducing the dsl and converting kernels
             OsString::from("-Wno-sign-compare"),
             OsString::from("-Wno-macro-redefined"),
             OsString::from("-Wno-unused-variable"),
@@ -140,7 +146,6 @@ impl MetalToolchain {
 
         Ok(Self {
             sdk,
-            std,
             opt_flags,
             extra_options,
             include_dirs,
@@ -162,19 +167,30 @@ impl MetalToolchain {
         }
     }
 
+    fn add_std_args(
+        &self,
+        cmd: &mut Command,
+        metal_std: &MetalStd,
+    ) {
+        cmd.arg(format!("-std={}", metal_std.to_str()));
+        cmd.arg(OsString::from(format!("-m{}-version-min={}", self.sdk.os(), metal_std.min_os())));
+    }
+
     pub async fn analyze(
         &self,
         path: impl AsRef<Path>,
     ) -> anyhow::Result<(impl Iterator<Item = MetalKernelInfo>, impl Iterator<Item = Box<str>>)> {
         let path = path.as_ref();
+        let metal_std = MetalStd::for_source(path);
 
         let depfile_path = NamedTempFile::new().context("cannot create temporary file")?;
 
         let mut cmd = self.xcrun();
         cmd.arg("metal")
-            .args(["-x", "metal"])
-            .arg(format!("-std={}", self.std.to_str()))
-            .args(self.extra_options.as_ref());
+            .args(["-x", "metal"]);
+
+        self.add_std_args(&mut cmd, &metal_std);
+        cmd.args(self.extra_options.as_ref());
 
         self.add_include_dirs(&mut cmd);
 
@@ -236,12 +252,14 @@ impl MetalToolchain {
         footer: impl AsRef<str>,
         output: impl AsRef<Path>,
     ) -> anyhow::Result<Option<Box<str>>> {
+        let metal_std = MetalStd::for_source(source.as_ref());
         let mut cmd = self.xcrun();
         cmd.arg("metal")
             .arg("-c")
-            .args(["-x", "metal"])
-            .arg(format!("-std={}", self.std.to_str()))
-            .args(self.extra_options.as_ref())
+            .args(["-x", "metal"]);
+
+        self.add_std_args(&mut cmd, &metal_std);
+        cmd.args(self.extra_options.as_ref())
             .args(self.opt_flags.as_ref());
 
         self.add_include_dirs(&mut cmd);
