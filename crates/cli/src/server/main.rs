@@ -49,5 +49,6 @@ pub async fn run_server(
         session_wrapper: SessionWrapper::new(session),
     };
 
-    let _ = rocket::custom(config).manage(state).mount("/", routes![handle_chat_completions, handle_models]).launch().await;
+    let _ =
+        rocket::custom(config).manage(state).mount("/", routes![handle_chat_completions, handle_models]).launch().await;
 }
