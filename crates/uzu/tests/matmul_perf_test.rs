@@ -28,7 +28,10 @@ struct TestShape {
 }
 
 impl std::fmt::Display for TestShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         write!(f, "{}x{}x{}", self.batch, self.input_dim, self.output_dim)
     }
 }
@@ -41,7 +44,10 @@ struct DtypeCombo {
 }
 
 impl std::fmt::Display for DtypeCombo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         write!(f, "{:?}*{:?}->{:?}", self.a_dtype, self.b_dtype, self.output_dtype)
     }
 }
@@ -51,6 +57,8 @@ struct PerfResult {
     combo: String,
     shape: String,
     dispatch_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mpp_used: Option<bool>,
     duration_ms: f64,
     gflops: f64,
     status: String,
@@ -68,7 +76,12 @@ fn dispatch_path_name(descriptor: &MatmulDispatchDescriptor) -> &'static str {
     }
 }
 
-fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+fn write_json_results<T: Serialize>(
+    test_name: &str,
+    device: &str,
+    mpp: bool,
+    results: &[T],
+) {
     if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
         let path = std::path::Path::new(&dir);
         std::fs::create_dir_all(path).expect("create results dir");
@@ -86,33 +99,64 @@ fn test_shapes() -> Vec<TestShape> {
     for &batch in &[512, 1024, 2048] {
         for &output_dim in &[512, 1024, 2048] {
             for &input_dim in &[1, 2, 4, 8, 16, 32, 64] {
-                shapes.push(TestShape { batch, input_dim, output_dim });
+                shapes.push(TestShape {
+                    batch,
+                    input_dim,
+                    output_dim,
+                });
             }
         }
     }
 
     let model_dims: &[(usize, usize)] = &[
-        (896, 896), (896, 4864), (4864, 896),
-        (1024, 1024), (1024, 4096), (4096, 1024),
-        (1152, 1152), (1152, 6912), (6912, 1152),
-        (1536, 1536), (1536, 8960), (8960, 1536),
-        (2048, 2048), (2048, 8192), (8192, 2048),
-        (2560, 2560), (2560, 10240), (10240, 2560),
-        (3072, 3072), (3072, 8192), (8192, 3072),
-        (3584, 3584), (3584, 18944), (18944, 3584),
-        (4096, 4096), (4096, 14336), (14336, 4096),
-        (5120, 5120), (5120, 17408), (17408, 5120),
+        (896, 896),
+        (896, 4864),
+        (4864, 896),
+        (1024, 1024),
+        (1024, 4096),
+        (4096, 1024),
+        (1152, 1152),
+        (1152, 6912),
+        (6912, 1152),
+        (1536, 1536),
+        (1536, 8960),
+        (8960, 1536),
+        (2048, 2048),
+        (2048, 8192),
+        (8192, 2048),
+        (2560, 2560),
+        (2560, 10240),
+        (10240, 2560),
+        (3072, 3072),
+        (3072, 8192),
+        (8192, 3072),
+        (3584, 3584),
+        (3584, 18944),
+        (18944, 3584),
+        (4096, 4096),
+        (4096, 14336),
+        (14336, 4096),
+        (5120, 5120),
+        (5120, 17408),
+        (17408, 5120),
     ];
     for &(input_dim, output_dim) in model_dims {
         for &batch in &[1, 128] {
-            shapes.push(TestShape { batch, input_dim, output_dim });
+            shapes.push(TestShape {
+                batch,
+                input_dim,
+                output_dim,
+            });
         }
     }
 
     shapes
 }
 
-fn fill_buffer_random(buf: &objc2::runtime::ProtocolObject<dyn MTLBuffer>, byte_count: usize) {
+fn fill_buffer_random(
+    buf: &objc2::runtime::ProtocolObject<dyn MTLBuffer>,
+    byte_count: usize,
+) {
     let ptr = buf.contents().as_ptr() as *mut u8;
     let slice = unsafe { std::slice::from_raw_parts_mut(ptr, byte_count) };
     for (i, byte) in slice.iter_mut().enumerate() {
@@ -126,11 +170,7 @@ fn encode_and_run(
     arguments: MatmulArguments<Metal>,
     descriptor: &MatmulDispatchDescriptor,
 ) -> Result<(), String> {
-    let cb = ctx
-        .command_queue
-        .command_buffer()
-        .ok_or("Failed to create command buffer")?
-        .to_owned();
+    let cb = ctx.command_queue.command_buffer().ok_or("Failed to create command buffer")?.to_owned();
     let enc = cb.new_compute_command_encoder().ok_or("Failed to create compute encoder")?;
     kernel.encode_with_descriptor(ctx, arguments, descriptor, &enc).map_err(|e| format!("encode: {e}"))?;
     enc.end_encoding();
@@ -139,11 +179,16 @@ fn encode_and_run(
     Ok(())
 }
 
-fn benchmark_single(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -> PerfResult {
+fn benchmark_single(
+    ctx: &MetalContext,
+    combo: &DtypeCombo,
+    shape: &TestShape,
+) -> PerfResult {
     let error_result = |msg: String| PerfResult {
         combo: format!("{}", combo),
         shape: format!("{}", shape),
         dispatch_path: String::new(),
+        mpp_used: None,
         duration_ms: 0.0,
         gflops: 0.0,
         status: "error".into(),
@@ -188,12 +233,14 @@ fn benchmark_single(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -
     };
     MatmulKernel::<Metal>::apply_batch_collapse(&mut arguments);
 
-    let descriptor = match choose_dispatch_descriptor(ctx, combo.a_dtype, &arguments) {
+    let descriptor = match choose_dispatch_descriptor(ctx, combo.a_dtype, combo.b_dtype, combo.output_dtype, &arguments)
+    {
         Ok(d) => d,
         Err(e) => return error_result(format!("dispatch: {e}")),
     };
 
     let path = dispatch_path_name(&descriptor).to_owned();
+    let mpp_used = Some(matches!(descriptor, MatmulDispatchDescriptor::GemmMpp(_)));
 
     for i in 0..WARMUP_ITERATIONS {
         let args = MatmulArguments {
@@ -247,6 +294,7 @@ fn benchmark_single(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -
         combo: format!("{}", combo),
         shape: format!("{}", shape),
         dispatch_path: path,
+        mpp_used,
         duration_ms,
         gflops,
         status: "ok".into(),
@@ -260,7 +308,7 @@ fn print_results_table(results: &[PerfResult]) {
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Dtype Combo", "Shape (BxKxN)", "Dispatch", "GFLOPS", "ms/iter", "Status"]);
+        .set_header(vec!["Dtype Combo", "Shape (BxKxN)", "Dispatch", "MPP Used", "GFLOPS", "ms/iter", "Status"]);
 
     for r in results {
         let (gflops_str, ms_str, status_str) = if r.status == "ok" {
@@ -268,17 +316,23 @@ fn print_results_table(results: &[PerfResult]) {
         } else {
             ("-".into(), "-".into(), format!("ERR: {}", r.error.as_deref().unwrap_or("?")))
         };
+        let mpp_used = match r.mpp_used {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "-",
+        };
         table.add_row(vec![
             r.combo.clone(),
             r.shape.clone(),
             r.dispatch_path.clone(),
+            mpp_used.into(),
             gflops_str,
             ms_str,
             status_str,
         ]);
     }
 
-    for col in [3, 4] {
+    for col in [4, 5] {
         if let Some(column) = table.column_mut(col) {
             column.set_cell_alignment(CellAlignment::Right);
         }
@@ -295,9 +349,21 @@ fn matmul_perf() {
     eprintln!("MPP available: {}", ctx.is_mpp_available());
 
     let combos = vec![
-        DtypeCombo { a_dtype: DataType::BF16, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
-        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I8, output_dtype: DataType::I32 },
-        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
+        DtypeCombo {
+            a_dtype: DataType::BF16,
+            b_dtype: DataType::BF16,
+            output_dtype: DataType::BF16,
+        },
+        DtypeCombo {
+            a_dtype: DataType::I8,
+            b_dtype: DataType::I8,
+            output_dtype: DataType::I32,
+        },
+        DtypeCombo {
+            a_dtype: DataType::I8,
+            b_dtype: DataType::BF16,
+            output_dtype: DataType::BF16,
+        },
     ];
 
     let shapes = test_shapes();
@@ -314,8 +380,7 @@ fn matmul_perf() {
 
     let pb = ProgressBar::new(total as u64);
     pb.set_style(
-        ProgressStyle::with_template("{bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .expect("progress style"),
+        ProgressStyle::with_template("{bar:40} {pos}/{len} [{elapsed_precise}] {msg}").expect("progress style"),
     );
 
     let mut results = Vec::with_capacity(total);

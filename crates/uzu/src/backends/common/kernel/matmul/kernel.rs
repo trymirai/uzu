@@ -2,19 +2,24 @@ use std::ops::DerefMut;
 
 use super::{
     dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
-    gemm_scalar_int::GemmScalarIntKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments,
-    split_k::SplitKKernel,
+    gemm_scalar_int::GemmScalarIntKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments, split_k::SplitKKernel,
 };
 use crate::{
     DataType,
     backends::common::{Backend, CommandBuffer, Kernels, kernel::TensorAddBiasKernel},
 };
 
-fn is_valid_dtype_combo(a: DataType, b: DataType, out: DataType) -> bool {
+fn is_valid_dtype_combo(
+    a: DataType,
+    b: DataType,
+    out: DataType,
+) -> bool {
     matches!(
         (a, b, out),
         (DataType::F16, DataType::F16, DataType::F16)
+            | (DataType::F16, DataType::F16, DataType::F32)
             | (DataType::BF16, DataType::BF16, DataType::BF16)
+            | (DataType::BF16, DataType::BF16, DataType::F32)
             | (DataType::F32, DataType::F32, DataType::F32)
             | (DataType::I8, DataType::I8, DataType::I32)
             | (DataType::I8, DataType::BF16, DataType::BF16)
@@ -41,7 +46,11 @@ where
         Self::new_mixed(data_type, data_type, data_type)
     }
 
-    pub fn new_mixed(a_dtype: DataType, b_dtype: DataType, output_dtype: DataType) -> Result<Self, B::Error> {
+    pub fn new_mixed(
+        a_dtype: DataType,
+        b_dtype: DataType,
+        output_dtype: DataType,
+    ) -> Result<Self, B::Error> {
         if !is_valid_dtype_combo(a_dtype, b_dtype, output_dtype) {
             return Err(B::Error::from(format!(
                 "Unsupported dtype combo for MatmulKernel: {a_dtype:?} * {b_dtype:?} -> {output_dtype:?}"
@@ -100,14 +109,14 @@ where
 
     fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, B::Error> {
         if self.gemm_mpp.is_none() {
-            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.a_dtype)?);
+            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
         }
         Ok(self.gemm_mpp.as_mut().unwrap())
     }
 
     fn get_or_create_gemm_scalar_int(&mut self) -> Result<&mut GemmScalarIntKernel<B>, B::Error> {
         if self.gemm_scalar_int.is_none() {
-            self.gemm_scalar_int = Some(GemmScalarIntKernel::<B>::new(self.a_dtype, self.b_dtype)?);
+            self.gemm_scalar_int = Some(GemmScalarIntKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
         }
         Ok(self.gemm_scalar_int.as_mut().unwrap())
     }

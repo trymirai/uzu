@@ -55,8 +55,14 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
 
         MatmulKernel::<Metal>::apply_batch_collapse(&mut matmul_arguments);
 
-        let descriptor = choose_dispatch_descriptor(context, self.output_dtype, &matmul_arguments)
-            .expect("Failed to create dispatch descriptor for full precision matmul");
+        let descriptor = dispatch_descriptor::choose_dispatch_descriptor(
+            context,
+            self.a_dtype,
+            self.b_dtype,
+            self.output_dtype,
+            &matmul_arguments,
+        )
+        .expect("Failed to create dispatch descriptor for full precision matmul");
 
         self.encode_with_descriptor(context, matmul_arguments, &descriptor, encoder)
             .expect("Failed to encode full precision matmul kernel");

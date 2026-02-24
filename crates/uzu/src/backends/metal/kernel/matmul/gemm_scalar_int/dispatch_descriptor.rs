@@ -56,6 +56,9 @@ impl DispatchDescriptor {
             z: arguments.batch_count as usize,
         };
 
-        Ok(Self { params, threadgroups })
+        Ok(Self {
+            params,
+            threadgroups,
+        })
     }
 }

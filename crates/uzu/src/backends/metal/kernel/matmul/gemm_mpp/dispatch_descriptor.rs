@@ -19,12 +19,11 @@ impl DispatchDescriptor {
         let n = arguments.output_dim;
         let k = arguments.input_dim;
 
-        let (block_rows, block_cols, block_depth, warps_per_row, warps_per_col) =
-            if m >= 128 && n >= 128 {
-                (128, 128, 512, 4i64, 4i64)
-            } else {
-                (64, 64, 256, 2i64, 2i64)
-            };
+        let (block_rows, block_cols, block_depth, warps_per_row, warps_per_col) = if m >= 128 && n >= 128 {
+            (128, 128, 512, 4i64, 4i64)
+        } else {
+            (64, 64, 256, 2i64, 2i64)
+        };
 
         let swizzle_log = 0i32;
 

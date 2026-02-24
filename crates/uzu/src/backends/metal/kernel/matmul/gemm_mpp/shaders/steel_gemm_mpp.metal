@@ -13,31 +13,93 @@ using GEMMParams = steel::GEMMParams;
 } // namespace uzu
 
 ///////////////////////////////////////////////////////////////////////////////
-// AccumType selection: int8_t -> int32_t, others -> float
+// Supported MPP A/B/output combinations
 ///////////////////////////////////////////////////////////////////////////////
 
-template <typename T>
-struct MppAccumType { using type = float; };
+template <typename AType, typename BType, typename OutType>
+struct MppCombo {
+  using IsSupported = metal::false_type;
+  using AccumType = float;
+};
 
 template <>
-struct MppAccumType<int8_t> { using type = int32_t; };
+struct MppCombo<half, half, half> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<half, half, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<bfloat16_t, bfloat16_t, bfloat16_t> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<bfloat16_t, bfloat16_t, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<float, float, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<int8_t, int8_t, int> {
+  using IsSupported = metal::true_type;
+  using AccumType = int32_t;
+};
+
+template <>
+struct MppCombo<int8_t, bfloat16_t, bfloat16_t> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<int8_t, bfloat16_t, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<bfloat16_t, int8_t, bfloat16_t> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<bfloat16_t, int8_t, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 // MPP GEMM implementation -- templated over tile config
 ///////////////////////////////////////////////////////////////////////////////
 
 template <
-    typename T,
+    typename AType,
+    typename BType,
     typename AccumType,
+    typename OutType,
     short BM_,
     short BN_,
     short BK_,
     short WM_,
     short WN_>
 METAL_FUNC void gemm_mpp_impl(
-    const device T* a,
-    const device T* b,
-    device T* d,
+    const device AType* a,
+    const device BType* b,
+    device OutType* d,
     const constant GEMMParams* params,
     const bool align_m,
     const bool align_n,
@@ -109,7 +171,8 @@ METAL_FUNC void gemm_mpp_impl(
     dispatch_bool(align_m || !is_unaligned_sm, [&](auto kAlignedM) {
       dispatch_bool(align_n || !is_unaligned_sn, [&](auto kAlignedN) {
         Dtile = mpp_gemm_loop<
-            T,
+            AType,
+            BType,
             SM,
             SN,
             SK,
@@ -145,12 +208,14 @@ METAL_FUNC void gemm_mpp_impl(
 // DSL kernel entry point
 ///////////////////////////////////////////////////////////////////////////////
 
-template <typename T>
-VARIANTS(T, half, bfloat)
+template <typename AType, typename BType, typename OutType>
+VARIANTS(AType, half, bfloat, float, int8_t)
+VARIANTS(BType, half, bfloat, float, int8_t)
+VARIANTS(OutType, half, bfloat, float, int)
 KERNEL(MatmulGemmMpp)(
-    const device T* a,
-    const device T* b,
-    device T* d,
+    const device AType* a,
+    const device BType* b,
+    device OutType* d,
     const constant uzu::matmul::GEMMParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -175,22 +240,24 @@ KERNEL(MatmulGemmMpp)(
     return;
   }
 
-  using AccumT = typename MppAccumType<T>::type;
+  IF_CONSTEXPR((MppCombo<AType, BType, OutType>::IsSupported::value)) {
+    using AccumT = typename MppCombo<AType, BType, OutType>::AccumType;
 
-  // Dispatch to the correct compile-time tile config
-  if (block_rows == 128 && block_cols == 128 && block_depth == 512 &&
-      warps_per_row == 4 && warps_per_col == 4) {
-    gemm_mpp_impl<T, AccumT, 128, 128, 512, 4, 4>(
-        a, b, d, params,
-        align_m, align_n, align_k,
-        simd.group_idx,
-        uint3(group_x, group_y, group_z));
-  } else {
-    gemm_mpp_impl<T, AccumT, 64, 64, 256, 2, 2>(
-        a, b, d, params,
-        align_m, align_n, align_k,
-        simd.group_idx,
-        uint3(group_x, group_y, group_z));
+    // Dispatch to the correct compile-time tile config
+    if (block_rows == 128 && block_cols == 128 && block_depth == 512 &&
+        warps_per_row == 4 && warps_per_col == 4) {
+      gemm_mpp_impl<AType, BType, AccumT, OutType, 128, 128, 512, 4, 4>(
+          a, b, d, params,
+          align_m, align_n, align_k,
+          simd.group_idx,
+          uint3(group_x, group_y, group_z));
+    } else {
+      gemm_mpp_impl<AType, BType, AccumT, OutType, 64, 64, 256, 2, 2>(
+          a, b, d, params,
+          align_m, align_n, align_k,
+          simd.group_idx,
+          uint3(group_x, group_y, group_z));
+    }
   }
 }
 
