@@ -418,8 +418,8 @@ where
             is_prefilling: false,
         };
 
-        let async_positions = Some((&async_positions_buffer, pass_idx));
-        let async_seeds = Some((&async_seeds_buffer, pass_idx));
+        let async_positions = Some((async_positions_buffer.clone(), pass_idx));
+        let async_seeds = Some((async_seeds_buffer.clone(), pass_idx));
 
         let should_fill_attention_bias = false; // we fill it once in prepare
         let skip_token_ids_copy = pass_idx > 0;
@@ -479,13 +479,19 @@ where
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
-        let sampling_output_buffer = sampling_output.borrow().buffer().clone();
-        let token_ids_buffer = self.context.scratch_buffers.token_ids.borrow().buffer().clone();
+        let sampling_output_binding = sampling_output.borrow();
+        let sampling_output_buffer = sampling_output_binding.buffer().clone();
+        let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
+        let token_ids_buffer = token_ids_binding.buffer().clone();
 
         root_command_buffer.with_compute_encoder(|encoder| {
-            self.context.token_copy_sampled.encode(&sampling_output_buffer, &token_ids_buffer, encoder);
+            self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
             let results_offset = slot * std::mem::size_of::<u32>();
-            self.context.token_copy_results.encode(&sampling_output_buffer, (&results_buffer, results_offset), encoder);
+            self.context.token_copy_results.encode(
+                sampling_output_buffer,
+                (results_buffer.as_ref(), results_offset),
+                encoder,
+            );
         });
 
         // Scatter + register for all transformer layers

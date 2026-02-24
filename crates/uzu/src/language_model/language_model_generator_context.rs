@@ -34,13 +34,13 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: B::NativeBuffer,
+    pub positions: Rc<B::NativeBuffer>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: B::NativeBuffer,
+    pub seeds: Rc<B::NativeBuffer>,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: B::NativeBuffer,
+    pub results: Rc<B::NativeBuffer>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
@@ -66,9 +66,9 @@ impl<B: Backend> AsyncBuffers<B> {
         let event = context.create_event().expect("Failed to create event");
 
         Self {
-            positions,
-            seeds,
-            results,
+            positions: Rc::new(positions),
+            seeds: Rc::new(seeds),
+            results: Rc::new(results),
             event,
             counter: Cell::new(0),
             prefill_count: Cell::new(0),

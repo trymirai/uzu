@@ -7,28 +7,12 @@ use crate::{
     backends::common::{Backend, Context, NativeBuffer},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Array<B: Backend> {
     buffer: Rc<B::NativeBuffer>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
-}
-
-pub fn size_for_shape(
-    shape: &[usize],
-    data_type: DataType,
-) -> usize {
-    let Some(last_dim) = shape.last() else {
-        return data_type.size_in_bytes();
-    };
-
-    let bits_per_row = last_dim * data_type.size_in_bits();
-    let padded_bytes_per_row = bits_per_row.div_ceil(8);
-
-    let num_rows: usize = shape.iter().rev().skip(1).product();
-
-    num_rows * padded_bytes_per_row
 }
 
 impl<B: Backend> Array<B> {
@@ -69,7 +53,7 @@ impl<B: Backend> Array<B> {
         &self.buffer.as_ref()
     }
 
-    pub fn buffer_rc(&self) -> Rc<B::NativeBuffer> {
+    pub fn buffer_rc_cloned(&self) -> Rc<B::NativeBuffer> {
         self.buffer.clone()
     }
 
@@ -207,6 +191,33 @@ impl<B: Backend> Array<B> {
             }
         }
     }
+}
+
+impl<B: Backend> Clone for Array<B> {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(),
+            offset: self.offset,
+            shape: self.shape.clone(),
+            data_type: self.data_type,
+        }
+    }
+}
+
+pub fn size_for_shape(
+    shape: &[usize],
+    data_type: DataType,
+) -> usize {
+    let Some(last_dim) = shape.last() else {
+        return data_type.size_in_bytes();
+    };
+
+    let bits_per_row = last_dim * data_type.size_in_bits();
+    let padded_bytes_per_row = bits_per_row.div_ceil(8);
+
+    let num_rows: usize = shape.iter().rev().skip(1).product();
+
+    num_rows * padded_bytes_per_row
 }
 
 // Array extends RefCell to have .view on RefCell<Array> (aka ArrayCell)

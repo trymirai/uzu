@@ -152,8 +152,8 @@ impl<B: Backend> ForwardPassState<B> {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         should_fill_attention_bias: bool,
-        async_positions: Option<(&B::NativeBuffer, usize)>,
-        async_seeds: Option<(&B::NativeBuffer, usize)>,
+        async_positions: Option<(Rc<B::NativeBuffer>, usize)>,
+        async_seeds: Option<(Rc<B::NativeBuffer>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
@@ -169,12 +169,7 @@ impl<B: Backend> ForwardPassState<B> {
         // Token positions - use async buffer if provided
         let token_positions_cell = if let Some((async_buf, offset)) = async_positions {
             let array = unsafe {
-                Array::from_parts(
-                    Rc::new(async_buf.clone()),
-                    offset * std::mem::size_of::<i32>(),
-                    &[suffix_length],
-                    DataType::I32,
-                )
+                Array::from_parts(async_buf, offset * std::mem::size_of::<i32>(), &[suffix_length], DataType::I32)
             };
             RefCell::new(array)
         } else {
@@ -197,12 +192,7 @@ impl<B: Backend> ForwardPassState<B> {
         // Token seeds - use async buffer if provided
         let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
             let array = unsafe {
-                Array::from_parts(
-                    Rc::new(async_buf.clone()),
-                    offset * std::mem::size_of::<u64>(),
-                    &[suffix_length],
-                    DataType::U64,
-                )
+                Array::from_parts(async_buf, offset * std::mem::size_of::<u64>(), &[suffix_length], DataType::U64)
             };
             RefCell::new(array)
         } else {

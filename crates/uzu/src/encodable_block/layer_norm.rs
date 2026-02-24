@@ -1,5 +1,7 @@
 //! LayerNorm encodable.
 
+use std::rc::Rc;
+
 use thiserror::Error;
 
 use super::{EncodableBlock, EncodingParameters};
@@ -27,7 +29,7 @@ pub struct LayerNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: B::NativeBuffer,
+    scales_buffer: Rc<B::NativeBuffer>,
 }
 
 impl<B: Backend> LayerNorm<B> {
@@ -40,7 +42,6 @@ impl<B: Backend> LayerNorm<B> {
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, LayerNormError<B>> {
         let scales = parameter_tree.leaf("scales").map_err(LayerNormError::ParameterError)?;
-        let scales_buffer = scales.buffer().clone();
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
@@ -59,7 +60,7 @@ impl<B: Backend> LayerNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer,
+            scales_buffer: scales.buffer_rc_cloned(),
         })
     }
 }
@@ -96,7 +97,7 @@ impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
 
         self.kernel.encode(
             input_array.buffer(),
-            &self.scales_buffer,
+            self.scales_buffer.as_ref(),
             output_array.buffer(),
             batch_size,
             model_dim,

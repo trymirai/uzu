@@ -78,7 +78,7 @@ impl<B: Backend> FullPrecisionEmbeddingLookup<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc().clone(),
+            weights_buffer: weights.buffer_rc_cloned().clone(),
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             input_scale: input_scale.unwrap_or(1.0),
