@@ -108,7 +108,7 @@ where
                     });
                 }
 
-                Some(biases.buffer_rc_cloned())
+                Some(biases.buffer_rc())
             },
             Err(_) => None,
         };
@@ -119,7 +119,7 @@ where
         Ok(Self {
             kernel: RefCell::new(kernel),
             bias_buffer,
-            weights_buffer: weights.buffer_rc_cloned(),
+            weights_buffer: weights.buffer_rc(),
             input_dim,
             output_dim,
             input_array_id,

@@ -198,7 +198,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                     });
                 }
 
-                biases.buffer_rc_cloned()
+                biases.buffer_rc()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -222,8 +222,8 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: scales.buffer_rc_cloned(),
-            scales_buffer: scales.buffer_rc_cloned(),
+            weights_buffer: scales.buffer_rc(),
+            scales_buffer: scales.buffer_rc(),
             biases_buffer,
             mode,
             input_scale,

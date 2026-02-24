@@ -75,7 +75,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             query_kernel = Some(kernel);
-            query_scales_buffer = Some(scales.buffer_rc_cloned());
+            query_scales_buffer = Some(scales.buffer_rc());
         }
 
         // Setup key normalization if configured
@@ -99,7 +99,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             key_kernel = Some(kernel);
-            key_scales_buffer = Some(scales.buffer_rc_cloned());
+            key_scales_buffer = Some(scales.buffer_rc());
         }
 
         Ok(Self {

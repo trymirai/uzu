@@ -91,8 +91,8 @@ impl<B: Backend> MoeBlock<B> {
                 let weights_arr = router_tree.leaf("weights").map_err(MoeBlockError::ParameterLoaderError)?;
                 let biases_arr = router_tree.leaf("biases").map_err(MoeBlockError::ParameterLoaderError)?;
                 RouterBlock {
-                    weights_buf: weights_arr.buffer_rc_cloned(),
-                    biases_buf: biases_arr.buffer_rc_cloned(),
+                    weights_buf: weights_arr.buffer_rc(),
+                    biases_buf: biases_arr.buffer_rc(),
                 }
             },
             LinearConfig::QLoRA {
@@ -146,10 +146,10 @@ impl<B: Backend> MoeBlock<B> {
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
         let shared_weights = SharedMoeWeights {
-            w13_buf: w13_arr.buffer_rc_cloned(),
-            w2_buf: w2_arr.buffer_rc_cloned(),
-            up_biases_buf: up_biases_arr.buffer_rc_cloned(),
-            down_biases_buf: down_biases_arr.buffer_rc_cloned(),
+            w13_buf: w13_arr.buffer_rc(),
+            w2_buf: w2_arr.buffer_rc(),
+            up_biases_buf: up_biases_arr.buffer_rc(),
+            down_biases_buf: down_biases_arr.buffer_rc(),
         };
 
         Ok(Self {
@@ -215,7 +215,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<B::NativeBuffer> { array.borrow().buffer_rc_cloned() };
+        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<B::NativeBuffer> { array.borrow().buffer_rc() };
 
         let mut array_iter = arrays.iter();
         let main_buf = clone_buffer(array_iter.next().unwrap());

@@ -60,7 +60,7 @@ impl<B: Backend> LayerNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer: scales.buffer_rc_cloned(),
+            scales_buffer: scales.buffer_rc(),
         })
     }
 }

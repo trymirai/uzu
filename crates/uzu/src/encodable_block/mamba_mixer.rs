@@ -266,7 +266,7 @@ impl<B: Backend> MambaMixer<B> {
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state.conv_padded_buffer().expect("Missing conv padded buffer");
-                let buffer = array.borrow().buffer_rc_cloned();
+                let buffer = array.borrow().buffer_rc();
 
                 self.conv_pack.encode(
                     state_buf,

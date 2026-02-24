@@ -155,7 +155,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizedMatmulType::Mlx, deq_biases.buffer_rc_cloned())
+                (QuantizedMatmulType::Mlx, deq_biases.buffer_rc())
             },
             Err(_) => {
                 let zero_points = parameter_tree.leaf("zero_points").map_err(QuantizedLinearError::ParameterError)?;
@@ -181,7 +181,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizedMatmulType::ZeroPoint, zero_points.buffer_rc_cloned())
+                (QuantizedMatmulType::ZeroPoint, zero_points.buffer_rc())
             },
         };
 
@@ -204,7 +204,7 @@ impl<B: Backend> QuantizedLinear<B> {
 
                 let bias_add_kernel = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, kernel_data_type)
                     .map_err(QuantizedLinearError::BackendError)?;
-                (Some(bias_add_kernel), Some(biases.buffer_rc_cloned()))
+                (Some(bias_add_kernel), Some(biases.buffer_rc()))
             },
             Err(_) => (None, None),
         };
@@ -227,8 +227,8 @@ impl<B: Backend> QuantizedLinear<B> {
             kernel,
             bias_add_kernel,
             biases_buffer,
-            weights_buffer: weights.buffer_rc_cloned(),
-            scales_buffer: scales.buffer_rc_cloned(),
+            weights_buffer: weights.buffer_rc(),
+            scales_buffer: scales.buffer_rc(),
             zero_points_or_biases_buffer,
             quantization_type,
             input_dim,

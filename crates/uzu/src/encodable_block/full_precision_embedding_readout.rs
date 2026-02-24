@@ -89,7 +89,7 @@ where
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            weights_buffer: weights.buffer_rc_cloned(),
+            weights_buffer: weights.buffer_rc(),
             vocab_size,
             model_dim,
         })

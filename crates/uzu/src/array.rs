@@ -53,7 +53,7 @@ impl<B: Backend> Array<B> {
         &self.buffer.as_ref()
     }
 
-    pub fn buffer_rc_cloned(&self) -> Rc<B::NativeBuffer> {
+    pub fn buffer_rc(&self) -> Rc<B::NativeBuffer> {
         self.buffer.clone()
     }
 

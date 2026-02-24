@@ -310,17 +310,17 @@ impl<B: Backend> ShortConvMixer<B> {
         let base_state_offset = conv_state.offset();
         let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
 
-        let weight_buf = self.conv_weight.buffer_rc_cloned();
+        let weight_buf = self.conv_weight.buffer_rc();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         self.short_conv_trie.encode(
-            (in_proj.buffer_rc_cloned().as_ref(), in_proj_offset),
+            (in_proj.buffer_rc().as_ref(), in_proj_offset),
             weight_buf.as_ref(),
             bias_buf,
-            (conv_state.buffer_rc_cloned().as_ref(), base_state_offset),
-            (parents.buffer_rc_cloned().as_ref(), parents_offset),
-            (out.buffer_rc_cloned().as_ref(), out_offset),
-            (suffix_state.buffer_rc_cloned().as_ref(), suffix_state_offset),
+            (conv_state.buffer_rc().as_ref(), base_state_offset),
+            (parents.buffer_rc().as_ref(), parents_offset),
+            (out.buffer_rc().as_ref(), out_offset),
+            (suffix_state.buffer_rc().as_ref(), suffix_state_offset),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -346,11 +346,11 @@ impl<B: Backend> ShortConvMixer<B> {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.buffer_rc_cloned();
-        let state_buf = conv_state.buffer_rc_cloned();
-        let out_buf = out.buffer_rc_cloned();
+        let in_proj_buf = in_proj.buffer_rc();
+        let state_buf = conv_state.buffer_rc();
+        let out_buf = out.buffer_rc();
 
-        let weight_buf = self.conv_weight.buffer_rc_cloned();
+        let weight_buf = self.conv_weight.buffer_rc();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         let kernel_size = self.config.kernel_size;

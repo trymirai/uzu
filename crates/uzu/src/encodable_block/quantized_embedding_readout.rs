@@ -178,7 +178,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                         got: deq_biases.data_type(),
                     });
                 }
-                deq_biases.buffer_rc_cloned()
+                deq_biases.buffer_rc()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -215,8 +215,8 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc_cloned(),
-            scales_buffer: scales.buffer_rc_cloned(),
+            weights_buffer: weights.buffer_rc(),
+            scales_buffer: scales.buffer_rc(),
             biases_buffer,
             vocab_size,
             model_dim,

@@ -74,7 +74,7 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
             let bitmask = cell.borrow();
             let bitmask_row_len = bitmask.shape()[1];
             let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
-            (Some(bitmask.buffer_rc_cloned()), bitmask_offset)
+            (Some(bitmask.buffer_rc()), bitmask_offset)
         });
         if let Err(e) = self.kernel.encode_with_encoder(
             logits.buffer(),
