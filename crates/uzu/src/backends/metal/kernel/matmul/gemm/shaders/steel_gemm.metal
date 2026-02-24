@@ -213,10 +213,6 @@ KERNEL(MatmulGemm)(
     const uint thread_z THREADS(2),
     const Simd simd
 ) {
-  if (simd.group_idx >= warps_per_row * warps_per_col) {
-    return;
-  }
-
   gemm_impl<T, float>(
       a, b, d, params,
       block_rows, block_cols, block_depth,
