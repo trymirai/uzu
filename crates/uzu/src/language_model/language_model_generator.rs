@@ -480,9 +480,9 @@ where
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
         let sampling_output_binding = sampling_output.borrow();
-        let sampling_output_buffer = sampling_output_binding.buffer().clone();
+        let sampling_output_buffer = sampling_output_binding.buffer();
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
-        let token_ids_buffer = token_ids_binding.buffer().clone();
+        let token_ids_buffer = token_ids_binding.buffer();
 
         root_command_buffer.with_compute_encoder(|encoder| {
             self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
