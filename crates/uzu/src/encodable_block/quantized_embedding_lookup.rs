@@ -222,7 +222,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: scales.buffer_rc(),
+            weights_buffer: weights.buffer_rc(),
             scales_buffer: scales.buffer_rc(),
             biases_buffer,
             mode,

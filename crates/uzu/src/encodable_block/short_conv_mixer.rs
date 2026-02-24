@@ -309,18 +309,16 @@ impl<B: Backend> ShortConvMixer<B> {
         let suffix_state_offset = suffix_state.offset() + sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = conv_state.offset();
         let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
-
-        let weight_buf = self.conv_weight.buffer_rc();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         self.short_conv_trie.encode(
-            (in_proj.buffer_rc().as_ref(), in_proj_offset),
-            weight_buf.as_ref(),
+            (in_proj.buffer(), in_proj_offset),
+            self.conv_weight.buffer(),
             bias_buf,
-            (conv_state.buffer_rc().as_ref(), base_state_offset),
-            (parents.buffer_rc().as_ref(), parents_offset),
-            (out.buffer_rc().as_ref(), out_offset),
-            (suffix_state.buffer_rc().as_ref(), suffix_state_offset),
+            (conv_state.buffer(), base_state_offset),
+            (parents.buffer(), parents_offset),
+            (out.buffer(), out_offset),
+            (suffix_state.buffer(), suffix_state_offset),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -346,23 +344,17 @@ impl<B: Backend> ShortConvMixer<B> {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.buffer_rc();
-        let state_buf = conv_state.buffer_rc();
-        let out_buf = out.buffer_rc();
-
-        let weight_buf = self.conv_weight.buffer_rc();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
-
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
         self.short_conv_decode.encode(
-            in_proj_buf.as_ref(),
-            weight_buf.as_ref(),
+            in_proj.buffer(),
+            self.conv_weight.buffer(),
             bias_buf,
-            state_buf.as_ref(),
-            out_buf.as_ref(),
-            state_buf.as_ref(),
+            conv_state.buffer(),
+            out.buffer(),
+            conv_state.buffer(),
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,
