@@ -9,5 +9,4 @@ pub mod sampler;
 pub mod tasks;
 
 // Re-export main types
-pub use language_model_generator::LanguageModelGenerator;
-pub use language_model_generator_context::LanguageModelGeneratorContext;
+pub use language_model_generator::{LanguageModelGenerator, LanguageModelGeneratorTrait};

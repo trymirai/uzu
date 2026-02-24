@@ -9,7 +9,6 @@ use crate::{
         Backend, CommandBuffer, Kernels,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
-            matmul::MatmulKernels,
             ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
     },
@@ -37,10 +36,7 @@ pub(crate) struct MambaMixer<B: Backend> {
     prefill_mode: SSDPrefillMode,
 }
 
-impl<B: Backend + 'static> MambaMixer<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> MambaMixer<B> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: &B::Context,

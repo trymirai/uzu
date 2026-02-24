@@ -1,7 +1,8 @@
 use std::{
+    any::Any,
     collections::HashMap,
     iter::repeat_n,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::Instant,
@@ -10,9 +11,9 @@ use std::{
 use itertools::{Either, Itertools, izip};
 
 use super::{
-    LanguageModelGeneratorContext,
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
+    language_model_generator_context::LanguageModelGeneratorContext,
     result::{GenerateResult, PrefillResult},
     rng::PRng,
     tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
@@ -20,25 +21,24 @@ use super::{
 use crate::{
     backends::common::{
         Backend, CommandBuffer, Context, NativeBuffer,
-        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, matmul::MatmulKernels},
+        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::{
+        cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
         state::ForwardPassState,
     },
     session::{
         config::DecodingConfig,
+        helpers::Context as LlmContext,
         parameter::{ConfigResolvableValue, ResolvableValue, SamplingMethod},
         types::Error,
     },
     trie::{TrieCreationConfig, TrieNode},
 };
 
-pub struct LanguageModelGenerator<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct LanguageModelGenerator<B: Backend> {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
@@ -48,37 +48,66 @@ where
     gpu_capture: GpuCaptureManager<B>,
 }
 
-impl<B: Backend + 'static> LanguageModelGenerator<B>
-where
-    B::Kernels: MatmulKernels,
-{
-    pub fn new(
+pub trait LanguageModelGeneratorTrait {
+    fn prefill(
+        &mut self,
+        tokens: Vec<u64>,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+        prefix_offset: usize,
+        sample_suffix: bool,
+    ) -> Result<PrefillResult, Error>;
+
+    fn generate(
+        &mut self,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error>;
+
+    fn prepare_async(
+        &mut self,
+        tokens_to_generate: usize,
+    );
+    fn async_generate(
+        &mut self,
+        pass_idx: usize,
+        sampling_method: SamplingMethod,
+        on_complete: Box<dyn FnOnce(u64) + Send>,
+    ) -> Result<(), Error>;
+
+    fn clear_cache(&mut self);
+    fn reset_state(&mut self);
+
+    fn tokens_len(&self) -> usize;
+    fn tokens_push(
+        &mut self,
+        token: u64,
+    );
+    fn generate_suffix_length(&self) -> usize;
+    fn async_batch_size(
+        &self,
         model_path: &Path,
-        decoding_config: DecodingConfig,
-    ) -> Result<Self, Error> {
-        let gpu_capture = GpuCaptureManager::new();
+    ) -> usize;
 
-        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
-        let prefill_step_size = decoding_config.prefill_step_size.resolve(&context.model_config);
-        let generate_suffix_length = decoding_config.generate_suffix_length();
+    fn get_slice(
+        &self,
+        range: Range<usize>,
+    ) -> Option<Box<dyn Any>>;
+    fn apply_slice(
+        &mut self,
+        slice: &dyn Any,
+        range: Range<usize>,
+    );
 
-        let mut generator = Self {
-            decoding_config,
-            tokens: Vec::new(),
-            context,
-            encoded_tasks: HashMap::new(),
-            registered_prefix_len: 0,
-            gpu_capture,
-        };
+    fn build_llm_context(&self) -> Box<dyn Any>;
+    fn reconfigure_from_context(
+        &mut self,
+        context: &dyn Any,
+    );
+}
 
-        //Warmup
-        generator.warmup(prefill_step_size);
-        generator.warmup(generate_suffix_length);
-
-        Ok(generator)
-    }
-
-    pub fn prefill(
+impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
+    fn prefill(
         &mut self,
         tokens: Vec<u64>,
         mut compiled_grammar: Option<&mut CompiledGrammar>,
@@ -273,7 +302,7 @@ where
         })
     }
 
-    pub fn generate(
+    fn generate(
         &mut self,
         mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
@@ -357,7 +386,7 @@ where
 
     /// Prepares async buffers for generation.
     /// Must be called after prefill, before async_generate loop.
-    pub fn prepare_async(
+    fn prepare_async(
         &mut self,
         tokens_to_generate: usize,
     ) {
@@ -385,15 +414,12 @@ where
     /// - `pass_idx`: Index of this pass (0, 1, 2, ...)
     /// - `sampling_method`: Sampling configuration
     /// - `on_complete`: Callback receiving sampled token as u64
-    pub fn async_generate<F>(
+    fn async_generate(
         &mut self,
         pass_idx: usize,
         sampling_method: SamplingMethod,
-        on_complete: F,
-    ) -> Result<(), Error>
-    where
-        F: FnOnce(u64) + Send + 'static,
-    {
+        on_complete: Box<dyn FnOnce(u64) + Send>,
+    ) -> Result<(), Error> {
         assert_eq!(self.decoding_config.generate_suffix_length(), 1, "async_generate only supports suffix_length=1");
 
         // Extract values from async_buffers before mutable borrow
@@ -564,17 +590,13 @@ where
         Ok(())
     }
 
-    pub fn has_attention_layers(&self) -> bool {
-        self.context.decoder_config.has_attention_layers()
-    }
-
-    pub fn clear_cache(&mut self) {
+    fn clear_cache(&mut self) {
         objc2::rc::autoreleasepool(|_pool| {
             self.encoded_tasks.clear();
         });
     }
 
-    pub fn reset_state(&mut self) {
+    fn reset_state(&mut self) {
         self.context.cache_layers.borrow_mut().clear();
         self.tokens.clear();
         self.registered_prefix_len = 0;
@@ -586,8 +608,118 @@ where
         self.context.async_buffers.reset_counter();
     }
 
-    pub fn prefix_len(&self) -> usize {
-        self.registered_prefix_len
+    fn tokens_len(&self) -> usize {
+        self.tokens.len()
+    }
+    fn tokens_push(
+        &mut self,
+        token: u64,
+    ) {
+        self.tokens.push(token);
+    }
+    fn generate_suffix_length(&self) -> usize {
+        self.decoding_config.generate_suffix_length()
+    }
+    fn async_batch_size(
+        &self,
+        model_path: &Path,
+    ) -> usize {
+        self.decoding_config.async_batch_size.resolve::<B>(model_path, self.context.context.as_ref())
+    }
+
+    fn get_slice(
+        &self,
+        range: Range<usize>,
+    ) -> Option<Box<dyn Any>> {
+        self.context.cache_layers.borrow().slice(&self.context.context, range).map(|s| Box::new(s) as Box<dyn Any>)
+    }
+    fn apply_slice(
+        &mut self,
+        slice: &dyn Any,
+        range: Range<usize>,
+    ) {
+        let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
+        self.context.cache_layers.borrow_mut().apply_slice(slice, Some(range));
+    }
+
+    fn build_llm_context(&self) -> Box<dyn Any> {
+        let cache_layers = self.context.cache_layers.borrow().clone(&self.context.context);
+        let context = LlmContext::new(self.tokens.clone(), cache_layers, self.decoding_config.clone());
+        Box::new(context)
+    }
+    fn reconfigure_from_context(
+        &mut self,
+        context: &dyn Any,
+    ) {
+        let ctx = context.downcast_ref::<LlmContext<B>>().unwrap();
+        let mut llm_state = self.context.cache_layers.borrow_mut();
+        for (_layer_idx, (ctx_layer, gen_layer)) in
+            ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()).enumerate()
+        {
+            match (ctx_layer, gen_layer) {
+                (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
+                    let copy_rows = src.prefix_segment_length();
+                    if copy_rows > 0 {
+                        {
+                            let mut dst_keys = dst.keys.borrow_mut();
+                            let src_keys = src.keys.borrow();
+                            dst_keys.copy_slice(&src_keys, 1, 0..copy_rows, 0);
+                        }
+                        {
+                            let mut dst_values = dst.values.borrow_mut();
+                            let src_values = src.values.borrow();
+                            dst_values.copy_slice(&src_values, 1, 0..copy_rows, 0);
+                        }
+                    }
+                    dst.state = src.state.clone();
+                    dst.prefix_token_positions = src.prefix_token_positions.clone();
+                },
+                (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
+                    {
+                        let mut dst_conv = dst.conv_state.borrow_mut();
+                        let src_conv = src.conv_state.borrow();
+                        dst_conv.copy_from_array(&src_conv);
+                    }
+                    {
+                        let mut dst_ssm = dst.ssm_state.borrow_mut();
+                        let src_ssm = src.ssm_state.borrow();
+                        dst_ssm.copy_from_array(&src_ssm);
+                    }
+                },
+                _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
+            }
+        }
+        drop(llm_state);
+
+        self.tokens = ctx.tokens.clone();
+    }
+}
+
+impl<B: Backend> LanguageModelGenerator<B> {
+    pub fn new(
+        model_path: &Path,
+        decoding_config: DecodingConfig,
+    ) -> Result<Self, Error> {
+        let gpu_capture = GpuCaptureManager::new();
+
+        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
+        let prefill_step_size = decoding_config.prefill_step_size.resolve(&context.model_config);
+        let generate_suffix_length = decoding_config.generate_suffix_length();
+
+        let mut generator = Self {
+            decoding_config,
+            tokens: Vec::new(),
+            context,
+            encoded_tasks: HashMap::new(),
+            registered_prefix_len: 0,
+            gpu_capture,
+        };
+
+        //Warmup
+        generator.warmup(prefill_step_size);
+        generator.warmup(generate_suffix_length);
+
+        Ok(generator)
     }
 
     fn warmup(

@@ -6,10 +6,7 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::common::{
-        Backend,
-        kernel::{matmul::MatmulKernels, mlp_gate_act_mul::MlpGateActMulEncodable},
-    },
+    backends::common::{Backend, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
     config::{DecoderConfig, EmbeddingConfig, LinearConfig, MLPConfig},
     encodable_block::{
         EncodableBlock, FullPrecisionLinearError, MlpBlock, MoeBlock, QuantizedLinearError, moe_block::MoeBlockError,
@@ -34,7 +31,7 @@ pub enum LayerError<B: Backend> {
     QLoRaNotSupported,
 }
 
-pub fn linear_block<const N: usize, B: Backend + 'static>(
+pub fn linear_block<const N: usize, B: Backend>(
     config: &LinearConfig,
     _has_biases: bool,
     input_dimension: usize,
@@ -43,10 +40,7 @@ pub fn linear_block<const N: usize, B: Backend + 'static>(
     parameter_tree: &ParameterTree<B::Context>,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>>
-where
-    B::Kernels: MatmulKernels,
-{
+) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>> {
     let output_dimension_sum: usize = output_dimensions.iter().sum();
     match config {
         LinearConfig::Quantized(quantization_config) | LinearConfig::MLXQuantized(quantization_config) => {
@@ -84,16 +78,13 @@ where
 }
 
 /// Creates an MLP block using the unfused implementation (separate up, activation, down)
-pub fn mlp_block<B: Backend + 'static>(
+pub fn mlp_block<B: Backend>(
     config: &MLPConfig,
     model_dimension: usize,
     hidden_dimension: usize,
     context: &B::Context,
     parameter_tree: &ParameterTree<B::Context>,
-) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>>
-where
-    B::Kernels: MatmulKernels,
-{
+) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>> {
     if let crate::config::MLPConfig::Dense(dense_config) = config {
         let data_type: DataType = dense_config.linear_config.activation_precision().into();
 
@@ -139,7 +130,7 @@ where
     unreachable!("Unknown MLP config")
 }
 
-pub fn embed_block<B: Backend + 'static>(
+pub fn embed_block<B: Backend>(
     config: &DecoderConfig,
     context: &B::Context,
     parameter_tree: &ParameterTree<B::Context>,
@@ -279,14 +270,11 @@ pub fn embed_block<B: Backend + 'static>(
     }
 }
 
-pub fn readout_block<B: Backend + 'static>(
+pub fn readout_block<B: Backend>(
     config: &DecoderConfig,
     context: &B::Context,
     parameter_tree: &ParameterTree<B::Context>,
-) -> Box<dyn EncodableBlock<B>>
-where
-    B::Kernels: MatmulKernels,
-{
+) -> Box<dyn EncodableBlock<B>> {
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,

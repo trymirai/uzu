@@ -36,20 +36,14 @@ pub enum FullPrecisionEmbeddingReadoutError<B: Backend> {
     },
 }
 
-pub struct FullPrecisionEmbeddingReadout<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct FullPrecisionEmbeddingReadout<B: Backend> {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
     weights_buffer: Rc<RefCell<B::NativeBuffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
 
-impl<B: Backend> FullPrecisionEmbeddingReadout<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> FullPrecisionEmbeddingReadout<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
@@ -96,10 +90,7 @@ where
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B> {
     fn supports_shared_encoder(&self) -> bool {
         true
     }

@@ -9,7 +9,7 @@ use super::MixerExecutables;
 use crate::backends::common::CommandBuffer;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::common::{Backend, kernel::matmul::MatmulKernels},
+    backends::common::Backend,
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, EncodableBlock, EncodingParameters, MambaMixer, QKNorm, RMSNorm, ShortConvMixer, TensorAddSwap,
@@ -33,10 +33,7 @@ pub struct LayerExecutables<B: Backend> {
     pub post_mlp_norm: Option<Box<dyn EncodableBlock<B>>>,
 }
 
-impl<B: Backend + 'static> LayerExecutables<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> LayerExecutables<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: Rc<B::Context>,

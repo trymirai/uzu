@@ -3,7 +3,7 @@ mod classifier_context;
 mod error;
 mod result;
 
-pub use classifier::Classifier;
+pub use classifier::{Classifier, ClassifierTrait};
 pub use classifier_context::ClassifierContext;
 pub use error::ClassifierError;
 pub use result::{ClassificationOutput, ClassificationStats};

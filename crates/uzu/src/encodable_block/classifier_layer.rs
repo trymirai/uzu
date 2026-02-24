@@ -6,7 +6,7 @@ use objc2::rc::autoreleasepool;
 use crate::backends::common::CommandBuffer;
 use crate::{
     DataType,
-    backends::common::{Backend, kernel::matmul::MatmulKernels},
+    backends::common::Backend,
     config::TransformerLayerConfig,
     encodable_block::{
         Attention, EncodableBlock, EncodingParameters, Normalization, QKNorm, TensorAddSwap, TensorCopy,
@@ -35,10 +35,7 @@ pub struct ClassifierLayer<B: Backend> {
     mlp_residual_add: Box<dyn EncodableBlock<B>>,
 }
 
-impl<B: Backend + 'static> ClassifierLayer<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> ClassifierLayer<B> {
     pub fn new(
         context: Rc<B::Context>,
         layer_config: &TransformerLayerConfig,

@@ -1,6 +1,6 @@
 use std::{mem::size_of, ops::DerefMut};
 
-use super::LanguageModelGeneratorContext;
+use super::language_model_generator_context::LanguageModelGeneratorContext;
 use crate::{
     backends::common::{Backend, Context, NativeBuffer},
     encodable_block::{EncodableBlock, EncodingParameters},

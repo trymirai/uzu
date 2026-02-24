@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::{
     DataType, DecoderConfig,
-    backends::common::{Backend, kernel::matmul::MatmulKernels},
+    backends::common::Backend,
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
         EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
@@ -27,10 +27,7 @@ pub struct Decoder<B: Backend> {
     pub local_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
 }
 
-impl<B: Backend + 'static> Decoder<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> Decoder<B> {
     pub fn new(
         context: Rc<B::Context>,
         decoder_config: Rc<DecoderConfig>,
