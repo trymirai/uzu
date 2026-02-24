@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    env,
+    rc::Rc,
+};
 
 use metal::{
     MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,

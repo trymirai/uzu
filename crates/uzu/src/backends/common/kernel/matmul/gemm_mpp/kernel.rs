@@ -9,7 +9,9 @@ use crate::{
 };
 
 pub struct GemmMppKernel<B: Backend> {
-    data_type: DataType,
+    a_dtype: DataType,
+    b_dtype: DataType,
+    output_dtype: DataType,
     pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemmMppKernel>,
 }
 
@@ -17,9 +19,15 @@ impl<B: Backend> GemmMppKernel<B>
 where
     B::Error: From<String>,
 {
-    pub fn new(data_type: DataType) -> Result<Self, B::Error> {
+    pub fn new(
+        a_dtype: DataType,
+        b_dtype: DataType,
+        output_dtype: DataType,
+    ) -> Result<Self, B::Error> {
         Ok(Self {
-            data_type,
+            a_dtype,
+            b_dtype,
+            output_dtype,
             pipelines: HashMap::new(),
         })
     }
@@ -28,7 +36,7 @@ where
         &mut self,
         context: &B::Context,
     ) -> Result<(), B::Error> {
-        for &config in Specialization::precompile_configs(self.data_type) {
+        for &config in Specialization::precompile_configs(self.output_dtype) {
             self.get_or_create_kernel(context, config)?;
         }
         Ok(())
@@ -40,9 +48,11 @@ where
         config: Specialization,
     ) -> Result<&<B::Kernels as Kernels>::MatmulGemmMppKernel, B::Error> {
         if !self.pipelines.contains_key(&config) {
-            let kernel = <B::Kernels as Kernels>::MatmulGemmMppKernel::new(
+            let pipeline = <B::Kernels as Kernels>::MatmulGemmMppKernel::new(
                 context,
-                self.data_type,
+                self.a_dtype,
+                self.b_dtype,
+                self.output_dtype,
                 config.block_rows as u32,
                 config.block_cols as u32,
                 config.block_depth as u32,
@@ -52,7 +62,7 @@ where
                 config.align_n,
                 config.align_k,
             )?;
-            self.pipelines.insert(config, kernel);
+            self.pipelines.insert(config, pipeline);
         }
         Ok(self.pipelines.get(&config).unwrap())
     }

@@ -2,4 +2,4 @@ mod dispatch_descriptor;
 mod kernel;
 
 pub use dispatch_descriptor::DispatchDescriptor;
-pub use kernel::GemmScalarIntKernel;
+pub use kernel::{GemmScalarIntKernel, supports_combo};

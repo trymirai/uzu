@@ -10,7 +10,8 @@ namespace uzu {
 namespace matmul {
 
 template <
-    typename T,
+    typename AType,
+    typename BType,
     short SM,
     short SN,
     short SK,
@@ -25,8 +26,8 @@ template <
     short UK,
     typename AccumType = float>
 auto mpp_gemm_loop(
-    const device T* A,
-    const device T* B,
+    const device AType* A,
+    const device BType* B,
     int lda,
     int ldb,
     int K,
@@ -45,9 +46,9 @@ auto mpp_gemm_loop(
 
   using DSubTile = MppSubTile<AccumType, UM, UN>;
   using ASubTile =
-      MppSubTile<T, (transpose_a ? UK : UM), (transpose_a ? UM : UK)>;
+      MppSubTile<AType, (transpose_a ? UK : UM), (transpose_a ? UM : UK)>;
   using BSubTile =
-      MppSubTile<T, (transpose_b ? UN : UK), (transpose_b ? UK : UN)>;
+      MppSubTile<BType, (transpose_b ? UN : UK), (transpose_b ? UK : UN)>;
 
   MppTile<AccumType, TM, TN, DSubTile> Dtile;
   Dtile.clear();
@@ -60,8 +61,8 @@ auto mpp_gemm_loop(
 
     STEEL_PRAGMA_NO_UNROLL
     for (int kk1 = 0; kk1 < BK; kk1 += SK) {
-      MppTile<T, RA, CA, ASubTile> Atile;
-      MppTile<T, RB, CB, BSubTile> Btile;
+      MppTile<AType, RA, CA, ASubTile> Atile;
+      MppTile<BType, RB, CB, BSubTile> Btile;
       const int k = kk1;
 
       volatile int compiler_barrier;
@@ -106,8 +107,8 @@ auto mpp_gemm_loop(
 
     STEEL_PRAGMA_NO_UNROLL
     for (int kk1 = 0; kk1 < rem_bk; kk1 += SK) {
-      MppTile<T, 1, 1, ASubTile> Atile;
-      MppTile<T, 1, 1, BSubTile> Btile;
+      MppTile<AType, 1, 1, ASubTile> Atile;
+      MppTile<BType, 1, 1, BSubTile> Btile;
 
       STEEL_PRAGMA_UNROLL
       for (int mm = 0; mm < TM; mm++) {
