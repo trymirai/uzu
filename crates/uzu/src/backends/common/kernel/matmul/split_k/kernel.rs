@@ -67,8 +67,7 @@ where
     ) -> Result<(), B::Error> {
         self.ensure_kernels(context)?;
         self.ensure_accumulator_buffer(context, dispatch_descriptor.accumulator_bytes)?;
-        let accumulator_buffer =
-            self.accumulator_buffer.as_ref().cloned().expect("Accumulator buffer must be initialized");
+        let accumulator_buffer = self.accumulator_buffer.as_ref().expect("Accumulator buffer must be initialized");
 
         let partial_group_count_x = u32::try_from(dispatch_descriptor.partial_threadgroups.x).map_err(|_| {
             B::Error::from(format!(
@@ -92,7 +91,7 @@ where
         partial.encode(
             (arguments.a, arguments.a_offset as usize),
             arguments.b,
-            &accumulator_buffer,
+            accumulator_buffer,
             std::slice::from_ref(&dispatch_descriptor.params),
             partial_group_count_x,
             partial_group_count_y,
@@ -114,7 +113,7 @@ where
         })?;
         let accum = self.accum_bfloat16.as_ref().unwrap();
         accum.encode(
-            &accumulator_buffer,
+            accumulator_buffer,
             arguments.d,
             dispatch_descriptor.partition_count,
             dispatch_descriptor.output_elements_per_partition,

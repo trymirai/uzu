@@ -1,5 +1,7 @@
 //! Quantized embedding readout encodable.
 
+use std::rc::Rc;
+
 use thiserror::Error;
 
 use super::{EncodableBlock, EncodingParameters};
@@ -65,9 +67,9 @@ pub enum QuantizedEmbeddingReadoutError<B: Backend> {
 
 pub struct QuantizedEmbeddingReadout<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
-    weights_buffer: B::NativeBuffer,
-    scales_buffer: B::NativeBuffer,
-    biases_buffer: B::NativeBuffer,
+    weights_buffer: Rc<B::NativeBuffer>,
+    scales_buffer: Rc<B::NativeBuffer>,
+    biases_buffer: Rc<B::NativeBuffer>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -176,7 +178,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                         got: deq_biases.data_type(),
                     });
                 }
-                deq_biases.buffer().clone()
+                deq_biases.buffer_rc()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -193,7 +195,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
                 }
 
-                buffer
+                Rc::new(buffer)
             },
         };
 
@@ -213,8 +215,8 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer().clone(),
-            scales_buffer: scales.buffer().clone(),
+            weights_buffer: weights.buffer_rc(),
+            scales_buffer: scales.buffer_rc(),
             biases_buffer,
             vocab_size,
             model_dim,

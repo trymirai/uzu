@@ -86,14 +86,14 @@ where
         )
         .expect("Failed to create out-projection kernel");
 
-        let conv_weight = conv_tree.leaf("weights").unwrap().clone();
+        let conv_weight = conv_tree.leaf("weights").unwrap();
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases").unwrap().clone())
+            Some(conv_tree.leaf("biases").unwrap())
         } else {
             None
         };
-        let gate_bias = split_tree.leaf("gate_bias").unwrap().clone();
-        let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap().clone();
+        let gate_bias = split_tree.leaf("gate_bias").unwrap();
+        let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap();
 
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
             .expect("Failed to create split in-projection kernel");
@@ -266,14 +266,12 @@ impl<B: Backend> MambaMixer<B> {
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state.conv_padded_buffer().expect("Missing conv padded buffer");
-                let borrow = array.borrow();
-                let buf = borrow.buffer().clone();
-                drop(borrow);
+                let buffer = array.borrow().buffer_rc();
 
                 self.conv_pack.encode(
                     state_buf,
                     input_buf,
-                    &buf,
+                    buffer.as_ref(),
                     state_stride as u32,
                     conv_dim as u32,
                     suffix_length as u32,
@@ -281,13 +279,13 @@ impl<B: Backend> MambaMixer<B> {
                     &encoder,
                 );
 
-                Some(buf)
+                Some(buffer)
             } else {
                 None
             };
 
             if conv_dim > 0 && self.config.kernel_size > 0 {
-                let conv_source = padded_buf.as_ref().unwrap_or(&input_buf);
+                let conv_source = padded_buf.as_ref().map(|b| b.as_ref()).unwrap_or(input_buf);
                 self.conv_scan.encode(
                     conv_source,
                     weight_buf,

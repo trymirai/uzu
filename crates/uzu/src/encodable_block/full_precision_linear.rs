@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 use thiserror::Error;
 
@@ -49,8 +49,8 @@ where
     B::Kernels: MatmulKernels,
 {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    bias_buffer: Option<B::NativeBuffer>,
-    weights_buffer: B::NativeBuffer,
+    bias_buffer: Option<Rc<B::NativeBuffer>>,
+    weights_buffer: Rc<B::NativeBuffer>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,
@@ -108,7 +108,7 @@ where
                     });
                 }
 
-                Some(biases.buffer().clone())
+                Some(biases.buffer_rc())
             },
             Err(_) => None,
         };
@@ -119,7 +119,7 @@ where
         Ok(Self {
             kernel: RefCell::new(kernel),
             bias_buffer,
-            weights_buffer: weights.buffer().clone(),
+            weights_buffer: weights.buffer_rc(),
             input_dim,
             output_dim,
             input_array_id,
@@ -155,7 +155,7 @@ where
                 a_offset: 0,
                 b: &self.weights_buffer,
                 output: output_array.buffer(),
-                bias: self.bias_buffer.as_ref(),
+                bias: self.bias_buffer.as_ref().map(|b| b.as_ref()),
                 batch: batch_size,
                 input_dim: self.input_dim,
                 output_dim: self.output_dim,

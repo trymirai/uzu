@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 use thiserror::Error;
 
@@ -41,7 +41,7 @@ where
     B::Kernels: MatmulKernels,
 {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    weights_buffer: B::NativeBuffer,
+    weights_buffer: Rc<B::NativeBuffer>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -89,7 +89,7 @@ where
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            weights_buffer: weights.buffer().clone(),
+            weights_buffer: weights.buffer_rc(),
             vocab_size,
             model_dim,
         })

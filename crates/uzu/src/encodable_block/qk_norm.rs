@@ -1,5 +1,7 @@
 //! QK Normalization encodable.
 
+use std::rc::Rc;
+
 use thiserror::Error;
 
 use super::{EncodableBlock, EncodingParameters};
@@ -28,8 +30,8 @@ pub struct QKNorm<B: Backend> {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<B::NativeBuffer>,
-    key_scales_buffer: Option<B::NativeBuffer>,
+    query_scales_buffer: Option<Rc<B::NativeBuffer>>,
+    key_scales_buffer: Option<Rc<B::NativeBuffer>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -55,7 +57,6 @@ impl<B: Backend> QKNorm<B> {
         // Setup query normalization if configured
         if let Some(ref q_config) = query_config {
             let scales = parameter_tree.leaf("query_norm.scales").map_err(QKNormError::ParameterError)?;
-            let scales_buffer = scales.buffer().clone();
 
             let accumulation_data_type: DataType = q_config.accumulation_precision.into();
             let scale_data_type: DataType = q_config.scale_precision.into();
@@ -74,13 +75,12 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             query_kernel = Some(kernel);
-            query_scales_buffer = Some(scales_buffer);
+            query_scales_buffer = Some(scales.buffer_rc());
         }
 
         // Setup key normalization if configured
         if let Some(ref k_config) = key_config {
             let scales = parameter_tree.leaf("key_norm.scales").map_err(QKNormError::ParameterError)?;
-            let scales_buffer = scales.buffer().clone();
 
             let accumulation_data_type: DataType = k_config.accumulation_precision.into();
             let scale_data_type: DataType = k_config.scale_precision.into();
@@ -99,7 +99,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             key_kernel = Some(kernel);
-            key_scales_buffer = Some(scales_buffer);
+            key_scales_buffer = Some(scales.buffer_rc());
         }
 
         Ok(Self {
@@ -144,7 +144,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         {
             query_kernel.encode(
                 qkv_buffer,
-                query_scales_buffer,
+                query_scales_buffer.as_ref(),
                 qkv_buffer,
                 batch_size,
                 self.num_q_heads as u32,
@@ -165,7 +165,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         {
             key_kernel.encode(
                 qkv_buffer,
-                key_scales_buffer,
+                key_scales_buffer.as_ref(),
                 qkv_buffer,
                 batch_size,
                 self.num_q_heads as u32,

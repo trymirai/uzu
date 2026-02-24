@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of, rc::Rc};
 
 use thiserror::Error;
 
@@ -8,9 +8,9 @@ use crate::{
 };
 
 pub struct KVLayerData<B: Backend> {
-    pub key_buffer: B::NativeBuffer,
+    pub key_buffer: Rc<B::NativeBuffer>,
     pub key_shape: [usize; 3],
-    pub value_buffer: B::NativeBuffer,
+    pub value_buffer: Rc<B::NativeBuffer>,
     pub value_shape: [usize; 3],
 }
 
@@ -92,8 +92,8 @@ impl<B: Backend> KVCacheUpdate<B> {
             // non-inline is not supported yet (and is broken anyways due to a data race)
             for swaps_chunk in swaps.chunks(max_inline_swaps) {
                 self.kernel.encode(
-                    &layer_data.key_buffer,
-                    &layer_data.value_buffer,
+                    layer_data.key_buffer.as_ref(),
+                    layer_data.value_buffer.as_ref(),
                     swaps_chunk,
                     swaps_chunk.len() as u32,
                     num_heads as u32,

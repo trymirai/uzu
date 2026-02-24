@@ -1,4 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
+
+use std::rc::Rc;
+
 use bytemuck;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array, Array3, s};
@@ -78,19 +81,23 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     let device = &context.device;
 
-    let key_buffer = device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(key_data.as_slice().unwrap()),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
-        .expect("Failed to create buffer");
+    let key_buffer = Rc::new(
+        device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(key_data.as_slice().unwrap()),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer"),
+    );
 
-    let value_buffer = device
-        .new_buffer_with_data(
-            bytemuck::cast_slice(value_data.as_slice().unwrap()),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
-        .expect("Failed to create buffer");
+    let value_buffer = Rc::new(
+        device
+            .new_buffer_with_data(
+                bytemuck::cast_slice(value_data.as_slice().unwrap()),
+                MTLResourceOptions::STORAGE_MODE_SHARED,
+            )
+            .expect("Failed to create buffer"),
+    );
 
     let kv_layer_data = KVLayerData::<Metal> {
         key_buffer: key_buffer.clone(),

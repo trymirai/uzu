@@ -228,31 +228,25 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
-        let (key_cache_buffer, value_cache_buffer) = if has_kv_cache {
-            let key_cache_binding = state.arrays(&[ArrayId::Keys(self.layer_index)]);
-            let value_cache_binding = state.arrays(&[ArrayId::Values(self.layer_index)]);
 
-            let key_cache_array = key_cache_binding[0].borrow_mut();
-            let key_cache_buf = key_cache_array.buffer().clone();
+        let key_cache_binding = has_kv_cache.then(|| state.arrays(&[ArrayId::Keys(self.layer_index)]));
+        let key_cache_array = key_cache_binding.as_ref().map(|b| b[0].borrow_mut());
 
-            let value_cache_array = value_cache_binding[0].borrow_mut();
-            let value_cache_buf = value_cache_array.buffer().clone();
+        let value_cache_binding = has_kv_cache.then(|| state.arrays(&[ArrayId::Values(self.layer_index)]));
+        let value_cache_array = value_cache_binding.as_ref().map(|b| b[0].borrow_mut());
 
-            (key_cache_buf, value_cache_buf)
-        } else {
-            // For classifiers, we need a values buffer with [num_groups, suffix_length, head_dim] layout.
-            // Use the KV cache update kernel to extract values from QKV into a dedicated extracted_values buffer.
-            let extracted_values_binding = state.arrays(&[ArrayId::ExtractedValues]);
-            let extracted_values_array = extracted_values_binding[0].borrow_mut();
-            let extracted_values_buf = extracted_values_array.buffer().clone();
+        let extracted_values_binding = (!has_kv_cache).then(|| state.arrays(&[ArrayId::ExtractedValues]));
+        let extracted_values_array = extracted_values_binding.as_ref().map(|b| b[0].borrow_mut());
 
-            // Reuse the KV cache update kernel to write values into extracted_values_buf.
+        // For classifiers (no KV cache): extract values from QKV into a dedicated extracted_values buffer.
+        if !has_kv_cache {
+            let extracted_values_buf = extracted_values_array.as_ref().unwrap().buffer();
             self.update_kv_cache_kernel.encode(
                 rotated_keys_buffer,
                 qkv_buffer,
                 // keys already in desired layout; harmless overwrite
                 rotated_keys_buffer,
-                &extracted_values_buf,
+                extracted_values_buf,
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
@@ -261,8 +255,17 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 max_sequence_length as u32,
                 &compute_encoder,
             );
+        }
 
-            (rotated_keys_buffer.clone(), extracted_values_buf)
+        let key_cache_buffer = if has_kv_cache {
+            key_cache_array.as_ref().unwrap().buffer()
+        } else {
+            rotated_keys_buffer
+        };
+        let value_cache_buffer = if has_kv_cache {
+            value_cache_array.as_ref().unwrap().buffer()
+        } else {
+            extracted_values_array.as_ref().unwrap().buffer()
         };
 
         let queries_array = rotated_queries_binding[0].borrow_mut();
@@ -271,22 +274,17 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         let attention_output_array = attention_output_binding[0].borrow_mut();
         let attention_output_buffer = attention_output_array.buffer();
 
-        let attention_bias_buffer = if use_mask {
-            let attention_bias_map = attention_bias_binding[0].clone();
+        let attention_bias_array_borrow = if use_mask {
             Some(
-                attention_bias_map
+                attention_bias_binding[0]
                     .get(&window_length)
-                    .map(|array| {
-                        let array_ref = array.borrow();
-                        array_ref.buffer().clone()
-                    })
-                    .unwrap_or_else(|| {
-                        panic!("Attention bias buffer not found for window length {:?}", window_length);
-                    }),
+                    .unwrap_or_else(|| panic!("Attention bias buffer not found for window length {:?}", window_length))
+                    .borrow(),
             )
         } else {
             None
         };
+        let attention_bias_buffer = attention_bias_array_borrow.as_ref().map(|a| a.buffer());
 
         let partials_binding = state.arrays(&[ArrayId::AttentionPartials]);
         let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
@@ -301,15 +299,16 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         let maxs_array = maxs_binding[0].borrow_mut();
         let maxs_buffer = maxs_array.buffer();
 
-        let sinks_buffer = sinks_binding.as_ref().map(|binding| binding[0].borrow().buffer().clone());
+        let sinks_borrow = sinks_binding.as_ref().map(|binding| binding[0].borrow());
+        let sinks_buffer = sinks_borrow.as_ref().map(|b| b.buffer());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
             self.update_kv_cache_kernel.encode(
                 rotated_keys_buffer,
                 qkv_buffer,
-                &key_cache_buffer,
-                &value_cache_buffer,
+                key_cache_buffer,
+                value_cache_buffer,
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
@@ -343,11 +342,11 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
                     queries_buffer,
-                    keys_buffer: &key_cache_buffer,
-                    values_buffer: &value_cache_buffer,
+                    keys_buffer: key_cache_buffer,
+                    values_buffer: value_cache_buffer,
                     output_buffer: attention_output_buffer,
-                    mask_buffer: attention_bias_buffer.as_ref(),
-                    sinks_buffer: sinks_buffer.as_ref(),
+                    mask_buffer: attention_bias_buffer,
+                    sinks_buffer,
                     num_heads,
                     num_groups,
                     suffix_length,
@@ -369,8 +368,8 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 };
                 kernel.encode(
                     queries_buffer,
-                    &key_cache_buffer,
-                    &value_cache_buffer,
+                    key_cache_buffer,
+                    value_cache_buffer,
                     attention_output_buffer,
                     gqa_factor as u32,
                     sequence_length as u32,
@@ -379,11 +378,11 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     v_head_stride as u32,
                     v_seq_stride as u32,
                     scale,
-                    attention_bias_buffer.as_ref(),
+                    attention_bias_buffer,
                     mask_kv_seq_stride_opt,
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
-                    sinks_buffer.as_ref(),
+                    sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
                     &compute_encoder,
@@ -400,8 +399,8 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 };
                 kernel_pass1.encode(
                     queries_buffer,
-                    &key_cache_buffer,
-                    &value_cache_buffer,
+                    key_cache_buffer,
+                    value_cache_buffer,
                     partials_buffer,
                     sums_buffer,
                     maxs_buffer,
@@ -414,11 +413,11 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     scale,
                     num_heads as u32,
                     suffix_length as u32,
-                    attention_bias_buffer.as_ref(),
+                    attention_bias_buffer,
                     mask_kv_seq_stride_opt,
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
-                    sinks_buffer.as_ref(),
+                    sinks_buffer,
                     &compute_encoder,
                 );
                 kernel_pass2.encode(

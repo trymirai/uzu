@@ -2,7 +2,7 @@ use std::{fmt::Debug, os::raw::c_void, ptr::NonNull};
 
 use super::Backend;
 
-pub trait NativeBuffer: Send + Sync + Debug + Clone {
+pub trait NativeBuffer: Debug {
     type Backend: Backend;
 
     fn set_label(

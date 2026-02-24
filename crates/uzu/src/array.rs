@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull};
+use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull, rc::Rc};
 
 use ndarray::{ArrayView, Dimension, IxDyn};
 
@@ -7,34 +7,18 @@ use crate::{
     backends::common::{Backend, Context, NativeBuffer},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Array<B: Backend> {
-    buffer: B::NativeBuffer,
+    buffer: Rc<B::NativeBuffer>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
 }
 
-pub fn size_for_shape(
-    shape: &[usize],
-    data_type: DataType,
-) -> usize {
-    let Some(last_dim) = shape.last() else {
-        return data_type.size_in_bytes();
-    };
-
-    let bits_per_row = last_dim * data_type.size_in_bits();
-    let padded_bytes_per_row = bits_per_row.div_ceil(8);
-
-    let num_rows: usize = shape.iter().rev().skip(1).product();
-
-    num_rows * padded_bytes_per_row
-}
-
 impl<B: Backend> Array<B> {
     // Constructors
     pub unsafe fn from_parts(
-        buffer: B::NativeBuffer,
+        buffer: Rc<B::NativeBuffer>,
         offset: usize,
         shape: &[usize],
         data_type: DataType,
@@ -50,7 +34,7 @@ impl<B: Backend> Array<B> {
             buffer.length()
         );
         Self {
-            buffer,
+            buffer: buffer.clone(),
             offset,
             shape: shape.into(),
             data_type,
@@ -66,7 +50,11 @@ impl<B: Backend> Array<B> {
 
     // Getters
     pub fn buffer(&self) -> &B::NativeBuffer {
-        &self.buffer
+        &self.buffer.as_ref()
+    }
+
+    pub fn buffer_rc(&self) -> Rc<B::NativeBuffer> {
+        self.buffer.clone()
     }
 
     pub fn offset(&self) -> usize {
@@ -205,6 +193,33 @@ impl<B: Backend> Array<B> {
     }
 }
 
+impl<B: Backend> Clone for Array<B> {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(),
+            offset: self.offset,
+            shape: self.shape.clone(),
+            data_type: self.data_type,
+        }
+    }
+}
+
+pub fn size_for_shape(
+    shape: &[usize],
+    data_type: DataType,
+) -> usize {
+    let Some(last_dim) = shape.last() else {
+        return data_type.size_in_bytes();
+    };
+
+    let bits_per_row = last_dim * data_type.size_in_bits();
+    let padded_bytes_per_row = bits_per_row.div_ceil(8);
+
+    let num_rows: usize = shape.iter().rev().skip(1).product();
+
+    num_rows * padded_bytes_per_row
+}
+
 // Array extends RefCell to have .view on RefCell<Array> (aka ArrayCell)
 
 pub type ArrayCell<B> = RefCell<Array<B>>;
@@ -263,6 +278,6 @@ impl<C: Context> ArrayContextExt for C {
         let buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
         buffer.set_label(Some(label));
 
-        unsafe { Array::from_parts(buffer, 0, shape, data_type) }
+        unsafe { Array::from_parts(Rc::new(buffer), 0, shape, data_type) }
     }
 }
