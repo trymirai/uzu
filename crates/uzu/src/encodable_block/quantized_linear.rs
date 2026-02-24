@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use thiserror::Error;
 
 use super::{EncodableBlock, EncodingParameters};
@@ -82,10 +84,10 @@ pub enum QuantizedLinearError<B: Backend> {
 pub struct QuantizedLinear<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-    biases_buffer: Option<B::NativeBuffer>,
-    weights_buffer: B::NativeBuffer,
-    scales_buffer: B::NativeBuffer,
-    zero_points_or_biases_buffer: B::NativeBuffer,
+    biases_buffer: Option<Rc<B::NativeBuffer>>,
+    weights_buffer: Rc<B::NativeBuffer>,
+    scales_buffer: Rc<B::NativeBuffer>,
+    zero_points_or_biases_buffer: Rc<B::NativeBuffer>,
     quantization_type: QuantizedMatmulType,
     input_dim: usize,
     output_dim: usize,
@@ -153,7 +155,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizedMatmulType::Mlx, deq_biases.buffer().clone())
+                (QuantizedMatmulType::Mlx, deq_biases.buffer_rc_cloned())
             },
             Err(_) => {
                 let zero_points = parameter_tree.leaf("zero_points").map_err(QuantizedLinearError::ParameterError)?;
@@ -179,7 +181,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizedMatmulType::ZeroPoint, zero_points.buffer().clone())
+                (QuantizedMatmulType::ZeroPoint, zero_points.buffer_rc_cloned())
             },
         };
 
@@ -202,7 +204,7 @@ impl<B: Backend> QuantizedLinear<B> {
 
                 let bias_add_kernel = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, kernel_data_type)
                     .map_err(QuantizedLinearError::BackendError)?;
-                (Some(bias_add_kernel), Some(biases.buffer().clone()))
+                (Some(bias_add_kernel), Some(biases.buffer_rc_cloned()))
             },
             Err(_) => (None, None),
         };
@@ -225,8 +227,8 @@ impl<B: Backend> QuantizedLinear<B> {
             kernel,
             bias_add_kernel,
             biases_buffer,
-            weights_buffer: weights.buffer().clone(),
-            scales_buffer: scales.buffer().clone(),
+            weights_buffer: weights.buffer_rc_cloned(),
+            scales_buffer: scales.buffer_rc_cloned(),
             zero_points_or_biases_buffer,
             quantization_type,
             input_dim,
@@ -276,7 +278,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
             let total_length = batch_size * self.output_dim;
             bias_add_kernel.encode_if(
                 output_buffer,
-                biases_buffer,
+                biases_buffer.as_ref(),
                 output_buffer,
                 self.output_dim as u32,
                 total_length as u32,
