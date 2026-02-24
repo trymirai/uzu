@@ -9,6 +9,9 @@ mod gpu_types;
 #[cfg(feature = "metal")]
 mod metal;
 
+#[cfg(feature = "vulkan")]
+mod slang;
+
 use common::{compiler::Compiler, envs, traitgen::traitgen_all};
 
 #[tokio::main(flavor = "current_thread")]
@@ -20,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     debug_log!("build script started");
+    debug_log!("out dir: {:?}", PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?));
 
     if envs::build_clean() {
         let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
@@ -39,6 +43,9 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(feature = "metal")]
     compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(generated_header_dir)?));
+
+    #[cfg(feature = "vulkan")]
+    compilers.push(Box::new(slang::SlangCompiler::new()?));
 
     let backends_kernels = try_join_all(compilers.iter().map(|c| c.build())).await?;
 
