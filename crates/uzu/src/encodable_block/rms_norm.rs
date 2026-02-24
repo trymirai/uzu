@@ -1,5 +1,7 @@
 //! RMS Normalization encodable.
 
+use std::rc::Rc;
+
 use thiserror::Error;
 
 use super::{EncodableBlock, EncodingParameters};
@@ -27,7 +29,7 @@ pub struct RMSNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: B::NativeBuffer,
+    scales_buffer: Rc<B::NativeBuffer>,
     use_sampling_range: bool,
 }
 
@@ -41,7 +43,6 @@ impl<B: Backend> RMSNorm<B> {
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, RMSNormError<B>> {
         let scales = parameter_tree.leaf("scales").map_err(RMSNormError::ParameterError)?;
-        let scales_buffer = scales.buffer().clone();
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
@@ -65,7 +66,7 @@ impl<B: Backend> RMSNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer,
+            scales_buffer: scales.buffer_rc_cloned(),
             use_sampling_range: false,
         })
     }
@@ -122,7 +123,7 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
 
         self.kernel.encode(
             (input_array.buffer(), input_offset),
-            &self.scales_buffer,
+            self.scales_buffer.as_ref(),
             (output_array.buffer(), output_offset),
             batch_len as u32,
             input_shape[1] as u32,

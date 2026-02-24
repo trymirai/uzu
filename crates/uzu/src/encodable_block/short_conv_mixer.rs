@@ -297,12 +297,6 @@ impl<B: Backend> ShortConvMixer<B> {
         let suffix_state = arrays[3].borrow_mut();
         let out = arrays[4].borrow_mut();
 
-        let in_proj_buf = in_proj.buffer().clone();
-        let parents_buf = parents.buffer().clone();
-        let base_state_buf = conv_state.buffer().clone();
-        let suffix_state_buf = suffix_state.buffer().clone();
-        let out_buf = out.buffer().clone();
-
         let data_type: DataType = self.config.in_projection_config.activation_precision().into();
         let elem_bytes = data_type.size_in_bytes();
 
@@ -316,18 +310,17 @@ impl<B: Backend> ShortConvMixer<B> {
         let base_state_offset = conv_state.offset();
         let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
 
-        let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.buffer().clone();
+        let weight_buf = self.conv_weight.buffer_rc_cloned();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         self.short_conv_trie.encode(
-            (&in_proj_buf, in_proj_offset),
-            &weight_buf,
+            (in_proj.buffer_rc_cloned().as_ref(), in_proj_offset),
+            weight_buf.as_ref(),
             bias_buf,
-            (&base_state_buf, base_state_offset),
-            (&parents_buf, parents_offset),
-            (&out_buf, out_offset),
-            (&suffix_state_buf, suffix_state_offset),
+            (conv_state.buffer_rc_cloned().as_ref(), base_state_offset),
+            (parents.buffer_rc_cloned().as_ref(), parents_offset),
+            (out.buffer_rc_cloned().as_ref(), out_offset),
+            (suffix_state.buffer_rc_cloned().as_ref(), suffix_state_offset),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -353,24 +346,23 @@ impl<B: Backend> ShortConvMixer<B> {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.buffer().clone();
-        let state_buf = conv_state.buffer().clone();
-        let out_buf = out.buffer().clone();
+        let in_proj_buf = in_proj.buffer_rc_cloned();
+        let state_buf = conv_state.buffer_rc_cloned();
+        let out_buf = out.buffer_rc_cloned();
 
-        let conv_weight = self.conv_weight.clone();
-        let weight_buf = conv_weight.buffer().clone();
+        let weight_buf = self.conv_weight.buffer_rc_cloned();
         let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
 
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
         self.short_conv_decode.encode(
-            &in_proj_buf,
-            &weight_buf,
+            in_proj_buf.as_ref(),
+            weight_buf.as_ref(),
             bias_buf,
-            &state_buf,
-            &out_buf,
-            &state_buf,
+            state_buf.as_ref(),
+            out_buf.as_ref(),
+            state_buf.as_ref(),
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,
