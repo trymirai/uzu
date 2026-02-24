@@ -170,7 +170,7 @@ impl<B: Backend> ForwardPassState<B> {
         let token_positions_cell = if let Some((async_buf, offset)) = async_positions {
             let array = unsafe {
                 Array::from_parts(
-                    async_buf.clone(),
+                    Rc::new(async_buf.clone()),
                     offset * std::mem::size_of::<i32>(),
                     &[suffix_length],
                     DataType::I32,
@@ -198,7 +198,7 @@ impl<B: Backend> ForwardPassState<B> {
         let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
             let array = unsafe {
                 Array::from_parts(
-                    async_buf.clone(),
+                    Rc::new(async_buf.clone()),
                     offset * std::mem::size_of::<u64>(),
                     &[suffix_length],
                     DataType::U64,
@@ -433,7 +433,7 @@ impl<B: Backend> ForwardPassState<B> {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe { Array::from_parts(buffer, 0, dims, data_type) })
+            RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, dims, data_type) })
         };
 
         ClassifierModeState {

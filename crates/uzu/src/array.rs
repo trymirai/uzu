@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull};
+use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull, rc::Rc};
 
 use ndarray::{ArrayView, Dimension, IxDyn};
 
@@ -9,7 +9,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Array<B: Backend> {
-    buffer: B::NativeBuffer,
+    buffer: Rc<B::NativeBuffer>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -34,7 +34,7 @@ pub fn size_for_shape(
 impl<B: Backend> Array<B> {
     // Constructors
     pub unsafe fn from_parts(
-        buffer: B::NativeBuffer,
+        buffer: Rc<B::NativeBuffer>,
         offset: usize,
         shape: &[usize],
         data_type: DataType,
@@ -50,7 +50,7 @@ impl<B: Backend> Array<B> {
             buffer.length()
         );
         Self {
-            buffer,
+            buffer: buffer.clone(),
             offset,
             shape: shape.into(),
             data_type,
@@ -66,7 +66,11 @@ impl<B: Backend> Array<B> {
 
     // Getters
     pub fn buffer(&self) -> &B::NativeBuffer {
-        &self.buffer
+        &self.buffer.as_ref()
+    }
+
+    pub fn buffer_rc(&self) -> Rc<B::NativeBuffer> {
+        self.buffer.clone()
     }
 
     pub fn offset(&self) -> usize {
@@ -263,6 +267,6 @@ impl<C: Context> ArrayContextExt for C {
         let buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
         buffer.set_label(Some(label));
 
-        unsafe { Array::from_parts(buffer, 0, shape, data_type) }
+        unsafe { Array::from_parts(Rc::new(buffer), 0, shape, data_type) }
     }
 }
