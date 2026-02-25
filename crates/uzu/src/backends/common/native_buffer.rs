@@ -6,11 +6,13 @@ pub trait NativeBuffer: Debug {
     type Backend: Backend;
 
     fn set_label(
-        &self,
+        &mut self,
         label: Option<&str>,
     );
 
     fn cpu_ptr(&self) -> NonNull<c_void>;
+
     fn length(&self) -> usize;
+
     fn id(&self) -> usize;
 }

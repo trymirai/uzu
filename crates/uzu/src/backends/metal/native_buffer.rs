@@ -1,4 +1,4 @@
-use std::{ops::Deref, os::raw::c_void, ptr::NonNull};
+use std::{os::raw::c_void, ptr::NonNull};
 
 use metal::{MTLBuffer, MTLResourceExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
@@ -10,10 +10,10 @@ impl NativeBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     type Backend = Metal;
 
     fn set_label(
-        &self,
+        &mut self,
         label: Option<&str>,
     ) {
-        MTLResourceExt::set_label(self.deref(), label);
+        (**self).set_label(label);
     }
 
     fn cpu_ptr(&self) -> NonNull<c_void> {
@@ -21,7 +21,7 @@ impl NativeBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     }
 
     fn length(&self) -> usize {
-        self.deref().length()
+        (**self).length()
     }
 
     fn id(&self) -> usize {
