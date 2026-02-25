@@ -526,7 +526,7 @@ where
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        self.context.command_buffer.borrow().encode_signal_event(&self.context.async_buffers.event, next_counter);
+        self.context.command_buffer.borrow_mut().encode_signal_event(&self.context.async_buffers.event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler

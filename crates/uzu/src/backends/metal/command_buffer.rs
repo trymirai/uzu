@@ -44,7 +44,7 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     }
 
     fn encode_signal_event(
-        &self,
+        &mut self,
         event: &Retained<ProtocolObject<dyn MTLEvent>>,
         value: u64,
     ) {

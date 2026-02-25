@@ -20,7 +20,7 @@ pub trait CommandBuffer {
     );
 
     fn encode_signal_event(
-        &self,
+        &mut self,
         event: &<Self::Backend as Backend>::Event,
         value: u64,
     );
