@@ -14,7 +14,7 @@ pub trait CommandBuffer {
     ) -> T;
 
     fn encode_wait_for_event(
-        &self,
+        &mut self,
         event: &<Self::Backend as Backend>::Event,
         value: u64,
     );

@@ -461,7 +461,7 @@ where
         if is_continuation {
             self.context
                 .command_buffer
-                .borrow()
+                .borrow_mut()
                 .encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
