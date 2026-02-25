@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of, ops::Deref};
 
 use super::LanguageModelGeneratorContext;
 use crate::{
@@ -114,7 +114,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         parameters: &EncodingParameters<B>,
         key: String,
     ) -> LanguageModelGeneratorEncodedTask<B> {
-        context.executables.encode(state, parameters, &context.command_buffer);
+        context.executables.encode(state, parameters, context.command_buffer.borrow().deref());
 
         LanguageModelGeneratorEncodedTask {
             key,

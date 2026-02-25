@@ -36,7 +36,7 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     }
 
     fn encode_wait_for_event(
-        &self,
+        &mut self,
         event: &Retained<ProtocolObject<dyn MTLEvent>>,
         value: u64,
     ) {
@@ -44,15 +44,15 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     }
 
     fn encode_signal_event(
-        &self,
+        &mut self,
         event: &Retained<ProtocolObject<dyn MTLEvent>>,
         value: u64,
     ) {
         self.encode_signal_event_value(event, value);
     }
 
-    fn add_completed_handler(
-        &self,
+    fn add_completion_handler(
+        &mut self,
         handler: impl Fn() + 'static,
     ) {
         self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |_| handler()));

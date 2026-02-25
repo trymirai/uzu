@@ -1,6 +1,6 @@
 use super::Backend;
 
-pub trait CommandBuffer: Clone {
+pub trait CommandBuffer {
     type Backend: Backend;
 
     fn with_compute_encoder<T>(
@@ -14,23 +14,24 @@ pub trait CommandBuffer: Clone {
     ) -> T;
 
     fn encode_wait_for_event(
-        &self,
+        &mut self,
         event: &<Self::Backend as Backend>::Event,
         value: u64,
     );
 
     fn encode_signal_event(
-        &self,
+        &mut self,
         event: &<Self::Backend as Backend>::Event,
         value: u64,
     );
 
-    fn add_completed_handler(
-        &self,
+    fn add_completion_handler(
+        &mut self,
         handler: impl Fn() + 'static,
     );
 
     fn submit(&self);
+
     fn wait_until_completed(&self);
 
     fn gpu_execution_time_ms(&self) -> Option<f64>;

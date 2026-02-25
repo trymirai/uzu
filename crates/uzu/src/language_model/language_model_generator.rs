@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::repeat_n, path::Path, sync::Arc, time::Instant};
+use std::{collections::HashMap, iter::repeat_n, ops::Deref, path::Path, sync::Arc, time::Instant};
 
 use itertools::{Either, Itertools, izip};
 
@@ -456,24 +456,26 @@ where
         }
 
         self.context.reset_command_buffer();
-        let root_command_buffer = &self.context.command_buffer;
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
-            root_command_buffer.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
+            self.context
+                .command_buffer
+                .borrow_mut()
+                .encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
         self.context.executables.encode(
             &mut state,
             &EncodingParameters::new(false, false, false),
-            &root_command_buffer,
+            self.context.command_buffer.borrow().deref(),
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
             &EncodingParameters::new(false, false, false),
-            &root_command_buffer,
+            self.context.command_buffer.borrow().deref(),
         );
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -484,7 +486,7 @@ where
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
         let token_ids_buffer = token_ids_binding.buffer();
 
-        root_command_buffer.with_compute_encoder(|encoder| {
+        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
             self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
             let results_offset = slot * std::mem::size_of::<u32>();
             self.context.token_copy_results.encode(
@@ -498,12 +500,12 @@ where
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
-            &root_command_buffer,
+            self.context.command_buffer.borrow().deref(),
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
 
-        root_command_buffer.with_compute_encoder(|encoder| {
+        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
             if let Some(mask_update) = &self.context.mask_update {
                 let updates: Vec<AttentionBiasUpdate> =
                     self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
@@ -524,7 +526,7 @@ where
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        root_command_buffer.encode_signal_event(&self.context.async_buffers.event, next_counter);
+        self.context.command_buffer.borrow_mut().encode_signal_event(&self.context.async_buffers.event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
@@ -541,11 +543,11 @@ where
             }
         };
 
-        root_command_buffer.add_completed_handler(handler);
-        root_command_buffer.submit();
+        self.context.command_buffer.borrow_mut().add_completion_handler(handler);
+        self.context.command_buffer.borrow().submit();
 
         if should_capture {
-            root_command_buffer.wait_until_completed();
+            self.context.command_buffer.borrow().wait_until_completed();
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
@@ -643,19 +645,19 @@ where
                 );
             }
 
-            let root_command_buffer = self.context.command_buffer.clone();
+            let command_buffer = self.context.command_buffer.clone();
 
             if !warmup {
                 if !task.is_prefilling {
                     self.context.gpu_sampler.encode(
                         &mut state,
                         &EncodingParameters::new(warmup, true, false),
-                        &self.context.command_buffer,
+                        &self.context.command_buffer.as_ref().borrow(),
                     );
                 }
             }
 
-            root_command_buffer.submit();
+            command_buffer.borrow().submit();
 
             if allow_pre_encode {
                 self.context.reset_command_buffer();
@@ -672,7 +674,7 @@ where
                 self.encoded_tasks.insert(next_task_key.clone(), next_encoded_task);
             }
 
-            root_command_buffer.wait_until_completed();
+            command_buffer.borrow().wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
             if should_capture {
                 self.gpu_capture
@@ -712,14 +714,13 @@ where
         wait_until_completed: bool,
     ) {
         let command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
-        let root_command_buffer = &command_buffer;
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
             cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
-                &root_command_buffer,
+                &command_buffer,
                 &self.context.kv_cache_update,
             );
         }
