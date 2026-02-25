@@ -51,8 +51,8 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
         self.encode_signal_event_value(event, value);
     }
 
-    fn add_completed_handler(
-        &self,
+    fn add_completion_handler(
+        &mut self,
         handler: impl Fn() + 'static,
     ) {
         self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |_| handler()));

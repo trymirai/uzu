@@ -25,8 +25,8 @@ pub trait CommandBuffer {
         value: u64,
     );
 
-    fn add_completed_handler(
-        &self,
+    fn add_completion_handler(
+        &mut self,
         handler: impl Fn() + 'static,
     );
 
