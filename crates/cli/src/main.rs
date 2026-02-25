@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use cli::handlers::{handle_bench, handle_run, handle_serve};
+use cli::handlers::{handle_bench, handle_classify, handle_run, handle_serve};
 
 #[derive(Parser)]
 struct Cli {
@@ -29,6 +29,14 @@ enum Commands {
         /// Prefill step size
         prefill_step_size: Option<usize>,
     },
+    /// Classify text with a classifier model
+    Classify {
+        /// Folder with model's files
+        model_path: String,
+        /// Non-interactive mode: classify a single message and exit
+        #[arg(long, short)]
+        message: Option<String>,
+    },
     /// Run benchmarks for the specified model
     Bench {
         /// Folder with model's files
@@ -57,6 +65,12 @@ fn main() {
             prefill_step_size,
         }) => {
             handle_serve(model_path, prefill_step_size);
+        },
+        Some(Commands::Classify {
+            model_path,
+            message,
+        }) => {
+            handle_classify(model_path, message);
         },
         Some(Commands::Bench {
             model_path,

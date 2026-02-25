@@ -3,4 +3,7 @@ pub mod main;
 pub mod state;
 pub use chat_completions::handle_chat_completions;
 pub use main::run_server;
-pub use state::{SessionState, SessionWrapper, load_session};
+pub use state::{
+    SessionState, SessionWrapper, load_classification_session,
+    load_model_type, load_session,
+};

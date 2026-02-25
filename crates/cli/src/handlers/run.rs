@@ -6,13 +6,17 @@ use std::sync::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Text;
-use uzu::session::{
-    config::RunConfig,
-    parameter::SamplingPolicy,
-    types::{Input, Output},
+use uzu::{
+    ModelType,
+    session::{
+        config::RunConfig,
+        parameter::SamplingPolicy,
+        types::{Input, Output},
+    },
 };
 
-use crate::server::load_session;
+use crate::handlers::handle_classify;
+use crate::server::{load_model_type, load_session};
 
 fn format_output(output: Output) -> String {
     let stats = &output.stats;
@@ -40,6 +44,11 @@ pub fn handle_run(
     seed: Option<u64>,
     mut message: Option<String>,
 ) {
+    let model_type = load_model_type(&model_path);
+    if model_type == ModelType::ClassifierModel {
+        return handle_classify(model_path, message);
+    }
+
     let mut session = load_session(model_path, prefill_step_size, seed);
 
     let is_model_running = Arc::new(AtomicBool::new(false));
