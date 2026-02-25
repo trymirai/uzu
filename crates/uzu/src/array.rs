@@ -275,7 +275,7 @@ impl<C: Context> ArrayContextExt for C {
     ) -> Array<Self::Backend> {
         let buffer_size_bytes = size_for_shape(shape, data_type);
 
-        let buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
+        let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
         buffer.set_label(Some(label));
 
         unsafe { Array::from_parts(Rc::new(buffer), 0, shape, data_type) }
