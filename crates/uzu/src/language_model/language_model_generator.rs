@@ -456,7 +456,7 @@ where
         }
 
         self.context.reset_command_buffer();
-        let root_command_buffer = &self.context.command_buffer;
+        let root_command_buffer = self.context.command_buffer.borrow();
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
@@ -643,19 +643,19 @@ where
                 );
             }
 
-            let root_command_buffer = self.context.command_buffer.clone();
+            let command_buffer = self.context.command_buffer.clone();
 
             if !warmup {
                 if !task.is_prefilling {
                     self.context.gpu_sampler.encode(
                         &mut state,
                         &EncodingParameters::new(warmup, true, false),
-                        &self.context.command_buffer,
+                        &self.context.command_buffer.as_ref().borrow(),
                     );
                 }
             }
 
-            root_command_buffer.submit();
+            command_buffer.borrow().submit();
 
             if allow_pre_encode {
                 self.context.reset_command_buffer();
@@ -672,7 +672,7 @@ where
                 self.encoded_tasks.insert(next_task_key.clone(), next_encoded_task);
             }
 
-            root_command_buffer.wait_until_completed();
+            command_buffer.borrow().wait_until_completed();
             let run_time = run_start.elapsed().as_secs_f64();
             if should_capture {
                 self.gpu_capture
