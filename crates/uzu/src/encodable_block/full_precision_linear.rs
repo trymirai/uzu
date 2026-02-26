@@ -44,10 +44,7 @@ pub enum FullPrecisionLinearError<B: Backend> {
     },
 }
 
-pub struct FullPrecisionLinear<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct FullPrecisionLinear<B: Backend> {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
     bias_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
     weights_buffer: Rc<RefCell<B::NativeBuffer>>,
@@ -57,10 +54,7 @@ where
     output_array_id: ArrayId,
 }
 
-impl<B: Backend> FullPrecisionLinear<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> FullPrecisionLinear<B> {
     pub fn new(
         context: &B::Context,
         precision: DataType,
@@ -128,10 +122,7 @@ where
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
     fn supports_shared_encoder(&self) -> bool {
         true
     }

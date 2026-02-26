@@ -9,31 +9,26 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer, kernel::matmul::MatmulKernels},
+    backends::common::{Backend, CommandBuffer},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
 };
 
-pub struct Classifier<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct Classifier<B: Backend> {
     pub context: ClassifierContext<B>,
 }
 
-impl<B: Backend + 'static> Classifier<B>
-where
-    B::Kernels: MatmulKernels,
-{
-    pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = ClassifierContext::new(model_path)?;
-        Ok(Self {
-            context,
-        })
-    }
+pub trait ClassifierTrait {
+    fn classify_tokens(
+        &mut self,
+        token_ids: Vec<u64>,
+        token_positions: Vec<usize>,
+    ) -> Result<ClassificationOutput, Error>;
+}
 
-    pub fn classify_tokens(
+impl<B: Backend> ClassifierTrait for Classifier<B> {
+    fn classify_tokens(
         &mut self,
         token_ids: Vec<u64>,
         token_positions: Vec<usize>,
@@ -76,6 +71,15 @@ where
                 probabilities,
                 stats,
             })
+        })
+    }
+}
+
+impl<B: Backend> Classifier<B> {
+    pub fn new(model_path: &Path) -> Result<Self, Error> {
+        let context = ClassifierContext::new(model_path)?;
+        Ok(Self {
+            context,
         })
     }
 

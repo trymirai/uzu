@@ -2,10 +2,7 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use crate::{
     DataType,
-    backends::common::{
-        Backend, Context, Kernels,
-        kernel::{SigmoidKernel, matmul::MatmulKernels},
-    },
+    backends::common::{Backend, Context, Kernels, kernel::SigmoidKernel},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::{
@@ -44,10 +41,7 @@ pub struct ClassifierContext<B: Backend> {
     pub sigmoid_kernel: <B::Kernels as Kernels>::SigmoidKernel,
 }
 
-impl<B: Backend + 'static> ClassifierContext<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> ClassifierContext<B> {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
 

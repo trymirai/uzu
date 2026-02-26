@@ -5,10 +5,7 @@ use crate::{
     array::Array,
     backends::common::{
         Backend, CommandBuffer, Context, Kernels,
-        kernel::{
-            ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel,
-            matmul::MatmulKernels,
-        },
+        kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::{DecoderLayerType, ShortConvConfig},
     encodable_block::{EncodableBlock, EncodingParameters, transformer_layer::linear_block},
@@ -30,10 +27,7 @@ pub struct ShortConvMixer<B: Backend> {
     conv_bias: Option<Array<B>>,
 }
 
-impl<B: Backend + 'static> ShortConvMixer<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> ShortConvMixer<B> {
     pub fn new(
         context: &B::Context,
         layer_type: DecoderLayerType,

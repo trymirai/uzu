@@ -10,10 +10,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Context, Kernels, NativeBuffer,
-        kernel::{
-            MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate,
-            matmul::MatmulKernels,
-        },
+        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
@@ -148,10 +145,7 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub async_buffers: AsyncBuffers<B>,
 }
 
-impl<B: Backend + 'static> LanguageModelGeneratorContext<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> LanguageModelGeneratorContext<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,

@@ -18,10 +18,7 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::common::{
-        Backend, CommandBuffer, Context,
-        kernel::{kv_cache_update::KVCacheUpdate, matmul::MatmulKernels},
-    },
+    backends::common::{Backend, CommandBuffer, Context, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{EncodableBlock, EncodingParameters, Sampling},
@@ -32,7 +29,7 @@ use crate::{
         traces::ActivationTrace,
     },
     language_model::{
-        LanguageModelGeneratorContext,
+        language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
     parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
@@ -155,10 +152,7 @@ pub enum ArrayTransform {
 // Model Context (internal)
 // ============================================================================
 
-enum ModelContext<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+enum ModelContext<B: Backend> {
     LanguageModelGenerator(LanguageModelGeneratorContext<B>),
     Classifier(Classifier<B>),
 }
@@ -171,18 +165,12 @@ where
 ///
 /// Automatically detects whether the model is an LLM or classifier and
 /// runs the appropriate validation.
-pub struct TraceValidator<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct TraceValidator<B: Backend> {
     model_path: PathBuf,
     context: ModelContext<B>,
 }
 
-impl<B: Backend + 'static> TraceValidator<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> TraceValidator<B> {
     /// Create a new trace validator for the given model path.
     ///
     /// Automatically detects the model type from config.json.
