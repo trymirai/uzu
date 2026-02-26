@@ -392,7 +392,9 @@ impl<B: Backend> ForwardPassState<B> {
         let create_buffer = |size: usize| -> ArrayCell<B> {
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, &[batch_size, size / batch_size], data_type) })
+            RefCell::new(unsafe {
+                Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, size / batch_size], data_type)
+            })
         };
 
         ClassifierModeState {
@@ -402,7 +404,9 @@ impl<B: Backend> ForwardPassState<B> {
             classifier_logits: {
                 let buffer_size = batch_size * num_labels * data_type.size_in_bytes();
                 let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-                RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, &[batch_size, num_labels], data_type) })
+                RefCell::new(unsafe {
+                    Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, num_labels], data_type)
+                })
             },
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,

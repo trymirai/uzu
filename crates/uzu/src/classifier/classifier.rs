@@ -111,35 +111,35 @@ where
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(&mut state, &encoding_params, &self.context.command_buffer);
-            self.context.embedding_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.embed.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context.embedding_norm.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
                 state.encode_copy_array(
-                    &self.context.command_buffer,
+                    &mut self.context.command_buffer,
                     ArrayId::Main,
                     traces.borrow().embedding_norm().clone(),
                 );
             }
 
             for layer in self.context.layers.iter() {
-                layer.encode(&mut state, &encoding_params, &self.context.command_buffer);
+                layer.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
             }
-            self.context.output_norm.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.output_norm.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
                 state.encode_copy_array(
-                    &self.context.command_buffer,
+                    &mut self.context.command_buffer,
                     ArrayId::Main,
                     traces.borrow().output_norm.clone(),
                 );
             }
 
-            self.context.pooling.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.pooling.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
 
-            self.context.prediction_head.encode(&mut state, &encoding_params, &self.context.command_buffer);
+            self.context.prediction_head.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
 
             self.context.command_buffer.submit();
             self.context.command_buffer.wait_until_completed();

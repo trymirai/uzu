@@ -282,9 +282,9 @@ where
             None,
         );
 
-        let command_buffer = ctx.context.create_command_buffer().expect("Failed to create command buffer");
+        let mut command_buffer = ctx.context.create_command_buffer().expect("Failed to create command buffer");
 
-        ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &command_buffer);
+        ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &mut command_buffer);
         command_buffer.submit();
         command_buffer.wait_until_completed();
 
