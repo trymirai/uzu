@@ -1,32 +1,59 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
     prelude::SamplingSeed,
-    session::{Session, config::DecodingConfig, parameter::PrefillStepSize},
+    session::{
+        Session,
+        config::{DecodingConfig, RunConfig},
+        parameter::PrefillStepSize,
+        types::{Error, Input, Output},
+    },
 };
 
-pub struct SessionWrapper(Mutex<Session>);
+pub trait RunSession {
+    fn run(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        progress: Option<Box<dyn Fn(Output) -> bool>>,
+    ) -> Result<Output, Error>;
+}
+
+impl RunSession for Session {
+    fn run(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        progress: Option<Box<dyn Fn(Output) -> bool>>,
+    ) -> Result<Output, Error> {
+        Session::run(self, input, config, progress)
+    }
+}
+
+pub struct SessionWrapper(Mutex<Box<dyn RunSession>>);
+
 unsafe impl Send for SessionWrapper {}
 unsafe impl Sync for SessionWrapper {}
+
 impl SessionWrapper {
-    pub fn new(session: Session) -> Self {
-        Self(Mutex::new(session))
+    pub fn new(runner: impl RunSession + 'static) -> Self {
+        Self(Mutex::new(Box::new(runner)))
     }
 
-    pub fn lock(&self) -> std::sync::MutexGuard<'_, Session> {
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn RunSession>> {
         self.0.lock().unwrap()
     }
 }
 
 pub struct SessionState {
     pub model_name: String,
-    pub session_wrapper: SessionWrapper,
+    pub session_wrapper: Arc<SessionWrapper>,
 }
-
-unsafe impl Send for SessionState {}
-unsafe impl Sync for SessionState {}
 
 pub fn load_session(
     model_path: String,
