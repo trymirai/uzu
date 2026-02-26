@@ -7,9 +7,9 @@
 #define SEQUENCE_BLOCK_SIZE_2 32
 #define TOTAL_BLOCKS_COUNT 32
 
-template <typename T, uint head_dim>
+template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(head_dim, 64, 128, 256)
+VARIANTS(HEAD_DIM, 64, 128, 256)
 KERNEL(AttentionTwoPass1)(
     const device T* queries,
     const device T* keys,
@@ -47,8 +47,8 @@ KERNEL(AttentionTwoPass1)(
   const uint3 tpg = {num_heads, suffix_length, TOTAL_BLOCKS_COUNT};
 
   constexpr bool query_transposed = false;
-  constexpr uint value_dim = head_dim;
-  constexpr uint qk_elements_per_thread = head_dim / HEAD_BLOCK_SIZE;
+  constexpr uint value_dim = HEAD_DIM;
+  constexpr uint qk_elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
   constexpr uint value_elements_per_thread = value_dim / HEAD_BLOCK_SIZE;
   uint inner_k_stride = SEQUENCE_BLOCK_SIZE_1 * k_seq_stride;
   uint inner_v_stride = SEQUENCE_BLOCK_SIZE_1 * v_seq_stride;
@@ -66,7 +66,7 @@ KERNEL(AttentionTwoPass1)(
           : head_idx * tpg.y + q_seq_idx; // Consistent with single-pass
   const uint kv_head_idx = head_idx / gqa_factor;
 
-  queries += q_offset * head_dim + simd.lane_idx * qk_elements_per_thread;
+  queries += q_offset * HEAD_DIM + simd.lane_idx * qk_elements_per_thread;
   keys += kv_head_idx * k_head_stride +
           (block_idx * SEQUENCE_BLOCK_SIZE_1 + simd.group_idx) * k_seq_stride +
           simd.lane_idx * qk_elements_per_thread;
@@ -189,9 +189,9 @@ KERNEL(AttentionTwoPass1)(
   }
 }
 
-template <typename T, uint head_dim>
+template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(head_dim, 64, 128, 256)
+VARIANTS(HEAD_DIM, 64, 128, 256)
 KERNEL(AttentionTwoPass2)(
     const device float* partials,
     const device float* sums,
@@ -206,18 +206,18 @@ KERNEL(AttentionTwoPass2)(
     const uint tid THREADS(1024)
 ) {
   const uint3 tpg = {num_heads, suffix_length, 1};
-  constexpr uint elements_per_thread = head_dim / HEAD_BLOCK_SIZE;
+  constexpr uint elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
 
   typedef float U;
   thread U o[elements_per_thread];
 
   const uint o_offset = q_seq_idx * tpg.x + head_idx; // Our custom layout
 
-  partials += o_offset * TOTAL_BLOCKS_COUNT * head_dim +
-              simd.group_idx * head_dim + simd.lane_idx * elements_per_thread;
+  partials += o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM +
+              simd.group_idx * HEAD_DIM + simd.lane_idx * elements_per_thread;
   sums += o_offset * TOTAL_BLOCKS_COUNT;
   maxs += o_offset * TOTAL_BLOCKS_COUNT;
-  out += o_offset * head_dim +
+  out += o_offset * HEAD_DIM +
          simd.group_idx * elements_per_thread; // Our custom output layout
 
   // First everybody reads the max and sum_exp

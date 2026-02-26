@@ -2,10 +2,10 @@
 #include "../definitions.metal"
 #include "quant_matmul.metal"
 
-template <typename T, int group_size, int bits>
+template <typename T, int GROUP_SIZE, int BITS>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(group_size, 32, 64, 128)
-VARIANTS(bits, 4, 8)
+VARIANTS(GROUP_SIZE, 32, 64, 128)
+VARIANTS(BITS, 4, 8)
 KERNEL(QuantizedMatmulQmmTransposed)(
     const device uint32_t* w,
     const device T* scales,
@@ -35,7 +35,7 @@ KERNEL(QuantizedMatmulQmmTransposed)(
 
   if (use_mlx_quant) {
     if (aligned_n) {
-      qmm_transposed_impl<T, group_size, bits, true, 32, 32, 32, true>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 32, 32, 32, true>(
           w,
           scales,
           zero_points,
@@ -53,7 +53,7 @@ KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lid
       );
     } else {
-      qmm_transposed_impl<T, group_size, bits, false, 32, 32, 32, true>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, 32, 32, 32, true>(
           w,
           scales,
           zero_points,
@@ -73,7 +73,7 @@ KERNEL(QuantizedMatmulQmmTransposed)(
     }
   } else {
     if (aligned_n) {
-      qmm_transposed_impl<T, group_size, bits, true, 32, 32, 32, false>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 32, 32, 32, false>(
           w,
           scales,
           zero_points,
@@ -91,7 +91,7 @@ KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lid
       );
     } else {
-      qmm_transposed_impl<T, group_size, bits, false, 32, 32, 32, false>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, 32, 32, 32, false>(
           w,
           scales,
           zero_points,
