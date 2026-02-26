@@ -144,13 +144,22 @@ pub fn embed_block<B: Backend + 'static>(
     context: &B::Context,
     parameter_tree: &ParameterTree<B::Context>,
 ) -> Box<dyn EncodableBlock<B>> {
+    embed_block_with_subtree(config, context, parameter_tree, "embedding")
+}
+
+pub fn embed_block_with_subtree<B: Backend + 'static>(
+    config: &DecoderConfig,
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B::Context>,
+    embedding_subtree: &str,
+) -> Box<dyn EncodableBlock<B>> {
+    let embeddings_tree = parameter_tree.subtree(embedding_subtree).expect("Failed to get embedding subtree");
+
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             common,
             precision,
         } => {
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = FullPrecisionEmbeddingLookup::new(
                 context,
                 (*precision).into(),
@@ -167,8 +176,6 @@ pub fn embed_block<B: Backend + 'static>(
             common,
             precision,
         } => {
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = FullPrecisionEmbeddingLookup::new(
                 context,
                 (*precision).into(),
@@ -186,8 +193,6 @@ pub fn embed_block<B: Backend + 'static>(
             activation_precision,
             ..
         } => {
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = FullPrecisionEmbeddingLookup::new(
                 context,
                 (*activation_precision).into(),
@@ -208,8 +213,6 @@ pub fn embed_block<B: Backend + 'static>(
         } => {
             let data_type: DataType = (*activation_precision).into();
             let input_scale = config.embedding_config.common().input_scale.unwrap_or(1.0);
-
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingLookup::new_untied_input(
                 context,
@@ -232,8 +235,6 @@ pub fn embed_block<B: Backend + 'static>(
         } => {
             let data_type: DataType = (*activation_precision).into();
 
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             // For QuantizedTied, group_size is implicit (per-row quantization), so group_size == model_dim
             let group_size = config.model_dim;
             let input_scale = config.embedding_config.common().input_scale.unwrap_or(1.0);
@@ -259,8 +260,6 @@ pub fn embed_block<B: Backend + 'static>(
         } => {
             let data_type: DataType = config.output_norm_config.scale_precision.into();
             let input_scale = config.embedding_config.common().input_scale.unwrap_or(1.0);
-
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingLookup::new_tied(
                 context,
@@ -279,6 +278,7 @@ pub fn embed_block<B: Backend + 'static>(
     }
 }
 
+#[allow(dead_code)]
 pub fn readout_block<B: Backend + 'static>(
     config: &DecoderConfig,
     context: &B::Context,
@@ -287,19 +287,31 @@ pub fn readout_block<B: Backend + 'static>(
 where
     B::Kernels: MatmulKernels,
 {
+    readout_block_with_subtree(config, context, parameter_tree, "embedding")
+}
+
+pub fn readout_block_with_subtree<B: Backend + 'static>(
+    config: &DecoderConfig,
+    context: &B::Context,
+    parameter_tree: &ParameterTree<B::Context>,
+    readout_subtree: &str,
+) -> Box<dyn EncodableBlock<B>>
+where
+    B::Kernels: MatmulKernels,
+{
+    let readout_tree = parameter_tree.subtree(readout_subtree).expect("Failed to get readout subtree");
+
     match &config.embedding_config {
         EmbeddingConfig::Tied {
             precision,
             ..
         } => {
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = FullPrecisionEmbeddingReadout::new(
                 context,
                 (*precision).into(),
                 config.vocab_size,
                 config.model_dim,
-                &embeddings_tree,
+                &readout_tree,
             )
             .expect("Failed to create full precision embedding readout");
 
@@ -309,14 +321,12 @@ where
             precision,
             ..
         } => {
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = FullPrecisionEmbeddingReadout::new(
                 context,
                 (*precision).into(),
                 config.vocab_size,
                 config.model_dim,
-                &embeddings_tree,
+                &readout_tree,
             )
             .expect("Failed to create full precision embedding readout");
 
@@ -329,7 +339,6 @@ where
             ..
         } => {
             let data_type: DataType = (*activation_precision).into();
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
 
             let block = QuantizedEmbeddingReadout::new_untied_output(
                 context,
@@ -338,7 +347,7 @@ where
                 config.model_dim,
                 *group_size,
                 *embedding_quantization_mode,
-                &embeddings_tree,
+                &readout_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");
 
@@ -351,8 +360,6 @@ where
         } => {
             let data_type: DataType = (*activation_precision).into();
 
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             // For QuantizedTied, group_size is implicit (per-row quantization), so group_size == model_dim
             let group_size = config.model_dim;
 
@@ -363,7 +370,7 @@ where
                 config.model_dim,
                 group_size,
                 *embedding_quantization_mode,
-                &embeddings_tree,
+                &readout_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");
 
@@ -376,8 +383,6 @@ where
         } => {
             let data_type: DataType = config.output_norm_config.scale_precision.into();
 
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = QuantizedEmbeddingReadout::new_tied(
                 context,
                 data_type,
@@ -385,7 +390,7 @@ where
                 config.model_dim,
                 *group_size,
                 *embedding_quantization_mode,
-                &embeddings_tree,
+                &readout_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");
 
@@ -398,8 +403,6 @@ where
         } => {
             let data_type: DataType = config.output_norm_config.scale_precision.into();
 
-            let embeddings_tree = parameter_tree.subtree("embedding").expect("Failed to get embedding subtree");
-
             let block = QuantizedEmbeddingReadout::new_untied_output(
                 context,
                 data_type,
@@ -407,7 +410,7 @@ where
                 config.model_dim,
                 *group_size,
                 *embedding_quantization_mode,
-                &embeddings_tree,
+                &readout_tree,
             )
             .expect("Failed to create quantized embedding readout kernel");
 

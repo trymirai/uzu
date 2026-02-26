@@ -23,3 +23,8 @@ pub use crate::{
     speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
     storage_path,
 };
+
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+pub use crate::session::TtsCodecSession;
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+pub use crate::session::TtsSession;

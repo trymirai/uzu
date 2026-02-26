@@ -8,7 +8,7 @@ use crate::{
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
         EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
-        transformer_layer::{embed_block, readout_block},
+        transformer_layer::{embed_block_with_subtree, readout_block_with_subtree},
     },
     forward_pass::{
         model_shape::ModelShape,
@@ -36,11 +36,24 @@ where
         decoder_config: Rc<DecoderConfig>,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
-        let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
+        Self::new_with_subtrees(context, decoder_config, root_weight_loader, "transformer", "embedding", "embedding")
+    }
 
-        let embed = embed_block(&decoder_config, context.as_ref(), root_weight_loader);
+    pub fn new_with_subtrees(
+        context: Rc<B::Context>,
+        decoder_config: Rc<DecoderConfig>,
+        root_weight_loader: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+        embedding_subtree: &str,
+        readout_subtree: &str,
+    ) -> Self {
+        let decoder_weight_loader =
+            root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
-        let readout = readout_block(&decoder_config, context.as_ref(), root_weight_loader);
+        let embed = embed_block_with_subtree(&decoder_config, context.as_ref(), root_weight_loader, embedding_subtree);
+
+        let readout =
+            readout_block_with_subtree(&decoder_config, context.as_ref(), root_weight_loader, readout_subtree);
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer =

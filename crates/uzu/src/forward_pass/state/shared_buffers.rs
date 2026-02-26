@@ -52,7 +52,15 @@ impl<B: Backend> SharedBuffers<B> {
         &mut self,
         parameter_tree: &ParameterTree<B::Context>,
     ) {
-        let transformer_tree = parameter_tree.subtree("transformer").expect("transformer subtree not found");
+        self.update_data_with_transformer_subtree(parameter_tree, "transformer");
+    }
+
+    pub fn update_data_with_transformer_subtree(
+        &mut self,
+        parameter_tree: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+    ) {
+        let transformer_tree = parameter_tree.subtree(transformer_subtree).expect("transformer subtree not found");
 
         if let Some(global_rope) = &mut self.global_rope {
             global_rope.update_data(&transformer_tree, "global_rope");

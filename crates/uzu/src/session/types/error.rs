@@ -50,4 +50,6 @@ pub enum Error {
     CaptureFailed,
     #[error("Classifier error: {0}")]
     Classifier(#[from] ClassifierError),
+    #[error("Audio codec error: {0}")]
+    AudioCodec(#[from] crate::audio::AudioError),
 }
