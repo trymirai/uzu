@@ -5,9 +5,9 @@
 #define SEQUENCE_BLOCK_SIZE 32
 #define HEAD_BLOCK_SIZE 32
 
-template <typename T, uint head_dim>
+template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(head_dim, 64, 128, 256)
+VARIANTS(HEAD_DIM, 64, 128, 256)
 KERNEL(AttentionSinglePass)(
     const device T* queries,
     const device T* keys,
@@ -42,8 +42,8 @@ KERNEL(AttentionSinglePass)(
   const uint3 tpg = {num_heads, suffix_length, 1};
   constexpr bool query_transposed = false;
 
-  constexpr uint value_dim = head_dim;
-  constexpr uint qk_elements_per_thread = head_dim / HEAD_BLOCK_SIZE;
+  constexpr uint value_dim = HEAD_DIM;
+  constexpr uint qk_elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
   constexpr uint value_elements_per_thread = value_dim / HEAD_BLOCK_SIZE;
   uint inner_k_stride = SEQUENCE_BLOCK_SIZE * int(k_seq_stride);
   uint inner_v_stride = SEQUENCE_BLOCK_SIZE * int(v_seq_stride);
@@ -59,7 +59,7 @@ KERNEL(AttentionSinglePass)(
   const uint q_offset = query_transposed ? tpg.x * q_seq_idx + head_idx
                                          : head_idx * tpg.y + q_seq_idx;
 
-  queries += q_offset * head_dim + simd.lane_idx * qk_elements_per_thread;
+  queries += q_offset * HEAD_DIM + simd.lane_idx * qk_elements_per_thread;
   keys += kv_head_idx * k_head_stride + simd.group_idx * k_seq_stride +
           simd.lane_idx * qk_elements_per_thread;
   values += kv_head_idx * v_head_stride + simd.group_idx * v_seq_stride +
