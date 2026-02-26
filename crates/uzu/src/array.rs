@@ -9,7 +9,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Array<B: Backend> {
-    buffer: Rc<B::NativeBuffer>,
+    buffer: Rc<RefCell<B::NativeBuffer>>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -18,20 +18,20 @@ pub struct Array<B: Backend> {
 impl<B: Backend> Array<B> {
     // Constructors
     pub unsafe fn from_parts(
-        buffer: Rc<B::NativeBuffer>,
+        buffer: Rc<RefCell<B::NativeBuffer>>,
         offset: usize,
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
         assert!(
-            offset + required_bytes <= buffer.length(),
+            offset + required_bytes <= buffer.borrow().length(),
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,
             offset,
             offset + required_bytes,
-            buffer.length()
+            buffer.borrow().length()
         );
         Self {
             buffer: buffer.clone(),
@@ -50,10 +50,14 @@ impl<B: Backend> Array<B> {
 
     // Getters
     pub fn buffer(&self) -> &B::NativeBuffer {
-        &self.buffer.as_ref()
+        // SAFETY: The Rc<RefCell<B::NativeBuffer>> keeps the allocation alive for at least
+        // as long as self. RefCell::as_ptr bypasses borrow tracking, which is sound because
+        // this crate uses Rc (single-threaded) and callers must not hold a borrow_mut
+        // concurrently with a reference returned here.
+        unsafe { &*(*self.buffer).as_ptr() }
     }
 
-    pub fn buffer_rc(&self) -> Rc<B::NativeBuffer> {
+    pub fn buffer_rc(&self) -> Rc<RefCell<B::NativeBuffer>> {
         self.buffer.clone()
     }
 
@@ -71,7 +75,7 @@ impl<B: Backend> Array<B> {
 
     // Utility
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { self.buffer.cpu_ptr().add(self.offset) }
+        unsafe { self.buffer.borrow_mut().cpu_ptr().add(self.offset) }
     }
 
     pub fn size(&self) -> usize {
@@ -278,6 +282,6 @@ impl<C: Context> ArrayContextExt for C {
         let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
         buffer.set_label(Some(label));
 
-        unsafe { Array::from_parts(Rc::new(buffer), 0, shape, data_type) }
+        unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, shape, data_type) }
     }
 }

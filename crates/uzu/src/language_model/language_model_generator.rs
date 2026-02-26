@@ -1,4 +1,11 @@
-use std::{collections::HashMap, iter::repeat_n, ops::DerefMut, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    iter::repeat_n,
+    ops::{Deref, DerefMut},
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -402,7 +409,7 @@ where
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let token_position = unsafe {
-            let ptr = async_positions_buffer.cpu_ptr().as_ptr() as *const u32;
+            let ptr = async_positions_buffer.borrow_mut().cpu_ptr().as_ptr() as *const u32;
             *ptr.add(pass_idx) as usize
         };
 
@@ -491,7 +498,7 @@ where
             let results_offset = slot * std::mem::size_of::<u32>();
             self.context.token_copy_results.encode(
                 sampling_output_buffer,
-                (results_buffer.as_ref(), results_offset),
+                (results_buffer.borrow().deref(), results_offset),
                 encoder,
             );
         });
@@ -535,7 +542,7 @@ where
 
         let handler = move || {
             let token = {
-                let ptr = results_buffer_clone.cpu_ptr().as_ptr() as *const u32;
+                let ptr = results_buffer_clone.borrow_mut().cpu_ptr().as_ptr() as *const u32;
                 unsafe { *ptr.add(slot) as u64 }
             };
             if let Some(cb) = callback.lock().unwrap().take() {

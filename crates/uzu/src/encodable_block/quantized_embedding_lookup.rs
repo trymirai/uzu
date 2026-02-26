@@ -1,6 +1,6 @@
 //! Quantized embedding lookup encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -67,9 +67,9 @@ pub enum QuantizedEmbeddingLookupError<B: Backend> {
 
 pub struct QuantizedEmbeddingLookup<B: Backend> {
     kernel: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-    weights_buffer: Rc<B::NativeBuffer>,
-    scales_buffer: Rc<B::NativeBuffer>,
-    biases_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
+    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
+    biases_buffer: Rc<RefCell<B::NativeBuffer>>,
     mode: QuantizationMode,
     input_scale: f32,
     vocab_size: u32,
@@ -210,13 +210,14 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                 };
 
                 let size_bytes = vocab_size * num_groups * element_size;
-                let buffer = context.create_buffer(size_bytes).map_err(QuantizedEmbeddingLookupError::BackendError)?;
+                let mut buffer =
+                    context.create_buffer(size_bytes).map_err(QuantizedEmbeddingLookupError::BackendError)?;
 
                 unsafe {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
                 }
 
-                Rc::new(buffer)
+                Rc::new(RefCell::new(buffer))
             },
         };
 
@@ -258,9 +259,9 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
 
         self.kernel.encode(
             token_ids_array.buffer(),
-            self.weights_buffer.as_ref(),
-            self.scales_buffer.as_ref(),
-            self.biases_buffer.as_ref(),
+            self.weights_buffer.borrow().deref(),
+            self.scales_buffer.borrow().deref(),
+            self.biases_buffer.borrow().deref(),
             output_array.buffer(),
             batch_size as u32,
             self.vocab_size,

@@ -1,6 +1,6 @@
 //! Full precision embedding lookup encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -38,7 +38,7 @@ pub enum FullPrecisionEmbeddingLookupError<B: Backend> {
 
 pub struct FullPrecisionEmbeddingLookup<B: Backend> {
     kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-    weights_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
     vocab_size: u32,
     model_dim: u32,
     input_scale: f32,
@@ -104,7 +104,7 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingLookup<B> {
 
         self.kernel.encode(
             token_ids_array.buffer(),
-            self.weights_buffer.as_ref(),
+            self.weights_buffer.borrow().deref(),
             output_array.buffer(),
             batch_size as u32,
             self.vocab_size,

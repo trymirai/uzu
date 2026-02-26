@@ -1,6 +1,6 @@
 //! QK Normalization encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -30,8 +30,8 @@ pub struct QKNorm<B: Backend> {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<Rc<B::NativeBuffer>>,
-    key_scales_buffer: Option<Rc<B::NativeBuffer>>,
+    query_scales_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
+    key_scales_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -144,7 +144,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         {
             query_kernel.encode(
                 qkv_buffer,
-                query_scales_buffer.as_ref(),
+                query_scales_buffer.borrow().deref(),
                 qkv_buffer,
                 batch_size,
                 self.num_q_heads as u32,
@@ -165,7 +165,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         {
             key_kernel.encode(
                 qkv_buffer,
-                key_scales_buffer.as_ref(),
+                key_scales_buffer.borrow().deref(),
                 qkv_buffer,
                 batch_size,
                 self.num_q_heads as u32,

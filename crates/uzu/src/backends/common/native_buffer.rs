@@ -10,7 +10,7 @@ pub trait NativeBuffer: Debug {
         label: Option<&str>,
     );
 
-    fn cpu_ptr(&self) -> NonNull<c_void>;
+    fn cpu_ptr(&mut self) -> NonNull<c_void>;
 
     fn length(&self) -> usize;
 

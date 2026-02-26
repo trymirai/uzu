@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -41,7 +41,7 @@ where
     B::Kernels: MatmulKernels,
 {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    weights_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -127,7 +127,7 @@ where
             FullPrecisionMatmulArguments {
                 a: input_array.buffer(),
                 a_offset: sampling_start * self.model_dim * element_size,
-                b: &self.weights_buffer,
+                b: self.weights_buffer.borrow().deref(),
                 output: output_array.buffer(),
                 bias: None,
                 batch: batch_size,

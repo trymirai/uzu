@@ -76,11 +76,12 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
             let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
             (Some(bitmask.buffer_rc()), bitmask_offset)
         });
+        let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
         if let Err(e) = self.kernel.encode_with_encoder(
             logits.buffer(),
             Some(seeds.buffer()),
             seeds_offset,
-            bitmask_buffer.as_ref().map(|b| b.as_ref()),
+            bitmask_borrow.as_deref(),
             bitmask_offset,
             output_buffer_ref.buffer(),
             sampling_method,

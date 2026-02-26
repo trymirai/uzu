@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -49,8 +49,8 @@ where
     B::Kernels: MatmulKernels,
 {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    bias_buffer: Option<Rc<B::NativeBuffer>>,
-    weights_buffer: Rc<B::NativeBuffer>,
+    bias_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
+    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,
@@ -147,15 +147,16 @@ where
         let input_array = arrays[0].borrow_mut();
         let output_array = arrays[1].borrow_mut();
 
+        let bias_borrow = self.bias_buffer.as_ref().map(|b| b.borrow());
         self.kernel.borrow_mut().encode(
             state.context(),
             encoder,
             FullPrecisionMatmulArguments {
                 a: input_array.buffer(),
                 a_offset: 0,
-                b: &self.weights_buffer,
+                b: self.weights_buffer.borrow().deref(),
                 output: output_array.buffer(),
-                bias: self.bias_buffer.as_ref().map(|b| b.as_ref()),
+                bias: bias_borrow.as_deref(),
                 batch: batch_size,
                 input_dim: self.input_dim,
                 output_dim: self.output_dim,

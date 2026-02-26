@@ -1,6 +1,6 @@
 //! Mamba2 SSM mixer encodable.
 
-use std::env;
+use std::{env, ops::Deref};
 
 use crate::{
     Activation, DataType,
@@ -271,7 +271,7 @@ impl<B: Backend> MambaMixer<B> {
                 self.conv_pack.encode(
                     state_buf,
                     input_buf,
-                    buffer.as_ref(),
+                    buffer.borrow().deref(),
                     state_stride as u32,
                     conv_dim as u32,
                     suffix_length as u32,
@@ -285,7 +285,8 @@ impl<B: Backend> MambaMixer<B> {
             };
 
             if conv_dim > 0 && self.config.kernel_size > 0 {
-                let conv_source = padded_buf.as_ref().map(|b| b.as_ref()).unwrap_or(input_buf);
+                let padded_borrow = padded_buf.as_ref().map(|b| b.borrow());
+                let conv_source = padded_borrow.as_deref().unwrap_or(input_buf);
                 self.conv_scan.encode(
                     conv_source,
                     weight_buf,

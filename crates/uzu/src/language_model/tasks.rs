@@ -17,7 +17,7 @@ impl<B: Backend> LanguageModelGeneratorEncodedTask<B> {
         &self.predicate_buffer
     }
 
-    pub fn disable_execution(&self) {
+    pub fn disable_execution(&mut self) {
         let ptr = self.predicate_buffer.cpu_ptr().as_ptr() as *mut u32;
 
         unsafe {

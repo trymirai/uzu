@@ -152,8 +152,8 @@ impl<B: Backend> ForwardPassState<B> {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         should_fill_attention_bias: bool,
-        async_positions: Option<(Rc<B::NativeBuffer>, usize)>,
-        async_seeds: Option<(Rc<B::NativeBuffer>, usize)>,
+        async_positions: Option<(Rc<RefCell<B::NativeBuffer>>, usize)>,
+        async_seeds: Option<(Rc<RefCell<B::NativeBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
@@ -423,7 +423,7 @@ impl<B: Backend> ForwardPassState<B> {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, dims, data_type) })
+            RefCell::new(unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) })
         };
 
         ClassifierModeState {

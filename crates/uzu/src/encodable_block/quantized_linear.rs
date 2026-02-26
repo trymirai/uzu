@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -84,10 +84,10 @@ pub enum QuantizedLinearError<B: Backend> {
 pub struct QuantizedLinear<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-    biases_buffer: Option<Rc<B::NativeBuffer>>,
-    weights_buffer: Rc<B::NativeBuffer>,
-    scales_buffer: Rc<B::NativeBuffer>,
-    zero_points_or_biases_buffer: Rc<B::NativeBuffer>,
+    biases_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
+    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
+    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
+    zero_points_or_biases_buffer: Rc<RefCell<B::NativeBuffer>>,
     quantization_type: QuantizedMatmulType,
     input_dim: usize,
     output_dim: usize,
@@ -262,9 +262,9 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
                 QuantizedMatmulArguments {
                     a_buffer: input_array.buffer(),
                     a_offset: 0,
-                    b_buffer: &self.weights_buffer,
-                    scales_buffer: &self.scales_buffer,
-                    zero_points_or_biases_buffer: &self.zero_points_or_biases_buffer,
+                    b_buffer: self.weights_buffer.borrow().deref(),
+                    scales_buffer: self.scales_buffer.borrow().deref(),
+                    zero_points_or_biases_buffer: self.zero_points_or_biases_buffer.borrow().deref(),
                     output_buffer,
                     batch: batch_size,
                     input_dim: self.input_dim,
@@ -278,7 +278,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
             let total_length = batch_size * self.output_dim;
             bias_add_kernel.encode_if(
                 output_buffer,
-                biases_buffer.as_ref(),
+                biases_buffer.borrow().deref(),
                 output_buffer,
                 self.output_dim as u32,
                 total_length as u32,

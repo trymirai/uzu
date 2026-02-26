@@ -34,13 +34,13 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Rc<B::NativeBuffer>,
+    pub positions: Rc<RefCell<B::NativeBuffer>>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Rc<B::NativeBuffer>,
+    pub seeds: Rc<RefCell<B::NativeBuffer>>,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Rc<B::NativeBuffer>,
+    pub results: Rc<RefCell<B::NativeBuffer>>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
@@ -66,9 +66,9 @@ impl<B: Backend> AsyncBuffers<B> {
         let event = context.create_event().expect("Failed to create event");
 
         Self {
-            positions: Rc::new(positions),
-            seeds: Rc::new(seeds),
-            results: Rc::new(results),
+            positions: Rc::new(RefCell::new(positions)),
+            seeds: Rc::new(RefCell::new(seeds)),
+            results: Rc::new(RefCell::new(results)),
             event,
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
@@ -85,7 +85,7 @@ impl<B: Backend> AsyncBuffers<B> {
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let ptr = self.positions.cpu_ptr().as_ptr() as *mut i32;
+        let ptr = self.positions.borrow_mut().cpu_ptr().as_ptr() as *mut i32;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = (base_position + i) as i32;
@@ -100,7 +100,7 @@ impl<B: Backend> AsyncBuffers<B> {
         prefix_len: usize,
         tokens_to_generate: usize,
     ) {
-        let ptr = self.seeds.cpu_ptr().as_ptr() as *mut u64;
+        let ptr = self.seeds.borrow_mut().cpu_ptr().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
@@ -118,7 +118,7 @@ impl<B: Backend> AsyncBuffers<B> {
         &self,
         pass_idx: usize,
     ) -> u32 {
-        let ptr = self.results.cpu_ptr().as_ptr() as *const u32;
+        let ptr = self.results.borrow_mut().cpu_ptr().as_ptr() as *const u32;
         unsafe { *ptr.add(pass_idx % self.batch_size) }
     }
 }
