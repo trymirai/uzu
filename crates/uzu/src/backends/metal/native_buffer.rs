@@ -16,7 +16,7 @@ impl NativeBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
         (**self).set_label(label);
     }
 
-    fn cpu_ptr(&mut self) -> NonNull<c_void> {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
         self.contents()
     }
 

@@ -67,7 +67,7 @@ impl<B: Backend> Array<B> {
 
     // Utility
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { self.buffer.borrow_mut().cpu_ptr().add(self.offset) }
+        unsafe { self.buffer.borrow().cpu_ptr().add(self.offset) }
     }
 
     pub fn size(&self) -> usize {

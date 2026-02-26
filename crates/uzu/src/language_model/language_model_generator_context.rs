@@ -85,7 +85,7 @@ impl<B: Backend> AsyncBuffers<B> {
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let ptr = self.positions.borrow_mut().cpu_ptr().as_ptr() as *mut i32;
+        let ptr = self.positions.borrow().cpu_ptr().as_ptr() as *mut i32;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = (base_position + i) as i32;
@@ -100,7 +100,7 @@ impl<B: Backend> AsyncBuffers<B> {
         prefix_len: usize,
         tokens_to_generate: usize,
     ) {
-        let ptr = self.seeds.borrow_mut().cpu_ptr().as_ptr() as *mut u64;
+        let ptr = self.seeds.borrow().cpu_ptr().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
@@ -118,7 +118,7 @@ impl<B: Backend> AsyncBuffers<B> {
         &self,
         pass_idx: usize,
     ) -> u32 {
-        let ptr = self.results.borrow_mut().cpu_ptr().as_ptr() as *const u32;
+        let ptr = self.results.borrow().cpu_ptr().as_ptr() as *const u32;
         unsafe { *ptr.add(pass_idx % self.batch_size) }
     }
 }

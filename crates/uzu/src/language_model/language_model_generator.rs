@@ -409,7 +409,7 @@ where
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let token_position = unsafe {
-            let ptr = async_positions_buffer.borrow_mut().cpu_ptr().as_ptr() as *const u32;
+            let ptr = async_positions_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
             *ptr.add(pass_idx) as usize
         };
 
@@ -545,7 +545,7 @@ where
 
         let handler = move || {
             let token = {
-                let ptr = results_buffer_clone.borrow_mut().cpu_ptr().as_ptr() as *const u32;
+                let ptr = results_buffer_clone.borrow().cpu_ptr().as_ptr() as *const u32;
                 unsafe { *ptr.add(slot) as u64 }
             };
             if let Some(cb) = callback.lock().unwrap().take() {

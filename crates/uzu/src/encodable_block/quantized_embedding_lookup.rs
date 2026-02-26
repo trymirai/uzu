@@ -210,8 +210,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                 };
 
                 let size_bytes = vocab_size * num_groups * element_size;
-                let mut buffer =
-                    context.create_buffer(size_bytes).map_err(QuantizedEmbeddingLookupError::BackendError)?;
+                let buffer = context.create_buffer(size_bytes).map_err(QuantizedEmbeddingLookupError::BackendError)?;
 
                 unsafe {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
