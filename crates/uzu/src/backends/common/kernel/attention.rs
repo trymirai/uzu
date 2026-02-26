@@ -18,7 +18,7 @@ pub struct AttentionGemmArguments<'a, B: Backend> {
     pub queries_buffer: &'a B::NativeBuffer,       // buffer(0)
     pub keys_buffer: &'a B::NativeBuffer,          // buffer(1)
     pub values_buffer: &'a B::NativeBuffer,        // buffer(2)
-    pub output_buffer: &'a B::NativeBuffer,        // buffer(3)
+    pub output_buffer: &'a mut B::NativeBuffer,    // buffer(3)
     pub mask_buffer: Option<&'a B::NativeBuffer>,  // buffer(6)
     pub sinks_buffer: Option<&'a B::NativeBuffer>, // buffer(7)
     pub num_heads: usize,
@@ -50,7 +50,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
         &self,
         context: &B::Context,
         compute_encoder: &mut B::ComputeEncoder,
-        args: &AttentionGemmArguments<B>,
+        args: AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
             32

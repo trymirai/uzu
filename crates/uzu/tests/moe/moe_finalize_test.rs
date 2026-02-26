@@ -85,7 +85,7 @@ fn test_finalize_correctness() {
         let tok2row_buf = alloc_buffer_with_data(&ctx, &tok2row);
         let probs_buf = alloc_buffer_with_data(&ctx, &probs);
         let y_partial_buf = alloc_buffer_with_data(&ctx, &y_partial);
-        let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
+        let mut y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
 
         // Execute finalize kernel
         let finalize = <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16)
@@ -96,7 +96,7 @@ fn test_finalize_correctness() {
             &tok2row_buf,
             &probs_buf,
             &y_partial_buf,
-            &y_out_buf,
+            &mut y_out_buf,
             t as u32,
             d_model as u32,
             k as u32,

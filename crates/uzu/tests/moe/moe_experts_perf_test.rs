@@ -94,36 +94,36 @@ fn run_decode_case(
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
     let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Buffers for indirect dispatch
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
     let max_tiles = e * sum_k * 16384; // Conservative upper bound
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
-    let row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
+    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+    let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     for _ in 0..warmup {
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(
             &mut cb,
-            &MoeExpertsTwoPassArguments {
+            MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
+                row_expert_map: &mut row_expert_map_buf,
                 hidden_buffer: &mut hidden_buf,
-                output_buffer: &output_buf,
+                output_buffer: &mut output_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
                 up_biases: &up_biases_buf,
                 down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
+                tile_counts: &mut tile_counts_buf,
+                tile_offsets: &mut tile_offsets_buf,
+                tile_map: &mut tile_map_buf,
+                total_tiles: &mut total_tiles_buf,
+                dispatch_args: &mut dispatch_args_buf,
                 total_rows: sum_k,
                 d_model,
                 d_ff,
@@ -148,21 +148,21 @@ fn run_decode_case(
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(
             &mut cb,
-            &MoeExpertsTwoPassArguments {
+            MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
+                row_expert_map: &mut row_expert_map_buf,
                 hidden_buffer: &mut hidden_buf,
-                output_buffer: &output_buf,
+                output_buffer: &mut output_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
                 up_biases: &up_biases_buf,
                 down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
+                tile_counts: &mut tile_counts_buf,
+                tile_offsets: &mut tile_offsets_buf,
+                tile_map: &mut tile_map_buf,
+                total_tiles: &mut total_tiles_buf,
+                dispatch_args: &mut dispatch_args_buf,
                 total_rows: sum_k,
                 d_model,
                 d_ff,
@@ -259,33 +259,33 @@ fn run_two_pass_prefill_case(
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
     let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
     let max_tiles = e * sum_k * 16384;
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
-    let row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
+    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+    let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     for _ in 0..warmup {
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let mut args = MoeExpertsTwoPassArguments {
+        let args = MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &row_expert_map_buf,
+            row_expert_map: &mut row_expert_map_buf,
             hidden_buffer: &mut hidden_buf,
-            output_buffer: &output_buf,
+            output_buffer: &mut output_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &tile_counts_buf,
-            tile_offsets: &tile_offsets_buf,
-            tile_map: &tile_map_buf,
-            total_tiles: &total_tiles_buf,
-            dispatch_args: &dispatch_args_buf,
+            tile_counts: &mut tile_counts_buf,
+            tile_offsets: &mut tile_offsets_buf,
+            tile_map: &mut tile_map_buf,
+            total_tiles: &mut total_tiles_buf,
+            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
@@ -299,7 +299,7 @@ fn run_two_pass_prefill_case(
             silu_alpha: 1.702,
             data_type: DataType::BF16,
         };
-        experts_kernel.encode(&mut cb, &mut args);
+        experts_kernel.encode(&mut cb, args);
         cb.commit();
         cb.wait_until_completed();
     }
@@ -308,21 +308,21 @@ fn run_two_pass_prefill_case(
     for _ in 0..iters {
         let start = Instant::now();
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let mut args = MoeExpertsTwoPassArguments {
+        let args = MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &row_expert_map_buf,
+            row_expert_map: &mut row_expert_map_buf,
             hidden_buffer: &mut hidden_buf,
-            output_buffer: &output_buf,
+            output_buffer: &mut output_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &tile_counts_buf,
-            tile_offsets: &tile_offsets_buf,
-            tile_map: &tile_map_buf,
-            total_tiles: &total_tiles_buf,
-            dispatch_args: &dispatch_args_buf,
+            tile_counts: &mut tile_counts_buf,
+            tile_offsets: &mut tile_offsets_buf,
+            tile_map: &mut tile_map_buf,
+            total_tiles: &mut total_tiles_buf,
+            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
@@ -336,7 +336,7 @@ fn run_two_pass_prefill_case(
             silu_alpha: 1.702,
             data_type: DataType::BF16,
         };
-        experts_kernel.encode(&mut cb, &mut args);
+        experts_kernel.encode(&mut cb, args);
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -409,34 +409,35 @@ fn run_fused_single_token_case(
     let w2_buf = alloc_buffer_with_data(ctx, &w2_all);
     let up_biases_buf = alloc_buffer_with_data(ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(ctx, &down_biases);
-    let hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
-    let y_buf = alloc_buffer::<bf16>(ctx, d_model);
-
-    let make_args = || MoeExpertsSingleDecodeArguments {
-        x: &x_buf,
-        topk_ids: &topk_ids_buf,
-        topk_probs: &topk_probs_buf,
-        w13_all: &w13_buf,
-        w2_all: &w2_buf,
-        up_biases: &up_biases_buf,
-        down_biases: &down_biases_buf,
-        hidden: &hidden_buf,
-        y: &y_buf,
-        d_model,
-        d_ff,
-        k,
-        gating_code: 2, // SwiGLU
-        silu_alpha: 1.0,
-        gate_clip_min: f32::NEG_INFINITY,
-        gate_clip_max: f32::INFINITY,
-        up_clip_min: f32::NEG_INFINITY,
-        up_clip_max: f32::INFINITY,
-        data_type: DataType::BF16,
-    };
+    let mut hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
+    let mut y_buf = alloc_buffer::<bf16>(ctx, d_model);
 
     for _ in 0..warmup {
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        fused_kernel.encode(&mut cb, make_args());
+        fused_kernel.encode(
+            &mut cb,
+            MoeExpertsSingleDecodeArguments {
+                x: &x_buf,
+                topk_ids: &topk_ids_buf,
+                topk_probs: &topk_probs_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                hidden: &mut hidden_buf,
+                y: &mut y_buf,
+                d_model,
+                d_ff,
+                k,
+                gating_code: 2, // SwiGLU
+                silu_alpha: 1.0,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                data_type: DataType::BF16,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
     }
@@ -445,7 +446,30 @@ fn run_fused_single_token_case(
     for _ in 0..iters {
         let start = Instant::now();
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        fused_kernel.encode(&mut cb, make_args());
+        fused_kernel.encode(
+            &mut cb,
+            MoeExpertsSingleDecodeArguments {
+                x: &x_buf,
+                topk_ids: &topk_ids_buf,
+                topk_probs: &topk_probs_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                hidden: &mut hidden_buf,
+                y: &mut y_buf,
+                d_model,
+                d_ff,
+                k,
+                gating_code: 2, // SwiGLU
+                silu_alpha: 1.0,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                data_type: DataType::BF16,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
@@ -558,35 +582,35 @@ fn run_indirect_decode_timed(
 
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
     let mut hidden_buf = alloc_buffer::<f32>(ctx, sum_k * d_ff);
-    let output_buf = alloc_buffer::<bf16>(ctx, sum_k * d_model);
+    let mut output_buf = alloc_buffer::<bf16>(ctx, sum_k * d_model);
 
-    let tile_counts_buf = alloc_buffer::<u32>(ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(ctx, e + 1);
+    let mut tile_counts_buf = alloc_buffer::<u32>(ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(ctx, e + 1);
     let max_tiles = e * sum_k * 16384;
-    let tile_map_buf = alloc_buffer::<u32>(ctx, max_tiles * 3);
-    let total_tiles_buf = alloc_buffer::<u32>(ctx, 1);
-    let dispatch_args_buf = alloc_buffer::<u32>(ctx, 3);
-    let row_expert_map_buf = alloc_buffer::<u32>(ctx, sum_k);
+    let mut tile_map_buf = alloc_buffer::<u32>(ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<u32>(ctx, 1);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(ctx, 3);
+    let mut row_expert_map_buf = alloc_buffer::<u32>(ctx, sum_k);
 
     for _ in 0..warmup {
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(
             &mut cb,
-            &MoeExpertsTwoPassArguments {
+            MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
+                row_expert_map: &mut row_expert_map_buf,
                 hidden_buffer: &mut hidden_buf,
-                output_buffer: &output_buf,
+                output_buffer: &mut output_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
                 up_biases: &up_biases_buf,
                 down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
+                tile_counts: &mut tile_counts_buf,
+                tile_offsets: &mut tile_offsets_buf,
+                tile_map: &mut tile_map_buf,
+                total_tiles: &mut total_tiles_buf,
+                dispatch_args: &mut dispatch_args_buf,
                 total_rows: sum_k,
                 d_model,
                 d_ff,
@@ -611,21 +635,21 @@ fn run_indirect_decode_timed(
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(
             &mut cb,
-            &MoeExpertsTwoPassArguments {
+            MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
-                row_expert_map: &row_expert_map_buf,
+                row_expert_map: &mut row_expert_map_buf,
                 hidden_buffer: &mut hidden_buf,
-                output_buffer: &output_buf,
+                output_buffer: &mut output_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
                 up_biases: &up_biases_buf,
                 down_biases: &down_biases_buf,
-                tile_counts: &tile_counts_buf,
-                tile_offsets: &tile_offsets_buf,
-                tile_map: &tile_map_buf,
-                total_tiles: &total_tiles_buf,
-                dispatch_args: &dispatch_args_buf,
+                tile_counts: &mut tile_counts_buf,
+                tile_offsets: &mut tile_offsets_buf,
+                tile_map: &mut tile_map_buf,
+                total_tiles: &mut total_tiles_buf,
+                dispatch_args: &mut dispatch_args_buf,
                 total_rows: sum_k,
                 d_model,
                 d_ff,
@@ -684,34 +708,35 @@ fn run_fused_decode_timed(
     let w2_buf = alloc_buffer_with_data(ctx, &w2_all);
     let up_biases_buf = alloc_buffer_with_data(ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(ctx, &down_biases);
-    let hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
-    let y_buf = alloc_buffer::<bf16>(ctx, d_model);
-
-    let make_args = || MoeExpertsSingleDecodeArguments {
-        x: &x_buf,
-        topk_ids: &topk_ids_buf,
-        topk_probs: &topk_probs_buf,
-        w13_all: &w13_buf,
-        w2_all: &w2_buf,
-        up_biases: &up_biases_buf,
-        down_biases: &down_biases_buf,
-        hidden: &hidden_buf,
-        y: &y_buf,
-        d_model,
-        d_ff,
-        k,
-        gating_code: 2,
-        silu_alpha: 1.0,
-        gate_clip_min: f32::NEG_INFINITY,
-        gate_clip_max: f32::INFINITY,
-        up_clip_min: f32::NEG_INFINITY,
-        up_clip_max: f32::INFINITY,
-        data_type: DataType::BF16,
-    };
+    let mut hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
+    let mut y_buf = alloc_buffer::<bf16>(ctx, d_model);
 
     for _ in 0..warmup {
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        fused_kernel.encode(&mut cb, make_args());
+        fused_kernel.encode(
+            &mut cb,
+            MoeExpertsSingleDecodeArguments {
+                x: &x_buf,
+                topk_ids: &topk_ids_buf,
+                topk_probs: &topk_probs_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                hidden: &mut hidden_buf,
+                y: &mut y_buf,
+                d_model,
+                d_ff,
+                k,
+                gating_code: 2,
+                silu_alpha: 1.0,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                data_type: DataType::BF16,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
     }
@@ -720,7 +745,30 @@ fn run_fused_decode_timed(
     for _ in 0..iters {
         let start = Instant::now();
         let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        fused_kernel.encode(&mut cb, make_args());
+        fused_kernel.encode(
+            &mut cb,
+            MoeExpertsSingleDecodeArguments {
+                x: &x_buf,
+                topk_ids: &topk_ids_buf,
+                topk_probs: &topk_probs_buf,
+                w13_all: &w13_buf,
+                w2_all: &w2_buf,
+                up_biases: &up_biases_buf,
+                down_biases: &down_biases_buf,
+                hidden: &mut hidden_buf,
+                y: &mut y_buf,
+                d_model,
+                d_ff,
+                k,
+                gating_code: 2,
+                silu_alpha: 1.0,
+                gate_clip_min: f32::NEG_INFINITY,
+                gate_clip_max: f32::INFINITY,
+                up_clip_min: f32::NEG_INFINITY,
+                up_clip_max: f32::INFINITY,
+                data_type: DataType::BF16,
+            },
+        );
         cb.commit();
         cb.wait_until_completed();
         times.push(start.elapsed().as_secs_f64() * 1000.0);

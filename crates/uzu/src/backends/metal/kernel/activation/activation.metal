@@ -6,11 +6,15 @@
 template <typename T>
 VARIANTS(T, half, float, bfloat)
 KERNEL(Activation) (
-    const device T* input,
+    const device T* input OPTIONAL(!in_place),
     device T* output,
     const constant uint& n,
     const constant uint& act_type,
+    const bool in_place SPECIALIZE,
     uint tid AXIS(n, 256)
 ) {
+  if (in_place) {
+    input = reinterpret_cast<const device T*>(output);
+  }
   output[tid] = activate(input[tid], act_type);
 }

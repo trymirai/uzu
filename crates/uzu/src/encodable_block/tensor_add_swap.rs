@@ -1,6 +1,6 @@
 //! Tensor add-swap encodable.
 
-use std::ops::Deref;
+use std::ops::DerefMut;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -51,8 +51,8 @@ impl<B: Backend> EncodableBlock<B> for TensorAddSwap<B> {
         let main_array = arrays[1].borrow_mut();
 
         self.kernel.encode(
-            skip_array.buffer().borrow().deref(),
-            main_array.buffer().borrow().deref(),
+            skip_array.buffer().borrow_mut().deref_mut(),
+            main_array.buffer().borrow_mut().deref_mut(),
             length as u32,
             encoder,
         );

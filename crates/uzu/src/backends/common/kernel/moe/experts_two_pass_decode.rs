@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use super::{
     MoeExpertsTwoPassArguments, MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
@@ -48,7 +48,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
     pub fn encode(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoeExpertsTwoPassArguments<B>,
+        mut args: MoeExpertsTwoPassArguments<B>,
     ) {
         if args.total_rows == 0 {
             return;
@@ -59,47 +59,47 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
         self.pass_a_tile.encode_counts(
             command_buffer,
-            &MoePassATileCountsArguments {
+            MoePassATileCountsArguments {
                 expert_offsets: args.expert_offsets,
-                tile_counts: args.tile_counts,
+                tile_counts: args.tile_counts.deref_mut(),
                 e: args.e,
                 h_blocks,
             },
         );
         self.pass_a_tile.encode_scan(
             command_buffer,
-            &MoePassATileScanArguments {
+            MoePassATileScanArguments {
                 tile_counts: args.tile_counts,
-                tile_offsets: args.tile_offsets,
-                total_tiles: args.total_tiles,
+                tile_offsets: args.tile_offsets.deref_mut(),
+                total_tiles: args.total_tiles.deref_mut(),
                 e: args.e,
             },
         );
         self.pass_a_tile.encode_row_map(
             command_buffer,
-            &MoePassARowMapArguments {
+            MoePassARowMapArguments {
                 expert_offsets: args.expert_offsets,
-                row_expert_map: args.row_expert_map,
+                row_expert_map: args.row_expert_map.deref_mut(),
                 total_rows: args.total_rows,
                 e: args.e,
             },
         );
         self.pass_a_tile.encode_build_map(
             command_buffer,
-            &MoePassATileBuildArguments {
+            MoePassATileBuildArguments {
                 expert_offsets: args.expert_offsets,
                 tile_offsets: args.tile_offsets,
                 row_expert_map: args.row_expert_map,
-                tile_map: args.tile_map,
+                tile_map: args.tile_map.deref_mut(),
                 total_rows: args.total_rows,
                 h_blocks,
             },
         );
         self.pass_a_tile.encode_dispatch_args(
             command_buffer,
-            &MoePassATileDispatchArguments {
+            MoePassATileDispatchArguments {
                 total_tiles: args.total_tiles,
-                dispatch_args: args.dispatch_args,
+                dispatch_args: args.dispatch_args.deref_mut(),
                 num_tiles_y: 1,
             },
         );
@@ -114,7 +114,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
                 args.x_perm_buffer,
                 args.expert_offsets,
                 args.w13_all,
-                args.hidden_buffer.deref(),
+                args.hidden_buffer.deref_mut(),
                 args.up_biases,
                 args.d_model as u32,
                 args.d_ff as u32,
@@ -124,8 +124,8 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
                 args.up_clip_min,
                 args.up_clip_max,
                 args.silu_alpha,
-                args.tile_map,
-                args.dispatch_args,
+                args.tile_map.deref(),
+                args.dispatch_args.deref(),
                 encoder,
             );
         });
@@ -135,10 +135,10 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             let pass_b_kernel = &self.fused_down[dtype_idx];
             pass_b_kernel.encode(
                 args.hidden_buffer.deref(),
-                args.row_expert_map,
+                args.row_expert_map.deref(),
                 args.w2_all,
                 args.down_biases,
-                args.output_buffer,
+                args.output_buffer.deref_mut(),
                 args.total_rows as u32,
                 args.d_model as u32,
                 args.d_ff as u32,

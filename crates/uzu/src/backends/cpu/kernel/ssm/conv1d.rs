@@ -26,7 +26,9 @@ pub fn conv1d_decode<T: ArrayElement + Float>(
     #[allow(unused)]
     #[optional(has_bias)]
     b: Option<*const T>,
-    #[allow(unused)] state: *const T,
+    #[allow(unused)]
+    #[optional(!state_in_place)]
+    state: Option<*const T>,
     #[allow(unused)] x_out: *mut T,
     #[allow(unused)] b_out: *mut T,
     #[allow(unused)] c_out: *mut T,
@@ -44,6 +46,9 @@ pub fn conv1d_decode<T: ArrayElement + Float>(
     #[allow(unused)]
     #[specialize]
     has_bias: bool,
+    #[allow(unused)]
+    #[specialize]
+    state_in_place: bool,
 ) {
     todo!()
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::DerefMut};
 
 use super::{
     super::matmul_arguments::MatmulArguments, dispatch_descriptor::DispatchDescriptor, specialization::Specialization,
@@ -63,7 +63,7 @@ where
     pub fn encode(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
@@ -83,7 +83,7 @@ where
         pipeline.encode(
             (arguments.a, arguments.a_offset as usize),
             arguments.b,
-            arguments.d,
+            arguments.d.deref_mut(),
             std::slice::from_ref(&dispatch_descriptor.params),
             group_count_x,
             group_count_y,

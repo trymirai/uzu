@@ -99,7 +99,7 @@ KERNEL(ShortConvDecode)(
     device const T* in_proj,
     device const T* w,
     device const T* b OPTIONAL(has_bias),
-    device const T* state,
+    device const T* state OPTIONAL(!state_in_place),
     device T* out,
     device T* next_state,
     constant const uint& suffix_len,
@@ -108,9 +108,14 @@ KERNEL(ShortConvDecode)(
     constant const uint& state_stride,
     constant const uint& model_dim,
     const bool has_bias SPECIALIZE,
+    const bool state_in_place SPECIALIZE,
     const uint token_idx AXIS(suffix_len, 32),
     const uint channel_idx AXIS(model_dim, 1)
 ) {
+  if (state_in_place) {
+    state = next_state;
+  }
+
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
   const uint state_offset = channel_idx * state_stride;
   const device T* w_row = w + channel_idx * kernel_size;

@@ -15,7 +15,9 @@ pub fn layer_norm<
     OUT: ArrayElement + Float,
     ACC: ArrayElement + Float,
 >(
-    #[allow(unused)] input: *const IN,
+    #[allow(unused)]
+    #[optional(!in_place)]
+    input: Option<*const IN>,
     #[allow(unused)] scales: *const SC,
     #[allow(unused)] output: *mut OUT,
     #[allow(unused)] batch_size: u32,
@@ -23,6 +25,9 @@ pub fn layer_norm<
     #[allow(unused)] epsilon: f32,
     #[allow(unused)] scale_offset: f32,
     #[allow(unused)] full_layer: u32,
+    #[allow(unused)]
+    #[specialize]
+    in_place: bool,
 ) {
     todo!()
 }

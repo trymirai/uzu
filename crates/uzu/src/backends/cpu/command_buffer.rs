@@ -8,7 +8,7 @@ use crate::backends::common::{CommandBuffer, CopyEncoder};
 
 pub struct CpuCommandBuffer {
     commands: Vec<Box<dyn Fn()>>,
-    completion_handlers: Vec<Box<dyn Fn()>>,
+    completion_handlers: Vec<Box<dyn FnOnce()>>,
     gpu_execution_time_ms: OnceCell<f64>,
 }
 
@@ -66,12 +66,12 @@ impl CommandBuffer for CpuCommandBuffer {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl Fn() + 'static,
+        handler: impl FnOnce() + 'static,
     ) {
-        self.completion_handlers.push(Box::new(move || handler()))
+        self.completion_handlers.push(Box::new(handler))
     }
 
-    fn submit(&self) {
+    fn submit(&mut self) {
         let start = Instant::now();
         for command in &self.commands {
             command()
@@ -79,7 +79,7 @@ impl CommandBuffer for CpuCommandBuffer {
         self.gpu_execution_time_ms
             .set((Instant::now() - start).as_secs_f64() * 1000.0)
             .expect("gpu execution time already set");
-        for completion_handler in self.completion_handlers.iter() {
+        for completion_handler in self.completion_handlers.drain(..) {
             completion_handler();
         }
     }

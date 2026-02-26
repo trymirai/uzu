@@ -229,16 +229,16 @@ fn ssd_update_with_z_bf16() {
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&state), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let y_buf = ctx
+    let mut y_buf = ctx
         .device
         .new_buffer(bsz * h * dh * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let ns_buf = ctx
+    let mut ns_buf = ctx
         .device
         .new_buffer(bsz * h * dh * n * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16).unwrap();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16, false).unwrap();
     let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
     let mut enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
@@ -249,9 +249,9 @@ fn ssd_update_with_z_bf16() {
         &c_buf,
         &d_buf,
         &z_buf,
-        &state_buf,
-        &y_buf,
-        &ns_buf,
+        Some(&state_buf),
+        &mut y_buf,
+        &mut ns_buf,
         (h / g) as u32,
         n as u32,
         x_strides.as_slice(),

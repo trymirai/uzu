@@ -1,4 +1,8 @@
-use std::mem::size_of;
+use std::{
+    cell::RefCell,
+    mem::size_of,
+    ops::{Deref, DerefMut},
+};
 
 use thiserror::Error;
 
@@ -29,7 +33,7 @@ enum ArgmaxImplementation<B: Backend> {
     TwoPass {
         main_kernel: <B::Kernels as Kernels>::ArgmaxMainKernel,
         final_kernel: <B::Kernels as Kernels>::ArgmaxFinalKernel,
-        partial_results_buffer: B::NativeBuffer,
+        partial_results_buffer: RefCell<B::NativeBuffer>,
     },
 }
 
@@ -76,15 +80,18 @@ impl<B: Backend> SamplingKernel<B> {
         max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError<B>> {
-        let bitmask =
-            <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
-        let temperature =
-            <B::Kernels as Kernels>::TemperatureKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
-        let topk = <B::Kernels as Kernels>::TopKKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
-        let topp = <B::Kernels as Kernels>::TopPKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
-        let minp = <B::Kernels as Kernels>::MinPKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
-        let gumbel =
-            <B::Kernels as Kernels>::GumbelKernel::new(context, data_type).map_err(SamplingError::BackendError)?;
+        let bitmask = <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type, true)
+            .map_err(SamplingError::BackendError)?;
+        let temperature = <B::Kernels as Kernels>::TemperatureKernel::new(context, data_type, true)
+            .map_err(SamplingError::BackendError)?;
+        let topk =
+            <B::Kernels as Kernels>::TopKKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
+        let topp =
+            <B::Kernels as Kernels>::TopPKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
+        let minp =
+            <B::Kernels as Kernels>::MinPKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
+        let gumbel = <B::Kernels as Kernels>::GumbelKernel::new(context, data_type, true)
+            .map_err(SamplingError::BackendError)?;
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
@@ -108,9 +115,11 @@ impl<B: Backend> SamplingKernel<B> {
                 let max_vocab_groups_per_batch = (max_vocab_size + elements_per_group - 1) / elements_per_group;
                 let max_partial_results = max_batch_size * max_vocab_groups_per_batch;
 
-                let partial_results_buffer = context
-                    .create_buffer(max_partial_results * size_of::<ArgmaxPair>())
-                    .expect("Failed to create partial results buffer");
+                let partial_results_buffer = RefCell::new(
+                    context
+                        .create_buffer(max_partial_results * size_of::<ArgmaxPair>())
+                        .expect("Failed to create partial results buffer"),
+                );
 
                 ArgmaxImplementation::TwoPass {
                     main_kernel,
@@ -135,12 +144,12 @@ impl<B: Backend> SamplingKernel<B> {
 
     pub fn encode_with_encoder(
         &self,
-        logits_buffer: &B::NativeBuffer,
+        mut logits_buffer: &mut B::NativeBuffer,
         seeds_buffer: Option<&B::NativeBuffer>,
         seeds_offset: usize,
         bitmask_buffer: Option<&B::NativeBuffer>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &B::NativeBuffer,
+        sampled_tokens_buffer: &mut B::NativeBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
@@ -155,9 +164,9 @@ impl<B: Backend> SamplingKernel<B> {
 
         if let Some(bitmask_buffer) = bitmask_buffer {
             self.bitmask.encode(
-                logits_buffer,
+                None::<&B::NativeBuffer>,
                 (bitmask_buffer, bitmask_offset),
-                logits_buffer,
+                logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,
                 compute_encoder,
@@ -173,8 +182,8 @@ impl<B: Backend> SamplingKernel<B> {
         {
             if let Some(temperature) = temperature {
                 self.temperature.encode(
-                    logits_buffer,
-                    logits_buffer,
+                    None::<&B::NativeBuffer>,
+                    logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
@@ -184,8 +193,8 @@ impl<B: Backend> SamplingKernel<B> {
 
             if let Some(top_k) = top_k {
                 self.topk.encode(
-                    logits_buffer,
-                    logits_buffer,
+                    None::<&B::NativeBuffer>,
+                    logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
                     top_k,
@@ -195,8 +204,8 @@ impl<B: Backend> SamplingKernel<B> {
 
             if let Some(top_p) = top_p {
                 self.topp.encode(
-                    logits_buffer,
-                    logits_buffer,
+                    None::<&B::NativeBuffer>,
+                    logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
                     top_p,
@@ -206,8 +215,8 @@ impl<B: Backend> SamplingKernel<B> {
 
             if let Some(min_p) = min_p {
                 self.minp.encode(
-                    logits_buffer,
-                    logits_buffer,
+                    None::<&B::NativeBuffer>,
+                    logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
                     min_p,
@@ -216,9 +225,9 @@ impl<B: Backend> SamplingKernel<B> {
             }
 
             self.gumbel.encode(
-                logits_buffer,
+                None::<&B::NativeBuffer>,
                 (seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?, seeds_offset),
-                logits_buffer,
+                logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,
                 compute_encoder,
@@ -230,7 +239,7 @@ impl<B: Backend> SamplingKernel<B> {
                 kernel,
             } => {
                 kernel.encode(
-                    logits_buffer,
+                    logits_buffer.deref(),
                     sampled_tokens_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -243,14 +252,14 @@ impl<B: Backend> SamplingKernel<B> {
                 partial_results_buffer,
             } => {
                 main_kernel.encode(
-                    logits_buffer,
-                    partial_results_buffer,
+                    logits_buffer.deref(),
+                    partial_results_buffer.borrow_mut().deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
                     compute_encoder,
                 );
                 final_kernel.encode(
-                    partial_results_buffer,
+                    partial_results_buffer.borrow().deref(),
                     sampled_tokens_buffer,
                     batch_size as u32,
                     vocab_size as u32,

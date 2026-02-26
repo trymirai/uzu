@@ -49,7 +49,9 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
     #[allow(unused)]
     #[optional(has_bias)]
     b: Option<*const T>,
-    #[allow(unused)] state: *const T,
+    #[allow(unused)]
+    #[optional(!state_in_place)]
+    state: Option<*const T>,
     #[allow(unused)] out: *mut T,
     #[allow(unused)] next_state: *mut T,
     #[allow(unused)] suffix_len: u32,
@@ -60,6 +62,9 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
     #[allow(unused)]
     #[specialize]
     has_bias: bool,
+    #[allow(unused)]
+    #[specialize]
+    state_in_place: bool,
 ) {
     todo!()
 }

@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use crate::{
     DataType,
     backends::common::{
@@ -26,9 +28,9 @@ pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     /// Down biases [E, d_model]
     pub down_biases: &'a B::NativeBuffer,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a B::NativeBuffer,
+    pub hidden: &'a mut B::NativeBuffer,
     /// Final output [d_model]
-    pub y: &'a B::NativeBuffer,
+    pub y: &'a mut B::NativeBuffer,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -83,7 +85,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
     pub fn encode(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: MoeExpertsSingleDecodeArguments<B>,
+        mut args: MoeExpertsSingleDecodeArguments<B>,
     ) {
         if args.k == 0 {
             return;
@@ -100,7 +102,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
                 args.topk_ids,
                 args.w13_all,
                 args.up_biases,
-                args.hidden,
+                args.hidden.deref_mut(),
                 args.d_model as u32,
                 args.d_ff as u32,
                 args.k as u32,
@@ -117,7 +119,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
         command_buffer.with_compute_encoder(|encoder| {
             let kernel = &self.pass_b[dtype_idx];
             kernel.encode(
-                args.hidden,
+                args.hidden.deref(),
                 args.topk_ids,
                 args.topk_probs,
                 args.w2_all,

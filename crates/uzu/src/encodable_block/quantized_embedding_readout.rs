@@ -1,6 +1,10 @@
 //! Quantized embedding readout encodable.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -257,7 +261,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
                     b_buffer: self.weights_buffer.borrow().deref(),
                     scales_buffer: self.scales_buffer.borrow().deref(),
                     zero_points_or_biases_buffer: self.biases_buffer.borrow().deref(),
-                    output_buffer: output_array.buffer().borrow().deref(),
+                    output_buffer: output_array.buffer().borrow_mut().deref_mut(),
                     batch: batch_size,
                     input_dim: self.model_dim,
                     output_dim: self.vocab_size,

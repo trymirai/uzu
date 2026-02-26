@@ -1,12 +1,12 @@
 use crate::backends::common::Backend;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MatmulArguments<'a, B: Backend> {
     pub a: &'a B::NativeBuffer,
     /// Byte offset into `a` (used for slicing the batch dimension).
     pub a_offset: u64,
     pub b: &'a B::NativeBuffer,
-    pub d: &'a B::NativeBuffer,
+    pub d: &'a mut B::NativeBuffer,
     pub bias: Option<&'a B::NativeBuffer>,
     /// M dimension - batch/number of tokens (rows of A, rows of D)
     pub batch: i32,

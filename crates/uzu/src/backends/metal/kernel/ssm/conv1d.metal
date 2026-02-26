@@ -32,7 +32,7 @@ KERNEL(Conv1dDecode)(
     device const T* x,
     device const T* w,
     device const T* b OPTIONAL(has_bias),
-    device const T* state,
+    device const T* state OPTIONAL(!state_in_place),
     device T* x_out,
     device T* b_out,
     device T* c_out,
@@ -46,9 +46,14 @@ KERNEL(Conv1dDecode)(
     constant const uint& proj_dim,
     const uint activation_type SPECIALIZE,
     const bool has_bias SPECIALIZE,
+    const bool state_in_place SPECIALIZE,
     const uint token_idx AXIS(suffix_len, 32),
     const uint channel_idx AXIS(num_channels, 1)
 ) {
+  if (state_in_place) {
+    state = next_state;
+  }
+
   const uint x_idx = token_idx * row_stride + channel_idx;
   const uint state_offset = channel_idx * state_stride;
   const device T* w_row = w + channel_idx * kernel_size;

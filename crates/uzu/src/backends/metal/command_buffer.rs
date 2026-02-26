@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{cell::Cell, ops::Deref};
 
 use metal::{MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder, MTLEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
@@ -53,12 +53,15 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl Fn() + 'static,
+        handler: impl FnOnce() + 'static,
     ) {
-        self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |_| handler()));
+        let cell = Cell::new(Some(handler));
+        self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |_| {
+            cell.take().expect("completion handler called more than once")()
+        }));
     }
 
-    fn submit(&self) {
+    fn submit(&mut self) {
         self.commit();
     }
 

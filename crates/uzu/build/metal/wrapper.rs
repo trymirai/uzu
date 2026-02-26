@@ -38,20 +38,48 @@ fn kernel_wrappers(
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
-    let specialize_constants = if let Some(&base) = base_index {
-        kernel
+    let specialize_constant_names = if let Some(&base) = base_index {
+        kernel_wrappers.push(
+            kernel
+                .arguments
+                .iter()
+                .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
+                .enumerate()
+                .map(|(i, a)| {
+                    let c_type = a.c_type.trim_start_matches("const ");
+                    let idx = base + i;
+                    format!(
+                        "constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n",
+                        kernel.name, a.name
+                    )
+                })
+                .collect::<String>()
+                .into_boxed_str(),
+        );
+
+        let specialize_constant_names = kernel
             .arguments
             .iter()
-            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
-            .enumerate()
-            .map(|(i, a)| {
-                let c_type = a.c_type.trim_start_matches("const ");
-                let idx = base + i;
-                format!("constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n", kernel.name, a.name)
+            .filter_map(|a| {
+                if matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))) {
+                    Some(a.name.to_string())
+                } else {
+                    None
+                }
             })
-            .collect::<String>()
+            .collect::<Vec<String>>();
+
+        kernel_wrappers.push(
+            specialize_constant_names
+                .iter()
+                .map(|n| format!("#define {} __dsl_specialize_{}_{}\n", n, kernel.name, n))
+                .collect::<String>()
+                .into(),
+        );
+
+        specialize_constant_names
     } else {
-        String::new()
+        Vec::new()
     };
 
     for type_variant in if let Some(variants) = &kernel.variants {
@@ -96,27 +124,35 @@ fn kernel_wrappers(
             "1".to_string()
         };
 
-        let mut wrapper_arguments = kernel
+        let (mut wrapper_arguments, condition_definitions) = kernel
             .arguments
             .iter()
-            .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_))))
+            .filter(|a| {
+                matches!(a.argument_type(), Ok(MetalArgumentType::Buffer(_)) | Ok(MetalArgumentType::Constant(_)))
+            })
             .enumerate()
             .map(|(i, a)| match a.argument_type() {
-                Ok(MetalArgumentType::Buffer) | Ok(MetalArgumentType::Constant(_)) => {
+                Ok(MetalArgumentType::Buffer(_)) | Ok(MetalArgumentType::Constant(_)) => {
                     let condition = a.argument_condition().unwrap();
 
                     if let Some(condition) = condition {
-                        format!(
-                            "{} {} [[buffer({}), function_constant(__dsl_specialize_{}_{})]]",
-                            &a.c_type, a.name, i, kernel.name, condition
+                        (
+                            format!(
+                                "{} {} [[buffer({}), function_constant(__dsl_buffer_condition_{}_{})]]",
+                                &a.c_type, a.name, i, wrapper_name, a.name
+                            ),
+                            Some(format!(
+                                "constant bool __dsl_buffer_condition_{}_{} = {};",
+                                wrapper_name, a.name, condition
+                            )),
                         )
                     } else {
-                        format!("{} {} [[buffer({})]]", &a.c_type, a.name, i)
+                        (format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None)
                     }
                 },
                 _ => unreachable!(),
             })
-            .collect::<Vec<_>>();
+            .collect::<(Vec<_>, Vec<_>)>();
 
         if kernel.has_axis() {
             if kernel.has_groups() || kernel.has_threads() {
@@ -159,7 +195,7 @@ fn kernel_wrappers(
                 .arguments
                 .iter()
                 .map(|a| match a.argument_type().unwrap() {
-                    MetalArgumentType::Buffer | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_) => {
+                    MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_) => {
                         a.name.to_string()
                     },
                     MetalArgumentType::Specialize(_) => {
@@ -192,19 +228,19 @@ fn kernel_wrappers(
             .collect::<(Vec<_>, Vec<_>)>();
 
         let defs = defs.join("");
+        let condition_definitions = condition_definitions.into_iter().flatten().join("\n");
         let undefs = undefs.join("");
 
         kernel_wrappers.push(
             format!(
-                "{defs}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
+                "{defs}\n{condition_definitions}\n[[kernel, max_total_threads_per_threadgroup({max_total_threads_per_threadgroup})]] void {wrapper_name}({wrapper_arguments}) {{\n{wrapper_body}}}\n{undefs}"
             )
             .into(),
         );
     }
 
-    if !specialize_constants.is_empty() {
-        kernel_wrappers.insert(0, specialize_constants.into());
-    }
+    kernel_wrappers
+        .push(specialize_constant_names.iter().map(|n| format!("#undef {}\n", n)).collect::<String>().into());
 
     Ok(kernel_wrappers.into())
 }

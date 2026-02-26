@@ -301,8 +301,8 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                     main_buf.borrow().deref(),
                     self.router.weights_buf.borrow().deref(),
                     self.router.biases_buf.borrow().deref(),
-                    topk_ids_buf.borrow().deref(),
-                    topk_probs_buf.borrow().deref(),
+                    topk_ids_buf.borrow_mut().deref_mut(),
+                    topk_probs_buf.borrow_mut().deref_mut(),
                     suffix_length as u32,
                     self.model_dim as u32,
                     e as u32,
@@ -316,9 +316,9 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         command_buffer.with_compute_encoder(|encoder| {
             self.counts_offsets_kernel.encode(
                 topk_ids_buf.borrow().deref(),
-                offsets_buf.borrow().deref(),
-                sumk_buf.borrow().deref(),
-                partials_buf.borrow().deref(),
+                offsets_buf.borrow_mut().deref_mut(),
+                sumk_buf.borrow_mut().deref_mut(),
+                partials_buf.borrow_mut().deref_mut(),
                 suffix_length as u32,
                 e as u32,
                 k as u32,
@@ -331,8 +331,8 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         command_buffer.with_compute_encoder(|encoder| {
             self.scatter_bases_kernel.encode(
                 partials_buf.borrow().deref(),
-                block_bases_buf.borrow().deref(),
-                block_alloc_buf.borrow().deref(),
+                block_bases_buf.borrow_mut().deref_mut(),
+                block_alloc_buf.borrow_mut().deref_mut(),
                 e as u32,
                 num_blocks as u32,
                 num_tiles as u32,
@@ -347,14 +347,14 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 offsets_buf.borrow().deref(),
                 block_bases_buf.borrow().deref(),
                 block_alloc_buf.borrow().deref(),
-                bucketed_ids_buf.borrow().deref(),
-                bucketed_probs_buf.borrow().deref(),
+                bucketed_ids_buf.borrow_mut().deref_mut(),
+                bucketed_probs_buf.borrow_mut().deref_mut(),
                 suffix_length as u32,
                 e as u32,
                 k as u32,
                 num_blocks as u32,
                 num_tiles as u32,
-                tok2row_buf.borrow().deref(),
+                tok2row_buf.borrow_mut().deref_mut(),
                 encoder,
             );
         });
@@ -362,10 +362,10 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         self.gather_kernels.encode(
             command_buffer,
             self.data_type,
-            &MoeGatherArguments {
+            MoeGatherArguments {
                 x_buffer: main_buf.borrow().deref(),
                 bucketed_ids_buffer: bucketed_ids_buf.borrow().deref(),
-                x_perm_buffer: x_perm_buf.borrow().deref(),
+                x_perm_buffer: x_perm_buf.borrow_mut().deref_mut(),
                 sumk_buffer: sumk_buf.borrow().deref(),
                 t: suffix_length,
                 k,
@@ -388,21 +388,21 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
             self.experts_two_pass_decode_kernel.encode(
                 command_buffer,
-                &MoeExpertsTwoPassArguments {
+                MoeExpertsTwoPassArguments {
                     x_perm_buffer: x_perm_buf.borrow().deref(),
                     expert_offsets: offsets_buf.borrow().deref(),
-                    row_expert_map: row_expert_map_buf.borrow().deref(),
+                    row_expert_map: row_expert_map_buf.borrow_mut().deref_mut(),
                     hidden_buffer: hidden_buf.borrow_mut().deref_mut(),
-                    output_buffer: y_partial_buf.borrow().deref(),
+                    output_buffer: y_partial_buf.borrow_mut().deref_mut(),
                     w13_all: self.shared_weights.w13_buf.borrow().deref(),
                     w2_all: self.shared_weights.w2_buf.borrow().deref(),
                     up_biases: self.shared_weights.up_biases_buf.borrow().deref(),
                     down_biases: self.shared_weights.down_biases_buf.borrow().deref(),
-                    tile_counts: tile_counts_buf.borrow().deref(),
-                    tile_offsets: tile_offsets_buf.borrow().deref(),
-                    tile_map: tile_map_buf.borrow().deref(),
-                    total_tiles: total_tiles_buf.borrow().deref(),
-                    dispatch_args: dispatch_args_buf.borrow().deref(),
+                    tile_counts: tile_counts_buf.borrow_mut().deref_mut(),
+                    tile_offsets: tile_offsets_buf.borrow_mut().deref_mut(),
+                    tile_map: tile_map_buf.borrow_mut().deref_mut(),
+                    total_tiles: total_tiles_buf.borrow_mut().deref_mut(),
+                    dispatch_args: dispatch_args_buf.borrow_mut().deref_mut(),
                     total_rows,
                     d_model: self.model_dim,
                     d_ff: self.hidden_dim,
@@ -423,34 +423,34 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
             let x_perm_borrow = x_perm_buf.borrow();
             let offsets_borrow = offsets_buf.borrow();
-            let row_expert_map_borrow = row_expert_map_buf.borrow();
+            let mut row_expert_map_borrow = row_expert_map_buf.borrow_mut();
             let mut hidden_borrow = hidden_buf.borrow_mut();
-            let y_partial_borrow = y_partial_buf.borrow();
+            let mut y_partial_borrow = y_partial_buf.borrow_mut();
             let w13_borrow = self.shared_weights.w13_buf.borrow();
             let w2_borrow = self.shared_weights.w2_buf.borrow();
             let up_biases_borrow = self.shared_weights.up_biases_buf.borrow();
             let down_biases_borrow = self.shared_weights.down_biases_buf.borrow();
-            let tile_counts_borrow = tile_counts_buf.borrow();
-            let tile_offsets_borrow = tile_offsets_buf.borrow();
-            let tile_map_borrow = tile_map_buf.borrow();
-            let total_tiles_borrow = total_tiles_buf.borrow();
-            let dispatch_args_borrow = dispatch_args_buf.borrow();
+            let mut tile_counts_borrow = tile_counts_buf.borrow_mut();
+            let mut tile_offsets_borrow = tile_offsets_buf.borrow_mut();
+            let mut tile_map_borrow = tile_map_buf.borrow_mut();
+            let mut total_tiles_borrow = total_tiles_buf.borrow_mut();
+            let mut dispatch_args_borrow = dispatch_args_buf.borrow_mut();
 
-            let mut args = MoeExpertsTwoPassArguments {
+            let args = MoeExpertsTwoPassArguments {
                 x_perm_buffer: x_perm_borrow.deref(),
                 expert_offsets: offsets_borrow.deref(),
-                row_expert_map: row_expert_map_borrow.deref(),
+                row_expert_map: row_expert_map_borrow.deref_mut(),
                 hidden_buffer: hidden_borrow.deref_mut(),
-                output_buffer: y_partial_borrow.deref(),
+                output_buffer: y_partial_borrow.deref_mut(),
                 w13_all: w13_borrow.deref(),
                 w2_all: w2_borrow.deref(),
                 up_biases: up_biases_borrow.deref(),
                 down_biases: down_biases_borrow.deref(),
-                tile_counts: tile_counts_borrow.deref(),
-                tile_offsets: tile_offsets_borrow.deref(),
-                tile_map: tile_map_borrow.deref(),
-                total_tiles: total_tiles_borrow.deref(),
-                dispatch_args: dispatch_args_borrow.deref(),
+                tile_counts: tile_counts_borrow.deref_mut(),
+                tile_offsets: tile_offsets_borrow.deref_mut(),
+                tile_map: tile_map_borrow.deref_mut(),
+                total_tiles: total_tiles_borrow.deref_mut(),
+                dispatch_args: dispatch_args_borrow.deref_mut(),
                 total_rows,
                 d_model: self.model_dim,
                 d_ff: self.hidden_dim,
@@ -464,7 +464,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 silu_alpha,
                 data_type: self.data_type,
             };
-            self.experts_two_pass_prefill_kernel.encode(command_buffer, &mut args);
+            self.experts_two_pass_prefill_kernel.encode(command_buffer, args);
         }
 
         command_buffer.with_compute_encoder(|encoder| {
@@ -472,7 +472,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 tok2row_buf.borrow().deref(),
                 topk_probs_buf.borrow().deref(),
                 y_partial_buf.borrow().deref(),
-                main_buf.borrow().deref(),
+                main_buf.borrow_mut().deref_mut(),
                 suffix_length as u32,
                 self.model_dim as u32,
                 k as u32,

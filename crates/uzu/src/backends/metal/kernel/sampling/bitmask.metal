@@ -8,15 +8,20 @@
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(Bitmask) (
-    device const T* logits,
+    device const T* logits OPTIONAL(!in_place),
     device const uint32_t* bitmask,
     device T* processed_logits,
     constant uint& batch_size,
     constant uint& vocab_size,
     uint group_idx GROUPS(vocab_size.div_ceil(BLOCK_SIZE * GRAIN_SIZE)),
     uint batch_idx GROUPS(batch_size),
-    uint thread_idx THREADS(BLOCK_SIZE)
+    uint thread_idx THREADS(BLOCK_SIZE),
+    const bool in_place SPECIALIZE
 ) {
+  if (in_place) {
+    logits = processed_logits;
+  }
+
   uint bitmask_size = (vocab_size + (BITS_IN_U32 - 1)) / BITS_IN_U32;
   uint base_idx =
       batch_idx * vocab_size + group_idx * BLOCK_SIZE * GRAIN_SIZE + thread_idx;

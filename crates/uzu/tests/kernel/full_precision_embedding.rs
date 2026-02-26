@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use num_traits::Float;
 use uzu::{
@@ -63,7 +63,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         kernel.encode(
             token_ids_array.buffer().borrow().deref(),
             weights_array.buffer().borrow().deref(),
-            output_array.buffer().borrow().deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
             input.batch_size as u32,
             input.vocab_size as u32,
             input.model_dim as u32,

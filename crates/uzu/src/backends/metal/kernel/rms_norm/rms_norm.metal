@@ -13,7 +13,7 @@ VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
 KERNEL(RMSNorm)(
-    const device InputT* input,
+    const device InputT* input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* output,
     constant uint& batch_size,
@@ -21,11 +21,16 @@ KERNEL(RMSNorm)(
     constant float& epsilon,
     constant float& scale_offset,
     constant bool& full_layer,
+    const bool in_place SPECIALIZE,
     threadgroup AccumT shared_sum[SIMD_SIZE],
     const Simd simd,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
 ) {
+  if (in_place) {
+    input = reinterpret_cast<const device InputT*>(output);
+  }
+
   const uint input_offset = batch_idx * element_count;
   const device InputT* input_data = input + input_offset;
   const device ScaleT* scales_data = scales;

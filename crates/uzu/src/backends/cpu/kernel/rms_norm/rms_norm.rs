@@ -15,7 +15,9 @@ pub fn rms_norm<
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
-    #[allow(unused)] input: *const InputT,
+    #[allow(unused)]
+    #[optional(!in_place)]
+    input: Option<*const InputT>,
     #[allow(unused)] scales: *const ScaleT,
     #[allow(unused)] output: *mut OutputT,
     #[allow(unused)] batch_size: u32,
@@ -23,6 +25,9 @@ pub fn rms_norm<
     #[allow(unused)] epsilon: f32,
     #[allow(unused)] scale_offset: f32,
     #[allow(unused)] full_layer: bool,
+    #[allow(unused)]
+    #[specialize]
+    in_place: bool,
 ) {
     todo!()
 }

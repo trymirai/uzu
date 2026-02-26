@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use super::{super::matmul_arguments::MatmulArguments, dispatch_descriptor::DispatchDescriptor};
 use crate::{
     DataType,
@@ -61,13 +63,13 @@ where
     pub fn encode(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
         self.ensure_kernels(context)?;
         self.ensure_accumulator_buffer(context, dispatch_descriptor.accumulator_bytes)?;
-        let accumulator_buffer = self.accumulator_buffer.as_ref().expect("Accumulator buffer must be initialized");
+        let mut accumulator_buffer = self.accumulator_buffer.as_mut().expect("Accumulator buffer must be initialized");
 
         let partial_group_count_x = u32::try_from(dispatch_descriptor.partial_threadgroups.x).map_err(|_| {
             B::Error::from(format!(
@@ -91,7 +93,7 @@ where
         partial.encode(
             (arguments.a, arguments.a_offset as usize),
             arguments.b,
-            accumulator_buffer,
+            accumulator_buffer.deref_mut(),
             std::slice::from_ref(&dispatch_descriptor.params),
             partial_group_count_x,
             partial_group_count_y,
@@ -113,8 +115,8 @@ where
         })?;
         let accum = self.accum_bfloat16.as_ref().unwrap();
         accum.encode(
-            accumulator_buffer,
-            arguments.d,
+            accumulator_buffer.deref(),
+            arguments.d.deref_mut(),
             dispatch_descriptor.partition_count,
             dispatch_descriptor.output_elements_per_partition,
             arguments.ldd,

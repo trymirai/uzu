@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+
 use super::{
     dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemv::GemvKernel,
     matmul_arguments::MatmulArguments, split_k::SplitKKernel,
@@ -73,7 +75,7 @@ where
     fn encode_dispatch_descriptor(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
@@ -96,15 +98,15 @@ where
     pub fn encode_with_descriptor(
         &mut self,
         context: &B::Context,
-        arguments: MatmulArguments<B>,
+        mut arguments: MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
-        self.encode_dispatch_descriptor(context, &arguments, dispatch_descriptor, encoder)?;
+        self.encode_dispatch_descriptor(context, &mut arguments, dispatch_descriptor, encoder)?;
 
         if let Some(bias) = arguments.bias {
             if !dispatch_descriptor.bias_is_fused() {
-                self.apply_bias_add(context, &arguments, bias, encoder)?;
+                self.apply_bias_add(context, &mut arguments, bias, encoder)?;
             }
         }
 
@@ -114,7 +116,7 @@ where
     fn apply_bias_add(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         bias: &B::NativeBuffer,
         encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
@@ -127,10 +129,10 @@ where
         }
 
         if self.bias_add.is_none() {
-            self.bias_add = Some(<B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.data_type)?);
+            self.bias_add = Some(<B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.data_type, true)?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
-        bias_add.encode(arguments.d, bias, arguments.d, n as u32, total_len as u32, encoder);
+        bias_add.encode(None::<&B::NativeBuffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, encoder);
         Ok(())
     }
 

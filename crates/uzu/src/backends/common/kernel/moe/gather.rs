@@ -10,7 +10,7 @@ use crate::{
 pub struct MoeGatherArguments<'a, B: Backend> {
     pub x_buffer: &'a B::NativeBuffer,
     pub bucketed_ids_buffer: &'a B::NativeBuffer,
-    pub x_perm_buffer: &'a B::NativeBuffer,
+    pub x_perm_buffer: &'a mut B::NativeBuffer,
     pub sumk_buffer: &'a B::NativeBuffer,
     pub t: usize,
     pub k: usize,
@@ -36,7 +36,7 @@ impl<B: Backend> MoeGatherKernels<B> {
         &self,
         command_buffer: &mut B::CommandBuffer,
         dtype: DataType,
-        args: &MoeGatherArguments<B>,
+        args: MoeGatherArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| match dtype {
             DataType::F32 => self.f32.encode(

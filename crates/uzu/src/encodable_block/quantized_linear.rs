@@ -1,4 +1,8 @@
-use std::{cell::RefCell, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -202,8 +206,9 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                let bias_add_kernel = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, kernel_data_type)
-                    .map_err(QuantizedLinearError::BackendError)?;
+                let bias_add_kernel =
+                    <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, kernel_data_type, true)
+                        .map_err(QuantizedLinearError::BackendError)?;
                 (Some(bias_add_kernel), Some(biases.buffer()))
             },
             Err(_) => (None, None),
@@ -255,7 +260,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
         let input_array = arrays[0].borrow_mut();
         let output_array = arrays[1].borrow_mut();
         let output_buf_rc = output_array.buffer();
-        let output_buf_borrow = output_buf_rc.borrow();
+        let mut output_buf_borrow = output_buf_rc.borrow_mut();
 
         self.kernel
             .encode(
@@ -266,7 +271,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
                     b_buffer: self.weights_buffer.borrow().deref(),
                     scales_buffer: self.scales_buffer.borrow().deref(),
                     zero_points_or_biases_buffer: self.zero_points_or_biases_buffer.borrow().deref(),
-                    output_buffer: output_buf_borrow.deref(),
+                    output_buffer: output_buf_borrow.deref_mut(),
                     batch: batch_size,
                     input_dim: self.input_dim,
                     output_dim: self.output_dim,
@@ -278,9 +283,9 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
         if let (Some(bias_add_kernel), Some(biases_buffer)) = (&self.bias_add_kernel, &self.biases_buffer) {
             let total_length = batch_size * self.output_dim;
             bias_add_kernel.encode_if(
-                output_buf_borrow.deref(),
+                None::<&B::NativeBuffer>,
                 biases_buffer.borrow().deref(),
-                output_buf_borrow.deref(),
+                output_buf_borrow.deref_mut(),
                 self.output_dim as u32,
                 total_length as u32,
                 encoder,

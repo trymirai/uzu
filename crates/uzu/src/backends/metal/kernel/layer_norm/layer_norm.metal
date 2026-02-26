@@ -119,7 +119,7 @@ VARIANTS(SC, float, half, bfloat)
 VARIANTS(OUT, float, half, bfloat)
 VARIANTS(ACC, float)
 KERNEL(LayerNorm) (
-    const device IN* input,
+    const device IN* input OPTIONAL(!in_place),
     const device SC* scales,
     device OUT* output,
     constant uint& batch_size,
@@ -127,12 +127,16 @@ KERNEL(LayerNorm) (
     constant float& epsilon,
     constant float& scale_offset,
     constant uint& full_layer,
+    const bool in_place SPECIALIZE,
     threadgroup ACC shared_mean[SIMD_SIZE],
     threadgroup ACC shared_variance[SIMD_SIZE],
     const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_in_row THREADS(BLOCK_SIZE)
 ) {
+  if (in_place) {
+    input = reinterpret_cast<const device IN*>(output);
+  }
   const uint input_offset = batch_idx * model_dim;
   layer_norm_core<IN, SC, OUT, ACC>(
       input + input_offset,

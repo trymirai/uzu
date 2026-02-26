@@ -1,6 +1,6 @@
 //! Tensor copy encodable.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -52,7 +52,7 @@ impl<B: Backend> EncodableBlock<B> for TensorCopy<B> {
 
         self.kernel.encode(
             source_array.buffer().borrow().deref(),
-            destination_array.buffer().borrow().deref(),
+            destination_array.buffer().borrow_mut().deref_mut(),
             length as u32,
             encoder,
         );
