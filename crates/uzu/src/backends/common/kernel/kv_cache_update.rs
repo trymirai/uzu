@@ -57,7 +57,7 @@ impl<B: Backend> KVCacheUpdate<B> {
         in_place_data: &[KVLayerData<B>],
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) -> Result<(), KVCacheUpdateError<B>> {
         command_buffer.with_compute_encoder(|encoder| {
             self.encode_with_encoder(in_place_data, source_indices, destination_indices, encoder)

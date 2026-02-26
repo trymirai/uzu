@@ -189,7 +189,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
@@ -242,12 +242,10 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
         let e = self.moe_config.num_routed_experts;
         let k = self.moe_config.num_active_routed_experts;
-
-        let root = command_buffer;
         let k_tile = 128;
 
         // Clear internal MoE buffers
-        root.with_copy_encoder(|encoder| {
+        command_buffer.with_copy_encoder(|encoder| {
             if suffix_length > 0 && k > 0 {
                 let entries = suffix_length * k;
                 let topk_bytes = entries * std::mem::size_of::<u32>();
@@ -358,7 +356,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         });
 
         self.gather_kernels.encode(
-            root,
+            command_buffer,
             self.data_type,
             &MoeGatherArguments {
                 x_buffer: &main_buf,
@@ -385,7 +383,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_decode_kernel.encode(
-                root,
+                command_buffer,
                 &MoeExpertsTwoPassArguments {
                     x_perm_buffer: &x_perm_buf,
                     expert_offsets: &offsets_buf,
@@ -447,7 +445,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 silu_alpha,
                 data_type: self.data_type,
             };
-            self.experts_two_pass_prefill_kernel.encode(root, &args);
+            self.experts_two_pass_prefill_kernel.encode(command_buffer, &args);
         }
 
         command_buffer.with_compute_encoder(|encoder| {

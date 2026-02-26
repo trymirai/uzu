@@ -178,7 +178,7 @@ impl<B: Backend> EncodableBlock<B> for Decoder<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         self.embed.encode(state, parameters, command_buffer);
 

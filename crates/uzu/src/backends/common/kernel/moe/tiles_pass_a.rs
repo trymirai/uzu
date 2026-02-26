@@ -68,7 +68,7 @@ impl<B: Backend> MoePassATileKernels<B> {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoePassATileCountsArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -78,7 +78,7 @@ impl<B: Backend> MoePassATileKernels<B> {
 
     pub fn encode_scan(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoePassATileScanArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -88,7 +88,7 @@ impl<B: Backend> MoePassATileKernels<B> {
 
     pub fn encode_row_map(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoePassARowMapArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -104,7 +104,7 @@ impl<B: Backend> MoePassATileKernels<B> {
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoePassATileBuildArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -122,7 +122,7 @@ impl<B: Backend> MoePassATileKernels<B> {
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoePassATileDispatchArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {

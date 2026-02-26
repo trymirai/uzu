@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::repeat_n, ops::Deref, path::Path, sync::Arc, time::Instant};
+use std::{collections::HashMap, iter::repeat_n, ops::DerefMut, path::Path, sync::Arc, time::Instant};
 
 use itertools::{Either, Itertools, izip};
 
@@ -468,14 +468,14 @@ where
         self.context.executables.encode(
             &mut state,
             &EncodingParameters::new(false, false, false),
-            self.context.command_buffer.borrow().deref(),
+            self.context.command_buffer.borrow_mut().deref_mut(),
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
             &EncodingParameters::new(false, false, false),
-            self.context.command_buffer.borrow().deref(),
+            self.context.command_buffer.borrow_mut().deref_mut(),
         );
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -486,7 +486,7 @@ where
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
         let token_ids_buffer = token_ids_binding.buffer();
 
-        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
+        self.context.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
             let results_offset = slot * std::mem::size_of::<u32>();
             self.context.token_copy_results.encode(
@@ -500,12 +500,12 @@ where
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
-            self.context.command_buffer.borrow().deref(),
+            self.context.command_buffer.borrow_mut().deref_mut(),
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
 
-        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
+        self.context.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             if let Some(mask_update) = &self.context.mask_update {
                 let updates: Vec<AttentionBiasUpdate> =
                     self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
@@ -652,7 +652,7 @@ where
                     self.context.gpu_sampler.encode(
                         &mut state,
                         &EncodingParameters::new(warmup, true, false),
-                        &self.context.command_buffer.as_ref().borrow(),
+                        self.context.command_buffer.borrow_mut().deref_mut(),
                     );
                 }
             }
@@ -713,14 +713,14 @@ where
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
-        let command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
+        let mut command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
             cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
-                &command_buffer,
+                &mut command_buffer,
                 &self.context.kv_cache_update,
             );
         }

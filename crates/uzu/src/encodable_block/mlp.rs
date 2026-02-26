@@ -31,7 +31,7 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         &self,
         state: &mut ForwardPassState<B>,
         params: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         if self.supports_shared_encoder() {
             command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, params, encoder));

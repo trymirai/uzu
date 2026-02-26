@@ -46,7 +46,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoeExpertsTwoPassArguments<B>,
     ) {
         if args.total_rows == 0 {

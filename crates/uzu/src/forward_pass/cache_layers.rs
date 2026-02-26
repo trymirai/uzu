@@ -276,7 +276,7 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);

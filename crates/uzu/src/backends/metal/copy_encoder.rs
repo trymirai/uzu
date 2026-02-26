@@ -1,16 +1,16 @@
 use std::ops::Range;
 
 use metal::{MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer};
-use objc2::runtime::ProtocolObject;
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
 use crate::backends::common::{Backend, CopyEncoder};
 
-impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
+impl CopyEncoder for Retained<ProtocolObject<dyn MTLBlitCommandEncoder>> {
     type Backend = Metal;
 
     fn encode_copy(
-        &self,
+        &mut self,
         src: &<Self::Backend as Backend>::NativeBuffer,
         dst: &<Self::Backend as Backend>::NativeBuffer,
         size: usize,
@@ -21,7 +21,7 @@ impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
     }
 
     fn encode_fill(
-        &self,
+        &mut self,
         dst: &<Self::Backend as Backend>::NativeBuffer,
         range: Range<usize>,
         value: u8,

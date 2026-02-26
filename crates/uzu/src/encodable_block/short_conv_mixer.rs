@@ -111,7 +111,7 @@ impl<B: Backend> ShortConvMixer<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
@@ -370,7 +370,7 @@ impl<B: Backend> EncodableBlock<B> for ShortConvMixer<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         if self.supports_shared_encoder() {
             command_buffer

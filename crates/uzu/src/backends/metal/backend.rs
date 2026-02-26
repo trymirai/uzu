@@ -11,8 +11,8 @@ impl Backend for Metal {
     type Context = MetalContext;
     type NativeBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
     type CommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
-    type ComputeEncoder = ProtocolObject<dyn MTLComputeCommandEncoder>;
-    type CopyEncoder = ProtocolObject<dyn MTLBlitCommandEncoder>;
+    type ComputeEncoder = Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>;
+    type CopyEncoder = Retained<ProtocolObject<dyn MTLBlitCommandEncoder>>;
     type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;
     type Error = MetalError;

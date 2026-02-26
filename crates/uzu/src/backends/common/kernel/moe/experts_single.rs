@@ -82,7 +82,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: MoeExpertsSingleDecodeArguments<B>,
     ) {
         if args.k == 0 {

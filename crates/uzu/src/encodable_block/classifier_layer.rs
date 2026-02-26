@@ -253,7 +253,7 @@ impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         #[cfg(not(feature = "tracing"))]
         {

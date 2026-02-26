@@ -768,7 +768,7 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         source_array_id: ArrayId,
         destination_array: RefCell<Array<B>>,
     ) {
