@@ -1,4 +1,4 @@
-use super::{gemm, gemm_mpp, gemm_scalar_int};
+use super::{gemm, gemm_mixed_types_simple, gemm_mpp};
 use crate::{
     DataType,
     backends::{
@@ -6,7 +6,7 @@ use crate::{
             MatmulGemmMppKernel,
             matmul::{
                 MatmulArguments, MatmulDispatchDescriptor, gemm_mpp::Specialization,
-                gemm_scalar_int as common_scalar_int, gemv, split_k,
+                gemm_mixed_types_simple as common_mixed_types_simple, gemv, split_k,
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError, kernel::dsl::MatmulGemmMppMetalKernel},
@@ -47,12 +47,12 @@ pub fn choose_dispatch_descriptor(
     output_dtype: DataType,
     arguments: &MatmulArguments<Metal>,
 ) -> Result<MatmulDispatchDescriptor, MetalError> {
-    if context.is_mpp_available() && mpp_shader_supports_combo(context, a_dtype, b_dtype, output_dtype) {
+    if mpp_shader_supports_combo(context, a_dtype, b_dtype, output_dtype) {
         return Ok(MatmulDispatchDescriptor::GemmMpp(gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?));
     }
 
-    if common_scalar_int::supports_combo(a_dtype, b_dtype, output_dtype) {
-        return Ok(MatmulDispatchDescriptor::GemmScalarInt(gemm_scalar_int::DispatchDescriptor::new(
+    if common_mixed_types_simple::supports_combo(a_dtype, b_dtype, output_dtype) {
+        return Ok(MatmulDispatchDescriptor::GemmMixedTypesSimple(gemm_mixed_types_simple::DispatchDescriptor::new(
             output_dtype,
             arguments,
         )?));

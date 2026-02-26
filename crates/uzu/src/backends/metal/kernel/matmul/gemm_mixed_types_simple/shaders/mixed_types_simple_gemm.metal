@@ -12,7 +12,7 @@ using GEMMParams = steel::GEMMParams;
 } // namespace uzu
 
 ///////////////////////////////////////////////////////////////////////////////
-// Scalar tiled GEMM for mixed/integer types
+// Simple tiled GEMM for mixed types
 //
 // Each threadgroup computes a TILE_M x TILE_N output tile.
 // The K dimension is iterated in chunks of TILE_K through threadgroup memory.
@@ -26,7 +26,7 @@ using GEMMParams = steel::GEMMParams;
 #define THREADS_PER_GROUP 256
 
 template <typename AType, typename BType, typename OutType, typename AccumType>
-METAL_FUNC void scalar_int_gemm_impl(
+METAL_FUNC void mixed_types_simple_gemm_impl(
     const device AType* a,
     const device BType* b,
     device OutType* d,
@@ -104,7 +104,7 @@ METAL_FUNC void scalar_int_gemm_impl(
 ///////////////////////////////////////////////////////////////////////////////
 
 // i8 * i8 -> i32 (accumulate in int)
-KERNEL(ScalarIntGemmI8I8I32)(
+KERNEL(MixedTypesSimpleGemmI8I8I32)(
     const device int8_t* a,
     const device int8_t* b,
     device int* d,
@@ -122,7 +122,7 @@ KERNEL(ScalarIntGemmI8I8I32)(
     const uint thread_z THREADS(1)
 ) {
   const uint thread_idx = thread_y * 32 + thread_x;
-  scalar_int_gemm_impl<int8_t, int8_t, int, int>(
+  mixed_types_simple_gemm_impl<int8_t, int8_t, int, int>(
       a, b, d, params,
       a_shared, b_shared,
       uint3(group_x, group_y, group_z),
@@ -132,7 +132,7 @@ KERNEL(ScalarIntGemmI8I8I32)(
 }
 
 // i8 * bf16 -> bf16 (accumulate in float)
-KERNEL(ScalarIntGemmI8Bf16Bf16)(
+KERNEL(MixedTypesSimpleGemmI8Bf16Bf16)(
     const device int8_t* a,
     const device bfloat16_t* b,
     device bfloat16_t* d,
@@ -150,7 +150,63 @@ KERNEL(ScalarIntGemmI8Bf16Bf16)(
     const uint thread_z THREADS(1)
 ) {
   const uint thread_idx = thread_y * 32 + thread_x;
-  scalar_int_gemm_impl<int8_t, bfloat16_t, bfloat16_t, float>(
+  mixed_types_simple_gemm_impl<int8_t, bfloat16_t, bfloat16_t, float>(
+      a, b, d, params,
+      a_shared, b_shared,
+      uint3(group_x, group_y, group_z),
+      uint3(thread_x, thread_y, 0),
+      thread_idx
+  );
+}
+
+// i8 * f16 -> f16 (accumulate in float)
+KERNEL(MixedTypesSimpleGemmI8F16F16)(
+    const device int8_t* a,
+    const device half* b,
+    device half* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const constant uint& group_count_x,
+    const constant uint& group_count_y,
+    const constant uint& group_count_z,
+    threadgroup int8_t a_shared[TILE_M * TILE_K],
+    threadgroup half b_shared[TILE_N * TILE_K],
+    const uint group_x GROUPS(group_count_x),
+    const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
+    const uint thread_x THREADS(32),
+    const uint thread_y THREADS(8),
+    const uint thread_z THREADS(1)
+) {
+  const uint thread_idx = thread_y * 32 + thread_x;
+  mixed_types_simple_gemm_impl<int8_t, half, half, float>(
+      a, b, d, params,
+      a_shared, b_shared,
+      uint3(group_x, group_y, group_z),
+      uint3(thread_x, thread_y, 0),
+      thread_idx
+  );
+}
+
+// i8 * f32 -> f32 (accumulate in float)
+KERNEL(MixedTypesSimpleGemmI8F32F32)(
+    const device int8_t* a,
+    const device float* b,
+    device float* d,
+    const constant uzu::matmul::GEMMParams* params,
+    const constant uint& group_count_x,
+    const constant uint& group_count_y,
+    const constant uint& group_count_z,
+    threadgroup int8_t a_shared[TILE_M * TILE_K],
+    threadgroup float b_shared[TILE_N * TILE_K],
+    const uint group_x GROUPS(group_count_x),
+    const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
+    const uint thread_x THREADS(32),
+    const uint thread_y THREADS(8),
+    const uint thread_z THREADS(1)
+) {
+  const uint thread_idx = thread_y * 32 + thread_x;
+  mixed_types_simple_gemm_impl<int8_t, float, float, float>(
       a, b, d, params,
       a_shared, b_shared,
       uint3(group_x, group_y, group_z),

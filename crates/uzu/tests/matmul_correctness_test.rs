@@ -60,7 +60,7 @@ fn dispatch_path_name(descriptor: &MatmulDispatchDescriptor) -> &'static str {
         MatmulDispatchDescriptor::SplitK(_) => "SplitK",
         MatmulDispatchDescriptor::Gemm(_) => "Gemm",
         MatmulDispatchDescriptor::GemmMpp(_) => "GemmMpp",
-        MatmulDispatchDescriptor::GemmScalarInt(_) => "GemmScalarInt",
+        MatmulDispatchDescriptor::GemmMixedTypesSimple(_) => "GemmMixedTypesSimple",
     }
 }
 

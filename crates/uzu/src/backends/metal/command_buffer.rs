@@ -222,8 +222,15 @@ pub struct MetalCommandBufferCompleted {
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
     type CommandBuffer = MetalCommandBuffer;
 
+    fn kernel_execution_time_ms(&self) -> Option<f64> {
+        match (self.kernel_start_time(), self.kernel_end_time()) {
+            (Some(start), Some(end)) => Some((end - start) * 1000.0),
+            _ => None,
+        }
+    }
+
     fn gpu_execution_time_ms(&self) -> Option<f64> {
-        match (self.command_buffer.kernel_start_time(), self.command_buffer.kernel_end_time()) {
+        match (self.gpu_start_time(), self.gpu_end_time()) {
             (Some(start), Some(end)) => Some((end - start) * 1000.0),
             _ => None,
         }

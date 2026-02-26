@@ -2,7 +2,7 @@ use std::ops::DerefMut;
 
 use super::{
     dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
-    gemm_scalar_int::GemmScalarIntKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments, split_k::SplitKKernel,
+    gemm_mixed_types_simple::GemmMixedTypesSimpleKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments, split_k::SplitKKernel,
 };
 use crate::{
     DataType,
@@ -22,6 +22,8 @@ fn is_valid_dtype_combo(
             | (DataType::BF16, DataType::BF16, DataType::F32)
             | (DataType::F32, DataType::F32, DataType::F32)
             | (DataType::I8, DataType::I8, DataType::I32)
+            | (DataType::I8, DataType::F16, DataType::F16)
+            | (DataType::I8, DataType::F32, DataType::F32)
             | (DataType::I8, DataType::BF16, DataType::BF16)
     )
 }
@@ -34,7 +36,7 @@ pub struct MatmulKernel<B: Backend> {
     gemv: Option<GemvKernel<B>>,
     splitk: Option<SplitKKernel<B>>,
     gemm_mpp: Option<GemmMppKernel<B>>,
-    gemm_scalar_int: Option<GemmScalarIntKernel<B>>,
+    gemm_mixed_types_simple: Option<GemmMixedTypesSimpleKernel<B>>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
@@ -65,7 +67,7 @@ where
             gemv: None,
             splitk: None,
             gemm_mpp: None,
-            gemm_scalar_int: None,
+            gemm_mixed_types_simple: None,
             bias_add: None,
         })
     }
@@ -114,11 +116,12 @@ where
         Ok(self.gemm_mpp.as_mut().unwrap())
     }
 
-    fn get_or_create_gemm_scalar_int(&mut self) -> Result<&mut GemmScalarIntKernel<B>, B::Error> {
-        if self.gemm_scalar_int.is_none() {
-            self.gemm_scalar_int = Some(GemmScalarIntKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
+    fn get_or_create_gemm_mixed_types_simple(&mut self) -> Result<&mut GemmMixedTypesSimpleKernel<B>, B::Error> {
+        if self.gemm_mixed_types_simple.is_none() {
+            self.gemm_mixed_types_simple =
+                Some(GemmMixedTypesSimpleKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
         }
-        Ok(self.gemm_scalar_int.as_mut().unwrap())
+        Ok(self.gemm_mixed_types_simple.as_mut().unwrap())
     }
 
     fn encode_dispatch_descriptor(
@@ -145,9 +148,9 @@ where
                 let gemm_mpp = self.get_or_create_gemm_mpp()?;
                 gemm_mpp.encode(context, arguments, d, encoder)
             },
-            MatmulDispatchDescriptor::GemmScalarInt(d) => {
-                let gemm_scalar_int = self.get_or_create_gemm_scalar_int()?;
-                gemm_scalar_int.encode(context, arguments, d, encoder)
+            MatmulDispatchDescriptor::GemmMixedTypesSimple(d) => {
+                let gemm_mixed_types_simple = self.get_or_create_gemm_mixed_types_simple()?;
+                gemm_mixed_types_simple.encode(context, arguments, d, encoder)
             },
         }
     }
