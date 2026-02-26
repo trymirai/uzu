@@ -233,7 +233,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();

@@ -75,7 +75,7 @@ where
         context: &B::Context,
         arguments: &MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
         match dispatch_descriptor {
             MatmulDispatchDescriptor::Gemv(d) => {
@@ -98,7 +98,7 @@ where
         context: &B::Context,
         arguments: MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
         self.encode_dispatch_descriptor(context, &arguments, dispatch_descriptor, encoder)?;
 
@@ -116,7 +116,7 @@ where
         context: &B::Context,
         arguments: &MatmulArguments<B>,
         bias: &B::NativeBuffer,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;

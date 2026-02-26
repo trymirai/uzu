@@ -55,7 +55,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
 
     pub fn encode(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         args: SSDPrefillArguments<B>,
         mode: SSDPrefillMode,
     ) {

@@ -31,7 +31,7 @@ impl Context for CpuContext {
         Ok(vec![0; size].into_boxed_slice())
     }
 
-    fn create_command_buffer(&self) -> Result<RefCell<CpuCommandBuffer>, CpuError> {
+    fn create_command_buffer(&self) -> Result<CpuCommandBuffer, CpuError> {
         Ok(CpuCommandBuffer::new())
     }
 

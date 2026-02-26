@@ -109,7 +109,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
                 args.gate_clip_max,
                 args.up_clip_min,
                 args.up_clip_max,
-                &encoder,
+                encoder,
             );
         });
 
@@ -126,7 +126,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
                 args.d_model as u32,
                 args.d_ff as u32,
                 args.k as u32,
-                &encoder,
+                encoder,
             );
         });
     }

@@ -70,7 +70,7 @@ impl<B: Backend> KVCacheUpdate<B> {
         in_place_data: &[KVLayerData<B>],
         source_indices: &[usize],
         destination_indices: &[usize],
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) -> Result<(), KVCacheUpdateError<B>> {
         if source_indices.len() != destination_indices.len() {
             return Err(KVCacheUpdateError::IndicesCountMismatch);

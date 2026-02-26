@@ -120,68 +120,68 @@ pub struct AudioClampArguments<'a, B: Backend> {
 pub trait AudioKernelRuntime<B: Backend> {
     fn encode_fsq_decode(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioFsqDecodeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_fsq_encode(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioFsqEncodeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_conv1d(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioConv1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv1d(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioCausalConv1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv_transpose1d(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioCausalConvTranspose1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_half_snake(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioHalfSnakeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_leaky_relu(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioElementwiseArguments<'_, B>,
         negative_slope: f32,
     ) -> Result<(), B::Error>;
 
     fn encode_tanh(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioElementwiseArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_add(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioAddArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_scale(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioScaleArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_clamp(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         arguments: AudioClampArguments<'_, B>,
     ) -> Result<(), B::Error>;
 }

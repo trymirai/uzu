@@ -138,7 +138,7 @@ impl<B: Backend> MambaMixer<B> {
     fn encode_pipeline_with_encoder(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         parameters: &EncodingParameters<B>,
     ) {
         let active_suffix_length = state.active_suffix_length();
@@ -162,7 +162,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -202,7 +202,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -246,7 +246,7 @@ impl<B: Backend> MambaMixer<B> {
                     suffix_length as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    &encoder,
+                    encoder,
                 );
             }
         } else {
@@ -262,7 +262,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     suffix_length as u32,
                     conv_dim as u32,
-                    &encoder,
+                    encoder,
                 );
 
                 Some(buffer)
@@ -290,7 +290,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    &encoder,
+                    encoder,
                 )
             }
         }
@@ -299,7 +299,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -350,7 +350,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -481,7 +481,7 @@ impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         self.encode_pipeline_with_encoder(state, encoder, parameters);
     }

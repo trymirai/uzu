@@ -39,7 +39,7 @@ impl<B: Backend> EncodableBlock<B> for Rope<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);

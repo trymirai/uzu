@@ -144,7 +144,7 @@ impl<B: Backend> SamplingKernel<B> {
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
     ) -> Result<(), SamplingError<B>> {
         if batch_size > self.max_batch_size {
             return Err(SamplingError::BatchSizeExceeded(batch_size, self.max_batch_size));

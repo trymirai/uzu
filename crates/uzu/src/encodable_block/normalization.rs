@@ -70,7 +70,7 @@ impl<B: Backend> EncodableBlock<B> for Normalization<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         match self {
             Self::LayerNorm(layer_norm) => layer_norm.encode_with_shared_encoder(state, parameters, encoder),

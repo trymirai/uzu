@@ -431,7 +431,7 @@ impl CpuCompiler {
             });
 
             quote! {
-                encoder.borrow_mut().push_command(move || {
+                encoder.push_command(move || {
                     #monomorphized_function(#function_call_args_joined)
                 });
             }
@@ -524,11 +524,11 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder std::cell::RefCell<crate::backends::cpu::command_buffer::CpuCommandBuffer>) {
+                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::cpu::command_buffer::CpuCommandBuffer) {
                     self.encode_if(#(#encode_args_passthrough ,)* encoder, None::<&Box<[u8]>>)
                 }
 
-                fn encode_if<#(#encode_generics ,)* 'encoder, 'predicate>(&self, #(#encode_args_defs, )* encoder: &'encoder std::cell::RefCell<crate::backends::cpu::command_buffer::CpuCommandBuffer>, predicate: Option<impl crate::backends::common::kernel::BufferArg<'predicate, Box<[u8]>>>) {
+                fn encode_if<#(#encode_generics ,)* 'encoder, 'predicate>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::cpu::command_buffer::CpuCommandBuffer, predicate: Option<impl crate::backends::common::kernel::BufferArg<'predicate, Box<[u8]>>>) {
                     #(#argument_copies)*
                     #encode_body
                 }

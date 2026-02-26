@@ -429,7 +429,7 @@ impl<B: Backend> EncodableBlock<B> for LayerExecutables<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         debug_assert!(
             self.supports_shared_encoder(),

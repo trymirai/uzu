@@ -248,7 +248,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();

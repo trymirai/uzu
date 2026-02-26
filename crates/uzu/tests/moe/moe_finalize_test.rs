@@ -91,7 +91,7 @@ fn test_finalize_correctness() {
         let finalize = <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16)
             .expect("finalize kernel");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        let mut encoder = cb.new_compute_command_encoder().expect("encoder");
         finalize.encode(
             &tok2row_buf,
             &probs_buf,
@@ -100,7 +100,7 @@ fn test_finalize_correctness() {
             t as u32,
             d_model as u32,
             k as u32,
-            &encoder,
+            &mut encoder,
         );
         encoder.end_encoding();
         cb.commit();

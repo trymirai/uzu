@@ -166,7 +166,7 @@ impl<B: Backend> EncodableBlock<B> for Decoder<B> {
         &self,
         _state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        _encoder: &B::ComputeEncoder,
+        _encoder: &mut B::ComputeEncoder,
     ) {
         unimplemented!("Decoder does not support shared encoder")
     }

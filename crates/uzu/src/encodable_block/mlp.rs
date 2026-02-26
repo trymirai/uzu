@@ -75,7 +75,7 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         &self,
         state: &mut ForwardPassState<B>,
         params: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         // Up
         self.up.encode_with_shared_encoder(state, params, encoder);

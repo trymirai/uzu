@@ -158,7 +158,7 @@ fn run_router_topk_once(
     let probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let encoder = cb.new_compute_command_encoder().expect("Failed to create command encoder");
+    let mut encoder = cb.new_compute_command_encoder().expect("Failed to create command encoder");
     kernel.encode(
         &input_buf,
         &weight_buf,
@@ -170,7 +170,7 @@ fn run_router_topk_once(
         e as u32,
         k as u32,
         renorm,
-        &encoder,
+        &mut encoder,
     );
     encoder.end_encoding();
     cb.commit();

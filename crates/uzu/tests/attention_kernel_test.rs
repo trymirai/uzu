@@ -317,7 +317,7 @@ fn run_single_pass_attention(
         .expect("Failed to create buffer");
 
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -347,7 +347,7 @@ fn run_single_pass_attention(
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
-        &compute_encoder,
+        &mut compute_encoder,
     );
     compute_encoder.end_encoding();
 
@@ -390,7 +390,7 @@ fn run_single_pass_attention_with_is_causal(
         .expect("Failed to create buffer");
 
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -419,7 +419,7 @@ fn run_single_pass_attention_with_is_causal(
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
-        &compute_encoder,
+        &mut compute_encoder,
     );
     compute_encoder.end_encoding();
 
@@ -461,7 +461,7 @@ fn run_gemm_attention(
         .expect("Failed to create buffer");
 
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let args = AttentionGemmArguments {
         queries_buffer: &query_buffer,
@@ -481,7 +481,7 @@ fn run_gemm_attention(
         scale,
     };
 
-    let encode_result = kernel.encode(context, &compute_encoder, &args);
+    let encode_result = kernel.encode(context, &mut compute_encoder, &args);
     compute_encoder.end_encoding();
     encode_result?;
 
@@ -936,7 +936,7 @@ fn run_two_pass_attention(
         .expect("Failed to create buffer");
 
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -967,7 +967,7 @@ fn run_two_pass_attention(
         mask_q_seq_stride,
         mask_head_stride,
         sinks_buffer.as_ref().map(|b| b),
-        &compute_encoder,
+        &mut compute_encoder,
     );
     kernel_pass2.encode(
         &partials_buffer,
@@ -976,7 +976,7 @@ fn run_two_pass_attention(
         &output_buffer,
         num_heads as u32,
         seq_len as u32,
-        &compute_encoder,
+        &mut compute_encoder,
     );
     compute_encoder.end_encoding();
 
@@ -1174,7 +1174,7 @@ fn perf_two_pass_attention() {
 
     // ---- Launch and time ----
     let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     let mask_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
     let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
@@ -1199,7 +1199,7 @@ fn perf_two_pass_attention() {
         None,
         None,
         sinks_buffer.as_ref().map(|b| b),
-        &compute_encoder,
+        &mut compute_encoder,
     );
     kernel_pass2.encode(
         &partials_buffer,
@@ -1208,7 +1208,7 @@ fn perf_two_pass_attention() {
         &output_buffer,
         num_heads as u32,
         suffix_length as u32,
-        &compute_encoder,
+        &mut compute_encoder,
     );
     compute_encoder.end_encoding();
 

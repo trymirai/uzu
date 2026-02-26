@@ -23,7 +23,7 @@ pub trait FullPrecisionMatmulKernel: Sized {
     fn encode(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        encoder: &<Self::Backend as Backend>::ComputeEncoder,
+        encoder: &mut <Self::Backend as Backend>::ComputeEncoder,
         arguments: FullPrecisionMatmulArguments<Self::Backend>,
     );
 }

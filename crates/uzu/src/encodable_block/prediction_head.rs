@@ -78,7 +78,7 @@ impl<B: Backend> EncodableBlock<B> for ClassifierPredictionHead<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         self.dense.encode_with_shared_encoder(state, parameters, encoder);
         self.activation.encode_with_shared_encoder(state, parameters, encoder);
