@@ -285,7 +285,7 @@ fn test_moe_pipeline_breakdown_decode() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Two-pass specific buffers
-    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     // Scatter block bases buffers
@@ -388,9 +388,9 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     let gather_perf = time_kernel("Gather", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         gather_kernel.encode(
-            &cb,
+            &mut cb,
             DataType::BF16,
             &MoeGatherArguments {
                 x_buffer: &x_buf,
@@ -407,14 +407,14 @@ fn test_moe_pipeline_breakdown_decode() {
     });
 
     let experts_perf = time_kernel("Experts (MAIN COMPUTE)", 2, 5, || {
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         experts_kernel.encode(
-            &cb,
+            &mut cb,
             &MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
                 row_expert_map: &row_expert_map_buf,
-                hidden_buffer: &hidden_buf,
+                hidden_buffer: &mut hidden_buf,
                 output_buffer: &y_partial_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,

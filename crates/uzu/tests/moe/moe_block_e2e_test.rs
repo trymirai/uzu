@@ -346,7 +346,7 @@ fn run_moe_parity_test_internal(
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     // Router + TopK (fused kernel)
     let router_topk =
@@ -412,7 +412,7 @@ fn run_moe_parity_test_internal(
 
     let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("gather");
     gather.encode(
-        &cb,
+        &mut cb,
         DataType::BF16,
         &MoeGatherArguments {
             x_buffer: &x_buf,
@@ -427,16 +427,16 @@ fn run_moe_parity_test_internal(
 
     // Additional buffers for 2-pass
     let total_rows = t * k;
-    let hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
     let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
 
     let experts = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("experts");
     let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
-    let args = MoeExpertsTwoPassArguments {
+    let mut args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
         row_expert_map: &row_expert_map_buf,
-        hidden_buffer: &hidden_buf,
+        hidden_buffer: &mut hidden_buf,
         output_buffer: &y_partial_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
@@ -460,7 +460,7 @@ fn run_moe_parity_test_internal(
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts.encode(&cb, &args);
+    experts.encode(&mut cb, &mut args);
 
     let finalize =
         <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");

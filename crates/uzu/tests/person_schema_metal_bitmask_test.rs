@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use std::{path::PathBuf, rc::Rc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
 use schemars::JsonSchema;
@@ -62,7 +62,7 @@ fn person_schema_metal_bitmask() {
     let elems = batch * buffer_size;
     let bytes = elems * core::mem::size_of::<i32>();
     let buffer = device.new_buffer(bytes, MTLResourceOptions::STORAGE_MODE_SHARED).expect("Failed to create buffer");
-    let metal_bitmask = unsafe { Array::<Metal>::from_parts(Rc::new(buffer), 0, &shape, DataType::I32) };
+    let metal_bitmask = unsafe { Array::<Metal>::from_parts(Rc::new(RefCell::new(buffer)), 0, &shape, DataType::I32) };
 
     let mut shape_i64 = [buffer_size as i64];
     let mut bitmask_tensor = DLTensor {

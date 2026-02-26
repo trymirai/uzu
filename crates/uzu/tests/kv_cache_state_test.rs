@@ -1,6 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use metal::{MTLCommandBuffer, MTLCommandQueue};
+use objc2::Message;
 use uzu::{
     DataType,
     array::ArrayContextExt,
@@ -190,7 +191,7 @@ fn run_scenario(
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
-        &root_command_buffer,
+        &mut root_command_buffer.retain(),
         &kv_cache_update,
     );
 
