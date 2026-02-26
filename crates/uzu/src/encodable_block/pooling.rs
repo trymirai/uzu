@@ -26,7 +26,7 @@ impl<B: Backend> PoolingKernel<B> {
         seq_len: u32,
         hidden_dim: u32,
         batch_size: u32,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         match self {
             Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
@@ -84,7 +84,7 @@ impl<B: Backend> EncodableBlock<B> for Pooling<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let batch_size = 1;
         let seq_len = state.aux_buffers_suffix_length();

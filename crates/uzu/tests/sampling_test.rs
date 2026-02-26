@@ -111,7 +111,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let command_buffer = command_buffer_ref.to_owned();
 
     // Run sampling
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
     kernel
         .encode_with_encoder(
             &logits_buffer,
@@ -123,7 +123,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
             SamplingMethod::Greedy,
             batch_size,
             vocab_size,
-            &compute_encoder,
+            &mut compute_encoder,
         )
         .expect("Argmax sampling should succeed");
     compute_encoder.end_encoding();
@@ -240,7 +240,7 @@ fn test_topp_sampling_from_prob_exact_match(
 
         let cb_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
-        let compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
         kernel
             .encode_with_encoder(
                 &logits_buf,
@@ -257,7 +257,7 @@ fn test_topp_sampling_from_prob_exact_match(
                 },
                 batch_size,
                 vocab_size,
-                &compute_encoder,
+                &mut compute_encoder,
             )
             .expect("encode");
         compute_encoder.end_encoding();
@@ -363,7 +363,7 @@ fn test_topp_sampling_statistical_large() {
 
         let cb_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
-        let compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         kernel
             .encode_with_encoder(
@@ -381,7 +381,7 @@ fn test_topp_sampling_statistical_large() {
                 },
                 BATCH,
                 VOCAB,
-                &compute_encoder,
+                &mut compute_encoder,
             )
             .expect("encode");
         compute_encoder.end_encoding();
@@ -465,7 +465,7 @@ fn perf_topp_128k_vocab() {
     // ---- Launch once and time ----
     let cb_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
-    let compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel
         .encode_with_encoder(
@@ -483,7 +483,7 @@ fn perf_topp_128k_vocab() {
             },
             BATCH,
             VOCAB,
-            &compute_encoder,
+            &mut compute_encoder,
         )
         .expect("encode");
     compute_encoder.end_encoding();
@@ -569,7 +569,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     // ---- Launch once and time ----
     let cb_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
-    let compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel
         .encode_with_encoder(
@@ -582,7 +582,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
             SamplingMethod::Greedy,
             BATCH,
             VOCAB,
-            &compute_encoder,
+            &mut compute_encoder,
         )
         .expect("encode");
     compute_encoder.end_encoding();
@@ -688,7 +688,8 @@ fn test_categorical_sampling() {
 
         let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
         let command_buffer = command_buffer_ref.to_owned();
-        let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         kernel
             .encode_with_encoder(
@@ -706,7 +707,7 @@ fn test_categorical_sampling() {
                 },
                 batch_size,
                 vocab_size,
-                &compute_encoder,
+                &mut compute_encoder,
             )
             .expect("Categorical sampling should succeed");
         compute_encoder.end_encoding();
@@ -829,7 +830,8 @@ fn test_categorical_sampling_statistical() {
 
         let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
         let command_buffer = command_buffer_ref.to_owned();
-        let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         kernel
             .encode_with_encoder(
@@ -847,7 +849,7 @@ fn test_categorical_sampling_statistical() {
                 },
                 BATCH,
                 VOCAB,
-                &compute_encoder,
+                &mut compute_encoder,
             )
             .expect("encode");
         compute_encoder.end_encoding();
@@ -935,7 +937,7 @@ fn perf_categorical_128k_vocab() {
     // Launch and time
     let cb_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
-    let compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel
         .encode_with_encoder(
@@ -953,7 +955,7 @@ fn perf_categorical_128k_vocab() {
             },
             BATCH,
             VOCAB,
-            &compute_encoder,
+            &mut compute_encoder,
         )
         .expect("encode");
     compute_encoder.end_encoding();
@@ -1024,8 +1026,8 @@ fn test_temperature_gpu_cpu_match() {
     let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &compute_encoder);
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1090,8 +1092,8 @@ fn test_topk_gpu_cpu_match() {
     let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TOPK, &compute_encoder);
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TOPK, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1155,8 +1157,8 @@ fn test_topp_gpu_cpu_match() {
     let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TOPP, &compute_encoder);
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TOPP, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1225,8 +1227,8 @@ fn test_minp_gpu_cpu_match() {
     let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, MINP, &compute_encoder);
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1313,7 +1315,7 @@ fn test_minp_sampling_exact_match(
 
         let cb_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
         let cb = cb_ref.to_owned();
-        let compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
         kernel
             .encode_with_encoder(
                 &logits_buf,
@@ -1330,7 +1332,7 @@ fn test_minp_sampling_exact_match(
                 },
                 batch_size,
                 vocab_size,
-                &compute_encoder,
+                &mut compute_encoder,
             )
             .expect("encode");
         compute_encoder.end_encoding();
@@ -1412,8 +1414,15 @@ fn test_gumbel_gpu_cpu_match() {
     let command_buffer_ref = context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
 
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &seeds_buffer, &gumbel_logits_buffer, BATCH as u32, VOCAB as u32, &compute_encoder);
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    kernel.encode(
+        &logits_buffer,
+        &seeds_buffer,
+        &gumbel_logits_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        &mut compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();

@@ -40,7 +40,7 @@ impl<B: Backend> EncodableBlock<B> for TensorCopy<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorCopy expects exactly 2 arrays");

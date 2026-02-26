@@ -249,8 +249,8 @@ fn run_prefill_kernel_mode(
     };
 
     let command_buffer = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&encoder, args, mode);
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    kernel.encode(&mut encoder, args, mode);
     encoder.end_encoding();
     command_buffer.commit();
     command_buffer.wait_until_completed();
@@ -321,7 +321,7 @@ fn run_conv_scan_once(
     }
 
     let command_buffer = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
     kernel.encode(
         &padded_buf,
         &w_buf,
@@ -337,7 +337,7 @@ fn run_conv_scan_once(
         channels as u32,
         channels as u32,
         0u32,
-        &encoder,
+        &mut encoder,
     );
     encoder.end_encoding();
 

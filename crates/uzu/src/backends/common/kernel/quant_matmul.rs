@@ -161,7 +161,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
 
     pub fn encode(
         &self,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         arguments: QuantizedMatmulArguments<B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
         if arguments.quantization_type != self.quantization_type {

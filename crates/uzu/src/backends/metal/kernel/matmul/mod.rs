@@ -29,7 +29,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
     fn encode(
         &mut self,
         context: &MetalContext,
-        encoder: &<Metal as crate::backends::common::Backend>::ComputeEncoder,
+        encoder: &mut <Metal as crate::backends::common::Backend>::ComputeEncoder,
         arguments: FullPrecisionMatmulArguments<Metal>,
     ) {
         let mut matmul_arguments = MatmulArguments {

@@ -20,17 +20,17 @@ trait ComputeEncoderRawConditional {
 /// Safe conditional wrapper that uses the raw unsafe methods internally.
 pub trait ComputeEncoderConditional {
     fn condition<IfBlock, ElseBlock>(
-        &self,
+        &mut self,
         predicate: &Retained<ProtocolObject<dyn MTLBuffer>>,
         offset: usize,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
-        IfBlock: FnOnce(),
-        ElseBlock: FnOnce();
+        IfBlock: FnOnce(&mut Self),
+        ElseBlock: FnOnce(&mut Self);
 }
 
-impl ComputeEncoderRawConditional for ProtocolObject<dyn MTLComputeCommandEncoder> {
+impl ComputeEncoderRawConditional for Retained<ProtocolObject<dyn MTLComputeCommandEncoder>> {
     fn encode_start_if(
         &self,
         predicate: &ProtocolObject<dyn MTLBuffer>,
@@ -64,20 +64,20 @@ where
     T: ComputeEncoderRawConditional,
 {
     fn condition<IfBlock, ElseBlock>(
-        &self,
+        &mut self,
         predicate: &Retained<ProtocolObject<dyn MTLBuffer>>,
         offset: usize,
         if_block: IfBlock,
         else_block: Option<ElseBlock>,
     ) where
-        IfBlock: FnOnce(),
-        ElseBlock: FnOnce(),
+        IfBlock: FnOnce(&mut Self),
+        ElseBlock: FnOnce(&mut Self),
     {
         self.encode_start_if(predicate, offset, MTLCompareFunction::Equal, 0);
-        if_block();
+        if_block(self);
         if let Some(else_block) = else_block {
             self.encode_start_else();
-            else_block();
+            else_block(self);
         }
         self.encode_end_if();
     }

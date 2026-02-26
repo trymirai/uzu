@@ -85,7 +85,7 @@ fn test_scatter_buckets_parity() {
         let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
             .expect("router_topk");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("Failed to create encoder");
+        let mut encoder = cb.new_compute_command_encoder().expect("Failed to create encoder");
         router_topk.encode(
             &input_buf,
             &weight_buf,
@@ -97,7 +97,7 @@ fn test_scatter_buckets_parity() {
             e as u32,
             k as u32,
             true,
-            &encoder,
+            &mut encoder,
         );
         encoder.end_encoding();
         cb.commit();
@@ -117,7 +117,7 @@ fn test_scatter_buckets_parity() {
         let fused_kernel =
             <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        let mut encoder = cb.new_compute_command_encoder().expect("encoder");
         fused_kernel.encode(
             &topk_ids_buf,
             &offsets_buf,
@@ -126,7 +126,7 @@ fn test_scatter_buckets_parity() {
             t as u32,
             e as u32,
             k as u32,
-            &encoder,
+            &mut encoder,
         );
         encoder.end_encoding();
         cb.commit();
@@ -146,7 +146,8 @@ fn test_scatter_buckets_parity() {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
 
-        let scatter_bases_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_bases_encoder");
+        let mut scatter_bases_encoder =
+            cb.new_compute_command_encoder().expect("Failed to create scatter_bases_encoder");
         scatter_bases_kernel.encode(
             &partials_buf,
             &block_bases_buf,
@@ -155,7 +156,7 @@ fn test_scatter_buckets_parity() {
             num_blocks as u32,
             num_tiles as u32,
             0u32,
-            &scatter_bases_encoder,
+            &mut scatter_bases_encoder,
         );
         scatter_bases_encoder.end_encoding();
 
@@ -167,7 +168,7 @@ fn test_scatter_buckets_parity() {
         let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let scatter_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_encoder");
+        let mut scatter_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_encoder");
         scatter_kernel.encode(
             &topk_ids_buf,
             &topk_probs_buf,
@@ -181,7 +182,7 @@ fn test_scatter_buckets_parity() {
             k as u32,
             num_blocks as u32,
             num_tiles as u32,
-            &scatter_encoder,
+            &mut scatter_encoder,
         );
         scatter_encoder.end_encoding();
 

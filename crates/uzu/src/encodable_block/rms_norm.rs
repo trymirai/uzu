@@ -88,7 +88,7 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);

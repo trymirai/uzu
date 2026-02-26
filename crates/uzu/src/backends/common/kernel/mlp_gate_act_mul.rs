@@ -27,7 +27,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
 
     pub fn encode(
         &self,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
         fused_up: &B::NativeBuffer,
         hidden: &B::NativeBuffer,
         m: i32,

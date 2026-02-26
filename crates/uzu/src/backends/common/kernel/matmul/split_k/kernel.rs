@@ -63,7 +63,7 @@ where
         context: &B::Context,
         arguments: &MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
         self.ensure_kernels(context)?;
         self.ensure_accumulator_buffer(context, dispatch_descriptor.accumulator_bytes)?;

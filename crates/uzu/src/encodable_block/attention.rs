@@ -134,7 +134,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
     ) {
-        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, &encoder));
+        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
 
         if parameters.wait_until_completed {
             command_buffer.submit();
@@ -150,7 +150,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
     ) {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -260,7 +260,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 suffix_length as u32,
                 0u32,
                 max_sequence_length as u32,
-                &compute_encoder,
+                compute_encoder,
             );
         }
 
@@ -331,7 +331,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 suffix_length as u32,
                 segment_prefix_length as u32,
                 max_sequence_length as u32,
-                &compute_encoder,
+                compute_encoder,
             );
         }
 
@@ -401,7 +401,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
-                    &compute_encoder,
+                    compute_encoder,
                 )
             },
             KernelVariant::TwoPass => {
@@ -434,7 +434,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
                     sinks_buffer,
-                    &compute_encoder,
+                    compute_encoder,
                 );
                 kernel_pass2.encode(
                     partials_buf_borrow.deref(),
@@ -443,7 +443,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     attention_output_buf_borrow.deref(),
                     num_heads as u32,
                     suffix_length as u32,
-                    &compute_encoder,
+                    compute_encoder,
                 );
             },
         }

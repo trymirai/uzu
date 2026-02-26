@@ -47,7 +47,7 @@ impl<B: Backend> EncodableBlock<B> for Activation<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let input_array = arrays[0].borrow_mut();

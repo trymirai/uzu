@@ -126,7 +126,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
         let qkv_shape = {

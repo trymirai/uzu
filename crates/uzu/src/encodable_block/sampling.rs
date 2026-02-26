@@ -49,7 +49,7 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         &self,
         state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 

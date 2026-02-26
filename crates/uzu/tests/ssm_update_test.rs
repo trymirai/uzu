@@ -241,7 +241,7 @@ fn ssd_update_with_z_bf16() {
     let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16).unwrap();
     let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let cb = cb_ref.to_owned();
-    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
     kernel.encode(
         &x_buf,
         &dt_buf,
@@ -261,7 +261,7 @@ fn ssd_update_with_z_bf16() {
         bsz as u32,
         h as u32,
         dh as u32,
-        &enc,
+        &mut enc,
     );
     enc.end_encoding();
     cb_ref.commit();

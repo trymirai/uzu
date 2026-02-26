@@ -122,7 +122,7 @@ fn test_moe_e2e_decode_perf() {
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
             let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            let encoder = cb.new_compute_command_encoder().expect("encoder");
+            let mut encoder = cb.new_compute_command_encoder().expect("encoder");
             router_topk.encode(
                 &x_buf,
                 &router_w_buf,
@@ -134,7 +134,7 @@ fn test_moe_e2e_decode_perf() {
                 e as u32,
                 k as u32,
                 true,
-                &encoder,
+                &mut encoder,
             );
             encoder.end_encoding();
             cb.commit();
@@ -183,7 +183,7 @@ fn test_moe_e2e_prefill_perf() {
         // Time fused Router+TopK
         let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
             let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            let encoder = cb.new_compute_command_encoder().expect("encoder");
+            let mut encoder = cb.new_compute_command_encoder().expect("encoder");
             router_topk.encode(
                 &x_buf,
                 &router_w_buf,
@@ -195,7 +195,7 @@ fn test_moe_e2e_prefill_perf() {
                 e as u32,
                 k as u32,
                 true,
-                &encoder,
+                &mut encoder,
             );
             encoder.end_encoding();
             cb.commit();
@@ -312,7 +312,7 @@ fn test_moe_pipeline_breakdown_decode() {
     // Testing: Router + TopK + Counts+Offsets (FUSED)
     let router_topk_fused_perf = time_kernel("Router+TopK (FUSED)", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        let mut encoder = cb.new_compute_command_encoder().expect("encoder");
         router_topk_fused_kernel.encode(
             &x_buf,
             &router_w_buf,
@@ -324,7 +324,7 @@ fn test_moe_pipeline_breakdown_decode() {
             e as u32,
             k as u32,
             true,
-            &encoder,
+            &mut encoder,
         );
         encoder.end_encoding();
         cb.commit();
@@ -333,7 +333,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let counts_offsets_perf = time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        let mut encoder = cb.new_compute_command_encoder().expect("encoder");
         counts_offsets_kernel.encode(
             &topk_ids_buf,
             &offsets_buf,
@@ -342,7 +342,7 @@ fn test_moe_pipeline_breakdown_decode() {
             t as u32,
             e as u32,
             k as u32,
-            &encoder,
+            &mut encoder,
         );
         encoder.end_encoding();
         cb.commit();
@@ -351,7 +351,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let scatter_perf = time_kernel("Scatter", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let scatter_bases_encoder = cb.new_compute_command_encoder().expect("scatter_bases_encoder");
+        let mut scatter_bases_encoder = cb.new_compute_command_encoder().expect("scatter_bases_encoder");
         scatter_bases_kernel.encode(
             &partials_buf,
             &block_bases_buf,
@@ -360,11 +360,11 @@ fn test_moe_pipeline_breakdown_decode() {
             num_blocks as u32,
             num_tiles as u32,
             0u32,
-            &scatter_bases_encoder,
+            &mut scatter_bases_encoder,
         );
         scatter_bases_encoder.end_encoding();
 
-        let scatter_map_encoder = cb.new_compute_command_encoder().expect("scatter_map_encoder");
+        let mut scatter_map_encoder = cb.new_compute_command_encoder().expect("scatter_map_encoder");
         scatter_map_kernel.encode(
             &topk_ids_buf,
             &topk_probs_buf,
@@ -379,7 +379,7 @@ fn test_moe_pipeline_breakdown_decode() {
             num_blocks as u32,
             num_tiles as u32,
             &tok2row_buf,
-            &scatter_map_encoder,
+            &mut scatter_map_encoder,
         );
         scatter_map_encoder.end_encoding();
 
@@ -445,7 +445,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
     let finalize_perf = time_kernel("Finalize", 2, 5, || {
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        let mut encoder = cb.new_compute_command_encoder().expect("encoder");
         finalize_kernel.encode(
             &tok2row_buf,
             &topk_probs_buf,
@@ -454,7 +454,7 @@ fn test_moe_pipeline_breakdown_decode() {
             t as u32,
             d_model as u32,
             k as u32,
-            &encoder,
+            &mut encoder,
         );
         encoder.end_encoding();
         cb.commit();

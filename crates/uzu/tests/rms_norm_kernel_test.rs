@@ -311,7 +311,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     // Create command buffer and encode
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel.encode(
         &input_buffer,
@@ -322,7 +322,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         epsilon,
         0.0,
         false,
-        &compute_encoder,
+        &mut compute_encoder,
     );
 
     compute_encoder.end_encoding();
@@ -428,7 +428,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
 
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel.encode(
         &input_buffer,
@@ -439,7 +439,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
         epsilon,
         0.0,
         false,
-        &compute_encoder,
+        &mut compute_encoder,
     );
 
     compute_encoder.end_encoding();
@@ -635,7 +635,7 @@ fn perf_rms_norm_with_size(
     // ---- Launch and time ----
     let command_buffer_ref = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
     let command_buffer = command_buffer_ref.to_owned();
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel.encode(
         &input_buffer,
@@ -646,7 +646,7 @@ fn perf_rms_norm_with_size(
         EPSILON,
         0.0,
         false,
-        &compute_encoder,
+        &mut compute_encoder,
     );
 
     compute_encoder.end_encoding();
@@ -802,7 +802,8 @@ fn qk_norm_test() {
     // Test Q head normalization
     {
         let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
-        let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         q_kernel.encode(
             &qkv_buffer,
@@ -817,7 +818,7 @@ fn qk_norm_test() {
             0,
             num_q_heads as u32,
             false,
-            &compute_encoder,
+            &mut compute_encoder,
         );
 
         compute_encoder.end_encoding();
@@ -864,7 +865,8 @@ fn qk_norm_test() {
     // Test K head normalization
     {
         let command_buffer = mtl_context.command_queue.command_buffer().expect("Failed to create command buffer");
-        let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+        let mut compute_encoder =
+            command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         k_kernel.encode(
             &qkv_buffer,
@@ -879,7 +881,7 @@ fn qk_norm_test() {
             num_q_heads as u32,
             num_kv_heads as u32,
             false,
-            &compute_encoder,
+            &mut compute_encoder,
         );
 
         compute_encoder.end_encoding();

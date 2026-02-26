@@ -308,7 +308,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                     e as u32,
                     k as u32,
                     self.router_renorm,
-                    &encoder,
+                    encoder,
                 );
             });
         }
@@ -322,7 +322,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 suffix_length as u32,
                 e as u32,
                 k as u32,
-                &encoder,
+                encoder,
             );
         });
 
@@ -337,7 +337,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 num_blocks as u32,
                 num_tiles as u32,
                 0u32,
-                &encoder,
+                encoder,
             );
         });
         command_buffer.with_compute_encoder(|encoder| {
@@ -355,7 +355,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 num_blocks as u32,
                 num_tiles as u32,
                 tok2row_buf.borrow().deref(),
-                &encoder,
+                encoder,
             );
         });
 
@@ -476,7 +476,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 suffix_length as u32,
                 self.model_dim as u32,
                 k as u32,
-                &encoder,
+                encoder,
             );
         });
 
@@ -494,7 +494,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         &self,
         _state: &mut ForwardPassState<B>,
         _parameters: &EncodingParameters<B>,
-        _encoder: &B::ComputeEncoder,
+        _encoder: &mut B::ComputeEncoder,
     ) {
         unreachable!("MoeBlock does not support shared compute encoder");
     }

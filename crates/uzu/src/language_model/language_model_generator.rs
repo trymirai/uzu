@@ -553,7 +553,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                         if update.unmask_col >= 0 || update.mask_col >= 0 {
                             let mask_buf_rc = mask_buffer.borrow().buffer();
                             let mask_buf_borrow = mask_buf_rc.borrow();
-                            mask_update.encode(mask_buf_borrow.deref(), update.unmask_col, update.mask_col, &encoder);
+                            mask_update.encode(mask_buf_borrow.deref(), update.unmask_col, update.mask_col, encoder);
                         }
                     }
                 }

@@ -107,7 +107,7 @@ pub trait EncodableBlock<B: Backend> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     );
 
     fn supports_shared_encoder(&self) -> bool {

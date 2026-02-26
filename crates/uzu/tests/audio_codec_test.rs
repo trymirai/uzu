@@ -99,7 +99,7 @@ fn audio_conv1d_replicate_matches_reference_f32() {
     }
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
     kernel.encode(
         input.buffer(),
@@ -117,7 +117,7 @@ fn audio_conv1d_replicate_matches_reference_f32() {
         padding as i32,
         1_i32,
         batch_size as i32,
-        &encoder,
+        &mut encoder,
     );
 
     encoder.end_encoding();
@@ -205,7 +205,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
     }
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
     kernel.encode(
         input.buffer(),
@@ -219,7 +219,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
         kernel_size as i32,
         dilation as i32,
         batch_size as i32,
-        &encoder,
+        &mut encoder,
     );
 
     encoder.end_encoding();
@@ -320,7 +320,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
     }
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
     kernel.encode(
         input.buffer(),
@@ -335,7 +335,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
         stride as i32,
         groups as i32,
         batch_size as i32,
-        &encoder,
+        &mut encoder,
     );
 
     encoder.end_encoding();
@@ -370,9 +370,9 @@ fn audio_leaky_relu_matches_reference_f32() {
     let output = context.create_array(&[n], DataType::F32, "audio_leaky_relu_output");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    kernel.encode(input.buffer(), output.buffer(), n as i32, slope, &encoder);
+    kernel.encode(input.buffer(), output.buffer(), n as i32, slope, &mut encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -405,9 +405,9 @@ fn audio_tanh_matches_reference_f32() {
     let output = context.create_array(&[n], DataType::F32, "audio_tanh_output");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    kernel.encode(input.buffer(), output.buffer(), n as i32, &encoder);
+    kernel.encode(input.buffer(), output.buffer(), n as i32, &mut encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -444,11 +444,11 @@ fn audio_add_and_scale_match_reference_f32() {
     let scaled = context.create_array(&[n], DataType::F32, "audio_add_scaled");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    add_kernel.encode(a.buffer(), b.buffer(), sum.buffer(), n as i32, &encoder);
+    add_kernel.encode(a.buffer(), b.buffer(), sum.buffer(), n as i32, &mut encoder);
 
-    scale_kernel.encode(sum.buffer(), scaled.buffer(), n as i32, scale_value, &encoder);
+    scale_kernel.encode(sum.buffer(), scaled.buffer(), n as i32, scale_value, &mut encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -494,9 +494,9 @@ fn audio_clamp_matches_reference_f32() {
     let output = context.create_array(&[n], DataType::F32, "audio_clamp_output");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    kernel.encode(input.buffer(), output.buffer(), n as i32, min_value, max_value, &encoder);
+    kernel.encode(input.buffer(), output.buffer(), n as i32, min_value, max_value, &mut encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -537,7 +537,7 @@ fn audio_half_snake_matches_reference_f32() {
     let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_output");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
     kernel.encode(
         input.buffer(),
@@ -549,7 +549,7 @@ fn audio_half_snake_matches_reference_f32() {
         negative_slope,
         eps,
         batch_size as i32,
-        &encoder,
+        &mut encoder,
     );
 
     encoder.end_encoding();
@@ -608,7 +608,7 @@ fn audio_fsq_decode_matches_reference() {
         context.create_array(&[batch_size, num_groups * codebook_dim, seq_len], DataType::F32, "audio_fsq_output");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
     kernel.encode(
         tokens.buffer(),
@@ -619,7 +619,7 @@ fn audio_fsq_decode_matches_reference() {
         codebook_dim as i32,
         &num_levels,
         batch_size as i32,
-        &encoder,
+        &mut encoder,
     );
 
     encoder.end_encoding();
@@ -671,7 +671,7 @@ fn audio_fsq_encode_matches_reference() {
     let tokens = context.create_array(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_encode_tokens");
 
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
-    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    let mut encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
     kernel.encode(
         input.buffer(),
@@ -684,7 +684,7 @@ fn audio_fsq_encode_matches_reference() {
         &dim_base_index,
         eps,
         batch_size as i32,
-        &encoder,
+        &mut encoder,
     );
 
     encoder.end_encoding();

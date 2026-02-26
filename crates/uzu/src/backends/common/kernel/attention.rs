@@ -49,7 +49,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
     pub fn encode(
         &self,
         context: &B::Context,
-        compute_encoder: &B::ComputeEncoder,
+        compute_encoder: &mut B::ComputeEncoder,
         args: &AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
@@ -138,7 +138,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             args.sinks_buffer,
             args.num_heads as u32,
             args.suffix_length as u32,
-            &compute_encoder,
+            compute_encoder,
         );
 
         Ok(())

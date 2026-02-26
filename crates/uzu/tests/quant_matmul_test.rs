@@ -511,8 +511,8 @@ fn execute_quantized_matmul(
                 quantization_type,
             };
             let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            let encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
-            kernel.encode(&encoder, args).unwrap();
+            let mut encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
+            kernel.encode(&mut encoder, args).unwrap();
             encoder.end_encoding();
             cb_ref.commit();
             cb_ref.wait_until_completed();
@@ -534,8 +534,8 @@ fn execute_quantized_matmul(
             quantization_type,
         };
         let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
-        kernel.encode(&encoder, args).unwrap();
+        let mut encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
+        kernel.encode(&mut encoder, args).unwrap();
         encoder.end_encoding();
         cb_ref.commit();
         cb_ref.wait_until_completed();

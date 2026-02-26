@@ -9,9 +9,9 @@ pub struct Cpu;
 impl Backend for Cpu {
     type Context = CpuContext;
     type NativeBuffer = Box<[u8]>;
-    type CommandBuffer = RefCell<CpuCommandBuffer>;
-    type ComputeEncoder = RefCell<CpuCommandBuffer>;
-    type CopyEncoder = RefCell<CpuCommandBuffer>;
+    type CommandBuffer = CpuCommandBuffer;
+    type ComputeEncoder = CpuCommandBuffer;
+    type CopyEncoder = CpuCommandBuffer;
     type Event = RefCell<u64>;
     type Kernels = CpuKernels;
     type Error = CpuError;

@@ -27,14 +27,10 @@ include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
 use crate::{
     DataType,
     backends::{
-        common::{
-            Backend,
-            kernel::matmul::{
-                FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait,
-                MatmulKernels,
-            },
+        common::kernel::matmul::{
+            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulKernels,
         },
-        cpu::{Cpu, context::CpuContext, error::CpuError},
+        cpu::{Cpu, command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError},
     },
 };
 
@@ -53,10 +49,10 @@ impl FullPrecisionMatmulKernelTrait for FullPrecisionMatmulCpuKernel {
     fn encode(
         &mut self,
         #[allow(unused)] context: &CpuContext,
-        #[allow(unused)] encoder: &<Cpu as Backend>::ComputeEncoder,
+        #[allow(unused)] encoder: &mut CpuCommandBuffer,
         #[allow(unused)] arguments: FullPrecisionMatmulArguments<Cpu>,
     ) {
-        encoder.borrow_mut().push_command(move || todo!());
+        encoder.push_command(move || todo!());
     }
 }
 

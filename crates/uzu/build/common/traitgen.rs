@@ -69,8 +69,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
             fn new(context: &<Self::Backend as Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as Backend>::Error>;
 
-            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#args ,)* encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder);
-            fn encode_if<#(#encode_generics, )* 'encoder, 'predicate>(&self, #(#args ,)* encoder: &'encoder <Self::Backend as Backend>::ComputeEncoder, predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>);
+            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#args ,)* encoder: &'encoder mut <Self::Backend as Backend>::ComputeEncoder);
+            fn encode_if<#(#encode_generics, )* 'encoder, 'predicate>(&self, #(#args ,)* encoder: &'encoder mut <Self::Backend as Backend>::ComputeEncoder, predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>);
         }
     };
 
