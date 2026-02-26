@@ -7,6 +7,7 @@ use crate::{
     DataType,
     backends::common::{
         Context,
+        gpu_types::ArgmaxPair,
         kernel::{
             ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel, MinPKernel,
             TemperatureKernel, TopKKernel, TopPKernel,
@@ -19,22 +20,6 @@ use crate::{
 pub enum ArgmaxStrategy {
     SinglePass, // One threadgroup per batch item
     TwoPass,    // Two-stage reduction
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct ArgmaxPair {
-    value: f32,
-    index: u32,
-}
-
-impl Default for ArgmaxPair {
-    fn default() -> Self {
-        Self {
-            value: f32::NEG_INFINITY,
-            index: u32::MAX,
-        }
-    }
 }
 
 enum ArgmaxImplementation<B: Backend> {
