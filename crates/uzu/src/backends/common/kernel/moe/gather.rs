@@ -34,7 +34,7 @@ impl<B: Backend> MoeGatherKernels<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         dtype: DataType,
         args: &MoeGatherArguments<B>,
     ) {

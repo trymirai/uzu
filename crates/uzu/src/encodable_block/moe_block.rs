@@ -1,6 +1,10 @@
 //! MoE (Mixture of Experts) block encodable.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -24,16 +28,16 @@ use crate::{
 };
 
 struct RouterBlock<B: Backend> {
-    weights_buf: Rc<B::NativeBuffer>,
-    biases_buf: Rc<B::NativeBuffer>,
+    weights_buf: Rc<RefCell<B::NativeBuffer>>,
+    biases_buf: Rc<RefCell<B::NativeBuffer>>,
 }
 
 #[derive(Clone)]
 struct SharedMoeWeights<B: Backend> {
-    pub w13_buf: Rc<B::NativeBuffer>,
-    pub w2_buf: Rc<B::NativeBuffer>,
-    pub up_biases_buf: Rc<B::NativeBuffer>,
-    pub down_biases_buf: Rc<B::NativeBuffer>,
+    pub w13_buf: Rc<RefCell<B::NativeBuffer>>,
+    pub w2_buf: Rc<RefCell<B::NativeBuffer>>,
+    pub up_biases_buf: Rc<RefCell<B::NativeBuffer>>,
+    pub down_biases_buf: Rc<RefCell<B::NativeBuffer>>,
 }
 
 pub struct MoeBlock<B: Backend> {
@@ -91,8 +95,8 @@ impl<B: Backend> MoeBlock<B> {
                 let weights_arr = router_tree.leaf("weights").map_err(MoeBlockError::ParameterLoaderError)?;
                 let biases_arr = router_tree.leaf("biases").map_err(MoeBlockError::ParameterLoaderError)?;
                 RouterBlock {
-                    weights_buf: weights_arr.buffer_rc(),
-                    biases_buf: biases_arr.buffer_rc(),
+                    weights_buf: weights_arr.buffer(),
+                    biases_buf: biases_arr.buffer(),
                 }
             },
             LinearConfig::QLoRA {
@@ -146,10 +150,10 @@ impl<B: Backend> MoeBlock<B> {
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
         let shared_weights = SharedMoeWeights {
-            w13_buf: w13_arr.buffer_rc(),
-            w2_buf: w2_arr.buffer_rc(),
-            up_biases_buf: up_biases_arr.buffer_rc(),
-            down_biases_buf: down_biases_arr.buffer_rc(),
+            w13_buf: w13_arr.buffer(),
+            w2_buf: w2_arr.buffer(),
+            up_biases_buf: up_biases_arr.buffer(),
+            down_biases_buf: down_biases_arr.buffer(),
         };
 
         Ok(Self {
@@ -189,7 +193,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
@@ -215,7 +219,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<B::NativeBuffer> { array.borrow().buffer_rc() };
+        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<RefCell<B::NativeBuffer>> { array.borrow().buffer() };
 
         let mut array_iter = arrays.iter();
         let main_buf = clone_buffer(array_iter.next().unwrap());
@@ -242,12 +246,10 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
         let e = self.moe_config.num_routed_experts;
         let k = self.moe_config.num_active_routed_experts;
-
-        let root = command_buffer;
         let k_tile = 128;
 
         // Clear internal MoE buffers
-        root.with_copy_encoder(|encoder| {
+        command_buffer.with_copy_encoder(|encoder| {
             if suffix_length > 0 && k > 0 {
                 let entries = suffix_length * k;
                 let topk_bytes = entries * std::mem::size_of::<u32>();
@@ -255,28 +257,28 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
                 // Clear topk_ids and tok2row buffers
                 if topk_bytes > 0 {
-                    encoder.encode_fill(&topk_ids_buf, 0..topk_bytes, 0xFF);
+                    encoder.encode_fill(topk_ids_buf.borrow_mut().deref_mut(), 0..topk_bytes, 0xFF);
                 }
                 if tok2row_bytes > 0 {
-                    encoder.encode_fill(&tok2row_buf, 0..tok2row_bytes, 0xFF);
+                    encoder.encode_fill(tok2row_buf.borrow_mut().deref_mut(), 0..tok2row_bytes, 0xFF);
                 }
 
                 // Clear hidden buffer
                 let hidden_bytes = suffix_length * k * self.hidden_dim * self.data_type.size_in_bytes();
                 if hidden_bytes > 0 {
-                    encoder.encode_fill(&hidden_buf, 0..hidden_bytes, 0);
+                    encoder.encode_fill(hidden_buf.borrow_mut().deref_mut(), 0..hidden_bytes, 0);
                 }
 
                 // Clear y_partial buffer
                 let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
                 if y_partial_bytes > 0 {
-                    encoder.encode_fill(&y_partial_buf, 0..y_partial_bytes, 0);
+                    encoder.encode_fill(y_partial_buf.borrow_mut().deref_mut(), 0..y_partial_bytes, 0);
                 }
 
                 // Clear x_perm buffer
                 let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
                 if x_perm_bytes > 0 {
-                    encoder.encode_fill(&x_perm_buf, 0..x_perm_bytes, 0);
+                    encoder.encode_fill(x_perm_buf.borrow_mut().deref_mut(), 0..x_perm_bytes, 0);
                 }
             }
         });
@@ -296,11 +298,11 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             command_buffer.with_compute_encoder(|encoder| {
                 // Use the fused router+topk kernel
                 self.router_topk_kernel.encode(
-                    main_buf.as_ref(),
-                    self.router.weights_buf.as_ref(),
-                    self.router.biases_buf.as_ref(),
-                    topk_ids_buf.as_ref(),
-                    topk_probs_buf.as_ref(),
+                    main_buf.borrow().deref(),
+                    self.router.weights_buf.borrow().deref(),
+                    self.router.biases_buf.borrow().deref(),
+                    topk_ids_buf.borrow().deref(),
+                    topk_probs_buf.borrow().deref(),
                     suffix_length as u32,
                     self.model_dim as u32,
                     e as u32,
@@ -313,10 +315,10 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
         command_buffer.with_compute_encoder(|encoder| {
             self.counts_offsets_kernel.encode(
-                topk_ids_buf.as_ref(),
-                offsets_buf.as_ref(),
-                sumk_buf.as_ref(),
-                partials_buf.as_ref(),
+                topk_ids_buf.borrow().deref(),
+                offsets_buf.borrow().deref(),
+                sumk_buf.borrow().deref(),
+                partials_buf.borrow().deref(),
                 suffix_length as u32,
                 e as u32,
                 k as u32,
@@ -328,9 +330,9 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         let num_tiles = ((e + 512 - 1) / 512).max(1);
         command_buffer.with_compute_encoder(|encoder| {
             self.scatter_bases_kernel.encode(
-                partials_buf.as_ref(),
-                block_bases_buf.as_ref(),
-                block_alloc_buf.as_ref(),
+                partials_buf.borrow().deref(),
+                block_bases_buf.borrow().deref(),
+                block_alloc_buf.borrow().deref(),
                 e as u32,
                 num_blocks as u32,
                 num_tiles as u32,
@@ -340,31 +342,31 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         });
         command_buffer.with_compute_encoder(|encoder| {
             self.scatter_map_kernel.encode(
-                topk_ids_buf.as_ref(),
-                topk_probs_buf.as_ref(),
-                offsets_buf.as_ref(),
-                block_bases_buf.as_ref(),
-                block_alloc_buf.as_ref(),
-                bucketed_ids_buf.as_ref(),
-                bucketed_probs_buf.as_ref(),
+                topk_ids_buf.borrow().deref(),
+                topk_probs_buf.borrow().deref(),
+                offsets_buf.borrow().deref(),
+                block_bases_buf.borrow().deref(),
+                block_alloc_buf.borrow().deref(),
+                bucketed_ids_buf.borrow().deref(),
+                bucketed_probs_buf.borrow().deref(),
                 suffix_length as u32,
                 e as u32,
                 k as u32,
                 num_blocks as u32,
                 num_tiles as u32,
-                tok2row_buf.as_ref(),
+                tok2row_buf.borrow().deref(),
                 &encoder,
             );
         });
 
         self.gather_kernels.encode(
-            root,
+            command_buffer,
             self.data_type,
             &MoeGatherArguments {
-                x_buffer: &main_buf,
-                bucketed_ids_buffer: &bucketed_ids_buf,
-                x_perm_buffer: &x_perm_buf,
-                sumk_buffer: &sumk_buf,
+                x_buffer: main_buf.borrow().deref(),
+                bucketed_ids_buffer: bucketed_ids_buf.borrow().deref(),
+                x_perm_buffer: x_perm_buf.borrow().deref(),
+                sumk_buffer: sumk_buf.borrow().deref(),
                 t: suffix_length,
                 k,
                 d_model: self.model_dim,
@@ -385,22 +387,22 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_decode_kernel.encode(
-                root,
+                command_buffer,
                 &MoeExpertsTwoPassArguments {
-                    x_perm_buffer: &x_perm_buf,
-                    expert_offsets: &offsets_buf,
-                    row_expert_map: &row_expert_map_buf,
-                    hidden_buffer: &hidden_buf,
-                    output_buffer: &y_partial_buf,
-                    w13_all: &self.shared_weights.w13_buf,
-                    w2_all: &self.shared_weights.w2_buf,
-                    up_biases: &self.shared_weights.up_biases_buf,
-                    down_biases: &self.shared_weights.down_biases_buf,
-                    tile_counts: &tile_counts_buf,
-                    tile_offsets: &tile_offsets_buf,
-                    tile_map: &tile_map_buf,
-                    total_tiles: &total_tiles_buf,
-                    dispatch_args: &dispatch_args_buf,
+                    x_perm_buffer: x_perm_buf.borrow().deref(),
+                    expert_offsets: offsets_buf.borrow().deref(),
+                    row_expert_map: row_expert_map_buf.borrow().deref(),
+                    hidden_buffer: hidden_buf.borrow_mut().deref_mut(),
+                    output_buffer: y_partial_buf.borrow().deref(),
+                    w13_all: self.shared_weights.w13_buf.borrow().deref(),
+                    w2_all: self.shared_weights.w2_buf.borrow().deref(),
+                    up_biases: self.shared_weights.up_biases_buf.borrow().deref(),
+                    down_biases: self.shared_weights.down_biases_buf.borrow().deref(),
+                    tile_counts: tile_counts_buf.borrow().deref(),
+                    tile_offsets: tile_offsets_buf.borrow().deref(),
+                    tile_map: tile_map_buf.borrow().deref(),
+                    total_tiles: total_tiles_buf.borrow().deref(),
+                    dispatch_args: dispatch_args_buf.borrow().deref(),
                     total_rows,
                     d_model: self.model_dim,
                     d_ff: self.hidden_dim,
@@ -419,21 +421,36 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
-            let args = MoeExpertsTwoPassArguments {
-                x_perm_buffer: x_perm_buf.as_ref(),
-                expert_offsets: offsets_buf.as_ref(),
-                row_expert_map: row_expert_map_buf.as_ref(),
-                hidden_buffer: hidden_buf.as_ref(),
-                output_buffer: y_partial_buf.as_ref(),
-                w13_all: self.shared_weights.w13_buf.as_ref(),
-                w2_all: self.shared_weights.w2_buf.as_ref(),
-                up_biases: self.shared_weights.up_biases_buf.as_ref(),
-                down_biases: self.shared_weights.down_biases_buf.as_ref(),
-                tile_counts: tile_counts_buf.as_ref(),
-                tile_offsets: tile_offsets_buf.as_ref(),
-                tile_map: tile_map_buf.as_ref(),
-                total_tiles: total_tiles_buf.as_ref(),
-                dispatch_args: dispatch_args_buf.as_ref(),
+            let x_perm_borrow = x_perm_buf.borrow();
+            let offsets_borrow = offsets_buf.borrow();
+            let row_expert_map_borrow = row_expert_map_buf.borrow();
+            let mut hidden_borrow = hidden_buf.borrow_mut();
+            let y_partial_borrow = y_partial_buf.borrow();
+            let w13_borrow = self.shared_weights.w13_buf.borrow();
+            let w2_borrow = self.shared_weights.w2_buf.borrow();
+            let up_biases_borrow = self.shared_weights.up_biases_buf.borrow();
+            let down_biases_borrow = self.shared_weights.down_biases_buf.borrow();
+            let tile_counts_borrow = tile_counts_buf.borrow();
+            let tile_offsets_borrow = tile_offsets_buf.borrow();
+            let tile_map_borrow = tile_map_buf.borrow();
+            let total_tiles_borrow = total_tiles_buf.borrow();
+            let dispatch_args_borrow = dispatch_args_buf.borrow();
+
+            let mut args = MoeExpertsTwoPassArguments {
+                x_perm_buffer: x_perm_borrow.deref(),
+                expert_offsets: offsets_borrow.deref(),
+                row_expert_map: row_expert_map_borrow.deref(),
+                hidden_buffer: hidden_borrow.deref_mut(),
+                output_buffer: y_partial_borrow.deref(),
+                w13_all: w13_borrow.deref(),
+                w2_all: w2_borrow.deref(),
+                up_biases: up_biases_borrow.deref(),
+                down_biases: down_biases_borrow.deref(),
+                tile_counts: tile_counts_borrow.deref(),
+                tile_offsets: tile_offsets_borrow.deref(),
+                tile_map: tile_map_borrow.deref(),
+                total_tiles: total_tiles_borrow.deref(),
+                dispatch_args: dispatch_args_borrow.deref(),
                 total_rows,
                 d_model: self.model_dim,
                 d_ff: self.hidden_dim,
@@ -447,15 +464,15 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
                 silu_alpha,
                 data_type: self.data_type,
             };
-            self.experts_two_pass_prefill_kernel.encode(root, &args);
+            self.experts_two_pass_prefill_kernel.encode(command_buffer, &mut args);
         }
 
         command_buffer.with_compute_encoder(|encoder| {
             self.finalize_kernel.encode(
-                tok2row_buf.as_ref(),
-                topk_probs_buf.as_ref(),
-                y_partial_buf.as_ref(),
-                main_buf.as_ref(),
+                tok2row_buf.borrow().deref(),
+                topk_probs_buf.borrow().deref(),
+                y_partial_buf.borrow().deref(),
+                main_buf.borrow().deref(),
                 suffix_length as u32,
                 self.model_dim as u32,
                 k as u32,

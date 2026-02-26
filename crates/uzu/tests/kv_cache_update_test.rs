@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use bytemuck;
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
@@ -81,23 +81,23 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     let device = &context.device;
 
-    let key_buffer = Rc::new(
+    let key_buffer = Rc::new(RefCell::new(
         device
             .new_buffer_with_data(
                 bytemuck::cast_slice(key_data.as_slice().unwrap()),
                 MTLResourceOptions::STORAGE_MODE_SHARED,
             )
             .expect("Failed to create buffer"),
-    );
+    ));
 
-    let value_buffer = Rc::new(
+    let value_buffer = Rc::new(RefCell::new(
         device
             .new_buffer_with_data(
                 bytemuck::cast_slice(value_data.as_slice().unwrap()),
                 MTLResourceOptions::STORAGE_MODE_SHARED,
             )
             .expect("Failed to create buffer"),
-    );
+    ));
 
     let kv_layer_data = KVLayerData::<Metal> {
         key_buffer: key_buffer.clone(),
@@ -106,8 +106,9 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
         value_shape: [num_heads, seq_len, head_dim],
     };
 
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
-    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &command_buffer) {
+    let mut command_buffer =
+        context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &mut command_buffer) {
         Ok(_) => {},
         Err(e) => {
             println!("Warning: Failed to encode KV cache update: {:?}. Skipping test.", e);
@@ -118,8 +119,8 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    let key_result_ptr = key_buffer.contents().as_ptr() as *const f32;
-    let value_result_ptr = value_buffer.contents().as_ptr() as *const f32;
+    let key_result_ptr = key_buffer.borrow().contents().as_ptr() as *const f32;
+    let value_result_ptr = value_buffer.borrow().contents().as_ptr() as *const f32;
 
     let total_elems = num_heads * seq_len * head_dim;
 

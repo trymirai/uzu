@@ -1,6 +1,6 @@
 //! QK Normalization encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -30,8 +30,8 @@ pub struct QKNorm<B: Backend> {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<Rc<B::NativeBuffer>>,
-    key_scales_buffer: Option<Rc<B::NativeBuffer>>,
+    query_scales_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
+    key_scales_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -75,7 +75,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             query_kernel = Some(kernel);
-            query_scales_buffer = Some(scales.buffer_rc());
+            query_scales_buffer = Some(scales.buffer());
         }
 
         // Setup key normalization if configured
@@ -99,7 +99,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             key_kernel = Some(kernel);
-            key_scales_buffer = Some(scales.buffer_rc());
+            key_scales_buffer = Some(scales.buffer());
         }
 
         Ok(Self {
@@ -135,7 +135,6 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         };
 
         let qkv_array = qkv_binding[0].borrow_mut();
-        let qkv_buffer = qkv_array.buffer();
         let batch_size = qkv_shape[0] as u32;
 
         // Process query normalization if configured
@@ -143,9 +142,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             query_kernel.encode(
-                qkv_buffer,
-                query_scales_buffer.as_ref(),
-                qkv_buffer,
+                qkv_array.buffer().borrow().deref(),
+                query_scales_buffer.borrow().deref(),
+                qkv_array.buffer().borrow().deref(),
                 batch_size,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
@@ -164,9 +163,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
             key_kernel.encode(
-                qkv_buffer,
-                key_scales_buffer.as_ref(),
-                qkv_buffer,
+                qkv_array.buffer().borrow().deref(),
+                key_scales_buffer.borrow().deref(),
+                qkv_array.buffer().borrow().deref(),
                 batch_size,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,

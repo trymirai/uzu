@@ -1,5 +1,7 @@
 //! MLP block encodable.
 
+use std::ops::Deref;
+
 use crate::{
     backends::common::{Backend, CommandBuffer, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
     encodable_block::{EncodableBlock, EncodingParameters},
@@ -31,7 +33,7 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         &self,
         state: &mut ForwardPassState<B>,
         params: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         if self.supports_shared_encoder() {
             command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, params, encoder));
@@ -45,11 +47,13 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
                 let fused = arrays[0].borrow_mut();
                 let hidden = arrays[1].borrow_mut();
                 let m = fused.shape()[0] as i32;
-                let fused_buf = fused.buffer();
-                let hidden_buf = hidden.buffer();
+                let fused_buf_rc = fused.buffer();
+                let fused_buf_borrow = fused_buf_rc.borrow();
+                let hidden_buf_rc = hidden.buffer();
+                let hidden_buf_borrow = hidden_buf_rc.borrow();
 
                 self.gate
-                    .encode(encoder, fused_buf, hidden_buf, m)
+                    .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref(), m)
                     .expect("Failed to encode MLP activation/mul kernel");
             });
 
@@ -81,9 +85,13 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         let fused = arrays[0].borrow_mut();
         let hidden = arrays[1].borrow_mut();
         let m = fused.shape()[0] as i32;
-        let fused_buf = fused.buffer();
-        let hidden_buf = hidden.buffer();
-        self.gate.encode(encoder, fused_buf, hidden_buf, m).expect("Failed to encode MLP activation/mul kernel");
+        let fused_buf_rc = fused.buffer();
+        let fused_buf_borrow = fused_buf_rc.borrow();
+        let hidden_buf_rc = hidden.buffer();
+        let hidden_buf_borrow = hidden_buf_rc.borrow();
+        self.gate
+            .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref(), m)
+            .expect("Failed to encode MLP activation/mul kernel");
         drop(fused);
         drop(hidden);
 

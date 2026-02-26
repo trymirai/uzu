@@ -264,7 +264,7 @@ impl<B: Backend> EncodableBlock<B> for LayerExecutables<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
     ) {
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.

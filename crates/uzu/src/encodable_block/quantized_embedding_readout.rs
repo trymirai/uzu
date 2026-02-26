@@ -1,6 +1,6 @@
 //! Quantized embedding readout encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -67,9 +67,9 @@ pub enum QuantizedEmbeddingReadoutError<B: Backend> {
 
 pub struct QuantizedEmbeddingReadout<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
-    weights_buffer: Rc<B::NativeBuffer>,
-    scales_buffer: Rc<B::NativeBuffer>,
-    biases_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
+    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
+    biases_buffer: Rc<RefCell<B::NativeBuffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -178,7 +178,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                         got: deq_biases.data_type(),
                     });
                 }
-                deq_biases.buffer_rc()
+                deq_biases.buffer()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -195,7 +195,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
                 }
 
-                Rc::new(buffer)
+                Rc::new(RefCell::new(buffer))
             },
         };
 
@@ -215,8 +215,8 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
-            scales_buffer: scales.buffer_rc(),
+            weights_buffer: weights.buffer(),
+            scales_buffer: scales.buffer(),
             biases_buffer,
             vocab_size,
             model_dim,
@@ -252,12 +252,12 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
             .encode(
                 encoder,
                 QuantizedMatmulArguments {
-                    a_buffer: input_array.buffer(),
+                    a_buffer: input_array.buffer().borrow().deref(),
                     a_offset,
-                    b_buffer: &self.weights_buffer,
-                    scales_buffer: &self.scales_buffer,
-                    zero_points_or_biases_buffer: &self.biases_buffer,
-                    output_buffer: output_array.buffer(),
+                    b_buffer: self.weights_buffer.borrow().deref(),
+                    scales_buffer: self.scales_buffer.borrow().deref(),
+                    zero_points_or_biases_buffer: self.biases_buffer.borrow().deref(),
+                    output_buffer: output_array.buffer().borrow().deref(),
                     batch: batch_size,
                     input_dim: self.model_dim,
                     output_dim: self.vocab_size,

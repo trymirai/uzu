@@ -35,9 +35,9 @@ fn test_tile_counts_correctness() {
 
         // Execute kernel using kernel struct
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_counts(
-            &cb,
+            &mut cb,
             &MoeTileCountsArguments {
                 offsets_buffer: &offsets_buf,
                 tile_counts_buffer: &tile_counts_buf,
@@ -80,9 +80,9 @@ fn test_tile_scan_correctness() {
 
         // Execute kernel using kernel struct
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_scan(
-            &cb,
+            &mut cb,
             &MoeTileScanArguments {
                 tile_counts_buffer: &tile_counts_buf,
                 tile_offsets_buffer: &tile_offsets_buf,
@@ -120,9 +120,9 @@ fn test_tile_edge_cases() {
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_counts(
-            &cb,
+            &mut cb,
             &MoeTileCountsArguments {
                 offsets_buffer: &offsets_buf,
                 tile_counts_buffer: &tile_counts_buf,
@@ -151,9 +151,9 @@ fn test_tile_edge_cases() {
         let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         tile_kernel.encode_counts(
-            &cb,
+            &mut cb,
             &MoeTileCountsArguments {
                 offsets_buffer: &offsets_buf,
                 tile_counts_buffer: &tile_counts_buf,

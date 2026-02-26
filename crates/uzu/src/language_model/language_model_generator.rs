@@ -1,4 +1,11 @@
-use std::{collections::HashMap, iter::repeat_n, ops::Deref, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    iter::repeat_n,
+    ops::{Deref, DerefMut},
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -402,7 +409,7 @@ where
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let token_position = unsafe {
-            let ptr = async_positions_buffer.cpu_ptr().as_ptr() as *const u32;
+            let ptr = async_positions_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
             *ptr.add(pass_idx) as usize
         };
 
@@ -468,30 +475,36 @@ where
         self.context.executables.encode(
             &mut state,
             &EncodingParameters::new(false, false, false),
-            self.context.command_buffer.borrow().deref(),
+            self.context.command_buffer.borrow_mut().deref_mut(),
         );
 
         // Encode sampling
         self.context.gpu_sampler.encode(
             &mut state,
             &EncodingParameters::new(false, false, false),
-            self.context.command_buffer.borrow().deref(),
+            self.context.command_buffer.borrow_mut().deref_mut(),
         );
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
         let sampling_output_binding = sampling_output.borrow();
-        let sampling_output_buffer = sampling_output_binding.buffer();
+        let sampling_output_buf_rc = sampling_output_binding.buffer();
+        let sampling_output_buf_borrow = sampling_output_buf_rc.borrow();
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
-        let token_ids_buffer = token_ids_binding.buffer();
+        let token_ids_buf_rc = token_ids_binding.buffer();
+        let token_ids_buf_borrow = token_ids_buf_rc.borrow();
 
-        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
-            self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
+        self.context.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+            self.context.token_copy_sampled.encode(
+                sampling_output_buf_borrow.deref(),
+                token_ids_buf_borrow.deref(),
+                encoder,
+            );
             let results_offset = slot * std::mem::size_of::<u32>();
             self.context.token_copy_results.encode(
-                sampling_output_buffer,
-                (results_buffer.as_ref(), results_offset),
+                sampling_output_buf_borrow.deref(),
+                (results_buffer.borrow().deref(), results_offset),
                 encoder,
             );
         });
@@ -500,24 +513,21 @@ where
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
-            self.context.command_buffer.borrow().deref(),
+            self.context.command_buffer.borrow_mut().deref_mut(),
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
 
-        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
+        self.context.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             if let Some(mask_update) = &self.context.mask_update {
                 let updates: Vec<AttentionBiasUpdate> =
                     self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
                 for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
                     if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
                         if update.unmask_col >= 0 || update.mask_col >= 0 {
-                            mask_update.encode(
-                                mask_buffer.borrow().buffer(),
-                                update.unmask_col,
-                                update.mask_col,
-                                &encoder,
-                            );
+                            let mask_buf_rc = mask_buffer.borrow().buffer();
+                            let mask_buf_borrow = mask_buf_rc.borrow();
+                            mask_update.encode(mask_buf_borrow.deref(), update.unmask_col, update.mask_col, &encoder);
                         }
                     }
                 }
@@ -535,7 +545,7 @@ where
 
         let handler = move || {
             let token = {
-                let ptr = results_buffer_clone.cpu_ptr().as_ptr() as *const u32;
+                let ptr = results_buffer_clone.borrow().cpu_ptr().as_ptr() as *const u32;
                 unsafe { *ptr.add(slot) as u64 }
             };
             if let Some(cb) = callback.lock().unwrap().take() {
@@ -652,7 +662,7 @@ where
                     self.context.gpu_sampler.encode(
                         &mut state,
                         &EncodingParameters::new(warmup, true, false),
-                        &self.context.command_buffer.as_ref().borrow(),
+                        self.context.command_buffer.borrow_mut().deref_mut(),
                     );
                 }
             }
@@ -713,14 +723,14 @@ where
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) {
-        let command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
+        let mut command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
             cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
-                &command_buffer,
+                &mut command_buffer,
                 &self.context.kv_cache_update,
             );
         }

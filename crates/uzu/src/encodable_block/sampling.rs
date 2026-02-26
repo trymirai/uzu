@@ -1,5 +1,7 @@
 //! Sampling kernel encodable.
 
+use std::ops::Deref;
+
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
@@ -74,15 +76,22 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
             let bitmask = cell.borrow();
             let bitmask_row_len = bitmask.shape()[1];
             let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
-            (Some(bitmask.buffer_rc()), bitmask_offset)
+            (Some(bitmask.buffer()), bitmask_offset)
         });
+        let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
+        let logits_buf_rc = logits.buffer();
+        let logits_buf_borrow = logits_buf_rc.borrow();
+        let seeds_buf_rc = seeds.buffer();
+        let seeds_buf_borrow = seeds_buf_rc.borrow();
+        let output_buf_rc = output_buffer_ref.buffer();
+        let output_buf_borrow = output_buf_rc.borrow();
         if let Err(e) = self.kernel.encode_with_encoder(
-            logits.buffer(),
-            Some(seeds.buffer()),
+            logits_buf_borrow.deref(),
+            Some(seeds_buf_borrow.deref()),
             seeds_offset,
-            bitmask_buffer.as_ref().map(|b| b.as_ref()),
+            bitmask_borrow.as_deref(),
             bitmask_offset,
-            output_buffer_ref.buffer(),
+            output_buf_borrow.deref(),
             sampling_method,
             batch_size,
             vocab_size,

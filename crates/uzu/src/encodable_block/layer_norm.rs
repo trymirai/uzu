@@ -1,6 +1,6 @@
 //! LayerNorm encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -29,7 +29,7 @@ pub struct LayerNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<B::NativeBuffer>,
+    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
 }
 
 impl<B: Backend> LayerNorm<B> {
@@ -60,7 +60,7 @@ impl<B: Backend> LayerNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer: scales.buffer_rc(),
+            scales_buffer: scales.buffer(),
         })
     }
 }
@@ -96,9 +96,9 @@ impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
         };
 
         self.kernel.encode(
-            input_array.buffer(),
-            self.scales_buffer.as_ref(),
-            output_array.buffer(),
+            input_array.buffer().borrow().deref(),
+            self.scales_buffer.borrow().deref(),
+            output_array.buffer().borrow().deref(),
             batch_size,
             model_dim,
             self.config.epsilon,

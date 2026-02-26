@@ -1,4 +1,4 @@
-use std::{mem::size_of, ops::Deref};
+use std::{mem::size_of, ops::DerefMut};
 
 use super::LanguageModelGeneratorContext;
 use crate::{
@@ -17,7 +17,7 @@ impl<B: Backend> LanguageModelGeneratorEncodedTask<B> {
         &self.predicate_buffer
     }
 
-    pub fn disable_execution(&self) {
+    pub fn disable_execution(&mut self) {
         let ptr = self.predicate_buffer.cpu_ptr().as_ptr() as *mut u32;
 
         unsafe {
@@ -114,7 +114,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         parameters: &EncodingParameters<B>,
         key: String,
     ) -> LanguageModelGeneratorEncodedTask<B> {
-        context.executables.encode(state, parameters, context.command_buffer.borrow().deref());
+        context.executables.encode(state, parameters, context.command_buffer.borrow_mut().deref_mut());
 
         LanguageModelGeneratorEncodedTask {
             key,

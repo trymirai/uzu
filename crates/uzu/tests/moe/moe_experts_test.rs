@@ -401,7 +401,7 @@ fn test_two_pass_decode_correctness() {
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
-    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
@@ -416,18 +416,18 @@ fn test_two_pass_decode_correctness() {
 
     // Execute 2-pass decode kernel
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     const K_TILE: usize = 64;
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as u32;
 
     experts_kernel.encode(
-        &cb,
+        &mut cb,
         &MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
             row_expert_map: &row_expert_map_buf,
-            hidden_buffer: &hidden_buf,
+            hidden_buffer: &mut hidden_buf,
             output_buffer: &y_partial_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
@@ -548,7 +548,7 @@ fn test_two_pass_decode_multi_token() {
     let w2_buf = alloc_buffer_with_data(&ctx, &data.w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &data.up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &data.down_biases);
-    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
@@ -560,14 +560,14 @@ fn test_two_pass_decode_multi_token() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     experts_kernel.encode(
-        &cb,
+        &mut cb,
         &MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
             row_expert_map: &row_expert_map_buf,
-            hidden_buffer: &hidden_buf,
+            hidden_buffer: &mut hidden_buf,
             output_buffer: &y_partial_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
@@ -650,7 +650,7 @@ fn test_two_pass_prefill_correctness() {
     let w2_buf = alloc_buffer_with_data(&ctx, &data.w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &data.up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &data.down_biases);
-    let hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
     let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
@@ -662,12 +662,12 @@ fn test_two_pass_prefill_correctness() {
     let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let args = MoeExpertsTwoPassArguments {
+    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
         row_expert_map: &row_expert_map_buf,
-        hidden_buffer: &hidden_buf,
+        hidden_buffer: &mut hidden_buf,
         output_buffer: &y_partial_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
@@ -691,7 +691,7 @@ fn test_two_pass_prefill_correctness() {
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts_kernel.encode(&cb, &args);
+    experts_kernel.encode(&mut cb, &mut args);
     cb.commit();
     cb.wait_until_completed();
 
@@ -791,10 +791,10 @@ fn test_fused_single_token_decode() {
 
     // Run fused decode kernel
     let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
 
     fused_kernel.encode(
-        &cb,
+        &mut cb,
         MoeExpertsSingleDecodeArguments {
             x: &x_buf,
             topk_ids: &topk_ids_buf,
@@ -915,9 +915,9 @@ fn test_fused_single_token_k4() {
     let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     fused_kernel.encode(
-        &cb,
+        &mut cb,
         MoeExpertsSingleDecodeArguments {
             x: &x_buf,
             topk_ids: &topk_ids_buf,

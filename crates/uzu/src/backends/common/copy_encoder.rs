@@ -6,15 +6,15 @@ pub trait CopyEncoder {
     type Backend: Backend;
 
     fn encode_copy(
-        &self,
+        &mut self,
         src: &<Self::Backend as Backend>::NativeBuffer,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        dst: &mut <Self::Backend as Backend>::NativeBuffer,
         size: usize,
     );
 
     fn encode_fill(
-        &self,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        &mut self,
+        dst: &mut <Self::Backend as Backend>::NativeBuffer,
         range: Range<usize>,
         value: u8,
     );

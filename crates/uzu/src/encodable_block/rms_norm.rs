@@ -1,6 +1,6 @@
 //! RMS Normalization encodable.
 
-use std::rc::Rc;
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -29,7 +29,7 @@ pub struct RMSNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<B::NativeBuffer>,
+    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
     use_sampling_range: bool,
 }
 
@@ -66,7 +66,7 @@ impl<B: Backend> RMSNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer: scales.buffer_rc(),
+            scales_buffer: scales.buffer(),
             use_sampling_range: false,
         })
     }
@@ -122,9 +122,9 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
         let output_offset = batch_start * output_row_size_in_bytes;
 
         self.kernel.encode(
-            (input_array.buffer(), input_offset),
-            self.scales_buffer.as_ref(),
-            (output_array.buffer(), output_offset),
+            (input_array.buffer().borrow().deref(), input_offset),
+            self.scales_buffer.borrow().deref(),
+            (output_array.buffer().borrow().deref(), output_offset),
             batch_len as u32,
             input_shape[1] as u32,
             self.config.epsilon,

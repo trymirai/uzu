@@ -22,7 +22,7 @@ impl<B: Backend> MoeTileMapKernels<B> {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoeTileCountsArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -32,7 +32,7 @@ impl<B: Backend> MoeTileMapKernels<B> {
 
     pub fn encode_scan(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoeTileScanArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -48,7 +48,7 @@ impl<B: Backend> MoeTileMapKernels<B> {
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoeTileMapBuildArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
@@ -65,7 +65,7 @@ impl<B: Backend> MoeTileMapKernels<B> {
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut B::CommandBuffer,
         args: &MoeTileDispatchArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
