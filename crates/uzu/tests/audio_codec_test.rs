@@ -8,16 +8,18 @@ use uzu::{
         fsq::{fsq_decode_reference, fsq_encode_reference},
         ops::{
             CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-            causal_conv_transpose1d_reference, causal_conv1d_reference, conv1d_reference, half_snake_reference,
+            causal_conv_transpose1d_lalamo_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
+            conv1d_reference, half_snake_reference,
         },
     },
     backends::{
         common::{
             Backend, Context, Kernels,
             kernel::{
-                AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dKernel, AudioClampKernel,
-                AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel, AudioHalfSnakeKernel,
-                AudioLeakyReluKernel, AudioScaleKernel, AudioTanhKernel,
+                AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dKernel,
+                AudioCausalConvTranspose1dLalamoKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
+                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioLeakyReluKernel, AudioNormNcsKernel, AudioScaleKernel,
+                AudioTanhKernel, AudioTransposeNscToNcsKernel,
             },
         },
         metal::Metal,
@@ -304,6 +306,122 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
 }
 
 #[test]
+fn audio_causal_conv_transpose1d_lalamo_matches_reference_f32() {
+    let context = create_test_context();
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dLalamoKernel::new(&context, DataType::F32)
+            .expect("audio runtime");
+
+    let batch_size = 1usize;
+    let cin = 2usize;
+    let groups = 1usize;
+    let cout = 2usize;
+    let stride = 2usize;
+    let kernel_size = 3usize;
+
+    let seq_len_in = 5usize;
+    let seq_len_out = 10usize;
+    let lengths_out: [i32; 1] = [10];
+
+    let input_len = batch_size * cin * seq_len_in;
+    let weight_len = cin * (cout / groups) * kernel_size;
+    let output_len = batch_size * cout * seq_len_out;
+
+    let input_values_ncs: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.017).sin() * 0.5).collect();
+    let weight_values: Vec<f32> = (0..weight_len).map(|i| ((i as f32) * 0.09).cos() * 0.2).collect();
+    let bias_values: Vec<f32> = vec![0.01, -0.02];
+    let expected = causal_conv_transpose1d_lalamo_reference(CausalConvTranspose1dSpec {
+        input: &input_values_ncs,
+        weight: &weight_values,
+        bias: &bias_values,
+        lengths: &lengths_out,
+        batch_size,
+        cin,
+        cout,
+        seq_len_in,
+        seq_len_out,
+        stride,
+        groups,
+    })
+    .expect("reference causal conv transpose lalamo");
+
+    let mut input_values_nsc = vec![0.0_f32; input_len];
+    for b in 0..batch_size {
+        for c in 0..cin {
+            for t in 0..seq_len_in {
+                let src_index = (b * cin + c) * seq_len_in + t;
+                let dst_index = (b * seq_len_in + t) * cin + c;
+                input_values_nsc[dst_index] = input_values_ncs[src_index];
+            }
+        }
+    }
+
+    for (layout_name, layout_code, input_shape, input_values) in [
+        ("NCS", 0_i32, [batch_size, cin, seq_len_in], input_values_ncs.as_slice()),
+        ("NSC", 1_i32, [batch_size, seq_len_in, cin], input_values_nsc.as_slice()),
+    ] {
+        let mut input = context.create_array(&input_shape, DataType::F32, "audio_causal_conv_transpose_lalamo_input");
+        input.as_slice_mut::<f32>().copy_from_slice(input_values);
+
+        let mut weight = context.create_array(
+            &[cin, cout / groups, kernel_size],
+            DataType::F32,
+            "audio_causal_conv_transpose_lalamo_weight",
+        );
+        weight.as_slice_mut::<f32>().copy_from_slice(&weight_values);
+
+        let mut bias = context.create_array(&[cout], DataType::F32, "audio_causal_conv_transpose_lalamo_bias");
+        bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
+
+        let mut lengths =
+            context.create_array(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lalamo_lengths");
+        lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
+
+        let output = context.create_array(
+            &[batch_size, cout, seq_len_out],
+            DataType::F32,
+            "audio_causal_conv_transpose_lalamo_output",
+        );
+
+        let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+        let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+
+        kernel.encode(
+            input.buffer(),
+            weight.buffer(),
+            bias.buffer(),
+            output.buffer(),
+            lengths.buffer(),
+            cin as i32,
+            cout as i32,
+            seq_len_in as i32,
+            seq_len_out as i32,
+            kernel_size as i32,
+            stride as i32,
+            groups as i32,
+            layout_code,
+            batch_size as i32,
+            &encoder,
+        );
+
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        let got = output.as_slice::<f32>();
+        for index in 0..output_len {
+            let delta = (expected[index] - got[index]).abs();
+            assert!(
+                delta <= 1e-4,
+                "layout={layout_name}, index={index}: expected {}, got {}, delta={delta}",
+                expected[index],
+                got[index]
+            );
+        }
+    }
+}
+
+#[test]
 fn audio_leaky_relu_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioLeakyReluKernel::new(&context, DataType::F32)
@@ -529,6 +647,115 @@ fn audio_half_snake_matches_reference_f32() {
 }
 
 #[test]
+fn audio_norm_ncs_matches_reference_f32() {
+    let context = create_test_context();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
+
+    let batch_size = 2usize;
+    let channels = 7usize;
+    let seq_len = 11usize;
+    let lengths_values: [i32; 2] = [8, 11];
+
+    let input_len = batch_size * channels * seq_len;
+    let input_values: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.013 - 3.0).sin() * 0.7).collect();
+    let scales_values: Vec<f32> = (0..channels).map(|i| 0.7 + i as f32 * 0.05).collect();
+    let bias_values: Vec<f32> = (0..channels).map(|i| -0.2 + i as f32 * 0.03).collect();
+    let epsilon = 1e-5f32;
+
+    let reference = |subtract_mean: bool| -> Vec<f32> {
+        let mut out = vec![0.0_f32; input_values.len()];
+        for batch in 0..batch_size {
+            let active_len = lengths_values[batch].max(0) as usize;
+            for t in 0..active_len {
+                let mut mean = 0.0_f32;
+                if subtract_mean {
+                    for c in 0..channels {
+                        let idx = (batch * channels + c) * seq_len + t;
+                        mean += input_values[idx];
+                    }
+                    mean /= channels as f32;
+                }
+                let mut variance_sum = 0.0_f32;
+                for c in 0..channels {
+                    let idx = (batch * channels + c) * seq_len + t;
+                    let centered = if subtract_mean {
+                        input_values[idx] - mean
+                    } else {
+                        input_values[idx]
+                    };
+                    variance_sum += centered * centered;
+                }
+                let inv_std = 1.0_f32 / (variance_sum / channels as f32 + epsilon).sqrt();
+                for c in 0..channels {
+                    let idx = (batch * channels + c) * seq_len + t;
+                    let centered = if subtract_mean {
+                        input_values[idx] - mean
+                    } else {
+                        input_values[idx]
+                    };
+                    out[idx] = centered * inv_std * scales_values[c] + bias_values[c];
+                }
+            }
+        }
+        out
+    };
+
+    for subtract_mean in [false, true] {
+        let mut input = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_input");
+        input.as_slice_mut::<f32>().copy_from_slice(&input_values);
+
+        let mut scales = context.create_array(&[channels], DataType::F32, "audio_norm_scales");
+        scales.as_slice_mut::<f32>().copy_from_slice(&scales_values);
+
+        let mut bias = context.create_array(&[channels], DataType::F32, "audio_norm_bias");
+        bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
+
+        let mut lengths = context.create_array(&[batch_size], DataType::I32, "audio_norm_lengths");
+        lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_values);
+
+        let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_output");
+
+        let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+        let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+
+        kernel.encode(
+            input.buffer(),
+            scales.buffer(),
+            bias.buffer(),
+            output.buffer(),
+            lengths.buffer(),
+            channels as i32,
+            seq_len as i32,
+            epsilon,
+            if subtract_mean {
+                1
+            } else {
+                0
+            },
+            batch_size as i32,
+            &encoder,
+        );
+
+        encoder.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        let got = output.as_slice::<f32>();
+        let expected = reference(subtract_mean);
+        for index in 0..input_len {
+            let delta = (expected[index] - got[index]).abs();
+            assert!(
+                delta <= 1e-4,
+                "subtract_mean={subtract_mean}, index={index}: expected {}, got {}, delta={delta}",
+                expected[index],
+                got[index]
+            );
+        }
+    }
+}
+
+#[test]
 fn audio_fsq_decode_matches_reference() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqDecodeKernel::new(&context, DataType::F32)
@@ -579,6 +806,47 @@ fn audio_fsq_decode_matches_reference() {
     for (index, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
         let delta = (a - e).abs();
         assert!(delta <= 1e-5, "index={index}, actual={a}, expected={e}, delta={delta}");
+    }
+}
+
+#[test]
+fn audio_transpose_nsc_to_ncs_matches_reference_f32() {
+    let context = create_test_context();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
+
+    let batch_size = 2usize;
+    let seq_len = 5usize;
+    let channels = 3usize;
+    let input_len = batch_size * seq_len * channels;
+    let input_values: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.031).sin()).collect();
+
+    let mut input = context.create_array(&[batch_size, seq_len, channels], DataType::F32, "audio_nsc_input");
+    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
+    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_ncs_output");
+
+    let mut expected = vec![0.0_f32; input_len];
+    for b in 0..batch_size {
+        for t in 0..seq_len {
+            for c in 0..channels {
+                let src_index = (b * seq_len + t) * channels + c;
+                let dst_index = (b * channels + c) * seq_len + t;
+                expected[dst_index] = input_values[src_index];
+            }
+        }
+    }
+
+    let command_buffer = context.command_queue.command_buffer().expect("command buffer");
+    let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
+    kernel.encode(input.buffer(), output.buffer(), seq_len as i32, channels as i32, batch_size as i32, &encoder);
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    let actual = output.as_slice::<f32>();
+    for (index, (&got, &exp)) in actual.iter().zip(expected.iter()).enumerate() {
+        let delta = (got - exp).abs();
+        assert!(delta <= 1e-6, "index={index}: expected {exp}, got {got}, delta={delta}");
     }
 }
 

@@ -366,7 +366,13 @@ impl<B: Backend> ForwardPassState<B> {
                     fill_attention_bias(bias_array, suffix_length, 0, |_row, _col| false);
                 }
             } else {
-                fill_attention_bias(bias_array, suffix_length, 0, |row, col| row < col);
+                if let Some(window_size) = window {
+                    fill_attention_bias(bias_array, suffix_length, 0, |row, col| {
+                        row < col || row >= col.saturating_add(*window_size)
+                    });
+                } else {
+                    fill_attention_bias(bias_array, suffix_length, 0, |row, col| row < col);
+                }
             }
         }
 

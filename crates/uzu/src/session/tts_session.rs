@@ -43,7 +43,6 @@ const DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE: usize = 1024;
 const DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE: usize = 16;
 const DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE: f32 = 0.8008;
 const DEFAULT_FISHAUDIO_SAMPLING_TOP_P: f32 = 0.8008;
-const DEFAULT_FISHAUDIO_MAX_NEW_TOKENS: usize = 96;
 
 pub struct TtsSession {
     #[allow(dead_code)]
@@ -76,6 +75,7 @@ struct FishAudioTextDecoderRuntime {
     fast_model_projection: Option<MatrixF32>,
     semantic_token_begin_id: i64,
     semantic_token_end_id: i64,
+    semantic_cardinality: usize,
     im_end_token_id: i64,
     codebook_size: usize,
     num_codebooks: usize,
@@ -126,11 +126,12 @@ struct FishAudioSamplingState {
     rng: StdRng,
     temperature: f32,
     top_p: f32,
+    step_key: Option<u64>,
 }
 
 impl FishAudioSamplingState {
     fn new(seed: u64) -> Self {
-        Self::with_params(seed, DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE, DEFAULT_FISHAUDIO_SAMPLING_TOP_P)
+        Self::with_params(seed, fishaudio_sampling_temperature(), fishaudio_sampling_top_p())
     }
 
     fn with_params(
@@ -142,7 +143,12 @@ impl FishAudioSamplingState {
             rng: StdRng::seed_from_u64(seed),
             temperature,
             top_p,
+            step_key: None,
         }
+    }
+
+    fn begin_step(&mut self) {
+        self.step_key = Some(self.rng.random::<u64>());
     }
 
     fn sample_index(
@@ -197,16 +203,45 @@ impl FishAudioSamplingState {
             return Ok(sorted[0].0);
         }
 
-        let mut draw = self.rng.random_range(0.0_f32..retained_sum);
-        for (index, probability) in retained.iter().enumerate() {
-            if draw <= *probability {
-                return Ok(sorted[index].0);
+        let step_key = self.step_key.unwrap_or_else(|| self.rng.random::<u64>());
+        let mut best_index = 0usize;
+        let mut best_score = f32::NEG_INFINITY;
+        for index in 0..keep {
+            let probability = (retained[index] / retained_sum).max(f32::MIN_POSITIVE);
+            let log_prob = probability.ln();
+            let token_index = sorted[index].0 as u64;
+            let gumbel = gumbel_from_step_key(step_key, token_index);
+            let score = log_prob + gumbel;
+            if score > best_score {
+                best_score = score;
+                best_index = index;
             }
-            draw -= *probability;
         }
 
-        Ok(sorted[keep - 1].0)
+        Ok(sorted[best_index].0)
     }
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = value;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn uniform01_from_u64(value: u64) -> f32 {
+    let mantissa = ((value >> 11) as f64) * (1.0 / ((1_u64 << 53) as f64));
+    mantissa.clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON) as f32
+}
+
+fn gumbel_from_step_key(
+    step_key: u64,
+    token_index: u64,
+) -> f32 {
+    let mixed = splitmix64(step_key ^ token_index.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let u = uniform01_from_u64(mixed);
+    -(-u.ln()).ln()
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,17 +334,20 @@ fn default_repeat_window_size() -> usize {
     DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE
 }
 
-fn fishaudio_default_max_new_tokens() -> usize {
-    DEFAULT_FISHAUDIO_MAX_NEW_TOKENS
+fn fishaudio_sampling_temperature() -> f32 {
+    std::env::var("UZU_FISHAUDIO_SAMPLING_TEMPERATURE")
+        .ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .unwrap_or(DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE)
 }
 
-fn fishaudio_max_new_tokens() -> usize {
-    let default_limit = fishaudio_default_max_new_tokens();
-    std::env::var("UZU_FISHAUDIO_MAX_NEW_TOKENS")
+fn fishaudio_sampling_top_p() -> f32 {
+    std::env::var("UZU_FISHAUDIO_SAMPLING_TOP_P")
         .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|&value| value > 0)
-        .unwrap_or(default_limit)
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0 && *value <= 1.0)
+        .unwrap_or(DEFAULT_FISHAUDIO_SAMPLING_TOP_P)
 }
 
 #[derive(Debug, Deserialize)]
@@ -323,6 +361,59 @@ enum TextDecoderConfigJson {
         #[serde(flatten)]
         config: FishAudioTextDecoderConfigJson,
     },
+}
+
+struct StreamingTokenAccumulator {
+    by_codebook: Vec<Vec<u32>>,
+}
+
+impl StreamingTokenAccumulator {
+    fn new(num_codebooks: usize) -> Result<Self, Error> {
+        if num_codebooks == 0 {
+            return Err(Error::UnableToLoadConfig);
+        }
+        Ok(Self {
+            by_codebook: vec![Vec::new(); num_codebooks],
+        })
+    }
+
+    fn push_frame(
+        &mut self,
+        frame_codes: &[u32],
+    ) -> Result<(), Error> {
+        if frame_codes.len() != self.by_codebook.len() {
+            return Err(Error::GenerateFailed);
+        }
+        for (codebook, &token) in self.by_codebook.iter_mut().zip(frame_codes.iter()) {
+            codebook.push(token);
+        }
+        Ok(())
+    }
+
+    fn frames(&self) -> usize {
+        self.by_codebook.first().map_or(0, Vec::len)
+    }
+
+    fn to_grid(&self) -> Result<AudioTokenGrid, Error> {
+        let frames = self.frames();
+        let mut tokens = Vec::with_capacity(self.by_codebook.len() * frames);
+        for codebook in &self.by_codebook {
+            if codebook.len() != frames {
+                return Err(Error::GenerateFailed);
+            }
+            tokens.extend_from_slice(codebook);
+        }
+
+        AudioTokenGrid::new(
+            tokens.into_boxed_slice(),
+            1,
+            self.by_codebook.len(),
+            frames,
+            vec![frames].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .map_err(Error::from)
+    }
 }
 
 impl TtsSession {
@@ -362,6 +453,15 @@ impl TtsSession {
         input: Input,
         seed: u64,
     ) -> Result<AudioPcmBatch, Error> {
+        let semantic_tokens = self.generate_semantic_tokens_with_seed(input, seed)?;
+        self.runtime.decode(&semantic_tokens).map_err(Error::from)
+    }
+
+    pub fn generate_semantic_tokens_with_seed(
+        &self,
+        input: Input,
+        seed: u64,
+    ) -> Result<AudioTokenGrid, Error> {
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self
             .tokenizer
@@ -372,8 +472,64 @@ impl TtsSession {
             .map(|&token| token as u64)
             .collect();
 
-        let semantic_tokens = self.generate_semantic_tokens(&text_tokens, seed)?;
-        self.runtime.decode(&semantic_tokens).map_err(Error::from)
+        self.generate_semantic_tokens(&text_tokens, seed)
+    }
+
+    pub fn synthesize_streaming<F>(
+        &self,
+        input: Input,
+        chunk_frames: usize,
+        on_chunk: F,
+    ) -> Result<AudioPcmBatch, Error>
+    where
+        F: FnMut(&AudioPcmBatch),
+    {
+        let seed = match *self.text_decoder.borrow().deref() {
+            TextDecoderRuntime::Stub(stub) => stub.default_seed,
+            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
+        };
+        self.synthesize_streaming_with_seed(input, seed, chunk_frames, on_chunk)
+    }
+
+    pub fn synthesize_streaming_with_seed<F>(
+        &self,
+        input: Input,
+        seed: u64,
+        chunk_frames: usize,
+        mut on_chunk: F,
+    ) -> Result<AudioPcmBatch, Error>
+    where
+        F: FnMut(&AudioPcmBatch),
+    {
+        if chunk_frames == 0 {
+            return Err(Error::GenerateFailed);
+        }
+
+        let prompt = self.render_prompt(&input)?;
+        let text_tokens: Vec<u64> = self
+            .tokenizer
+            .encode(prompt.as_str(), false)
+            .map_err(|_| Error::UnableToEncodeText)?
+            .get_ids()
+            .iter()
+            .map(|&token| token as u64)
+            .collect();
+
+        let mut streamed_tokens = StreamingTokenAccumulator::new(self.runtime.config().num_groups())?;
+        let mut emitted_samples = 0usize;
+        let semantic_tokens = self.generate_semantic_tokens_with_callback(&text_tokens, seed, &mut |codes| {
+            streamed_tokens.push_frame(codes)?;
+            if streamed_tokens.frames() % chunk_frames == 0 {
+                let partial_grid = streamed_tokens.to_grid()?;
+                let partial_pcm = self.runtime.decode(&partial_grid).map_err(Error::from)?;
+                Self::emit_streaming_chunk(&partial_pcm, &mut emitted_samples, &mut on_chunk)?;
+            }
+            Ok(())
+        })?;
+
+        let full_pcm = self.runtime.decode(&semantic_tokens).map_err(Error::from)?;
+        Self::emit_streaming_chunk(&full_pcm, &mut emitted_samples, &mut on_chunk)?;
+        Ok(full_pcm)
     }
 
     fn from_model_metadata(
@@ -478,6 +634,96 @@ impl TtsSession {
             },
         }
     }
+
+    fn generate_semantic_tokens_with_callback<F>(
+        &self,
+        text_tokens: &[u64],
+        seed: u64,
+        on_frame: &mut F,
+    ) -> Result<AudioTokenGrid, Error>
+    where
+        F: FnMut(&[u32]) -> Result<(), Error>,
+    {
+        let mut decoder = self.text_decoder.borrow_mut();
+        let codec_cardinality =
+            usize::try_from(self.runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
+        match &mut *decoder {
+            TextDecoderRuntime::Stub(stub) => {
+                let frames = text_tokens.len();
+                if stub.num_codebooks != self.runtime.config().num_groups() {
+                    return Err(Error::UnableToLoadConfig);
+                }
+
+                let token_upper_bound = stub.codebook_size.min(codec_cardinality);
+                if token_upper_bound == 0 {
+                    return Err(Error::UnableToLoadConfig);
+                }
+
+                let tokens = generate_stub_tokens(stub.num_codebooks, frames, token_upper_bound, seed);
+                let grid = AudioTokenGrid::new(
+                    tokens.into_boxed_slice(),
+                    1,
+                    stub.num_codebooks,
+                    frames,
+                    vec![frames].into_boxed_slice(),
+                    AudioTokenPacking::CodebookMajor,
+                )
+                .map_err(Error::from)?;
+
+                for frame in 0..grid.frames() {
+                    let mut frame_codes = Vec::with_capacity(stub.num_codebooks);
+                    for codebook in 0..stub.num_codebooks {
+                        frame_codes.push(grid.get(0, codebook, frame));
+                    }
+                    on_frame(&frame_codes)?;
+                }
+                Ok(grid)
+            },
+            TextDecoderRuntime::FishAudio(runtime) => {
+                runtime.generate_semantic_tokens_with_callback(text_tokens, codec_cardinality, seed, on_frame)
+            },
+        }
+    }
+
+    fn emit_streaming_chunk<F>(
+        pcm: &AudioPcmBatch,
+        emitted_samples: &mut usize,
+        on_chunk: &mut F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(&AudioPcmBatch),
+    {
+        if pcm.batch_size() != 1 {
+            return Err(Error::GenerateFailed);
+        }
+
+        let samples = pcm.samples();
+        if *emitted_samples > samples.len() {
+            return Err(Error::GenerateFailed);
+        }
+
+        let delta = &samples[*emitted_samples..];
+        if delta.is_empty() {
+            return Ok(());
+        }
+
+        let channels = pcm.channels();
+        if delta.len() % channels != 0 {
+            return Err(Error::GenerateFailed);
+        }
+        let frames = delta.len() / channels;
+        let chunk = AudioPcmBatch::new(
+            delta.to_vec().into_boxed_slice(),
+            pcm.sample_rate(),
+            channels,
+            vec![frames].into_boxed_slice(),
+        )
+        .map_err(Error::from)?;
+
+        on_chunk(&chunk);
+        *emitted_samples = samples.len();
+        Ok(())
+    }
 }
 
 fn parse_text_decoder_runtime(
@@ -516,6 +762,12 @@ fn parse_text_decoder_runtime(
                 return Err(Error::UnableToLoadConfig);
             }
             if config.semantic_token_begin_id > config.semantic_token_end_id {
+                return Err(Error::UnableToLoadConfig);
+            }
+            let semantic_cardinality =
+                usize::try_from(config.semantic_token_end_id - config.semantic_token_begin_id + 1)
+                    .map_err(|_| Error::UnableToLoadConfig)?;
+            if semantic_cardinality == 0 {
                 return Err(Error::UnableToLoadConfig);
             }
             if !config.slow_readout_config.is_full_precision() {
@@ -596,6 +848,7 @@ fn parse_text_decoder_runtime(
                 fast_model_projection,
                 semantic_token_begin_id: config.semantic_token_begin_id,
                 semantic_token_end_id: config.semantic_token_end_id,
+                semantic_cardinality,
                 im_end_token_id: config.im_end_token_id,
                 codebook_size: config.codebook_size,
                 num_codebooks: config.num_codebooks,
@@ -616,6 +869,29 @@ impl FishAudioTextDecoderRuntime {
         codec_cardinality: usize,
         seed: u64,
     ) -> Result<AudioTokenGrid, Error> {
+        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, None)
+    }
+
+    fn generate_semantic_tokens_with_callback<F>(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        on_frame: &mut F,
+    ) -> Result<AudioTokenGrid, Error>
+    where
+        F: FnMut(&[u32]) -> Result<(), Error>,
+    {
+        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, Some(on_frame))
+    }
+
+    fn generate_semantic_tokens_internal(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        mut on_frame: Option<&mut dyn FnMut(&[u32]) -> Result<(), Error>>,
+    ) -> Result<AudioTokenGrid, Error> {
         if text_tokens.is_empty() {
             return AudioTokenGrid::new(
                 Vec::new().into_boxed_slice(),
@@ -631,17 +907,19 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::GenerateFailed);
         }
 
-        let token_upper_bound = self.codebook_size.min(codec_cardinality);
-        if token_upper_bound == 0 {
+        let semantic_token_upper_bound = self.semantic_cardinality;
+        let residual_token_upper_bound = self.codebook_size.min(codec_cardinality);
+        if semantic_token_upper_bound == 0 || residual_token_upper_bound == 0 {
             return Err(Error::UnableToLoadConfig);
         }
 
         self.slow_runner.reset();
         let mut sampling = FishAudioSamplingState::new(seed);
+        sampling.begin_step();
         let (mut current_semantic_token, mut current_hidden) =
             self.slow_runner.decode_next_token_with_hidden(text_tokens, EmbeddingInjection::None, &mut sampling)?;
 
-        let max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len()).min(fishaudio_max_new_tokens());
+        let max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len());
         let mut by_codebook = vec![Vec::<u32>::new(); self.num_codebooks];
 
         for _step in 0..max_new_tokens {
@@ -653,7 +931,7 @@ impl FishAudioTextDecoderRuntime {
                 current_semantic_token,
                 self.semantic_token_begin_id,
                 self.semantic_token_end_id,
-                token_upper_bound,
+                semantic_token_upper_bound,
             );
             by_codebook[0].push(first_code);
 
@@ -669,19 +947,20 @@ impl FishAudioTextDecoderRuntime {
                 fast_runner.reset();
                 fast_runner.advance_with_override_embedding(&projected_hidden, &mut sampling)?;
 
-                let fast_vocab_limit = self.short_logits_size.min(token_upper_bound);
+                let fast_vocab_limit = self.short_logits_size.min(residual_token_upper_bound);
                 if fast_vocab_limit == 0 {
                     return Err(Error::UnableToLoadConfig);
                 }
 
-                    let mut fast_token = u64::from(first_code);
-                    for codebook_index in 1..self.num_codebooks {
-                        fast_token = fast_runner.decode_next_token_with_vocab_limit(
-                            &[fast_token],
-                            Some(fast_vocab_limit),
-                            &mut sampling,
-                        )?;
-                        let clamped = u32::try_from((fast_token as usize).min(token_upper_bound.saturating_sub(1)))
+                let mut fast_token = u64::from(first_code);
+                for codebook_index in 1..self.num_codebooks {
+                    fast_token = fast_runner.decode_next_token_with_vocab_limit(
+                        &[fast_token],
+                        Some(fast_vocab_limit),
+                        &mut sampling,
+                    )?;
+                    let clamped =
+                        u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
                             .map_err(|_| Error::GenerateFailed)?;
                     by_codebook[codebook_index].push(clamped);
                     current_codes.push(clamped);
@@ -689,12 +968,14 @@ impl FishAudioTextDecoderRuntime {
                 }
             }
 
+            if let Some(callback) = on_frame.as_mut() {
+                callback(&current_codes)?;
+            }
+
             let injection = self.build_slow_embedding_injection(&current_codes)?;
-            let (next_semantic_token, next_hidden) = self.slow_runner.decode_next_token_with_hidden(
-                &[current_semantic_token],
-                injection,
-                &mut sampling,
-            )?;
+            sampling.begin_step();
+            let (next_semantic_token, next_hidden) =
+                self.slow_runner.decode_next_token_with_hidden(&[current_semantic_token], injection, &mut sampling)?;
             current_semantic_token = next_semantic_token;
             current_hidden = next_hidden;
         }
@@ -889,13 +1170,7 @@ impl TokenDecoderRunner {
         embedding: &[f32],
         sampling: &mut FishAudioSamplingState,
     ) -> Result<(), Error> {
-        self.decode_next_step(
-            &[0],
-            EmbeddingInjection::Override(embedding.to_vec()),
-            None,
-            false,
-            sampling,
-        )?;
+        self.decode_next_step(&[0], EmbeddingInjection::Override(embedding.to_vec()), None, false, sampling)?;
         Ok(())
     }
 
@@ -926,8 +1201,8 @@ impl TokenDecoderRunner {
             None,
             &token_seeds,
             token_ids.len(),
-            token_ids.len().saturating_sub(1),
-            1,
+            0,
+            token_ids.len(),
             false,
             None,
             false,
@@ -1327,10 +1602,10 @@ mod tests {
     use super::{
         DEFAULT_FISHAUDIO_RANDOM_SEED, DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE, DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE,
         DEFAULT_FISHAUDIO_SAMPLING_TOP_P, DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE, DEFAULT_STUB_SEED,
-        FishAudioSamplingState, MatrixF32,
-        default_repeat_window_size, default_short_logits_size, fishaudio_default_max_new_tokens,
-        fishaudio_max_new_tokens, generate_stub_tokens, load_stub_seed, semantic_token_to_code,
+        FishAudioSamplingState, MatrixF32, StreamingTokenAccumulator, default_repeat_window_size,
+        default_short_logits_size, generate_stub_tokens, load_stub_seed, semantic_token_to_code,
     };
+    use crate::audio::AudioTokenPacking;
 
     #[test]
     fn missing_seed_file_uses_default_path() {
@@ -1363,7 +1638,6 @@ mod tests {
     fn fishaudio_decoder_defaults_match_lalamo_consts() {
         assert_eq!(default_short_logits_size(), DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE);
         assert_eq!(default_repeat_window_size(), DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE);
-        assert_eq!(fishaudio_max_new_tokens(), fishaudio_default_max_new_tokens());
         assert_eq!(DEFAULT_FISHAUDIO_RANDOM_SEED, 123);
         assert_eq!(DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE, 0.8008);
         assert_eq!(DEFAULT_FISHAUDIO_SAMPLING_TOP_P, 0.8008);
@@ -1402,5 +1676,26 @@ mod tests {
         assert_eq!(matrix.row(2), None);
         assert_eq!(matrix.matmul(&[1.0, 0.0, 1.0]), Some(vec![4.0, 10.0]));
         assert_eq!(matrix.matmul(&[1.0, 0.0]), None);
+    }
+
+    #[test]
+    fn streaming_token_accumulator_builds_codebook_major_grid() {
+        let mut accumulator = StreamingTokenAccumulator::new(3).expect("accumulator");
+        accumulator.push_frame(&[1, 10, 100]).expect("frame 0");
+        accumulator.push_frame(&[2, 20, 200]).expect("frame 1");
+
+        let grid = accumulator.to_grid().expect("grid");
+        assert_eq!(grid.batch_size(), 1);
+        assert_eq!(grid.codebooks(), 3);
+        assert_eq!(grid.frames(), 2);
+        assert_eq!(grid.packing(), AudioTokenPacking::CodebookMajor);
+        assert_eq!(grid.tokens(), &[1, 2, 10, 20, 100, 200]);
+    }
+
+    #[test]
+    fn streaming_token_accumulator_rejects_wrong_frame_width() {
+        let mut accumulator = StreamingTokenAccumulator::new(2).expect("accumulator");
+        let error = accumulator.push_frame(&[1]).expect_err("must reject wrong width");
+        assert!(matches!(error, crate::session::types::Error::GenerateFailed));
     }
 }
