@@ -1,7 +1,7 @@
 mod dispatch_descriptor;
 mod gemm;
 mod gemm_mpp;
-mod gemm_scalar_int;
+mod gemm_mixed_types_simple;
 
 pub use dispatch_descriptor::choose_dispatch_descriptor;
 

@@ -1,4 +1,4 @@
-pub use crate::backends::common::kernel::matmul::gemm_scalar_int::DispatchDescriptor;
+pub use crate::backends::common::kernel::matmul::gemm_mixed_types_simple::DispatchDescriptor;
 use crate::{
     DataType,
     backends::{

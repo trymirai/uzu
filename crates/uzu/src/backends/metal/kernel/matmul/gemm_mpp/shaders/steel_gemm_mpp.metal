@@ -59,6 +59,24 @@ struct MppCombo<int8_t, int8_t, int> {
 };
 
 template <>
+struct MppCombo<int8_t, half, half> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<int8_t, half, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
+struct MppCombo<int8_t, float, float> {
+  using IsSupported = metal::true_type;
+  using AccumType = float;
+};
+
+template <>
 struct MppCombo<int8_t, bfloat16_t, bfloat16_t> {
   using IsSupported = metal::true_type;
   using AccumType = float;

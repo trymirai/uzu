@@ -1,4 +1,4 @@
-use super::{gemm, gemm_mpp, gemm_scalar_int, gemv, split_k};
+use super::{gemm, gemm_mixed_types_simple, gemm_mpp, gemv, split_k};
 
 #[derive(Debug, Clone)]
 pub enum MatmulDispatchDescriptor {
@@ -6,7 +6,7 @@ pub enum MatmulDispatchDescriptor {
     SplitK(split_k::DispatchDescriptor),
     Gemm(gemm::DispatchDescriptor),
     GemmMpp(gemm_mpp::DispatchDescriptor),
-    GemmScalarInt(gemm_scalar_int::DispatchDescriptor),
+    GemmMixedTypesSimple(gemm_mixed_types_simple::DispatchDescriptor),
 }
 
 impl MatmulDispatchDescriptor {
@@ -16,7 +16,7 @@ impl MatmulDispatchDescriptor {
             MatmulDispatchDescriptor::SplitK(_)
             | MatmulDispatchDescriptor::Gemm(_)
             | MatmulDispatchDescriptor::GemmMpp(_)
-            | MatmulDispatchDescriptor::GemmScalarInt(_) => false,
+            | MatmulDispatchDescriptor::GemmMixedTypesSimple(_) => false,
         }
     }
 }

@@ -1,6 +1,7 @@
 mod dispatch_descriptor;
 mod kernel;
-mod specialization;
+pub mod specialization;
 
-pub use dispatch_descriptor::DispatchDescriptor;
+pub use dispatch_descriptor::{DispatchDescriptor, OutputSource};
 pub use kernel::GemvKernel;
+pub use specialization::Specialization;

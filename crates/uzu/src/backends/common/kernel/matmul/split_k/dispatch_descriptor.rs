@@ -1,7 +1,7 @@
 use super::{
     super::{grid_size::GridSize, matmul_arguments::MatmulArguments},
     specialization::Specialization,
-    tile_configuration::{TileConfiguration, select_tile_configuration},
+    tile_configuration::TileConfiguration,
 };
 use crate::{
     DataType,
@@ -36,7 +36,13 @@ impl DispatchDescriptor {
             return Ok(None);
         }
 
-        let tile = select_tile_configuration(m, n);
+        let tile = TileConfiguration {
+            tile_rows: 16,
+            tile_cols: 32,
+            tile_depth: 16,
+            warps_per_row: 2,
+            warps_per_col: 2,
+        };
         let partition_count = compute_partition_count(k);
         let mn_aligned = (m % tile.tile_rows) == 0 && (n % tile.tile_cols) == 0;
         let k_aligned = (k % tile.tile_depth) == 0;
@@ -140,5 +146,5 @@ fn is_supported_specialization(config: &Specialization) -> bool {
         warps_per_col: 2,
     };
 
-    config.tile == supported_tile && config.transpose_b && !config.mn_aligned && config.k_aligned
+    config.tile == supported_tile && config.transpose_b && config.k_aligned
 }
