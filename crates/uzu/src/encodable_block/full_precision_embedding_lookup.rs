@@ -78,7 +78,7 @@ impl<B: Backend> FullPrecisionEmbeddingLookup<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
+            weights_buffer: weights.buffer(),
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             input_scale: input_scale.unwrap_or(1.0),
@@ -103,9 +103,9 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingLookup<B> {
         let output_array = arrays[1].borrow_mut();
 
         self.kernel.encode(
-            token_ids_array.buffer(),
+            token_ids_array.buffer().borrow().deref(),
             self.weights_buffer.borrow().deref(),
-            output_array.buffer(),
+            output_array.buffer().borrow().deref(),
             batch_size as u32,
             self.vocab_size,
             self.model_dim,

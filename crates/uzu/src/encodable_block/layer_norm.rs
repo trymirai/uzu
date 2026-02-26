@@ -60,7 +60,7 @@ impl<B: Backend> LayerNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer: scales.buffer_rc(),
+            scales_buffer: scales.buffer(),
         })
     }
 }
@@ -96,9 +96,9 @@ impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
         };
 
         self.kernel.encode(
-            input_array.buffer(),
+            input_array.buffer().borrow().deref(),
             self.scales_buffer.borrow().deref(),
-            output_array.buffer(),
+            output_array.buffer().borrow().deref(),
             batch_size,
             model_dim,
             self.config.epsilon,

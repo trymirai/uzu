@@ -178,7 +178,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                         got: deq_biases.data_type(),
                     });
                 }
-                deq_biases.buffer_rc()
+                deq_biases.buffer()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -216,8 +216,8 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
-            scales_buffer: scales.buffer_rc(),
+            weights_buffer: weights.buffer(),
+            scales_buffer: scales.buffer(),
             biases_buffer,
             vocab_size,
             model_dim,
@@ -253,12 +253,12 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
             .encode(
                 encoder,
                 QuantizedMatmulArguments {
-                    a_buffer: input_array.buffer(),
+                    a_buffer: input_array.buffer().borrow().deref(),
                     a_offset,
                     b_buffer: self.weights_buffer.borrow().deref(),
                     scales_buffer: self.scales_buffer.borrow().deref(),
                     zero_points_or_biases_buffer: self.biases_buffer.borrow().deref(),
-                    output_buffer: output_array.buffer(),
+                    output_buffer: output_array.buffer().borrow().deref(),
                     batch: batch_size,
                     input_dim: self.model_dim,
                     output_dim: self.vocab_size,

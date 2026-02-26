@@ -49,15 +49,7 @@ impl<B: Backend> Array<B> {
     }
 
     // Getters
-    pub fn buffer(&self) -> &B::NativeBuffer {
-        // SAFETY: The Rc<RefCell<B::NativeBuffer>> keeps the allocation alive for at least
-        // as long as self. RefCell::as_ptr bypasses borrow tracking, which is sound because
-        // this crate uses Rc (single-threaded) and callers must not hold a borrow_mut
-        // concurrently with a reference returned here.
-        unsafe { &*(*self.buffer).as_ptr() }
-    }
-
-    pub fn buffer_rc(&self) -> Rc<RefCell<B::NativeBuffer>> {
+    pub fn buffer(&self) -> Rc<RefCell<B::NativeBuffer>> {
         self.buffer.clone()
     }
 

@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use super::{
     MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments,
 };
@@ -47,7 +49,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
     pub fn encode(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoeExpertsTwoPassArguments<B>,
+        args: &mut MoeExpertsTwoPassArguments<B>,
     ) {
         if args.total_rows == 0 {
             return;
@@ -116,7 +118,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
                 args.expert_offsets,
                 args.w13_all,
                 args.up_biases,
-                args.hidden_buffer,
+                args.hidden_buffer.deref(),
                 args.d_model as u32,
                 args.d_ff as u32,
                 args.e as u32,
@@ -141,7 +143,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         command_buffer.with_compute_encoder(|encoder| {
             let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
             kernel_pass_b.encode(
-                args.hidden_buffer,
+                args.hidden_buffer.deref(),
                 args.expert_offsets,
                 args.w2_all,
                 args.down_biases,
@@ -162,7 +164,7 @@ pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
     pub x_perm_buffer: &'a B::NativeBuffer,
     pub expert_offsets: &'a B::NativeBuffer,
     pub row_expert_map: &'a B::NativeBuffer,
-    pub hidden_buffer: &'a B::NativeBuffer,
+    pub hidden_buffer: &'a mut B::NativeBuffer,
     pub output_buffer: &'a B::NativeBuffer,
     pub w13_all: &'a B::NativeBuffer,
     pub w2_all: &'a B::NativeBuffer,

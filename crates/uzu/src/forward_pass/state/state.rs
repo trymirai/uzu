@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
@@ -776,14 +781,14 @@ impl<B: Backend> ForwardPassState<B> {
         let src_borrow = source_ref.borrow();
         let dst_borrow = destination_array.borrow();
 
-        let src_buf = src_borrow.buffer();
-        let dst_buf = dst_borrow.buffer();
+        let src_buf_rc = src_borrow.buffer();
+        let dst_buf_rc = dst_borrow.buffer();
 
         let copy_size_bytes = dst_borrow.size();
         debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
         command_buffer.with_copy_encoder(|encoder| {
-            encoder.encode_copy(src_buf, dst_buf, copy_size_bytes);
+            encoder.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
         });
     }
 }

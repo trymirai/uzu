@@ -224,9 +224,9 @@ impl<B: Backend> KVCacheLayer<B> {
         let v_shape = self.values.borrow().shape().to_vec();
 
         let layer_data = KVLayerData {
-            key_buffer: self.keys.borrow().buffer_rc(),
+            key_buffer: self.keys.borrow().buffer(),
             key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer: self.values.borrow().buffer_rc(),
+            value_buffer: self.values.borrow().buffer(),
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 

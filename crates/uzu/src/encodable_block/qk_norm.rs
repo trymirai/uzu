@@ -75,7 +75,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             query_kernel = Some(kernel);
-            query_scales_buffer = Some(scales.buffer_rc());
+            query_scales_buffer = Some(scales.buffer());
         }
 
         // Setup key normalization if configured
@@ -99,7 +99,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             key_kernel = Some(kernel);
-            key_scales_buffer = Some(scales.buffer_rc());
+            key_scales_buffer = Some(scales.buffer());
         }
 
         Ok(Self {
@@ -135,7 +135,6 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
         };
 
         let qkv_array = qkv_binding[0].borrow_mut();
-        let qkv_buffer = qkv_array.buffer();
         let batch_size = qkv_shape[0] as u32;
 
         // Process query normalization if configured
@@ -143,9 +142,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             query_kernel.encode(
-                qkv_buffer,
+                qkv_array.buffer().borrow().deref(),
                 query_scales_buffer.borrow().deref(),
-                qkv_buffer,
+                qkv_array.buffer().borrow().deref(),
                 batch_size,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
@@ -164,9 +163,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
             key_kernel.encode(
-                qkv_buffer,
+                qkv_array.buffer().borrow().deref(),
                 key_scales_buffer.borrow().deref(),
-                qkv_buffer,
+                qkv_array.buffer().borrow().deref(),
                 batch_size,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,

@@ -89,7 +89,7 @@ where
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            weights_buffer: weights.buffer_rc(),
+            weights_buffer: weights.buffer(),
             vocab_size,
             model_dim,
         })
@@ -125,10 +125,10 @@ where
             state.context(),
             encoder,
             FullPrecisionMatmulArguments {
-                a: input_array.buffer(),
+                a: input_array.buffer().borrow().deref(),
                 a_offset: sampling_start * self.model_dim * element_size,
                 b: self.weights_buffer.borrow().deref(),
-                output: output_array.buffer(),
+                output: output_array.buffer().borrow().deref(),
                 bias: None,
                 batch: batch_size,
                 input_dim: self.model_dim,

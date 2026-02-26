@@ -108,7 +108,7 @@ where
                     });
                 }
 
-                Some(biases.buffer_rc())
+                Some(biases.buffer())
             },
             Err(_) => None,
         };
@@ -119,7 +119,7 @@ where
         Ok(Self {
             kernel: RefCell::new(kernel),
             bias_buffer,
-            weights_buffer: weights.buffer_rc(),
+            weights_buffer: weights.buffer(),
             input_dim,
             output_dim,
             input_array_id,
@@ -152,10 +152,10 @@ where
             state.context(),
             encoder,
             FullPrecisionMatmulArguments {
-                a: input_array.buffer(),
+                a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.weights_buffer.borrow().deref(),
-                output: output_array.buffer(),
+                output: output_array.buffer().borrow().deref(),
                 bias: bias_borrow.as_deref(),
                 batch: batch_size,
                 input_dim: self.input_dim,

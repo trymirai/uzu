@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use super::{
     MoeExpertsTwoPassArguments, MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
     MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments,
@@ -112,7 +114,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
                 args.x_perm_buffer,
                 args.expert_offsets,
                 args.w13_all,
-                args.hidden_buffer,
+                args.hidden_buffer.deref(),
                 args.up_biases,
                 args.d_model as u32,
                 args.d_ff as u32,
@@ -132,7 +134,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         command_buffer.with_compute_encoder(|encoder| {
             let pass_b_kernel = &self.fused_down[dtype_idx];
             pass_b_kernel.encode(
-                args.hidden_buffer,
+                args.hidden_buffer.deref(),
                 args.row_expert_map,
                 args.w2_all,
                 args.down_biases,

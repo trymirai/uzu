@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::{
     DataType,
     array::Array,
@@ -229,12 +231,10 @@ impl<B: Backend> ShortConvMixer<B> {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let in_proj_buf = in_proj.buffer();
-        let state_buf = conv_state.buffer();
-        let out_buf = out.buffer();
-
-        let weight_buf = self.conv_weight.buffer();
-        let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
+        let weight_buf_rc = self.conv_weight.buffer();
+        let weight_buf_borrow = weight_buf_rc.borrow();
+        let bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
+        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
 
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
@@ -246,8 +246,8 @@ impl<B: Backend> ShortConvMixer<B> {
         let padded_size = padded_rows * self.model_dim * element_size;
         let padded_buf = state.context().create_buffer(padded_size).expect("Failed to create padded buffer");
         self.short_conv_pack.encode(
-            state_buf,
-            in_proj_buf,
+            conv_state.buffer().borrow().deref(),
+            in_proj.buffer().borrow().deref(),
             &padded_buf,
             state_stride as u32,
             suffix_length as u32,
@@ -258,11 +258,11 @@ impl<B: Backend> ShortConvMixer<B> {
 
         self.short_conv_prefill.encode(
             &padded_buf,
-            in_proj_buf,
-            weight_buf,
-            bias_buf,
-            out_buf,
-            state_buf,
+            in_proj.buffer().borrow().deref(),
+            weight_buf_borrow.deref(),
+            bias_buf_borrow.as_deref(),
+            out.buffer().borrow().deref(),
+            conv_state.buffer().borrow().deref(),
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,
@@ -309,16 +309,19 @@ impl<B: Backend> ShortConvMixer<B> {
         let suffix_state_offset = suffix_state.offset() + sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = conv_state.offset();
         let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
-        let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
+        let trie_weight_buf_rc = self.conv_weight.buffer();
+        let trie_weight_buf_borrow = trie_weight_buf_rc.borrow();
+        let trie_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
+        let trie_bias_buf_borrow = trie_bias_buf_rc.as_ref().map(|rc| rc.borrow());
 
         self.short_conv_trie.encode(
-            (in_proj.buffer(), in_proj_offset),
-            self.conv_weight.buffer(),
-            bias_buf,
-            (conv_state.buffer(), base_state_offset),
-            (parents.buffer(), parents_offset),
-            (out.buffer(), out_offset),
-            (suffix_state.buffer(), suffix_state_offset),
+            (in_proj.buffer().borrow().deref(), in_proj_offset),
+            trie_weight_buf_borrow.deref(),
+            trie_bias_buf_borrow.as_deref(),
+            (conv_state.buffer().borrow().deref(), base_state_offset),
+            (parents.buffer().borrow().deref(), parents_offset),
+            (out.buffer().borrow().deref(), out_offset),
+            (suffix_state.buffer().borrow().deref(), suffix_state_offset),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -344,17 +347,20 @@ impl<B: Backend> ShortConvMixer<B> {
         let conv_state = arrays[1].borrow_mut();
         let out = arrays[2].borrow_mut();
 
-        let bias_buf = self.conv_bias.as_ref().map(|b| b.buffer());
+        let decode_weight_buf_rc = self.conv_weight.buffer();
+        let decode_weight_buf_borrow = decode_weight_buf_rc.borrow();
+        let decode_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
+        let decode_bias_buf_borrow = decode_bias_buf_rc.as_ref().map(|rc| rc.borrow());
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
         self.short_conv_decode.encode(
-            in_proj.buffer(),
-            self.conv_weight.buffer(),
-            bias_buf,
-            conv_state.buffer(),
-            out.buffer(),
-            conv_state.buffer(),
+            in_proj.buffer().borrow().deref(),
+            decode_weight_buf_borrow.deref(),
+            decode_bias_buf_borrow.as_deref(),
+            conv_state.buffer().borrow().deref(),
+            out.buffer().borrow().deref(),
+            conv_state.buffer().borrow().deref(),
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,

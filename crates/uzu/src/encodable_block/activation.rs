@@ -1,5 +1,7 @@
 //! Activation encodable.
 
+use std::ops::Deref;
+
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
@@ -60,6 +62,12 @@ impl<B: Backend> EncodableBlock<B> for Activation<B> {
             ActivationConfig::Identity => panic!("Identity activation is not supported for kernel"),
         };
 
-        self.kernel.encode(input_array.buffer(), output_array.buffer(), n as u32, act_type, encoder);
+        self.kernel.encode(
+            input_array.buffer().borrow().deref(),
+            output_array.buffer().borrow().deref(),
+            n as u32,
+            act_type,
+            encoder,
+        );
     }
 }

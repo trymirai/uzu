@@ -12,7 +12,7 @@ impl CopyEncoder for Retained<ProtocolObject<dyn MTLBlitCommandEncoder>> {
     fn encode_copy(
         &mut self,
         src: &<Self::Backend as Backend>::NativeBuffer,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        dst: &mut <Self::Backend as Backend>::NativeBuffer,
         size: usize,
     ) {
         assert!(src.length() >= size && dst.length() >= size);
@@ -22,7 +22,7 @@ impl CopyEncoder for Retained<ProtocolObject<dyn MTLBlitCommandEncoder>> {
 
     fn encode_fill(
         &mut self,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        dst: &mut <Self::Backend as Backend>::NativeBuffer,
         range: Range<usize>,
         value: u8,
     ) {

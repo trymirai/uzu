@@ -489,15 +489,21 @@ where
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
         let sampling_output_binding = sampling_output.borrow();
-        let sampling_output_buffer = sampling_output_binding.buffer();
+        let sampling_output_buf_rc = sampling_output_binding.buffer();
+        let sampling_output_buf_borrow = sampling_output_buf_rc.borrow();
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
-        let token_ids_buffer = token_ids_binding.buffer();
+        let token_ids_buf_rc = token_ids_binding.buffer();
+        let token_ids_buf_borrow = token_ids_buf_rc.borrow();
 
         self.context.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
-            self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
+            self.context.token_copy_sampled.encode(
+                sampling_output_buf_borrow.deref(),
+                token_ids_buf_borrow.deref(),
+                encoder,
+            );
             let results_offset = slot * std::mem::size_of::<u32>();
             self.context.token_copy_results.encode(
-                sampling_output_buffer,
+                sampling_output_buf_borrow.deref(),
                 (results_buffer.borrow().deref(), results_offset),
                 encoder,
             );
@@ -519,12 +525,9 @@ where
                 for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
                     if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
                         if update.unmask_col >= 0 || update.mask_col >= 0 {
-                            mask_update.encode(
-                                mask_buffer.borrow().buffer(),
-                                update.unmask_col,
-                                update.mask_col,
-                                &encoder,
-                            );
+                            let mask_buf_rc = mask_buffer.borrow().buffer();
+                            let mask_buf_borrow = mask_buf_rc.borrow();
+                            mask_update.encode(mask_buf_borrow.deref(), update.unmask_col, update.mask_col, &encoder);
                         }
                     }
                 }

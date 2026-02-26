@@ -198,7 +198,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                     });
                 }
 
-                biases.buffer_rc()
+                biases.buffer()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -223,8 +223,8 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
-            scales_buffer: scales.buffer_rc(),
+            weights_buffer: weights.buffer(),
+            scales_buffer: scales.buffer(),
             biases_buffer,
             mode,
             input_scale,
@@ -258,11 +258,11 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
         };
 
         self.kernel.encode(
-            token_ids_array.buffer(),
+            token_ids_array.buffer().borrow().deref(),
             self.weights_buffer.borrow().deref(),
             self.scales_buffer.borrow().deref(),
             self.biases_buffer.borrow().deref(),
-            output_array.buffer(),
+            output_array.buffer().borrow().deref(),
             batch_size as u32,
             self.vocab_size,
             self.model_dim,
