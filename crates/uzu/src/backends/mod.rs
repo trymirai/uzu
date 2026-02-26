@@ -7,6 +7,10 @@ pub mod metal;
 macro_rules! select_backend {
     ($expr:expr, $unk:expr) => {{
         match std::env::var("UZU_BACKEND").map(|s| s.to_lowercase()).as_deref().unwrap_or("metal") {
+            "cpu" => {
+                type B = crate::backends::cpu::Cpu;
+                $expr
+            },
             #[cfg(feature = "metal")]
             "metal" => {
                 type B = crate::backends::metal::Metal;

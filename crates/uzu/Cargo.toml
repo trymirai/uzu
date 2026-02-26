@@ -5,6 +5,7 @@ edition.workspace = true
 build = "build/main.rs"
 
 [dependencies]
+dsl.workspace = true
 xgrammar.workspace = true
 half.workspace = true
 ndarray.workspace = true

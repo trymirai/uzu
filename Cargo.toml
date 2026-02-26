@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/uzu", "crates/benchmarks"]
+members = ["crates/cli", "crates/uzu", "crates/benchmarks", "crates/dsl"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,7 @@ repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
 benchmarks = { path = "crates/benchmarks" }
+dsl = { path = "crates/dsl" }
 uzu = { path = "crates/uzu" }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }

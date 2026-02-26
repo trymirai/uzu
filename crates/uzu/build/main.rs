@@ -6,6 +6,8 @@ use futures::future::try_join_all;
 mod common;
 mod gpu_types;
 
+mod cpu;
+
 #[cfg(feature = "metal")]
 mod metal;
 
@@ -36,6 +38,8 @@ async fn main() -> anyhow::Result<()> {
     debug_log!("gpu_types build done");
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
+
+    compilers.push(Box::new(cpu::CpuCompiler::new()?));
 
     #[cfg(feature = "metal")]
     compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(generated_header_dir)?));
