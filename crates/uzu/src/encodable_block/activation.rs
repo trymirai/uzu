@@ -60,6 +60,6 @@ impl<B: Backend> EncodableBlock<B> for Activation<B> {
             ActivationConfig::Identity => panic!("Identity activation is not supported for kernel"),
         };
 
-        self.kernel.encode(input_array.buffer(), output_array.buffer(), n as u32, act_type, encoder);
+        self.kernel.encode(input_array.buffer(), output_array.buffer(), n as u32, act_type, 0.0_f32, encoder);
     }
 }

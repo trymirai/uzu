@@ -10,7 +10,8 @@ KERNEL(Activation) (
     device T* output,
     const constant uint& n,
     const constant uint& act_type,
+    const constant float& act_param,
     uint tid AXIS(n, 256)
 ) {
-  output[tid] = activate(input[tid], act_type);
+  output[tid] = activate(input[tid], act_type, act_param);
 }

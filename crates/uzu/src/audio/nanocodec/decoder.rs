@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::ops::{
-    CausalConv1dSpec, CausalConvTranspose1dSpec, HalfSnakeSpec, causal_conv_transpose1d_lalamo_reference,
+    CausalConv1dSpec, CausalConvTranspose1dSpec, HalfSnakeSpec, causal_conv_transpose1d_causal_pad_reference,
     causal_conv1d_reference, half_snake_reference,
 };
 use crate::audio::{AudioError, AudioResult};
@@ -360,7 +360,7 @@ impl NanoCodecDecoderGraph {
                 .map(|length| checked_mul_i32(length, stage.upsample_conv.stride))
                 .collect::<AudioResult<Vec<_>>>()?;
 
-            x = causal_conv_transpose1d_lalamo_reference(CausalConvTranspose1dSpec {
+            x = causal_conv_transpose1d_causal_pad_reference(CausalConvTranspose1dSpec {
                 input: &x,
                 weight: &stage.upsample_conv.weight,
                 bias: &stage.upsample_conv.bias,

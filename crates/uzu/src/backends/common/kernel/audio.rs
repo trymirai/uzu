@@ -89,12 +89,6 @@ pub struct AudioHalfSnakeArguments<'a, B: Backend> {
     pub eps: f32,
 }
 
-pub struct AudioElementwiseArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
-    pub n: usize,
-}
-
 pub struct AudioAddArguments<'a, B: Backend> {
     pub a: &'a B::NativeBuffer,
     pub b: &'a B::NativeBuffer,
@@ -152,19 +146,6 @@ pub trait AudioKernelRuntime<B: Backend> {
         &self,
         compute_encoder: &B::ComputeEncoder,
         arguments: AudioHalfSnakeArguments<'_, B>,
-    ) -> Result<(), B::Error>;
-
-    fn encode_leaky_relu(
-        &self,
-        compute_encoder: &B::ComputeEncoder,
-        arguments: AudioElementwiseArguments<'_, B>,
-        negative_slope: f32,
-    ) -> Result<(), B::Error>;
-
-    fn encode_tanh(
-        &self,
-        compute_encoder: &B::ComputeEncoder,
-        arguments: AudioElementwiseArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_add(

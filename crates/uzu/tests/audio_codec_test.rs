@@ -8,7 +8,7 @@ use uzu::{
         fsq::{fsq_decode_reference, fsq_encode_reference},
         ops::{
             CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-            causal_conv_transpose1d_lalamo_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
+            causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
             conv1d_reference, half_snake_reference,
         },
     },
@@ -16,10 +16,10 @@ use uzu::{
         common::{
             Backend, Context, Kernels,
             kernel::{
-                AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dKernel,
-                AudioCausalConvTranspose1dLalamoKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
-                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioLeakyReluKernel, AudioNormNcsKernel, AudioScaleKernel,
-                AudioTanhKernel, AudioTransposeNscToNcsKernel,
+                ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dKernel,
+                AudioCausalConvTranspose1dCausalPadKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
+                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioScaleKernel,
+                AudioTransposeNscToNcsKernel,
             },
         },
         metal::Metal,
@@ -306,10 +306,10 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
 }
 
 #[test]
-fn audio_causal_conv_transpose1d_lalamo_matches_reference_f32() {
+fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
     let context = create_test_context();
     let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dLalamoKernel::new(&context, DataType::F32)
+        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(&context, DataType::F32)
             .expect("audio runtime");
 
     let batch_size = 1usize;
@@ -330,7 +330,7 @@ fn audio_causal_conv_transpose1d_lalamo_matches_reference_f32() {
     let input_values_ncs: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.017).sin() * 0.5).collect();
     let weight_values: Vec<f32> = (0..weight_len).map(|i| ((i as f32) * 0.09).cos() * 0.2).collect();
     let bias_values: Vec<f32> = vec![0.01, -0.02];
-    let expected = causal_conv_transpose1d_lalamo_reference(CausalConvTranspose1dSpec {
+    let expected = causal_conv_transpose1d_causal_pad_reference(CausalConvTranspose1dSpec {
         input: &input_values_ncs,
         weight: &weight_values,
         bias: &bias_values,
@@ -424,7 +424,7 @@ fn audio_causal_conv_transpose1d_lalamo_matches_reference_f32() {
 #[test]
 fn audio_leaky_relu_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioLeakyReluKernel::new(&context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(&context, DataType::F32)
         .expect("audio runtime");
 
     let n = 1024usize;
@@ -439,7 +439,8 @@ fn audio_leaky_relu_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    kernel.encode(input.buffer(), output.buffer(), n as i32, slope, &encoder);
+    let act_leaky_relu = 3_u32;
+    kernel.encode(input.buffer(), output.buffer(), n as u32, act_leaky_relu, slope, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();
@@ -460,8 +461,8 @@ fn audio_leaky_relu_matches_reference_f32() {
 #[test]
 fn audio_tanh_matches_reference_f32() {
     let context = create_test_context();
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::AudioTanhKernel::new(&context, DataType::F32).expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(&context, DataType::F32)
+        .expect("audio runtime");
 
     let n = 1024usize;
     let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
@@ -474,7 +475,8 @@ fn audio_tanh_matches_reference_f32() {
     let command_buffer = context.command_queue.command_buffer().expect("command buffer");
     let encoder = command_buffer.new_compute_command_encoder().expect("compute encoder");
 
-    kernel.encode(input.buffer(), output.buffer(), n as i32, &encoder);
+    let act_tanh = 2_u32;
+    kernel.encode(input.buffer(), output.buffer(), n as u32, act_tanh, 0.0_f32, &encoder);
 
     encoder.end_encoding();
     command_buffer.commit();

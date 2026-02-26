@@ -336,7 +336,7 @@ pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) ->
     Ok(output)
 }
 
-pub fn causal_conv_transpose1d_lalamo_reference(spec: CausalConvTranspose1dSpec<'_>) -> AudioResult<Vec<f32>> {
+pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dSpec<'_>) -> AudioResult<Vec<f32>> {
     let CausalConvTranspose1dSpec {
         input,
         weight,
@@ -515,7 +515,7 @@ pub fn half_snake_reference(spec: HalfSnakeSpec<'_>) -> AudioResult<Vec<f32>> {
 mod tests {
     use super::{
         CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-        causal_conv_transpose1d_lalamo_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
+        causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
         conv1d_reference, half_snake_reference,
     };
 
@@ -582,8 +582,8 @@ mod tests {
     }
 
     #[test]
-    fn causal_conv_transpose_lalamo_reference_matches_expected() {
-        let output = causal_conv_transpose1d_lalamo_reference(CausalConvTranspose1dSpec {
+    fn causal_conv_transpose_causal_pad_reference_matches_expected() {
+        let output = causal_conv_transpose1d_causal_pad_reference(CausalConvTranspose1dSpec {
             input: &[1.0, 2.0, 3.0],
             weight: &[1.0, 2.0, 3.0, 4.0],
             bias: &[0.0],
@@ -596,7 +596,7 @@ mod tests {
             stride: 2,
             groups: 1,
         })
-        .expect("causal conv transpose lalamo");
+        .expect("causal conv transpose causal-pad");
 
         assert_eq!(output, vec![4.0, 3.0, 10.0, 7.0, 16.0, 11.0]);
     }

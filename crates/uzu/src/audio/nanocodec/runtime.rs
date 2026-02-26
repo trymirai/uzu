@@ -20,9 +20,8 @@ use crate::{
             Backend, CommandBuffer, Context, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dKernel,
-                AudioCausalConvTranspose1dLalamoKernel, AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel,
-                AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel, AudioTanhKernel,
-                AudioTransposeNscToNcsKernel,
+                AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel,
+                AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel, AudioTransposeNscToNcsKernel,
             },
         },
         metal::Metal,
@@ -1357,7 +1356,7 @@ fn causal_conv1d_grouped_enqueue(
     Ok(output)
 }
 
-fn causal_conv_transpose1d_lalamo_enqueue(
+fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
@@ -1400,9 +1399,9 @@ fn causal_conv_transpose1d_lalamo_enqueue(
     }
 
     let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dLalamoKernel::new(context, DataType::F32)
+        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(context, DataType::F32)
             .map_err(|err| {
-            AudioError::Runtime(format!("failed to initialize Lalamo causal conv transpose kernel: {err}"))
+            AudioError::Runtime(format!("failed to initialize causal-pad conv transpose kernel: {err}"))
         })?;
     let mut weight_array = context.create_array(
         &[spec.cin, spec.cout / spec.groups, kernel_size],
@@ -1619,7 +1618,7 @@ fn gelu_enqueue(
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(input.buffer(), output.buffer(), n_u32, gelu_id, compute_encoder);
+        kernel.encode(input.buffer(), output.buffer(), n_u32, gelu_id, 0.0_f32, compute_encoder);
     });
     Ok(output)
 }
@@ -1652,12 +1651,14 @@ fn tanh_enqueue(
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioTanhKernel::new(context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(context, DataType::F32)
         .map_err(|err| AudioError::Runtime(format!("failed to initialize tanh kernel: {err}")))?;
     let output = context.create_array(input.shape(), DataType::F32, "fishaudio_tanh_output");
-    let n_i32 = usize_to_i32(input.num_elements(), "n")?;
+    let n_u32 = u32::try_from(input.num_elements())
+        .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
+    let tanh_id = 2_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(input.buffer(), output.buffer(), n_i32, compute_encoder);
+        kernel.encode(input.buffer(), output.buffer(), n_u32, tanh_id, 0.0_f32, compute_encoder);
     });
     Ok(output)
 }
@@ -2523,7 +2524,7 @@ impl FishAudioCodecGraph {
                 .collect::<AudioResult<Vec<_>>>()?;
             let next_lengths_array = create_i32_array(&context, &next_lengths, "fishaudio_upsample_lengths");
 
-            x = causal_conv_transpose1d_lalamo_enqueue(
+            x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
                 &command_buffer,
                 &x,
@@ -2634,7 +2635,7 @@ impl FishAudioCodecGraph {
                 .collect::<AudioResult<Vec<_>>>()?;
             let next_lengths_array = create_i32_array(&context, &next_lengths, "fishaudio_decoder_block_lengths");
 
-            x = causal_conv_transpose1d_lalamo_enqueue(
+            x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
                 &command_buffer,
                 &x,
