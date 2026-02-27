@@ -258,6 +258,26 @@ pub trait ArrayContextExt {
         array.as_bytes_mut().fill(0);
         array
     }
+
+    fn create_array_from<T: ArrayElement>(
+        &self,
+        shape: &[usize],
+        data: &[T],
+        label: &str,
+    ) -> Array<Self::Backend> {
+        let size_from_shape: usize = shape.iter().product();
+        assert_eq!(
+            data.len(),
+            size_from_shape,
+            "Shape size {} and data size {} are not equal",
+            shape.len(),
+            data.len()
+        );
+
+        let mut array = self.create_array_uninitialized(shape, T::data_type(), label);
+        array.as_slice_mut().copy_from_slice(data);
+        array
+    }
 }
 
 impl<C: Context> ArrayContextExt for C {

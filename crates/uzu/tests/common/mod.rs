@@ -77,3 +77,19 @@ impl Speculator for RepeatSpeculator {
         hm.into_iter().map(|(pos, weight)| (pos, weight / sum)).collect()
     }
 }
+
+/// Invokes `$body` once per available backend, with `$B` bound to each backend type.
+#[macro_export]
+macro_rules! for_each_backend {
+    (|$B:ident| $body:expr) => {{
+        {
+            type $B = uzu::backends::cpu::Cpu;
+            $body
+        }
+        #[cfg(feature = "metal")]
+        {
+            type $B = uzu::backends::metal::Metal;
+            $body
+        }
+    }};
+}

@@ -82,5 +82,9 @@ tracing = []
 audio-runtime = []
 
 [[test]]
+name = "kernel"
+path = "tests/kernel/mod.rs"
+
+[[test]]
 name = "moe"
 path = "tests/moe/mod.rs"
