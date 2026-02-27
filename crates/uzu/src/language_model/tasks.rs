@@ -1,4 +1,4 @@
-use std::{mem::size_of, ops::DerefMut};
+use std::mem::size_of;
 
 use super::language_model_generator_context::LanguageModelGeneratorContext;
 use crate::{
@@ -109,12 +109,12 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
 
     pub fn build_encoded_task<B: Backend>(
         &self,
-        context: &LanguageModelGeneratorContext<B>,
+        context: &mut LanguageModelGeneratorContext<B>,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         key: String,
     ) -> LanguageModelGeneratorEncodedTask<B> {
-        context.executables.encode(state, parameters, context.command_buffer.borrow_mut().deref_mut());
+        context.executables.encode(state, parameters, &mut context.command_buffer);
 
         LanguageModelGeneratorEncodedTask {
             key,

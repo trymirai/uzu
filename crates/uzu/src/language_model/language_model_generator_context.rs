@@ -122,7 +122,7 @@ impl<B: Backend> AsyncBuffers<B> {
 
 pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: Rc<RefCell<B::CommandBuffer>>,
+    pub command_buffer: B::CommandBuffer,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -151,8 +151,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
-        let command_buffer =
-            Rc::new(RefCell::new(context.create_command_buffer().expect("Failed to create command buffer")));
+        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -248,8 +247,10 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         Ok(context)
     }
 
-    pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
+    pub fn reset_command_buffer(&mut self) -> B::CommandBuffer {
+        std::mem::replace(
+            &mut self.command_buffer,
+            self.context.create_command_buffer().expect("Failed to create command buffer"),
+        )
     }
 }
