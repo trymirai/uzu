@@ -15,6 +15,12 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
+#[cfg(feature = "fwht")]
+use super::{
+    fwht::{Fwht, FwhtMode},
+    fwht_linear::FwhtLinear,
+};
+
 #[derive(Debug, Error)]
 pub enum LayerError<B: Backend> {
     #[error("Backend error: {0}")]
@@ -29,6 +35,49 @@ pub enum LayerError<B: Backend> {
     ParameterLoaderError(#[source] ParameterLoaderError),
     #[error("QLoRA linear layer not supported")]
     QLoRaNotSupported,
+}
+
+#[cfg(feature = "fwht")]
+fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
+    if dim.is_power_of_two() && dim >= 64 && dim <= 8192 {
+        Some(FwhtMode::Full)
+    } else if dim % 32 == 0 {
+        Some(FwhtMode::Block { block_size: 32 })
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "fwht")]
+fn wrap_with_fwht<B: Backend>(
+    context: &B::Context,
+    data_type: DataType,
+    linear: Box<dyn EncodableBlock<B>>,
+    input_array_id: ArrayId,
+    input_dim: usize,
+    output_array_id: ArrayId,
+    output_dim: usize,
+) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>> {
+    let pre_fwht = if let Some(mode) = fwht_mode_for_dim(input_dim) {
+        Some(
+            Box::new(Fwht::new(context, data_type, mode, input_array_id, input_dim).map_err(LayerError::BackendError)?)
+                as Box<dyn EncodableBlock<B>>,
+        )
+    } else {
+        None
+    };
+
+    let post_fwht = if let Some(mode) = fwht_mode_for_dim(output_dim) {
+        Some(
+            Box::new(
+                Fwht::new(context, data_type, mode, output_array_id, output_dim).map_err(LayerError::BackendError)?,
+            ) as Box<dyn EncodableBlock<B>>,
+        )
+    } else {
+        None
+    };
+
+    Ok(Box::new(FwhtLinear::new(pre_fwht, linear, post_fwht)))
 }
 
 pub fn linear_block<const N: usize, B: Backend>(
@@ -54,6 +103,22 @@ pub fn linear_block<const N: usize, B: Backend>(
                 output_array_id,
             )
             .map_err(LayerError::QuantizedLinearError)?;
+
+            #[cfg(feature = "fwht")]
+            {
+                let data_type: DataType = quantization_config.activation_precision.into();
+                return wrap_with_fwht::<B>(
+                    context,
+                    data_type,
+                    Box::new(block),
+                    input_array_id,
+                    input_dimension,
+                    output_array_id,
+                    output_dimension_sum,
+                );
+            }
+
+            #[cfg(not(feature = "fwht"))]
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {

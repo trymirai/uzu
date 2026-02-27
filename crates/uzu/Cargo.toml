@@ -80,6 +80,7 @@ metal-nax = []
 
 tracing = []
 audio-runtime = []
+fwht = []
 
 [[test]]
 name = "kernel"
