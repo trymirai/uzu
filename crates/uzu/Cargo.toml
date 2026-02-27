@@ -67,7 +67,7 @@ cbindgen.workspace = true
 clang-ast = { workspace = true, optional = true }
 
 [features]
-default = ["metal"]
+default = ["metal", "fwht"]
 
 metal = [
     "dep:clang-ast",

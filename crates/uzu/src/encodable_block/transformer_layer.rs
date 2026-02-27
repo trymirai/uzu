@@ -37,14 +37,37 @@ pub enum LayerError<B: Backend> {
     QLoRaNotSupported,
 }
 
+/// Returns the FWHT mode for a given dimension, based on `UZU_FWHT_MODE` env var.
+///
+/// Supported values:
+///   `full`     — full-vector transform (threadgroup memory, radix-16)
+///   `block32`  — block-wise with block_size=32 (simd_shuffle path)
+///   `block64`  — block-wise with block_size=64
+///   `block128` — block-wise with block_size=128
+///   `off` or unset — no FWHT
 #[cfg(feature = "fwht")]
 fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
-    if dim.is_power_of_two() && dim >= 64 && dim <= 8192 {
-        Some(FwhtMode::Full)
-    } else if dim % 32 == 0 {
-        Some(FwhtMode::Block { block_size: 32 })
-    } else {
-        None
+    let mode_str = std::env::var("UZU_FWHT_MODE").unwrap_or_default();
+    match mode_str.as_str() {
+        "full" => {
+            if dim.is_power_of_two() && dim >= 64 && dim <= 8192 {
+                Some(FwhtMode::Full)
+            } else if dim % 32 == 0 {
+                Some(FwhtMode::Block { block_size: 32 })
+            } else {
+                None
+            }
+        },
+        "block32" => {
+            if dim % 32 == 0 { Some(FwhtMode::Block { block_size: 32 }) } else { None }
+        },
+        "block64" => {
+            if dim % 64 == 0 { Some(FwhtMode::Block { block_size: 64 }) } else { None }
+        },
+        "block128" => {
+            if dim % 128 == 0 { Some(FwhtMode::Block { block_size: 128 }) } else { None }
+        },
+        _ => None, // "off", unset, or unknown → no FWHT
     }
 }
 
@@ -76,6 +99,11 @@ fn wrap_with_fwht<B: Backend>(
     } else {
         None
     };
+
+    // If both are None, skip the wrapper entirely
+    if pre_fwht.is_none() && post_fwht.is_none() {
+        return Ok(linear);
+    }
 
     Ok(Box::new(FwhtLinear::new(pre_fwht, linear, post_fwht)))
 }
