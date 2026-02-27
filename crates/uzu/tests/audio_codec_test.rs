@@ -16,8 +16,8 @@ use uzu::{
         common::{
             Backend, Context, Kernels,
             kernel::{
-                ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dKernel,
-                AudioCausalConvTranspose1dCausalPadKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
+                ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
+                AudioCausalConvTranspose1dKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
                 AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioScaleKernel,
                 AudioTransposeNscToNcsKernel,
             },
@@ -308,9 +308,11 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
 #[test]
 fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
     let context = create_test_context();
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(&context, DataType::F32)
-            .expect("audio runtime");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(
+        &context,
+        DataType::F32,
+    )
+    .expect("audio runtime");
 
     let batch_size = 1usize;
     let cin = 2usize;

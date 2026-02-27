@@ -8,6 +8,7 @@ use std::{
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     rc::Rc,
+    time::Instant,
 };
 
 use half::{bf16, f16};
@@ -18,13 +19,21 @@ use tokenizers::Tokenizer;
 
 use crate::{
     DataType,
+    array::{ArrayCell, ArrayContextExt},
     audio::{AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking},
     backends::{
-        common::{Backend, CommandBuffer, Context as BackendContext, kernel::kv_cache_update::KVCacheUpdate},
+        common::{
+            Backend, CommandBuffer, Context as BackendContext, Kernels,
+            kernel::{
+                FullPrecisionEmbeddingLookupKernel, TensorAddBiasKernel, TensorAddScaleKernel, TensorCopyKernel,
+                kv_cache_update::KVCacheUpdate,
+                matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
+            },
+        },
         metal::Metal,
     },
     config::{InnerModelConfig, LinearConfig, ModelMetadata, ModelType, TtsModelConfig},
-    encodable_block::{Decoder, EncodableBlock, EncodingParameters},
+    encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -32,7 +41,11 @@ use crate::{
         state::{ArrayId, ForwardPassState, SharedBuffers},
     },
     parameters::{ParameterLoader, read_safetensors_metadata},
-    session::types::{Error, Input},
+    session::{
+        config::{TtsChunkPolicy, TtsRunConfig},
+        parameter::SamplingMethod,
+        types::{Error, Input},
+    },
 };
 
 const DEFAULT_STUB_SPEAKER_ID: &str = "speaker:0";
@@ -43,6 +56,32 @@ const DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE: usize = 1024;
 const DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE: usize = 16;
 const DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE: f32 = 0.8008;
 const DEFAULT_FISHAUDIO_SAMPLING_TOP_P: f32 = 0.8008;
+const DEFAULT_CHUNK_EMA_ALPHA: f64 = 0.2;
+const DEFAULT_CHUNK_HYSTERESIS_FRACTION: f64 = 0.25;
+const TTS_ENGINE_V2_FLAG: &str = "UZU_TTS_ENGINE_V2";
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TtsExecutionStats {
+    pub semantic_decode_seconds: f64,
+    pub audio_decode_seconds: f64,
+    pub callback_seconds: f64,
+    pub command_buffers_submitted: usize,
+    pub host_waits: usize,
+    pub semantic_frames: usize,
+    pub emitted_chunks: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RunnerInstrumentation {
+    command_buffers_submitted: usize,
+    host_waits: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AdaptiveChunkController {
+    ema_ms_per_frame: Option<f64>,
+    current_chunk_frames: usize,
+}
 
 pub struct TtsSession {
     #[allow(dead_code)]
@@ -54,6 +93,7 @@ pub struct TtsSession {
     prompt_template: String,
     drop_initial_newline: bool,
     text_decoder: RefCell<TextDecoderRuntime>,
+    last_execution_stats: RefCell<Option<TtsExecutionStats>>,
 }
 
 enum TextDecoderRuntime {
@@ -71,8 +111,7 @@ struct StubTextDecoderRuntime {
 struct FishAudioTextDecoderRuntime {
     slow_runner: TokenDecoderRunner,
     fast_runner: Option<TokenDecoderRunner>,
-    codebook_embeddings: MatrixF32,
-    fast_model_projection: Option<MatrixF32>,
+    gpu_path: FishAudioGpuPath,
     semantic_token_begin_id: i64,
     semantic_token_end_id: i64,
     semantic_cardinality: usize,
@@ -82,8 +121,10 @@ struct FishAudioTextDecoderRuntime {
     slow_model_dim: usize,
     fast_model_dim: usize,
     max_seq_len: usize,
-    short_logits_size: usize,
     scale_codebook_embeddings: bool,
+    fast_vocab_limit: usize,
+    current_codes_scratch: Vec<u32>,
+    instrumentation: RunnerInstrumentation,
 }
 
 type MetalContext = <Metal as Backend>::Context;
@@ -98,9 +139,20 @@ struct TokenDecoderRunner {
     model_shape: ModelShape,
     decoder_config: Rc<crate::config::DecoderConfig>,
     executables: Decoder<Metal>,
+    sampler: GpuSampling<Metal>,
     kv_cache_update: KVCacheUpdate<Metal>,
+    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
+    tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
+    single_hidden_capture: ArrayCell<Metal>,
+    single_override_embedding: ArrayCell<Metal>,
+    single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
+    should_fill_attention_bias: bool,
     next_position: usize,
+    instrumentation: RunnerInstrumentation,
 }
+
+type PreInjectionEncodeCallback<'a> =
+    dyn FnMut(&TokenDecoderRunner, &ForwardPassState<Metal>, &MetalCommandBuffer) -> Result<(), Error> + 'a;
 
 struct MatrixF32 {
     rows: usize,
@@ -108,25 +160,28 @@ struct MatrixF32 {
     values: Vec<f32>,
 }
 
-enum EmbeddingInjection {
-    None,
-    Add {
-        values: Vec<f32>,
-        post_scale: Option<f32>,
-    },
-    Override(Vec<f32>),
+struct FishAudioGpuPath {
+    embedding_lookup: <<Metal as Backend>::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
+    projection: <<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel,
+    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
+    tensor_add_bias: <<Metal as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
+    codebook_embeddings: ArrayCell<Metal>,
+    codebook_row_indices: ArrayCell<Metal>,
+    codebook_lookup: ArrayCell<Metal>,
+    projection_weights: Option<ArrayCell<Metal>>,
 }
 
-struct DecodeStep {
-    token: u64,
-    last_hidden: Option<Vec<f32>>,
+enum EmbeddingInjection {
+    None,
+    AddPreloaded {
+        post_scale: Option<f32>,
+    },
+    OverrideFirstRowInternal,
 }
 
 struct FishAudioSamplingState {
     rng: StdRng,
-    temperature: f32,
-    top_p: f32,
-    step_key: Option<u64>,
+    method: SamplingMethod,
 }
 
 impl FishAudioSamplingState {
@@ -139,109 +194,29 @@ impl FishAudioSamplingState {
         temperature: f32,
         top_p: f32,
     ) -> Self {
+        let method = if temperature <= 0.0 || top_p <= 0.0 {
+            SamplingMethod::Greedy
+        } else {
+            SamplingMethod::Stochastic {
+                temperature: Some(temperature),
+                top_k: None,
+                top_p: Some(top_p),
+                min_p: None,
+            }
+        };
         Self {
             rng: StdRng::seed_from_u64(seed),
-            temperature,
-            top_p,
-            step_key: None,
+            method,
         }
     }
 
-    fn begin_step(&mut self) {
-        self.step_key = Some(self.rng.random::<u64>());
+    fn method(&self) -> SamplingMethod {
+        self.method
     }
 
-    fn sample_index(
-        &mut self,
-        logits: &[f32],
-    ) -> Result<usize, Error> {
-        if logits.is_empty() {
-            return Err(Error::GenerateFailed);
-        }
-
-        if self.temperature <= 0.0 || self.top_p <= 0.0 {
-            return Ok(argmax_index(logits));
-        }
-
-        let mut sorted = logits.iter().copied().enumerate().collect::<Vec<_>>();
-        sorted.sort_by(|left, right| right.1.total_cmp(&left.1));
-
-        let max_logit = sorted[0].1;
-        let mut probs = Vec::with_capacity(sorted.len());
-        let mut sum = 0.0_f32;
-        for (_, value) in &sorted {
-            let probability = ((*value / self.temperature) - (max_logit / self.temperature)).exp();
-            probs.push(probability);
-            sum += probability;
-        }
-
-        if !sum.is_finite() || sum <= 0.0 {
-            return Ok(sorted[0].0);
-        }
-
-        for probability in &mut probs {
-            *probability /= sum;
-        }
-
-        let mut keep = probs.len();
-        if self.top_p < 1.0 {
-            let mut cumulative = 0.0_f32;
-            keep = 0;
-            for probability in &probs {
-                cumulative += *probability;
-                keep += 1;
-                if cumulative > self.top_p {
-                    break;
-                }
-            }
-            keep = keep.max(1);
-        }
-
-        let retained = &probs[..keep];
-        let retained_sum: f32 = retained.iter().sum();
-        if retained_sum <= 0.0 || !retained_sum.is_finite() {
-            return Ok(sorted[0].0);
-        }
-
-        let step_key = self.step_key.unwrap_or_else(|| self.rng.random::<u64>());
-        let mut best_index = 0usize;
-        let mut best_score = f32::NEG_INFINITY;
-        for index in 0..keep {
-            let probability = (retained[index] / retained_sum).max(f32::MIN_POSITIVE);
-            let log_prob = probability.ln();
-            let token_index = sorted[index].0 as u64;
-            let gumbel = gumbel_from_step_key(step_key, token_index);
-            let score = log_prob + gumbel;
-            if score > best_score {
-                best_score = score;
-                best_index = index;
-            }
-        }
-
-        Ok(sorted[best_index].0)
+    fn next_seed(&mut self) -> u64 {
+        self.rng.random::<u64>()
     }
-}
-
-fn splitmix64(mut value: u64) -> u64 {
-    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = value;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
-fn uniform01_from_u64(value: u64) -> f32 {
-    let mantissa = ((value >> 11) as f64) * (1.0 / ((1_u64 << 53) as f64));
-    mantissa.clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON) as f32
-}
-
-fn gumbel_from_step_key(
-    step_key: u64,
-    token_index: u64,
-) -> f32 {
-    let mixed = splitmix64(step_key ^ token_index.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    let u = uniform01_from_u64(mixed);
-    -(-u.ln()).ln()
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,6 +325,145 @@ fn fishaudio_sampling_top_p() -> f32 {
         .unwrap_or(DEFAULT_FISHAUDIO_SAMPLING_TOP_P)
 }
 
+fn is_tts_engine_v2_enabled() -> bool {
+    std::env::var(TTS_ENGINE_V2_FLAG)
+        .ok()
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            value == "1" || value == "true" || value == "yes" || value == "on"
+        })
+        .unwrap_or(false)
+}
+
+fn fishaudio_max_new_tokens_override() -> Option<usize> {
+    std::env::var("UZU_FISHAUDIO_MAX_NEW_TOKENS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+}
+
+impl FishAudioGpuPath {
+    fn new(
+        context: &MetalContext,
+        data_type: DataType,
+        codebook_embeddings: &MatrixF32,
+        fast_model_projection: &Option<MatrixF32>,
+        num_codebooks: usize,
+        codebook_size: usize,
+        slow_model_dim: usize,
+        fast_model_dim: usize,
+    ) -> Result<Self, Error> {
+        if codebook_embeddings.rows != num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?
+            || codebook_embeddings.cols != slow_model_dim
+        {
+            return Err(Error::UnableToLoadConfig);
+        }
+        if let Some(projection) = fast_model_projection
+            && (projection.rows != fast_model_dim || projection.cols != slow_model_dim)
+        {
+            return Err(Error::UnableToLoadConfig);
+        }
+
+        let embedding_lookup =
+            <<Metal as Backend>::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let projection =
+            <<<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(
+                context, data_type,
+            )
+            .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let tensor_copy = <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
+            .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let tensor_add_bias = <<Metal as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type)
+            .map_err(|_| Error::UnableToCreateBackendContext)?;
+
+        let mut codebook_embeddings_gpu = context.create_array(
+            &[num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?, slow_model_dim],
+            data_type,
+            "tts_codebook_embeddings_gpu",
+        );
+        write_f32_slice_into_array(&mut codebook_embeddings_gpu, &codebook_embeddings.values)?;
+
+        let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
+        let codebook_lookup = context.create_array(&[num_codebooks, slow_model_dim], data_type, "tts_codebook_lookup");
+
+        let projection_weights = if let Some(projection) = fast_model_projection {
+            let mut weights =
+                context.create_array(&[fast_model_dim, slow_model_dim], data_type, "tts_fast_projection_weights");
+            write_f32_slice_into_array(&mut weights, &projection.values)?;
+            Some(RefCell::new(weights))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            embedding_lookup,
+            projection,
+            tensor_copy,
+            tensor_add_bias,
+            codebook_embeddings: RefCell::new(codebook_embeddings_gpu),
+            codebook_row_indices: RefCell::new(codebook_row_indices),
+            codebook_lookup: RefCell::new(codebook_lookup),
+            projection_weights,
+        })
+    }
+}
+
+impl AdaptiveChunkController {
+    fn new(config: &TtsRunConfig) -> Self {
+        Self {
+            ema_ms_per_frame: None,
+            current_chunk_frames: config.min_chunk_frames.max(1),
+        }
+    }
+
+    fn target_frames(
+        &self,
+        config: &TtsRunConfig,
+    ) -> usize {
+        let min_frames = config.min_chunk_frames.max(1);
+        let max_frames = config.max_chunk_frames.max(min_frames);
+        match config.chunk_policy {
+            TtsChunkPolicy::Fixed => min_frames,
+            TtsChunkPolicy::Adaptive => {
+                let Some(ema_ms_per_frame) = self.ema_ms_per_frame else {
+                    return min_frames;
+                };
+                let raw = (config.target_emit_latency_ms as f64 / ema_ms_per_frame).round();
+                let candidate = raw.max(min_frames as f64).min(max_frames as f64) as usize;
+                if self.current_chunk_frames == 0 {
+                    return candidate;
+                }
+                let change = ((candidate as f64 - self.current_chunk_frames as f64).abs()
+                    / self.current_chunk_frames as f64)
+                    .max(0.0);
+                if change < DEFAULT_CHUNK_HYSTERESIS_FRACTION {
+                    self.current_chunk_frames
+                } else {
+                    candidate
+                }
+            },
+        }
+    }
+
+    fn observe(
+        &mut self,
+        frames: usize,
+        decode_elapsed: std::time::Duration,
+        next_chunk_frames: usize,
+    ) {
+        if frames == 0 {
+            return;
+        }
+        let ms_per_frame = (decode_elapsed.as_secs_f64() * 1000.0) / frames as f64;
+        self.ema_ms_per_frame = Some(match self.ema_ms_per_frame {
+            Some(previous) => previous * (1.0 - DEFAULT_CHUNK_EMA_ALPHA) + ms_per_frame * DEFAULT_CHUNK_EMA_ALPHA,
+            None => ms_per_frame,
+        });
+        self.current_chunk_frames = next_chunk_frames.max(1);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum TextDecoderConfigJson {
@@ -437,6 +551,10 @@ impl TtsSession {
         &self.runtime
     }
 
+    pub fn last_execution_stats(&self) -> Option<TtsExecutionStats> {
+        self.last_execution_stats.borrow().clone()
+    }
+
     pub fn synthesize(
         &self,
         input: Input,
@@ -453,15 +571,29 @@ impl TtsSession {
         input: Input,
         seed: u64,
     ) -> Result<AudioPcmBatch, Error> {
-        let semantic_tokens = self.generate_semantic_tokens_with_seed(input, seed)?;
-        self.runtime.decode(&semantic_tokens).map_err(Error::from)
+        self.synthesize_with_seed_and_config(input, seed, &TtsRunConfig::default())
     }
 
-    pub fn generate_semantic_tokens_with_seed(
+    pub fn synthesize_with_config(
+        &self,
+        input: Input,
+        config: &TtsRunConfig,
+    ) -> Result<AudioPcmBatch, Error> {
+        let seed = match *self.text_decoder.borrow().deref() {
+            TextDecoderRuntime::Stub(stub) => stub.default_seed,
+            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
+        };
+        self.synthesize_with_seed_and_config(input, seed, config)
+    }
+
+    pub fn synthesize_with_seed_and_config(
         &self,
         input: Input,
         seed: u64,
-    ) -> Result<AudioTokenGrid, Error> {
+        config: &TtsRunConfig,
+    ) -> Result<AudioPcmBatch, Error> {
+        config.validate().map_err(|_| Error::GenerateFailed)?;
+
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self
             .tokenizer
@@ -472,7 +604,63 @@ impl TtsSession {
             .map(|&token| token as u64)
             .collect();
 
-        self.generate_semantic_tokens(&text_tokens, seed)
+        let semantic_start = Instant::now();
+        let semantic_tokens = self.generate_semantic_tokens(&text_tokens, seed, config.max_semantic_frames)?;
+        let semantic_decode_seconds = semantic_start.elapsed().as_secs_f64();
+        let instrumentation = self.take_text_decoder_instrumentation();
+
+        let audio_start = Instant::now();
+        let pcm = match config.non_streaming_mode {
+            crate::session::config::TtsNonStreamingMode::FullDecode => {
+                self.runtime.decode(&semantic_tokens).map_err(Error::from)?
+            },
+            crate::session::config::TtsNonStreamingMode::ChunkedIfNeeded => {
+                // Incremental decode state is introduced in the runtime separately.
+                // Until that lands, keep full decode for parity.
+                self.runtime.decode(&semantic_tokens).map_err(Error::from)?
+            },
+        };
+        let audio_decode_seconds = audio_start.elapsed().as_secs_f64();
+
+        self.record_last_execution_stats(TtsExecutionStats {
+            semantic_decode_seconds,
+            audio_decode_seconds,
+            callback_seconds: 0.0,
+            command_buffers_submitted: instrumentation.command_buffers_submitted,
+            host_waits: instrumentation.host_waits,
+            semantic_frames: semantic_tokens.frames(),
+            emitted_chunks: usize::from(config.streaming_enabled),
+        });
+
+        Ok(pcm)
+    }
+
+    pub fn generate_semantic_tokens_with_seed(
+        &self,
+        input: Input,
+        seed: u64,
+    ) -> Result<AudioTokenGrid, Error> {
+        self.generate_semantic_tokens_with_seed_and_config(input, seed, &TtsRunConfig::default())
+    }
+
+    pub fn generate_semantic_tokens_with_seed_and_config(
+        &self,
+        input: Input,
+        seed: u64,
+        config: &TtsRunConfig,
+    ) -> Result<AudioTokenGrid, Error> {
+        config.validate().map_err(|_| Error::GenerateFailed)?;
+        let prompt = self.render_prompt(&input)?;
+        let text_tokens: Vec<u64> = self
+            .tokenizer
+            .encode(prompt.as_str(), false)
+            .map_err(|_| Error::UnableToEncodeText)?
+            .get_ids()
+            .iter()
+            .map(|&token| token as u64)
+            .collect();
+
+        self.generate_semantic_tokens(&text_tokens, seed, config.max_semantic_frames)
     }
 
     pub fn synthesize_streaming<F>(
@@ -492,6 +680,126 @@ impl TtsSession {
     }
 
     pub fn synthesize_streaming_with_seed<F>(
+        &self,
+        input: Input,
+        seed: u64,
+        chunk_frames: usize,
+        on_chunk: F,
+    ) -> Result<AudioPcmBatch, Error>
+    where
+        F: FnMut(&AudioPcmBatch),
+    {
+        let config = TtsRunConfig::fixed_chunk_frames(chunk_frames);
+        self.synthesize_streaming_with_seed_and_config(input, seed, &config, on_chunk)
+    }
+
+    pub fn synthesize_streaming_with_config<F>(
+        &self,
+        input: Input,
+        config: &TtsRunConfig,
+        on_chunk: F,
+    ) -> Result<AudioPcmBatch, Error>
+    where
+        F: FnMut(&AudioPcmBatch),
+    {
+        let seed = match *self.text_decoder.borrow().deref() {
+            TextDecoderRuntime::Stub(stub) => stub.default_seed,
+            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
+        };
+        self.synthesize_streaming_with_seed_and_config(input, seed, config, on_chunk)
+    }
+
+    pub fn synthesize_streaming_with_seed_and_config<F>(
+        &self,
+        input: Input,
+        seed: u64,
+        config: &TtsRunConfig,
+        mut on_chunk: F,
+    ) -> Result<AudioPcmBatch, Error>
+    where
+        F: FnMut(&AudioPcmBatch),
+    {
+        config.validate().map_err(|_| Error::GenerateFailed)?;
+        if !config.streaming_enabled {
+            let pcm = self.synthesize_with_seed_and_config(input, seed, config)?;
+            on_chunk(&pcm);
+            return Ok(pcm);
+        }
+
+        if !is_tts_engine_v2_enabled() {
+            return self.synthesize_streaming_legacy(input, seed, config.min_chunk_frames, on_chunk);
+        }
+
+        let prompt = self.render_prompt(&input)?;
+        let text_tokens: Vec<u64> = self
+            .tokenizer
+            .encode(prompt.as_str(), false)
+            .map_err(|_| Error::UnableToEncodeText)?
+            .get_ids()
+            .iter()
+            .map(|&token| token as u64)
+            .collect();
+
+        let mut streamed_tokens = StreamingTokenAccumulator::new(self.runtime.config().num_groups())?;
+        let mut emitted_samples = 0usize;
+        let mut emitted_chunks = 0usize;
+        let mut callback_seconds = 0.0_f64;
+        let mut audio_decode_seconds = 0.0_f64;
+        let mut last_decoded_frames = 0usize;
+        let mut chunk_controller = AdaptiveChunkController::new(config);
+
+        let semantic_start = Instant::now();
+        let semantic_tokens = self.generate_semantic_tokens_with_callback(
+            &text_tokens,
+            seed,
+            config.max_semantic_frames,
+            &mut |codes| {
+                streamed_tokens.push_frame(codes)?;
+                let ready_frames = streamed_tokens.frames().saturating_sub(last_decoded_frames);
+                let target_frames = chunk_controller.target_frames(config);
+                if ready_frames >= target_frames {
+                    let decode_start = Instant::now();
+                    let partial_grid = streamed_tokens.to_grid()?;
+                    let partial_pcm = self.runtime.decode(&partial_grid).map_err(Error::from)?;
+                    let decode_elapsed = decode_start.elapsed();
+                    audio_decode_seconds += decode_elapsed.as_secs_f64();
+                    chunk_controller.observe(ready_frames, decode_elapsed, target_frames);
+
+                    let callback_start = Instant::now();
+                    Self::emit_streaming_chunk(&partial_pcm, &mut emitted_samples, &mut on_chunk)?;
+                    callback_seconds += callback_start.elapsed().as_secs_f64();
+                    emitted_chunks += 1;
+                    last_decoded_frames = streamed_tokens.frames();
+                }
+                Ok(())
+            },
+        )?;
+        let semantic_decode_seconds = semantic_start.elapsed().as_secs_f64();
+
+        let final_decode_start = Instant::now();
+        let full_pcm = self.runtime.decode(&semantic_tokens).map_err(Error::from)?;
+        audio_decode_seconds += final_decode_start.elapsed().as_secs_f64();
+
+        let callback_start = Instant::now();
+        Self::emit_streaming_chunk(&full_pcm, &mut emitted_samples, &mut on_chunk)?;
+        callback_seconds += callback_start.elapsed().as_secs_f64();
+        emitted_chunks += 1;
+
+        let instrumentation = self.take_text_decoder_instrumentation();
+        self.record_last_execution_stats(TtsExecutionStats {
+            semantic_decode_seconds,
+            audio_decode_seconds,
+            callback_seconds,
+            command_buffers_submitted: instrumentation.command_buffers_submitted,
+            host_waits: instrumentation.host_waits,
+            semantic_frames: semantic_tokens.frames(),
+            emitted_chunks,
+        });
+
+        Ok(full_pcm)
+    }
+
+    fn synthesize_streaming_legacy<F>(
         &self,
         input: Input,
         seed: u64,
@@ -517,15 +825,20 @@ impl TtsSession {
 
         let mut streamed_tokens = StreamingTokenAccumulator::new(self.runtime.config().num_groups())?;
         let mut emitted_samples = 0usize;
-        let semantic_tokens = self.generate_semantic_tokens_with_callback(&text_tokens, seed, &mut |codes| {
-            streamed_tokens.push_frame(codes)?;
-            if streamed_tokens.frames() % chunk_frames == 0 {
-                let partial_grid = streamed_tokens.to_grid()?;
-                let partial_pcm = self.runtime.decode(&partial_grid).map_err(Error::from)?;
-                Self::emit_streaming_chunk(&partial_pcm, &mut emitted_samples, &mut on_chunk)?;
-            }
-            Ok(())
-        })?;
+        let semantic_tokens = self.generate_semantic_tokens_with_callback(
+            &text_tokens,
+            seed,
+            TtsRunConfig::default().max_semantic_frames,
+            &mut |codes| {
+                streamed_tokens.push_frame(codes)?;
+                if streamed_tokens.frames() % chunk_frames == 0 {
+                    let partial_grid = streamed_tokens.to_grid()?;
+                    let partial_pcm = self.runtime.decode(&partial_grid).map_err(Error::from)?;
+                    Self::emit_streaming_chunk(&partial_pcm, &mut emitted_samples, &mut on_chunk)?;
+                }
+                Ok(())
+            },
+        )?;
 
         let full_pcm = self.runtime.decode(&semantic_tokens).map_err(Error::from)?;
         Self::emit_streaming_chunk(&full_pcm, &mut emitted_samples, &mut on_chunk)?;
@@ -558,6 +871,7 @@ impl TtsSession {
             prompt_template: tts_model_config.message_processor_config.prompt_template.clone(),
             drop_initial_newline: tts_model_config.message_processor_config.drop_initial_newline,
             text_decoder: RefCell::new(text_decoder),
+            last_execution_stats: RefCell::new(None),
         })
     }
 
@@ -601,13 +915,15 @@ impl TtsSession {
         &self,
         text_tokens: &[u64],
         seed: u64,
+        max_semantic_frames: usize,
     ) -> Result<AudioTokenGrid, Error> {
+        let max_semantic_frames = max_semantic_frames.max(1);
         let mut decoder = self.text_decoder.borrow_mut();
         let codec_cardinality =
             usize::try_from(self.runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
         match &mut *decoder {
             TextDecoderRuntime::Stub(stub) => {
-                let frames = text_tokens.len();
+                let frames = text_tokens.len().min(max_semantic_frames);
                 if stub.num_codebooks != self.runtime.config().num_groups() {
                     return Err(Error::UnableToLoadConfig);
                 }
@@ -630,7 +946,7 @@ impl TtsSession {
                 .map_err(Error::from)
             },
             TextDecoderRuntime::FishAudio(runtime) => {
-                runtime.generate_semantic_tokens(text_tokens, codec_cardinality, seed)
+                runtime.generate_semantic_tokens(text_tokens, codec_cardinality, seed, max_semantic_frames)
             },
         }
     }
@@ -639,17 +955,19 @@ impl TtsSession {
         &self,
         text_tokens: &[u64],
         seed: u64,
+        max_semantic_frames: usize,
         on_frame: &mut F,
     ) -> Result<AudioTokenGrid, Error>
     where
         F: FnMut(&[u32]) -> Result<(), Error>,
     {
+        let max_semantic_frames = max_semantic_frames.max(1);
         let mut decoder = self.text_decoder.borrow_mut();
         let codec_cardinality =
             usize::try_from(self.runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
         match &mut *decoder {
             TextDecoderRuntime::Stub(stub) => {
-                let frames = text_tokens.len();
+                let frames = text_tokens.len().min(max_semantic_frames);
                 if stub.num_codebooks != self.runtime.config().num_groups() {
                     return Err(Error::UnableToLoadConfig);
                 }
@@ -679,9 +997,13 @@ impl TtsSession {
                 }
                 Ok(grid)
             },
-            TextDecoderRuntime::FishAudio(runtime) => {
-                runtime.generate_semantic_tokens_with_callback(text_tokens, codec_cardinality, seed, on_frame)
-            },
+            TextDecoderRuntime::FishAudio(runtime) => runtime.generate_semantic_tokens_with_callback(
+                text_tokens,
+                codec_cardinality,
+                seed,
+                max_semantic_frames,
+                on_frame,
+            ),
         }
     }
 
@@ -723,6 +1045,21 @@ impl TtsSession {
         on_chunk(&chunk);
         *emitted_samples = samples.len();
         Ok(())
+    }
+
+    fn take_text_decoder_instrumentation(&self) -> RunnerInstrumentation {
+        let mut decoder = self.text_decoder.borrow_mut();
+        match &mut *decoder {
+            TextDecoderRuntime::Stub(_) => RunnerInstrumentation::default(),
+            TextDecoderRuntime::FishAudio(runtime) => runtime.take_instrumentation(),
+        }
+    }
+
+    fn record_last_execution_stats(
+        &self,
+        stats: TtsExecutionStats,
+    ) {
+        self.last_execution_stats.borrow_mut().replace(stats);
     }
 }
 
@@ -801,8 +1138,10 @@ fn parse_text_decoder_runtime(
                 Rc::new(slow_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
             let fast_decoder_config =
                 Rc::new(fast_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+            let text_decoder_context = MetalContext::new().map_err(|_| Error::UnableToCreateBackendContext)?;
 
-            let slow_runner = TokenDecoderRunner::new(
+            let slow_runner = TokenDecoderRunner::new_with_context(
+                text_decoder_context.clone(),
                 model_path,
                 slow_decoder_config,
                 "text_decoder.transformer_slow",
@@ -811,7 +1150,8 @@ fn parse_text_decoder_runtime(
             )?;
 
             let fast_runner = if config.num_codebooks > 1 {
-                Some(TokenDecoderRunner::new(
+                Some(TokenDecoderRunner::new_with_context(
+                    text_decoder_context.clone(),
                     model_path,
                     fast_decoder_config,
                     "text_decoder.transformer_fast",
@@ -841,11 +1181,29 @@ fn parse_text_decoder_runtime(
                 None
             };
 
+            let activation_data_type = slow_runner.single_hidden_capture.borrow().data_type();
+            if let Some(fast_runner_ref) = fast_runner.as_ref() {
+                let fast_data_type = fast_runner_ref.single_override_embedding.borrow().data_type();
+                if fast_data_type != activation_data_type {
+                    return Err(Error::UnableToLoadConfig);
+                }
+            }
+
+            let gpu_path = FishAudioGpuPath::new(
+                text_decoder_context.as_ref(),
+                activation_data_type,
+                &codebook_embeddings,
+                &fast_model_projection,
+                config.num_codebooks,
+                config.codebook_size,
+                config.slow_model_dim,
+                config.fast_model_dim,
+            )?;
+
             Ok(TextDecoderRuntime::FishAudio(FishAudioTextDecoderRuntime {
                 slow_runner,
                 fast_runner,
-                codebook_embeddings,
-                fast_model_projection,
+                gpu_path,
                 semantic_token_begin_id: config.semantic_token_begin_id,
                 semantic_token_end_id: config.semantic_token_end_id,
                 semantic_cardinality,
@@ -855,8 +1213,10 @@ fn parse_text_decoder_runtime(
                 slow_model_dim: config.slow_model_dim,
                 fast_model_dim: config.fast_model_dim,
                 max_seq_len: config.max_seq_len,
-                short_logits_size: config.short_logits_size,
                 scale_codebook_embeddings: config.scale_codebook_embeddings,
+                fast_vocab_limit: config.short_logits_size.min(config.codebook_size),
+                current_codes_scratch: vec![0_u32; config.num_codebooks],
+                instrumentation: RunnerInstrumentation::default(),
             }))
         },
     }
@@ -868,8 +1228,9 @@ impl FishAudioTextDecoderRuntime {
         text_tokens: &[u64],
         codec_cardinality: usize,
         seed: u64,
+        max_semantic_frames: usize,
     ) -> Result<AudioTokenGrid, Error> {
-        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, None)
+        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, max_semantic_frames, None)
     }
 
     fn generate_semantic_tokens_with_callback<F>(
@@ -877,12 +1238,19 @@ impl FishAudioTextDecoderRuntime {
         text_tokens: &[u64],
         codec_cardinality: usize,
         seed: u64,
+        max_semantic_frames: usize,
         on_frame: &mut F,
     ) -> Result<AudioTokenGrid, Error>
     where
         F: FnMut(&[u32]) -> Result<(), Error>,
     {
-        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, Some(on_frame))
+        self.generate_semantic_tokens_internal(
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+            Some(on_frame),
+        )
     }
 
     fn generate_semantic_tokens_internal(
@@ -890,6 +1258,7 @@ impl FishAudioTextDecoderRuntime {
         text_tokens: &[u64],
         codec_cardinality: usize,
         seed: u64,
+        max_semantic_frames: usize,
         mut on_frame: Option<&mut dyn FnMut(&[u32]) -> Result<(), Error>>,
     ) -> Result<AudioTokenGrid, Error> {
         if text_tokens.is_empty() {
@@ -913,14 +1282,44 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::UnableToLoadConfig);
         }
 
+        self.instrumentation = RunnerInstrumentation::default();
         self.slow_runner.reset();
+        self.slow_runner.clear_instrumentation();
+        if let Some(fast_runner) = self.fast_runner.as_mut() {
+            fast_runner.clear_instrumentation();
+        }
         let mut sampling = FishAudioSamplingState::new(seed);
-        sampling.begin_step();
-        let (mut current_semantic_token, mut current_hidden) =
-            self.slow_runner.decode_next_token_with_hidden(text_tokens, EmbeddingInjection::None, &mut sampling)?;
+        let mut current_semantic_token = self.slow_runner.decode_next_token_with_hidden_capture(
+            text_tokens,
+            EmbeddingInjection::None,
+            &mut sampling,
+        )?;
+        let post_scale = if self.scale_codebook_embeddings {
+            Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
+        } else {
+            None
+        };
 
-        let max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len());
-        let mut by_codebook = vec![Vec::<u32>::new(); self.num_codebooks];
+        let mut max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len());
+        max_new_tokens = max_new_tokens.min(max_semantic_frames.max(1));
+        if let Some(limit) = fishaudio_max_new_tokens_override() {
+            max_new_tokens = max_new_tokens.min(limit);
+        }
+        let mut by_codebook =
+            (0..self.num_codebooks).map(|_| Vec::<u32>::with_capacity(max_new_tokens)).collect::<Vec<_>>();
+        if self.current_codes_scratch.len() != self.num_codebooks {
+            self.current_codes_scratch = vec![0_u32; self.num_codebooks];
+        }
+
+        if self.num_codebooks > 1 {
+            let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+            if fast_vocab_limit == 0 {
+                return Err(Error::UnableToLoadConfig);
+            }
+            if let Some(fast_runner) = self.fast_runner.as_mut() {
+                fast_runner.prepare_single_token_vocab_mask(fast_vocab_limit)?;
+            }
+        }
 
         for _step in 0..max_new_tokens {
             if current_semantic_token as i64 == self.im_end_token_id {
@@ -934,50 +1333,102 @@ impl FishAudioTextDecoderRuntime {
                 semantic_token_upper_bound,
             );
             by_codebook[0].push(first_code);
-
-            let mut current_codes = Vec::with_capacity(self.num_codebooks);
-            current_codes.push(first_code);
+            self.current_codes_scratch[0] = first_code;
 
             if self.num_codebooks > 1 {
-                let projected_hidden = self.project_slow_hidden_to_fast(&current_hidden)?;
-                let Some(fast_runner) = self.fast_runner.as_mut() else {
+                let (slow_runner, fast_runner_opt, gpu_path) =
+                    (&mut self.slow_runner, &mut self.fast_runner, &mut self.gpu_path);
+                let slow_hidden_capture = &slow_runner.single_hidden_capture;
+                let slow_model_dim = self.slow_model_dim;
+                let fast_model_dim = self.fast_model_dim;
+                let Some(fast_runner) = fast_runner_opt.as_mut() else {
                     return Err(Error::GenerateFailed);
                 };
 
                 fast_runner.reset();
-                fast_runner.advance_with_override_embedding(&projected_hidden, &mut sampling)?;
-
-                let fast_vocab_limit = self.short_logits_size.min(residual_token_upper_bound);
-                if fast_vocab_limit == 0 {
-                    return Err(Error::UnableToLoadConfig);
+                let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+                let mut pre_projection =
+                    |runner: &TokenDecoderRunner,
+                     _state: &ForwardPassState<Metal>,
+                     command_buffer: &MetalCommandBuffer| {
+                        Self::encode_project_slow_hidden_to_fast_on(
+                            runner.context.as_ref(),
+                            gpu_path,
+                            slow_hidden_capture,
+                            &runner.single_override_embedding,
+                            slow_model_dim,
+                            fast_model_dim,
+                            command_buffer,
+                        )
+                    };
+                let mut fast_token = fast_runner
+                    .decode_next_token_with_override_prefix_from_internal_and_pre_injection(
+                        u64::from(first_code),
+                        Some(fast_vocab_limit),
+                        &mut sampling,
+                        Some(&mut pre_projection),
+                    )?;
+                if self.num_codebooks > 1 {
+                    let clamped =
+                        u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                            .map_err(|_| Error::GenerateFailed)?;
+                    by_codebook[1].push(clamped);
+                    self.current_codes_scratch[1] = clamped;
+                    fast_token = u64::from(clamped);
                 }
 
-                let mut fast_token = u64::from(first_code);
-                for codebook_index in 1..self.num_codebooks {
+                for codebook_index in 2..self.num_codebooks {
                     fast_token = fast_runner.decode_next_token_with_vocab_limit(
                         &[fast_token],
                         Some(fast_vocab_limit),
                         &mut sampling,
+                        None,
                     )?;
                     let clamped =
                         u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
                             .map_err(|_| Error::GenerateFailed)?;
                     by_codebook[codebook_index].push(clamped);
-                    current_codes.push(clamped);
+                    self.current_codes_scratch[codebook_index] = clamped;
                     fast_token = u64::from(clamped);
                 }
             }
 
             if let Some(callback) = on_frame.as_mut() {
-                callback(&current_codes)?;
+                callback(&self.current_codes_scratch)?;
             }
 
-            let injection = self.build_slow_embedding_injection(&current_codes)?;
-            sampling.begin_step();
-            let (next_semantic_token, next_hidden) =
-                self.slow_runner.decode_next_token_with_hidden(&[current_semantic_token], injection, &mut sampling)?;
-            current_semantic_token = next_semantic_token;
-            current_hidden = next_hidden;
+            let (slow_runner, gpu_path) = (&mut self.slow_runner, &mut self.gpu_path);
+            let current_codes = self.current_codes_scratch.as_slice();
+            let num_codebooks = self.num_codebooks;
+            let codebook_size = self.codebook_size;
+            let slow_model_dim = self.slow_model_dim;
+            let mut pre_codebook_sum =
+                |runner: &TokenDecoderRunner, _state: &ForwardPassState<Metal>, command_buffer: &MetalCommandBuffer| {
+                    Self::encode_slow_codebook_sum_from_codes_on(
+                        gpu_path,
+                        &runner.single_override_embedding,
+                        current_codes,
+                        num_codebooks,
+                        codebook_size,
+                        slow_model_dim,
+                        command_buffer,
+                    )
+                };
+            current_semantic_token = slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
+                &[current_semantic_token],
+                EmbeddingInjection::AddPreloaded {
+                    post_scale,
+                },
+                &mut sampling,
+                Some(&mut pre_codebook_sum),
+            )?;
+        }
+
+        self.instrumentation = self.slow_runner.take_instrumentation();
+        if let Some(fast_runner) = self.fast_runner.as_mut() {
+            let fast = fast_runner.take_instrumentation();
+            self.instrumentation.command_buffers_submitted += fast.command_buffers_submitted;
+            self.instrumentation.host_waits += fast.host_waits;
         }
 
         let frames = by_codebook.first().map_or(0, Vec::len);
@@ -1000,62 +1451,164 @@ impl FishAudioTextDecoderRuntime {
         .map_err(Error::from)
     }
 
-    fn build_slow_embedding_injection(
-        &self,
-        codebooks: &[u32],
-    ) -> Result<EmbeddingInjection, Error> {
-        if codebooks.len() != self.num_codebooks {
-            return Err(Error::GenerateFailed);
-        }
-        let mut sum = vec![0.0_f32; self.slow_model_dim];
+    fn encode_project_slow_hidden_to_fast_on(
+        context: &MetalContext,
+        gpu_path: &mut FishAudioGpuPath,
+        slow_hidden_capture: &ArrayCell<Metal>,
+        output_embedding: &ArrayCell<Metal>,
+        slow_model_dim: usize,
+        fast_model_dim: usize,
+        command_buffer: &MetalCommandBuffer,
+    ) -> Result<(), Error> {
+        let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
 
-        for (codebook_index, &token) in codebooks.iter().enumerate() {
-            let token = usize::try_from(token).map_err(|_| Error::GenerateFailed)?;
-            if token >= self.codebook_size {
+        if let Some(weights) = gpu_path.projection_weights.as_ref() {
+            let hidden = slow_hidden_capture.borrow();
+            let weights = weights.borrow();
+            let output = output_embedding.borrow();
+            if hidden.shape() != [1, slow_model_dim]
+                || output.shape() != [1, fast_model_dim]
+                || weights.shape() != [fast_model_dim, slow_model_dim]
+            {
                 return Err(Error::GenerateFailed);
             }
-            let row = codebook_index
-                .checked_mul(self.codebook_size)
-                .and_then(|offset| offset.checked_add(token))
-                .ok_or(Error::GenerateFailed)?;
-            let embedding_row = self.codebook_embeddings.row(row).ok_or(Error::GenerateFailed)?;
-            for (dst, &src) in sum.iter_mut().zip(embedding_row.iter()) {
-                *dst += src;
-            }
+
+            command_buffer.with_compute_encoder(|encoder| {
+                gpu_path.projection.encode(
+                    context,
+                    encoder,
+                    FullPrecisionMatmulArguments {
+                        a: hidden.buffer(),
+                        a_offset: hidden.offset(),
+                        b: weights.buffer(),
+                        output: output.buffer(),
+                        bias: None,
+                        batch: 1,
+                        input_dim: slow_model_dim,
+                        output_dim: fast_model_dim,
+                    },
+                );
+            });
+            return Ok(());
         }
 
-        let post_scale = if self.scale_codebook_embeddings {
-            Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
-        } else {
-            None
-        };
-
-        Ok(EmbeddingInjection::Add {
-            values: sum,
-            post_scale,
-        })
-    }
-
-    fn project_slow_hidden_to_fast(
-        &self,
-        hidden: &[f32],
-    ) -> Result<Vec<f32>, Error> {
-        if hidden.len() != self.slow_model_dim {
-            return Err(Error::GenerateFailed);
-        }
-
-        if let Some(projection) = &self.fast_model_projection {
-            if projection.rows != self.fast_model_dim || projection.cols != self.slow_model_dim {
-                return Err(Error::UnableToLoadConfig);
-            }
-            return projection.matmul(hidden).ok_or(Error::GenerateFailed);
-        }
-
-        if self.slow_model_dim != self.fast_model_dim {
+        if slow_model_dim != fast_model_dim {
             return Err(Error::UnableToLoadConfig);
         }
 
-        Ok(hidden.to_vec())
+        let hidden = slow_hidden_capture.borrow();
+        let output = output_embedding.borrow();
+        if hidden.shape() != [1, slow_model_dim] || output.shape() != [1, fast_model_dim] {
+            return Err(Error::GenerateFailed);
+        }
+        command_buffer.with_compute_encoder(|encoder| {
+            gpu_path.tensor_copy.encode(
+                (hidden.buffer(), hidden.offset()),
+                (output.buffer(), output.offset()),
+                model_dim_u32,
+                encoder,
+            );
+        });
+        Ok(())
+    }
+
+    fn encode_slow_codebook_sum_from_codes_on(
+        gpu_path: &mut FishAudioGpuPath,
+        slow_sum_embedding: &ArrayCell<Metal>,
+        current_codes: &[u32],
+        num_codebooks: usize,
+        codebook_size: usize,
+        slow_model_dim: usize,
+        command_buffer: &MetalCommandBuffer,
+    ) -> Result<(), Error> {
+        if current_codes.len() != num_codebooks {
+            return Err(Error::GenerateFailed);
+        }
+        if num_codebooks == 0 {
+            return Err(Error::UnableToLoadConfig);
+        }
+
+        {
+            let mut row_indices = gpu_path.codebook_row_indices.borrow_mut();
+            if row_indices.shape() != [num_codebooks] || row_indices.data_type() != DataType::U64 {
+                return Err(Error::GenerateFailed);
+            }
+            let indices_slice = row_indices.as_slice_mut::<u64>();
+            for (codebook_index, &token) in current_codes.iter().enumerate() {
+                let token = usize::try_from(token).map_err(|_| Error::GenerateFailed)?;
+                if token >= codebook_size {
+                    return Err(Error::GenerateFailed);
+                }
+                let row = codebook_index
+                    .checked_mul(codebook_size)
+                    .and_then(|offset| offset.checked_add(token))
+                    .ok_or(Error::GenerateFailed)?;
+                indices_slice[codebook_index] = u64::try_from(row).map_err(|_| Error::GenerateFailed)?;
+            }
+        }
+
+        let total_vocab = num_codebooks.checked_mul(codebook_size).ok_or(Error::GenerateFailed)?;
+        let total_vocab_u32 = u32::try_from(total_vocab).map_err(|_| Error::GenerateFailed)?;
+        let num_codebooks_u32 = u32::try_from(num_codebooks).map_err(|_| Error::GenerateFailed)?;
+        let slow_model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
+        let lookup_row_stride = slow_model_dim
+            .checked_mul(gpu_path.codebook_lookup.borrow().data_type().size_in_bytes())
+            .ok_or(Error::GenerateFailed)?;
+        gpu_path
+            .codebook_lookup
+            .borrow()
+            .offset()
+            .checked_add(lookup_row_stride.checked_mul(num_codebooks.saturating_sub(1)).ok_or(Error::GenerateFailed)?)
+            .ok_or(Error::GenerateFailed)?;
+
+        let codebook_row_indices = gpu_path.codebook_row_indices.borrow();
+        let codebook_embeddings = gpu_path.codebook_embeddings.borrow();
+        let codebook_lookup = gpu_path.codebook_lookup.borrow();
+        let slow_sum = slow_sum_embedding.borrow();
+        if codebook_row_indices.shape() != [num_codebooks]
+            || codebook_embeddings.shape() != [total_vocab, slow_model_dim]
+            || codebook_lookup.shape() != [num_codebooks, slow_model_dim]
+            || slow_sum.shape() != [1, slow_model_dim]
+            || codebook_embeddings.data_type() != slow_sum.data_type()
+            || codebook_lookup.data_type() != slow_sum.data_type()
+        {
+            return Err(Error::GenerateFailed);
+        }
+
+        command_buffer.with_compute_encoder(|encoder| {
+            gpu_path.embedding_lookup.encode(
+                (codebook_row_indices.buffer(), codebook_row_indices.offset()),
+                (codebook_embeddings.buffer(), codebook_embeddings.offset()),
+                (codebook_lookup.buffer(), codebook_lookup.offset()),
+                num_codebooks_u32,
+                total_vocab_u32,
+                slow_model_dim_u32,
+                1.0,
+                encoder,
+            );
+            gpu_path.tensor_copy.encode(
+                (codebook_lookup.buffer(), codebook_lookup.offset()),
+                (slow_sum.buffer(), slow_sum.offset()),
+                slow_model_dim_u32,
+                encoder,
+            );
+            for row_index in 1..num_codebooks {
+                let bias_offset = codebook_lookup.offset() + row_index * lookup_row_stride;
+                gpu_path.tensor_add_bias.encode(
+                    (slow_sum.buffer(), slow_sum.offset()),
+                    (codebook_lookup.buffer(), bias_offset),
+                    (slow_sum.buffer(), slow_sum.offset()),
+                    slow_model_dim_u32,
+                    slow_model_dim_u32,
+                    encoder,
+                );
+            }
+        });
+        Ok(())
+    }
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
+        std::mem::take(&mut self.instrumentation)
     }
 }
 
@@ -1080,20 +1633,22 @@ fn semantic_token_to_code(
 }
 
 impl TokenDecoderRunner {
-    fn new(
+    fn new_with_context(
+        context: Rc<MetalContext>,
         model_path: &Path,
         decoder_config: Rc<crate::config::DecoderConfig>,
         transformer_subtree: &str,
         embedding_subtree: &str,
         readout_subtree: &str,
     ) -> Result<Self, Error> {
-        let context = MetalContext::new().map_err(|_| Error::UnableToCreateBackendContext)?;
         let command_buffer =
             Rc::new(RefCell::new(context.create_command_buffer().expect("Failed to create command buffer")));
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
         let max_prefix_length = decoder_config.context_length;
         let max_suffix_length = decoder_config.context_length.max(1);
+        let should_fill_attention_bias =
+            model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
 
         let weights_path = model_path.join("model.safetensors");
         let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
@@ -1113,6 +1668,27 @@ impl TokenDecoderRunner {
             embedding_subtree,
             readout_subtree,
         );
+        let logits_data_type = scratch_buffers.logits.borrow().data_type();
+        let sampler =
+            GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let activation_data_type = model_shape.activation_data_type();
+        let tensor_copy =
+            <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let tensor_add_scale =
+            <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let single_hidden_capture = RefCell::new(context.create_array(
+            &[1, decoder_config.model_dim],
+            activation_data_type,
+            "tts_single_hidden_capture",
+        ));
+        let single_override_embedding = RefCell::new(context.create_array(
+            &[1, decoder_config.model_dim],
+            activation_data_type,
+            "tts_single_override_embedding",
+        ));
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -1134,8 +1710,16 @@ impl TokenDecoderRunner {
             model_shape,
             decoder_config,
             executables,
+            sampler,
             kv_cache_update,
+            tensor_copy,
+            tensor_add_scale,
+            single_hidden_capture,
+            single_override_embedding,
+            single_token_vocab_masks: HashMap::new(),
+            should_fill_attention_bias,
             next_position: 0,
+            instrumentation: RunnerInstrumentation::default(),
         })
     }
 
@@ -1149,29 +1733,83 @@ impl TokenDecoderRunner {
         token_ids: &[u64],
         vocab_limit: Option<usize>,
         sampling: &mut FishAudioSamplingState,
+        precomputed_single_token_bitmask: Option<&[u32]>,
     ) -> Result<u64, Error> {
-        let step = self.decode_next_step(token_ids, EmbeddingInjection::None, vocab_limit, false, sampling)?;
-        Ok(step.token)
+        self.decode_next_step(
+            token_ids,
+            EmbeddingInjection::None,
+            vocab_limit,
+            sampling,
+            precomputed_single_token_bitmask,
+            false,
+            None,
+        )
     }
 
-    fn decode_next_token_with_hidden(
+    fn decode_next_token_with_hidden_capture(
         &mut self,
         token_ids: &[u64],
         embedding_injection: EmbeddingInjection,
         sampling: &mut FishAudioSamplingState,
-    ) -> Result<(u64, Vec<f32>), Error> {
-        let step = self.decode_next_step(token_ids, embedding_injection, None, true, sampling)?;
-        let hidden = step.last_hidden.ok_or(Error::GenerateFailed)?;
-        Ok((step.token, hidden))
+    ) -> Result<u64, Error> {
+        self.decode_next_step(token_ids, embedding_injection, None, sampling, None, true, None)
     }
 
-    fn advance_with_override_embedding(
+    fn decode_next_token_with_hidden_capture_and_pre_injection(
         &mut self,
-        embedding: &[f32],
+        token_ids: &[u64],
+        embedding_injection: EmbeddingInjection,
         sampling: &mut FishAudioSamplingState,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
+    ) -> Result<u64, Error> {
+        self.decode_next_step(token_ids, embedding_injection, None, sampling, None, true, pre_injection_encode)
+    }
+
+    fn decode_next_token_with_override_prefix_from_internal_and_pre_injection(
+        &mut self,
+        first_token: u64,
+        vocab_limit: Option<usize>,
+        sampling: &mut FishAudioSamplingState,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
+    ) -> Result<u64, Error> {
+        self.decode_next_step(
+            &[0, first_token],
+            EmbeddingInjection::OverrideFirstRowInternal,
+            vocab_limit,
+            sampling,
+            None,
+            false,
+            pre_injection_encode,
+        )
+    }
+
+    fn prepare_single_token_vocab_mask(
+        &mut self,
+        vocab_limit: usize,
     ) -> Result<(), Error> {
-        self.decode_next_step(&[0], EmbeddingInjection::Override(embedding.to_vec()), None, false, sampling)?;
+        let limit = vocab_limit.min(self.decoder_config.vocab_size);
+        if limit == 0 || limit >= self.decoder_config.vocab_size {
+            return Ok(());
+        }
+        if self.single_token_vocab_masks.contains_key(&limit) {
+            return Ok(());
+        }
+        let row_words = self.decoder_config.vocab_size.div_ceil(32);
+        let mut mask = vec![0_u32; row_words];
+        for token_index in 0..limit {
+            let word = token_index / 32;
+            let bit = token_index % 32;
+            mask[word] |= 1_u32 << bit;
+        }
+        self.single_token_vocab_masks.insert(limit, mask.into_boxed_slice());
         Ok(())
+    }
+
+    fn get_single_token_vocab_mask(
+        &self,
+        vocab_limit: usize,
+    ) -> Option<&[u32]> {
+        self.single_token_vocab_masks.get(&vocab_limit).map(|mask| mask.as_ref())
     }
 
     fn decode_next_step(
@@ -1179,282 +1817,384 @@ impl TokenDecoderRunner {
         token_ids: &[u64],
         embedding_injection: EmbeddingInjection,
         vocab_limit: Option<usize>,
-        capture_hidden: bool,
         sampling: &mut FishAudioSamplingState,
-    ) -> Result<DecodeStep, Error> {
-        if token_ids.is_empty() {
-            return Err(Error::GenerateFailed);
-        }
+        precomputed_single_token_bitmask: Option<&[u32]>,
+        capture_hidden: bool,
+        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
+    ) -> Result<u64, Error> {
+        objc2::rc::autoreleasepool(|_| {
+            if token_ids.is_empty() {
+                return Err(Error::GenerateFailed);
+            }
 
-        let positions: Vec<usize> = (self.next_position..self.next_position + token_ids.len()).collect();
-        let token_seeds = vec![0_u64; token_ids.len()];
+            let token_count = token_ids.len();
+            let sampling_start = token_count - 1;
+            let sampling_length = 1usize;
 
-        let mut state = ForwardPassState::new_llm(
-            self.context.clone(),
-            &self.decoder_config,
-            &self.model_shape,
-            &self.scratch_buffers,
-            self.cache_layers.clone(),
-            self.shared_buffers.clone(),
-            token_ids,
-            &positions,
-            None,
-            &token_seeds,
-            token_ids.len(),
-            0,
-            token_ids.len(),
-            false,
-            None,
-            false,
-            true,
-            None,
-            None,
-        );
+            let mut single_position = [0_usize; 1];
+            let mut two_positions = [0_usize; 2];
+            let positions_storage;
+            let positions: &[usize] = if token_count == 1 {
+                single_position[0] = self.next_position;
+                &single_position
+            } else if token_count == 2 {
+                two_positions[0] = self.next_position;
+                two_positions[1] = self.next_position + 1;
+                &two_positions
+            } else {
+                positions_storage = (self.next_position..self.next_position + token_count).collect::<Vec<_>>();
+                positions_storage.as_slice()
+            };
 
-        self.command_buffer =
-            Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
-        let encoding_parameters = EncodingParameters::new(false, false, false);
-        self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-        self.command_buffer.borrow().submit();
-        self.command_buffer.borrow().wait_until_completed();
+            let mut single_seed = [0_u64; 1];
+            let mut two_seeds = [0_u64; 2];
+            let mut token_seeds_storage;
+            let token_seeds: &mut [u64] = if token_count == 1 {
+                &mut single_seed
+            } else if token_count == 2 {
+                &mut two_seeds
+            } else {
+                token_seeds_storage = vec![0_u64; token_count];
+                token_seeds_storage.as_mut_slice()
+            };
+            if matches!(sampling.method(), SamplingMethod::Stochastic { .. }) {
+                token_seeds[sampling_start] = sampling.next_seed();
+            }
 
-        apply_embedding_injection(&mut state, &embedding_injection, token_ids.len(), self.decoder_config.model_dim)?;
+            enum TokenBitmaskSource<'a> {
+                None,
+                Borrowed(&'a [u32]),
+                Owned(Vec<u32>),
+            }
 
-        self.command_buffer =
-            Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
-        for layer in self.executables.layers.iter() {
-            layer.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-        }
-        self.command_buffer.borrow().submit();
-        self.command_buffer.borrow().wait_until_completed();
+            let token_bitmask_source = if let Some(mask) = precomputed_single_token_bitmask {
+                TokenBitmaskSource::Borrowed(mask)
+            } else if let Some(limit_raw) = vocab_limit {
+                let limit = limit_raw.min(self.decoder_config.vocab_size);
+                if limit == 0 {
+                    return Err(Error::GenerateFailed);
+                }
+                if limit >= self.decoder_config.vocab_size {
+                    TokenBitmaskSource::None
+                } else if token_count == 1 {
+                    if let Some(mask) = self.get_single_token_vocab_mask(limit) {
+                        TokenBitmaskSource::Borrowed(mask)
+                    } else {
+                        let row_words = self.decoder_config.vocab_size.div_ceil(32);
+                        let mut mask = vec![0_u32; row_words];
+                        for token_index in 0..limit {
+                            let word = token_index / 32;
+                            let bit = token_index % 32;
+                            mask[word] |= 1_u32 << bit;
+                        }
+                        TokenBitmaskSource::Owned(mask)
+                    }
+                } else {
+                    let row_words = self.decoder_config.vocab_size.div_ceil(32);
+                    let mut mask = vec![0_u32; token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?];
+                    for token_index in 0..limit {
+                        let word = token_index / 32;
+                        let bit = token_index % 32;
+                        mask[sampling_start * row_words + word] |= 1_u32 << bit;
+                    }
+                    TokenBitmaskSource::Owned(mask)
+                }
+            } else {
+                TokenBitmaskSource::None
+            };
 
-        let last_hidden = if capture_hidden {
-            Some(read_last_hidden_from_main(&state, token_ids.len(), self.decoder_config.model_dim)?)
-        } else {
-            None
-        };
+            let token_bitmask: Option<&[u32]> = match &token_bitmask_source {
+                TokenBitmaskSource::None => None,
+                TokenBitmaskSource::Borrowed(mask) => Some(*mask),
+                TokenBitmaskSource::Owned(mask) => Some(mask.as_slice()),
+            };
 
-        self.command_buffer =
-            Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
-        self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-        self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-        self.command_buffer.borrow().submit();
-        self.command_buffer.borrow().wait_until_completed();
+            let mut state = ForwardPassState::new_llm(
+                self.context.clone(),
+                &self.decoder_config,
+                &self.model_shape,
+                &self.scratch_buffers,
+                self.cache_layers.clone(),
+                self.shared_buffers.clone(),
+                token_ids,
+                positions,
+                token_bitmask,
+                token_seeds,
+                token_count,
+                sampling_start,
+                sampling_length,
+                false,
+                None,
+                false,
+                self.should_fill_attention_bias,
+                None,
+                None,
+            );
+            if let Some(method) = state.sampling_method_mut() {
+                *method = Some(sampling.method());
+            }
 
-        let token = read_sampled_token(&state, self.decoder_config.vocab_size, vocab_limit, sampling)?;
-        self.accept_suffix(token_ids.len(), &positions);
-        self.next_position = self.next_position.saturating_add(token_ids.len());
-        Ok(DecodeStep {
-            token,
-            last_hidden,
+            let encoding_parameters = EncodingParameters::new(false, false, false);
+            let mut single_accepted = [0_usize; 1];
+            let two_accepted = [0_usize, 1_usize];
+            let accepted_suffix_indices_storage;
+            let accepted_suffix_indices: &[usize] = if token_count == 1 {
+                single_accepted[0] = 0;
+                &single_accepted
+            } else if token_count == 2 {
+                &two_accepted
+            } else {
+                accepted_suffix_indices_storage = (0..token_count).collect::<Vec<_>>();
+                accepted_suffix_indices_storage.as_slice()
+            };
+
+            if matches!(embedding_injection, EmbeddingInjection::None) && !capture_hidden {
+                self.command_buffer = Rc::new(RefCell::new(
+                    self.context.create_command_buffer().expect("Failed to create command buffer"),
+                ));
+                self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                if let Some(pre_encode) = pre_injection_encode.as_mut() {
+                    pre_encode(self, &state, self.command_buffer.borrow().deref())?;
+                }
+                for layer in self.executables.layers.iter() {
+                    layer.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                }
+                self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.cache_layers.borrow_mut().update_after_acceptance(
+                    accepted_suffix_indices,
+                    None,
+                    self.command_buffer.borrow().deref(),
+                    &self.kv_cache_update,
+                );
+                self.submit_and_wait_current_command_buffer();
+                let token = read_sampled_token_from_sampling_output(&state)?;
+                self.cache_layers.borrow_mut().register_accepted_tokens(positions);
+                self.next_position = self.next_position.saturating_add(token_count);
+                return Ok(token);
+            }
+
+            let override_embedding = match embedding_injection {
+                EmbeddingInjection::OverrideFirstRowInternal => Some(&self.single_override_embedding),
+                _ => None,
+            };
+
+            if let Some(override_embedding) = override_embedding {
+                if capture_hidden || token_count == 0 {
+                    return Err(Error::GenerateFailed);
+                }
+
+                self.command_buffer = Rc::new(RefCell::new(
+                    self.context.create_command_buffer().expect("Failed to create command buffer"),
+                ));
+                self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                if let Some(pre_encode) = pre_injection_encode.as_mut() {
+                    pre_encode(self, &state, self.command_buffer.borrow().deref())?;
+                }
+                self.encode_override_first_row_from_device(&state, override_embedding)?;
+                for layer in self.executables.layers.iter() {
+                    layer.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                }
+                self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.cache_layers.borrow_mut().update_after_acceptance(
+                    accepted_suffix_indices,
+                    None,
+                    self.command_buffer.borrow().deref(),
+                    &self.kv_cache_update,
+                );
+                self.submit_and_wait_current_command_buffer();
+                let token = read_sampled_token_from_sampling_output(&state)?;
+                self.cache_layers.borrow_mut().register_accepted_tokens(positions);
+                self.next_position = self.next_position.saturating_add(token_count);
+                return Ok(token);
+            }
+
+            self.command_buffer =
+                Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
+            self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            if let Some(pre_encode) = pre_injection_encode.as_mut() {
+                pre_encode(self, &state, self.command_buffer.borrow().deref())?;
+            }
+            match embedding_injection {
+                EmbeddingInjection::None => {},
+                EmbeddingInjection::AddPreloaded {
+                    post_scale,
+                } => {
+                    self.encode_add_scale_from_single_bias(&state, token_count, post_scale.unwrap_or(1.0))?;
+                },
+                EmbeddingInjection::OverrideFirstRowInternal => {
+                    return Err(Error::GenerateFailed);
+                },
+            }
+            for layer in self.executables.layers.iter() {
+                layer.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            }
+            if capture_hidden {
+                self.encode_capture_last_hidden_into_single_buffer(&state, token_count)?;
+            }
+            self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            self.cache_layers.borrow_mut().update_after_acceptance(
+                accepted_suffix_indices,
+                None,
+                self.command_buffer.borrow().deref(),
+                &self.kv_cache_update,
+            );
+            self.submit_and_wait_current_command_buffer();
+            let token = read_sampled_token_from_sampling_output(&state)?;
+            self.cache_layers.borrow_mut().register_accepted_tokens(positions);
+            self.next_position = self.next_position.saturating_add(token_count);
+            Ok(token)
         })
     }
 
-    fn accept_suffix(
-        &mut self,
-        suffix_len: usize,
-        positions: &[usize],
-    ) {
-        let accepted_suffix_indices: Vec<usize> = (0..suffix_len).collect();
-        let command_buffer = self.context.create_command_buffer().expect("Failed to create command buffer");
-        self.cache_layers.borrow_mut().update_after_acceptance(
-            &accepted_suffix_indices,
-            None,
-            &command_buffer,
-            &self.kv_cache_update,
-        );
-        command_buffer.submit();
-        command_buffer.wait_until_completed();
-
-        self.cache_layers.borrow_mut().register_accepted_tokens(positions);
-    }
-}
-
-fn argmax_index(values: &[f32]) -> usize {
-    let mut best_index = 0usize;
-    let mut best_value = f32::NEG_INFINITY;
-    for (index, &value) in values.iter().enumerate() {
-        if value > best_value {
-            best_value = value;
-            best_index = index;
+    fn encode_capture_last_hidden_into_single_buffer(
+        &self,
+        state: &ForwardPassState<Metal>,
+        token_count: usize,
+    ) -> Result<(), Error> {
+        if token_count == 0 {
+            return Err(Error::GenerateFailed);
         }
+        let model_dim = self.decoder_config.model_dim;
+        let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
+        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = main.borrow();
+        let bytes_per_element = main.data_type().size_in_bytes();
+        let row_offset = (token_count - 1)
+            .checked_mul(model_dim)
+            .and_then(|value| value.checked_mul(bytes_per_element))
+            .ok_or(Error::GenerateFailed)?;
+        let src_offset = main.offset().checked_add(row_offset).ok_or(Error::GenerateFailed)?;
+        let capture = self.single_hidden_capture.borrow();
+        if capture.shape() != [1, model_dim] || capture.data_type() != main.data_type() {
+            return Err(Error::GenerateFailed);
+        }
+
+        self.command_buffer.borrow().with_compute_encoder(|encoder| {
+            self.tensor_copy.encode((main.buffer(), src_offset), capture.buffer(), model_dim_u32, encoder);
+        });
+        Ok(())
     }
-    best_index
+
+    fn encode_override_first_row_from_device(
+        &self,
+        state: &ForwardPassState<Metal>,
+        override_embedding: &ArrayCell<Metal>,
+    ) -> Result<(), Error> {
+        let model_dim = self.decoder_config.model_dim;
+        let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
+        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = main.borrow();
+        let override_embedding = override_embedding.borrow();
+        if override_embedding.shape() != [1, model_dim] || override_embedding.data_type() != main.data_type() {
+            return Err(Error::GenerateFailed);
+        }
+
+        self.command_buffer.borrow().with_compute_encoder(|encoder| {
+            self.tensor_copy.encode(
+                (override_embedding.buffer(), override_embedding.offset()),
+                (main.buffer(), main.offset()),
+                model_dim_u32,
+                encoder,
+            );
+        });
+        Ok(())
+    }
+
+    fn encode_add_scale_from_single_bias(
+        &self,
+        state: &ForwardPassState<Metal>,
+        token_count: usize,
+        scale: f32,
+    ) -> Result<(), Error> {
+        if token_count == 0 {
+            return Err(Error::GenerateFailed);
+        }
+        let model_dim = self.decoder_config.model_dim;
+        let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
+        let total_len = token_count.checked_mul(model_dim).ok_or(Error::GenerateFailed)?;
+        let total_len_u32 = u32::try_from(total_len).map_err(|_| Error::GenerateFailed)?;
+
+        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = main.borrow();
+        let bias = self.single_override_embedding.borrow();
+        if bias.shape() != [1, model_dim] || bias.data_type() != main.data_type() {
+            return Err(Error::GenerateFailed);
+        }
+
+        self.command_buffer.borrow().with_compute_encoder(|encoder| {
+            self.tensor_add_scale.encode(
+                (main.buffer(), main.offset()),
+                bias.buffer(),
+                (main.buffer(), main.offset()),
+                model_dim_u32,
+                total_len_u32,
+                scale,
+                encoder,
+            );
+        });
+        Ok(())
+    }
+
+    fn submit_and_wait_current_command_buffer(&mut self) {
+        self.command_buffer.borrow().submit();
+        self.instrumentation.command_buffers_submitted += 1;
+        self.command_buffer.borrow().wait_until_completed();
+        self.instrumentation.host_waits += 1;
+    }
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
+        std::mem::take(&mut self.instrumentation)
+    }
+
+    fn clear_instrumentation(&mut self) {
+        self.instrumentation = RunnerInstrumentation::default();
+    }
 }
 
-fn read_sampled_token(
-    state: &ForwardPassState<Metal>,
-    vocab_size: usize,
-    vocab_limit: Option<usize>,
-    sampling: &mut FishAudioSamplingState,
-) -> Result<u64, Error> {
-    let logits = state.arrays(&[ArrayId::Logits])[0].clone();
-    let logits = logits.borrow();
-    if logits.shape().len() != 2 || logits.shape()[1] != vocab_size || logits.shape()[0] == 0 {
-        return Err(Error::GenerateFailed);
-    }
-    let row_count = logits.shape()[0];
-    let row_start = (row_count - 1).checked_mul(vocab_size).ok_or(Error::GenerateFailed)?;
-    let row_end = row_start.checked_add(vocab_size).ok_or(Error::GenerateFailed)?;
-
-    let limit = vocab_limit.unwrap_or(vocab_size).min(vocab_size);
-    if limit == 0 {
-        return Err(Error::GenerateFailed);
-    }
-
-    let row_values = match logits.data_type() {
-        DataType::F32 => logits.as_slice::<f32>()[row_start..row_end][..limit].to_vec(),
-        DataType::F16 => logits.as_slice::<f16>()[row_start..row_end][..limit]
-            .iter()
-            .map(|&value| f32::from(value))
-            .collect::<Vec<_>>(),
-        DataType::BF16 => logits.as_slice::<bf16>()[row_start..row_end][..limit]
-            .iter()
-            .map(|&value| f32::from(value))
-            .collect::<Vec<_>>(),
-        _ => return Err(Error::GenerateFailed),
-    };
-
-    let sampled_index = sampling.sample_index(&row_values)?;
-
-    u64::try_from(sampled_index).map_err(|_| Error::GenerateFailed)
+fn read_sampled_token_from_sampling_output(state: &ForwardPassState<Metal>) -> Result<u64, Error> {
+    let output = state.sampling_output().ok_or(Error::GenerateFailed)?;
+    let output = output.borrow();
+    let tokens = output.as_slice::<u32>();
+    let token = tokens.first().copied().ok_or(Error::GenerateFailed)?;
+    Ok(u64::from(token))
 }
 
-fn apply_embedding_injection(
-    state: &mut ForwardPassState<Metal>,
-    injection: &EmbeddingInjection,
-    suffix_len: usize,
-    model_dim: usize,
+fn write_f32_slice_into_array(
+    array: &mut crate::array::Array<Metal>,
+    values: &[f32],
 ) -> Result<(), Error> {
-    if matches!(injection, EmbeddingInjection::None) {
-        return Ok(());
-    }
-
-    let main = state.arrays(&[ArrayId::Main])[0].clone();
-    let mut main = main.borrow_mut();
-    if main.shape().len() != 2 || main.shape()[0] != suffix_len || main.shape()[1] != model_dim {
+    if array.num_elements() != values.len() {
         return Err(Error::GenerateFailed);
     }
-    let values_len = suffix_len.checked_mul(model_dim).ok_or(Error::GenerateFailed)?;
-
-    match (injection, main.data_type()) {
-        (EmbeddingInjection::Override(values), DataType::F32) => {
-            if values.len() != values_len {
-                return Err(Error::GenerateFailed);
-            }
-            main.as_slice_mut::<f32>().copy_from_slice(values);
+    match array.data_type() {
+        DataType::F32 => {
+            array.as_slice_mut::<f32>().copy_from_slice(values);
             Ok(())
         },
-        (EmbeddingInjection::Override(values), DataType::F16) => {
-            if values.len() != values_len {
-                return Err(Error::GenerateFailed);
-            }
-            for (dst, &src) in main.as_slice_mut::<f16>().iter_mut().zip(values.iter()) {
+        DataType::F16 => {
+            for (dst, &src) in array.as_slice_mut::<f16>().iter_mut().zip(values.iter()) {
                 *dst = f16::from_f32(src);
             }
             Ok(())
         },
-        (EmbeddingInjection::Override(values), DataType::BF16) => {
-            if values.len() != values_len {
-                return Err(Error::GenerateFailed);
-            }
-            for (dst, &src) in main.as_slice_mut::<bf16>().iter_mut().zip(values.iter()) {
+        DataType::BF16 => {
+            for (dst, &src) in array.as_slice_mut::<bf16>().iter_mut().zip(values.iter()) {
                 *dst = bf16::from_f32(src);
             }
             Ok(())
         },
-        (
-            EmbeddingInjection::Add {
-                values,
-                post_scale,
-            },
-            DataType::F32,
-        ) => {
-            if values.len() != model_dim {
-                return Err(Error::GenerateFailed);
-            }
-            let scale = post_scale.unwrap_or(1.0);
-            let slice = main.as_slice_mut::<f32>();
-            for token_index in 0..suffix_len {
-                let row_start = token_index * model_dim;
-                for dim in 0..model_dim {
-                    let idx = row_start + dim;
-                    slice[idx] = (slice[idx] + values[dim]) * scale;
-                }
-            }
-            Ok(())
-        },
-        (
-            EmbeddingInjection::Add {
-                values,
-                post_scale,
-            },
-            DataType::F16,
-        ) => {
-            if values.len() != model_dim {
-                return Err(Error::GenerateFailed);
-            }
-            let scale = post_scale.unwrap_or(1.0);
-            let slice = main.as_slice_mut::<f16>();
-            for token_index in 0..suffix_len {
-                let row_start = token_index * model_dim;
-                for dim in 0..model_dim {
-                    let idx = row_start + dim;
-                    let current = f32::from(slice[idx]);
-                    slice[idx] = f16::from_f32((current + values[dim]) * scale);
-                }
-            }
-            Ok(())
-        },
-        (
-            EmbeddingInjection::Add {
-                values,
-                post_scale,
-            },
-            DataType::BF16,
-        ) => {
-            if values.len() != model_dim {
-                return Err(Error::GenerateFailed);
-            }
-            let scale = post_scale.unwrap_or(1.0);
-            let slice = main.as_slice_mut::<bf16>();
-            for token_index in 0..suffix_len {
-                let row_start = token_index * model_dim;
-                for dim in 0..model_dim {
-                    let idx = row_start + dim;
-                    let current = f32::from(slice[idx]);
-                    slice[idx] = bf16::from_f32((current + values[dim]) * scale);
-                }
-            }
-            Ok(())
-        },
-        _ => Err(Error::GenerateFailed),
-    }
-}
-
-fn read_last_hidden_from_main(
-    state: &ForwardPassState<Metal>,
-    suffix_len: usize,
-    model_dim: usize,
-) -> Result<Vec<f32>, Error> {
-    let main = state.arrays(&[ArrayId::Main])[0].clone();
-    let main = main.borrow();
-    if main.shape().len() != 2 || main.shape()[0] != suffix_len || main.shape()[1] != model_dim || suffix_len == 0 {
-        return Err(Error::GenerateFailed);
-    }
-
-    let start = (suffix_len - 1).checked_mul(model_dim).ok_or(Error::GenerateFailed)?;
-    let end = start.checked_add(model_dim).ok_or(Error::GenerateFailed)?;
-
-    match main.data_type() {
-        DataType::F32 => Ok(main.as_slice::<f32>()[start..end].to_vec()),
-        DataType::F16 => Ok(main.as_slice::<f16>()[start..end].iter().map(|&v| f32::from(v)).collect()),
-        DataType::BF16 => Ok(main.as_slice::<bf16>()[start..end].iter().map(|&v| f32::from(v)).collect()),
         _ => Err(Error::GenerateFailed),
     }
 }
 
 impl MatrixF32 {
+    #[cfg(test)]
     fn row(
         &self,
         index: usize,
@@ -1467,14 +2207,15 @@ impl MatrixF32 {
         self.values.get(start..end)
     }
 
-    fn matmul(
+    #[cfg(test)]
+    fn matmul_into(
         &self,
         input: &[f32],
-    ) -> Option<Vec<f32>> {
-        if input.len() != self.cols {
+        output: &mut [f32],
+    ) -> Option<()> {
+        if input.len() != self.cols || output.len() != self.rows {
             return None;
         }
-        let mut output = vec![0.0_f32; self.rows];
         for (row_index, row) in self.values.chunks_exact(self.cols).enumerate() {
             let mut acc = 0.0_f32;
             for (&w, &x) in row.iter().zip(input.iter()) {
@@ -1482,7 +2223,7 @@ impl MatrixF32 {
             }
             output[row_index] = acc;
         }
-        Some(output)
+        Some(())
     }
 }
 
@@ -1600,12 +2341,15 @@ fn generate_stub_tokens(
 #[cfg(test)]
 mod tests {
     use super::{
+        AdaptiveChunkController, DEFAULT_CHUNK_EMA_ALPHA, DEFAULT_CHUNK_HYSTERESIS_FRACTION,
         DEFAULT_FISHAUDIO_RANDOM_SEED, DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE, DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE,
         DEFAULT_FISHAUDIO_SAMPLING_TOP_P, DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE, DEFAULT_STUB_SEED,
         FishAudioSamplingState, MatrixF32, StreamingTokenAccumulator, default_repeat_window_size,
         default_short_logits_size, generate_stub_tokens, load_stub_seed, semantic_token_to_code,
     };
     use crate::audio::AudioTokenPacking;
+    use crate::session::config::{TtsChunkPolicy, TtsRunConfig};
+    use crate::session::parameter::SamplingMethod;
 
     #[test]
     fn missing_seed_file_uses_default_path() {
@@ -1644,23 +2388,24 @@ mod tests {
     }
 
     #[test]
-    fn fishaudio_sampling_is_seeded() {
-        let logits = [2.0_f32, 1.0, 0.5];
+    fn fishaudio_sampling_seed_stream_is_deterministic() {
         let mut a = FishAudioSamplingState::new(123);
         let mut b = FishAudioSamplingState::new(123);
-
-        let sample_a = (0..8).map(|_| a.sample_index(&logits).expect("sample")).collect::<Vec<_>>();
-        let sample_b = (0..8).map(|_| b.sample_index(&logits).expect("sample")).collect::<Vec<_>>();
-        assert_eq!(sample_a, sample_b);
+        let seeds_a = (0..8).map(|_| a.next_seed()).collect::<Vec<_>>();
+        let seeds_b = (0..8).map(|_| b.next_seed()).collect::<Vec<_>>();
+        assert_eq!(seeds_a, seeds_b);
     }
 
     #[test]
-    fn fishaudio_sampling_top_p_zero_falls_back_to_argmax() {
-        let logits = [0.1_f32, 1.2, -0.4, 0.7];
-        let mut sampler = FishAudioSamplingState::with_params(999, 0.8, 0.0);
-        for _ in 0..8 {
-            assert_eq!(sampler.sample_index(&logits).expect("sample"), 1);
-        }
+    fn fishaudio_sampling_top_p_zero_switches_to_greedy() {
+        let sampler = FishAudioSamplingState::with_params(999, 0.8, 0.0);
+        assert_eq!(sampler.method(), SamplingMethod::Greedy);
+    }
+
+    #[test]
+    fn fishaudio_sampling_positive_top_p_uses_stochastic_mode() {
+        let sampler = FishAudioSamplingState::with_params(999, 0.8, 0.8);
+        assert!(matches!(sampler.method(), SamplingMethod::Stochastic { .. }));
     }
 
     #[test]
@@ -1674,8 +2419,10 @@ mod tests {
         assert_eq!(matrix.row(0), Some([1.0_f32, 2.0, 3.0].as_slice()));
         assert_eq!(matrix.row(1), Some([4.0_f32, 5.0, 6.0].as_slice()));
         assert_eq!(matrix.row(2), None);
-        assert_eq!(matrix.matmul(&[1.0, 0.0, 1.0]), Some(vec![4.0, 10.0]));
-        assert_eq!(matrix.matmul(&[1.0, 0.0]), None);
+        let mut out = [0.0_f32; 2];
+        assert_eq!(matrix.matmul_into(&[1.0, 0.0, 1.0], &mut out), Some(()));
+        assert_eq!(out, [4.0, 10.0]);
+        assert_eq!(matrix.matmul_into(&[1.0, 0.0], &mut out), None);
     }
 
     #[test]
@@ -1697,5 +2444,34 @@ mod tests {
         let mut accumulator = StreamingTokenAccumulator::new(2).expect("accumulator");
         let error = accumulator.push_frame(&[1]).expect_err("must reject wrong width");
         assert!(matches!(error, crate::session::types::Error::GenerateFailed));
+    }
+
+    #[test]
+    fn adaptive_chunk_controller_applies_hysteresis() {
+        let config = TtsRunConfig {
+            min_chunk_frames: 16,
+            max_chunk_frames: 256,
+            target_emit_latency_ms: 80,
+            chunk_policy: TtsChunkPolicy::Adaptive,
+            ..TtsRunConfig::default()
+        };
+        let mut controller = AdaptiveChunkController::new(&config);
+        assert_eq!(controller.target_frames(&config), 16);
+
+        controller.observe(16, std::time::Duration::from_millis(32), 16);
+        let first = controller.target_frames(&config);
+        assert!(first >= 16);
+
+        // Small fluctuations under hysteresis threshold should keep the current chunk size.
+        let near_first = ((first as f64) * (1.0 + DEFAULT_CHUNK_HYSTERESIS_FRACTION / 2.0)).round() as usize;
+        controller.current_chunk_frames = first;
+        controller.ema_ms_per_frame = Some(config.target_emit_latency_ms as f64 / near_first as f64);
+        assert_eq!(controller.target_frames(&config), first);
+
+        // Larger changes should trigger chunk-size updates.
+        let far_target =
+            ((first as f64) * (1.0 + DEFAULT_CHUNK_HYSTERESIS_FRACTION + DEFAULT_CHUNK_EMA_ALPHA)).round() as usize;
+        controller.ema_ms_per_frame = Some(config.target_emit_latency_ms as f64 / far_target as f64);
+        assert_ne!(controller.target_frames(&config), first);
     }
 }

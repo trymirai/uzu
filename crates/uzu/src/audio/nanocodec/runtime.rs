@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, fs::File, os::unix::fs::FileExt, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fs::File, os::unix::fs::FileExt, path::Path, rc::Rc, time::Instant};
 
 use half::{bf16, f16};
 use serde::Deserialize;
@@ -20,8 +20,9 @@ use crate::{
             Backend, CommandBuffer, Context, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dKernel,
-                AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel,
-                AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel, AudioTransposeNscToNcsKernel,
+                AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
+                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
+                AudioTransposeNscToNcsKernel,
             },
         },
         metal::Metal,
@@ -75,6 +76,67 @@ fn checked_mul_i32(
         .map_err(|_| AudioError::Runtime("length scaling factor exceeds i32 range".to_string()))?
         .checked_mul(value)
         .ok_or(AudioError::Runtime("scaled length overflow".to_string()))
+}
+
+fn fishaudio_profile_enabled() -> bool {
+    std::env::var("UZU_FISHAUDIO_PROFILE")
+        .ok()
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            value == "1" || value == "true" || value == "yes" || value == "on"
+        })
+        .unwrap_or(false)
+}
+
+fn fishaudio_dtype_key(data_type: DataType) -> u8 {
+    match data_type {
+        DataType::F16 => 1,
+        DataType::BF16 => 2,
+        _ => 0,
+    }
+}
+
+fn write_f32_slice_to_array(
+    array: &mut Array<Metal>,
+    values: &[f32],
+) -> AudioResult<()> {
+    if array.num_elements() != values.len() {
+        return Err(AudioError::Runtime(format!(
+            "array element count mismatch: expected {}, got {}",
+            array.num_elements(),
+            values.len()
+        )));
+    }
+    match array.data_type() {
+        DataType::F32 => {
+            array.as_slice_mut::<f32>().copy_from_slice(values);
+            Ok(())
+        },
+        DataType::F16 => {
+            for (dst, &src) in array.as_slice_mut::<f16>().iter_mut().zip(values.iter()) {
+                *dst = f16::from_f32(src);
+            }
+            Ok(())
+        },
+        DataType::BF16 => {
+            for (dst, &src) in array.as_slice_mut::<bf16>().iter_mut().zip(values.iter()) {
+                *dst = bf16::from_f32(src);
+            }
+            Ok(())
+        },
+        other => Err(AudioError::Runtime(format!("unsupported dtype for f32 array write: {other:?}"))),
+    }
+}
+
+fn read_array_to_f32_vec(array: &Array<Metal>) -> AudioResult<Vec<f32>> {
+    Ok(match array.data_type() {
+        DataType::F32 => array.as_slice::<f32>().to_vec(),
+        DataType::F16 => array.as_slice::<f16>().iter().copied().map(f32::from).collect(),
+        DataType::BF16 => array.as_slice::<bf16>().iter().copied().map(f32::from).collect(),
+        other => {
+            return Err(AudioError::Runtime(format!("unsupported dtype for f32 array read: {other:?}")));
+        },
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,6 +354,8 @@ fn default_decoder_eps() -> f32 {
 
 #[derive(Debug, Clone, Deserialize)]
 struct FishAudioTtsConfigJson {
+    #[serde(default)]
+    activation_precision: Option<ConfigDataType>,
     audio_decoder_config: FishAudioAudioDecoderConfigJson,
 }
 
@@ -304,11 +368,15 @@ struct FishAudioAudioDecoderConfigJson {
     input_dim: usize,
     downsample_factor: Vec<usize>,
     decoder_rates: Vec<usize>,
+    #[serde(default)]
+    precision: Option<ConfigDataType>,
     quantizer_config: FishAudioQuantizerConfigJson,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct FishAudioQuantizerConfigJson {
+    #[serde(default)]
+    precision: Option<ConfigDataType>,
     post_module_config: crate::config::TransformerConfig,
     upsampler_config: FishAudioUpsamplerConfigJson,
 }
@@ -445,6 +513,79 @@ struct FishAudioCodecGraph {
     input_dim: usize,
     total_codebooks: usize,
     upsample_factor: usize,
+    vocoder_data_type: DataType,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioConv1dGpuLayer {
+    weight: Array<Metal>,
+    bias: Array<Metal>,
+    cin: usize,
+    cout: usize,
+    kernel_size: usize,
+    dilation: usize,
+    groups: usize,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioConvTranspose1dGpuLayer {
+    weight: Array<Metal>,
+    bias: Array<Metal>,
+    cin: usize,
+    cout: usize,
+    kernel_size: usize,
+    stride: usize,
+    groups: usize,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioPointwiseConvGpuLayer {
+    weight: Array<Metal>,
+    bias: Array<Metal>,
+    cin: usize,
+    cout: usize,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioNormGpuLayer {
+    scales: Array<Metal>,
+    bias: Array<Metal>,
+    epsilon: f32,
+    subtract_mean: bool,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioConvNeXtGpuLayer {
+    depthwise_conv: FishAudioConv1dGpuLayer,
+    norm: FishAudioNormGpuLayer,
+    pwconv1: FishAudioPointwiseConvGpuLayer,
+    pwconv2: FishAudioPointwiseConvGpuLayer,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioResidualUnitGpuLayer {
+    snake1_alpha: Array<Metal>,
+    conv1: FishAudioConv1dGpuLayer,
+    snake2_alpha: Array<Metal>,
+    conv2: FishAudioConv1dGpuLayer,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioDecoderBlockGpuLayer {
+    snake_alpha: Array<Metal>,
+    trans_conv: FishAudioConvTranspose1dGpuLayer,
+    res_unit1: FishAudioResidualUnitGpuLayer,
+    res_unit2: FishAudioResidualUnitGpuLayer,
+    res_unit3: FishAudioResidualUnitGpuLayer,
+}
+
+#[derive(Debug, Clone)]
+struct FishAudioDecoderGpuGraph {
+    first_conv: FishAudioConv1dGpuLayer,
+    upsample_blocks: Vec<(FishAudioConvTranspose1dGpuLayer, FishAudioConvNeXtGpuLayer)>,
+    decoder_blocks: Vec<FishAudioDecoderBlockGpuLayer>,
+    final_snake_alpha: Array<Metal>,
+    final_conv: FishAudioConv1dGpuLayer,
 }
 
 struct FishAudioPostModuleRuntime {
@@ -457,8 +598,27 @@ struct FishAudioPostModuleRuntime {
     max_sequence_length: usize,
 }
 
+struct FishAudioKernelCache {
+    transpose_nsc_to_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel,
+    half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel,
+    causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel,
+    causal_conv1d_grouped: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel,
+    causal_conv_transpose1d_causal_pad:
+        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel,
+    conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel,
+    norm_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel,
+    activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel,
+    add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel,
+}
+
 thread_local! {
     static FISHAUDIO_POST_MODULE_RUNTIME_CACHE: RefCell<HashMap<String, Rc<FishAudioPostModuleRuntime>>> =
+        RefCell::new(HashMap::new());
+    static FISHAUDIO_DECODE_CONTEXT_CACHE: RefCell<HashMap<String, Rc<<Metal as Backend>::Context>>> =
+        RefCell::new(HashMap::new());
+    static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<FishAudioKernelCache>>> =
+        RefCell::new(HashMap::new());
+    static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<FishAudioDecoderGpuGraph>>> =
         RefCell::new(HashMap::new());
 }
 
@@ -761,6 +921,43 @@ fn parse_fishaudio_tts_config_json(tts_config: &serde_json::Value) -> AudioResul
     serde_json::from_value(tts_config.clone()).map_err(|err| {
         AudioError::Runtime(format!("invalid Lalamo tts_config for FishAudio DAC runtime import: {err}"))
     })
+}
+
+fn resolve_fishaudio_vocoder_data_type(tts_config: &FishAudioTtsConfigJson) -> AudioResult<DataType> {
+    let mut resolved_precision: Option<ConfigDataType> = None;
+    for (field_name, precision) in [
+        ("tts_config.activation_precision", tts_config.activation_precision),
+        ("tts_config.audio_decoder_config.precision", tts_config.audio_decoder_config.precision),
+        (
+            "tts_config.audio_decoder_config.quantizer_config.precision",
+            tts_config.audio_decoder_config.quantizer_config.precision,
+        ),
+    ] {
+        if let Some(precision) = precision {
+            if let Some(existing) = resolved_precision {
+                if existing != precision {
+                    return Err(AudioError::Runtime(format!(
+                        "conflicting FishAudio precision in Lalamo export: {field_name}={precision:?} conflicts with {existing:?}"
+                    )));
+                }
+            } else {
+                resolved_precision = Some(precision);
+            }
+        }
+    }
+
+    let precision = resolved_precision.ok_or(AudioError::Runtime(
+        "missing FishAudio precision in Lalamo export; expected one of tts_config.activation_precision, \
+tts_config.audio_decoder_config.precision, or tts_config.audio_decoder_config.quantizer_config.precision"
+            .to_string(),
+    ))?;
+    let data_type: DataType = precision.into();
+    if !matches!(data_type, DataType::F32 | DataType::F16 | DataType::BF16) {
+        return Err(AudioError::Runtime(format!(
+            "unsupported FishAudio vocoder precision in Lalamo export: {precision:?} (expected float32/float16/bfloat16)"
+        )));
+    }
+    Ok(data_type)
 }
 
 fn read_matrix_f32(
@@ -1111,9 +1308,10 @@ fn build_fishaudio_decoder_graph(
 }
 
 fn build_fishaudio_codec_graph(
-    cfg: &FishAudioAudioDecoderConfigJson,
+    tts_config: &FishAudioTtsConfigJson,
     model_weights_path: &Path,
 ) -> AudioResult<FishAudioCodecGraph> {
+    let cfg = &tts_config.audio_decoder_config;
     let reader = SafeTensorReader::open(model_weights_path)?;
     if cfg.n_codebooks == 0 || cfg.codebook_size <= 1 || cfg.semantic_codebook_size <= 1 {
         return Err(AudioError::InvalidTokenCardinality);
@@ -1139,6 +1337,7 @@ fn build_fishaudio_codec_graph(
     let decoder = build_fishaudio_decoder_graph(&reader, cfg)?;
     let total_codebooks =
         cfg.n_codebooks.checked_add(1).ok_or(AudioError::Runtime("FishAudio codebook count overflow".to_string()))?;
+    let vocoder_data_type = resolve_fishaudio_vocoder_data_type(tts_config)?;
 
     Ok(FishAudioCodecGraph {
         semantic_quantizer,
@@ -1157,6 +1356,7 @@ fn build_fishaudio_codec_graph(
             .chain(cfg.decoder_rates.iter())
             .try_fold(1usize, |acc, &value| acc.checked_mul(value))
             .ok_or(AudioError::Runtime("FishAudio upsample factor overflow".to_string()))?,
+        vocoder_data_type,
     })
 }
 
@@ -1170,6 +1370,273 @@ fn create_i32_array(
         array.as_slice_mut::<i32>().copy_from_slice(values);
     }
     array
+}
+
+fn create_data_array(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    shape: &[usize],
+    values: &[f32],
+    label: &str,
+) -> AudioResult<Array<Metal>> {
+    let expected = checked_product(shape)?;
+    if expected != values.len() {
+        return Err(AudioError::Runtime(format!(
+            "tensor '{label}' shape/value mismatch: expected {expected}, got {}",
+            values.len()
+        )));
+    }
+    let mut array = context.create_array(shape, data_type, label);
+    write_f32_slice_to_array(&mut array, values)?;
+    Ok(array)
+}
+
+fn create_alpha_gpu_array(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    channels: usize,
+    alpha: &[f32],
+    label: &str,
+) -> AudioResult<Array<Metal>> {
+    if alpha.len() != channels {
+        return Err(AudioError::Runtime(format!(
+            "alpha length mismatch for '{label}': expected {channels}, got {}",
+            alpha.len()
+        )));
+    }
+    create_data_array(context, data_type, &[channels], alpha, label)
+}
+
+fn create_conv1d_gpu_layer(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    layer: &FishAudioConv1dLayer,
+    label_prefix: &str,
+) -> AudioResult<FishAudioConv1dGpuLayer> {
+    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
+        return Err(AudioError::InvalidTokenCardinality);
+    }
+    let cin_per_group = layer.cin / layer.groups;
+    let weight_shape = [layer.cout, cin_per_group, layer.kernel_size];
+    let weight =
+        create_data_array(context, data_type, &weight_shape, &layer.weight, &format!("{label_prefix}_weight"))?;
+    let bias = create_data_array(context, data_type, &[layer.cout], &layer.bias, &format!("{label_prefix}_bias"))?;
+    Ok(FishAudioConv1dGpuLayer {
+        weight,
+        bias,
+        cin: layer.cin,
+        cout: layer.cout,
+        kernel_size: layer.kernel_size,
+        dilation: layer.dilation,
+        groups: layer.groups,
+    })
+}
+
+fn create_conv_transpose1d_gpu_layer(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    layer: &FishAudioConvTranspose1dLayer,
+    label_prefix: &str,
+) -> AudioResult<FishAudioConvTranspose1dGpuLayer> {
+    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
+        return Err(AudioError::InvalidTokenCardinality);
+    }
+    let weight_plane = checked_product(&[layer.cin, layer.cout / layer.groups])?;
+    if weight_plane == 0 || layer.weight.len() % weight_plane != 0 {
+        return Err(AudioError::Runtime(format!("transpose layer '{label_prefix}' has invalid weight shape")));
+    }
+    let kernel_size = layer.weight.len() / weight_plane;
+    let weight = create_data_array(
+        context,
+        data_type,
+        &[layer.cin, layer.cout / layer.groups, kernel_size],
+        &layer.weight,
+        &format!("{label_prefix}_weight"),
+    )?;
+    let bias = create_data_array(context, data_type, &[layer.cout], &layer.bias, &format!("{label_prefix}_bias"))?;
+    Ok(FishAudioConvTranspose1dGpuLayer {
+        weight,
+        bias,
+        cin: layer.cin,
+        cout: layer.cout,
+        kernel_size,
+        stride: layer.stride,
+        groups: layer.groups,
+    })
+}
+
+fn create_pointwise_conv_gpu_layer(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    weight: &MatrixF32,
+    bias: &[f32],
+    label_prefix: &str,
+) -> AudioResult<FishAudioPointwiseConvGpuLayer> {
+    if bias.len() != weight.rows {
+        return Err(AudioError::Runtime(format!(
+            "pointwise layer '{label_prefix}' bias mismatch: expected {}, got {}",
+            weight.rows,
+            bias.len()
+        )));
+    }
+    let weight_array = create_data_array(
+        context,
+        data_type,
+        &[weight.rows, weight.cols, 1],
+        &weight.values,
+        &format!("{label_prefix}_weight"),
+    )?;
+    let bias_array = create_data_array(context, data_type, &[weight.rows], bias, &format!("{label_prefix}_bias"))?;
+    Ok(FishAudioPointwiseConvGpuLayer {
+        weight: weight_array,
+        bias: bias_array,
+        cin: weight.cols,
+        cout: weight.rows,
+    })
+}
+
+fn create_norm_gpu_layer(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    layer: &FishAudioNormLayer,
+    channels: usize,
+    label_prefix: &str,
+) -> AudioResult<FishAudioNormGpuLayer> {
+    if layer.scales.len() != channels {
+        return Err(AudioError::Runtime(format!(
+            "norm layer '{label_prefix}' scale mismatch: expected {channels}, got {}",
+            layer.scales.len()
+        )));
+    }
+    let mut bias = vec![0.0_f32; channels];
+    if let Some(bias_values) = &layer.biases {
+        if bias_values.len() != channels {
+            return Err(AudioError::Runtime(format!(
+                "norm layer '{label_prefix}' bias mismatch: expected {channels}, got {}",
+                bias_values.len()
+            )));
+        }
+        bias.copy_from_slice(bias_values);
+    }
+    Ok(FishAudioNormGpuLayer {
+        scales: create_data_array(context, data_type, &[channels], &layer.scales, &format!("{label_prefix}_scales"))?,
+        bias: create_data_array(context, data_type, &[channels], &bias, &format!("{label_prefix}_bias"))?,
+        epsilon: layer.epsilon,
+        subtract_mean: layer.subtract_mean,
+    })
+}
+
+fn create_convnext_gpu_layer(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    layer: &FishAudioConvNeXtLayer,
+    label_prefix: &str,
+) -> AudioResult<FishAudioConvNeXtGpuLayer> {
+    let channels = layer.depthwise_conv.cout;
+    Ok(FishAudioConvNeXtGpuLayer {
+        depthwise_conv: create_conv1d_gpu_layer(
+            context,
+            data_type,
+            &layer.depthwise_conv,
+            &format!("{label_prefix}_dwconv"),
+        )?,
+        norm: create_norm_gpu_layer(context, data_type, &layer.norm, channels, &format!("{label_prefix}_norm"))?,
+        pwconv1: create_pointwise_conv_gpu_layer(
+            context,
+            data_type,
+            &layer.pwconv1,
+            &layer.pwconv1_bias,
+            &format!("{label_prefix}_pwconv1"),
+        )?,
+        pwconv2: create_pointwise_conv_gpu_layer(
+            context,
+            data_type,
+            &layer.pwconv2,
+            &layer.pwconv2_bias,
+            &format!("{label_prefix}_pwconv2"),
+        )?,
+    })
+}
+
+fn create_residual_unit_gpu_layer(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+    layer: &FishAudioResidualUnitLayer,
+    channels: usize,
+    label_prefix: &str,
+) -> AudioResult<FishAudioResidualUnitGpuLayer> {
+    Ok(FishAudioResidualUnitGpuLayer {
+        snake1_alpha: create_alpha_gpu_array(
+            context,
+            data_type,
+            channels,
+            &layer.snake1_alpha,
+            &format!("{label_prefix}_snake1"),
+        )?,
+        conv1: create_conv1d_gpu_layer(context, data_type, &layer.conv1, &format!("{label_prefix}_conv1"))?,
+        snake2_alpha: create_alpha_gpu_array(
+            context,
+            data_type,
+            channels,
+            &layer.snake2_alpha,
+            &format!("{label_prefix}_snake2"),
+        )?,
+        conv2: create_conv1d_gpu_layer(context, data_type, &layer.conv2, &format!("{label_prefix}_conv2"))?,
+    })
+}
+
+fn fishaudio_kernels(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+) -> AudioResult<Rc<FishAudioKernelCache>> {
+    let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(fishaudio_dtype_key(data_type));
+    FISHAUDIO_KERNEL_CACHE.with(|cache| {
+        if let Some(existing) = cache.borrow().get(&key) {
+            return Ok(existing.clone());
+        }
+
+        let created = Rc::new(FishAudioKernelCache {
+            transpose_nsc_to_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize NSC->NCS transpose kernel: {err}")))?,
+            half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize snake1d kernel: {err}")))?,
+            causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize causal conv1d kernel: {err}")))?,
+            causal_conv1d_grouped: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize grouped causal conv1d kernel: {err}")))?,
+            causal_conv_transpose1d_causal_pad:
+                <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(
+                    context.as_ref(),
+                    data_type,
+                )
+                .map_err(|err| {
+                    AudioError::Runtime(format!("failed to initialize causal-pad conv transpose kernel: {err}"))
+                })?,
+            conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize pointwise conv1d kernel: {err}")))?,
+            norm_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize norm kernel: {err}")))?,
+            activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize activation kernel: {err}")))?,
+            add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize add kernel: {err}")))?,
+        });
+
+        cache.borrow_mut().insert(key, created.clone());
+        Ok(created)
+    })
 }
 
 fn transpose_nsc_to_ncs_enqueue(
@@ -1188,14 +1655,21 @@ fn transpose_nsc_to_ncs_enqueue(
         });
     }
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize NSC->NCS transpose kernel: {err}")))?;
-    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "fishaudio_ncs_output");
+    let data_type = input.data_type();
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "fishaudio_ncs_output");
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(input.buffer(), output.buffer(), seq_len_i32, channels_i32, batch_i32, compute_encoder);
+        kernels.transpose_nsc_to_ncs.encode(
+            input.buffer(),
+            output.buffer(),
+            seq_len_i32,
+            channels_i32,
+            batch_i32,
+            compute_encoder,
+        );
     });
     Ok(output)
 }
@@ -1204,7 +1678,7 @@ fn snake1d_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    alpha: &[f32],
+    alpha: &Array<Metal>,
     batch_size: usize,
     channels: usize,
     seq_len: usize,
@@ -1216,26 +1690,31 @@ fn snake1d_enqueue(
             actual_tokens: input.num_elements(),
         });
     }
-    if alpha.len() != channels {
+    if alpha.shape() != [channels] {
         return Err(AudioError::InvalidTokenShape {
             expected_tokens: channels,
-            actual_tokens: alpha.len(),
+            actual_tokens: alpha.num_elements(),
         });
     }
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize snake1d kernel: {err}")))?;
-    let mut alpha_array = context.create_array(&[channels], DataType::F32, "fishaudio_snake_alpha");
-    alpha_array.as_slice_mut::<f32>().copy_from_slice(alpha);
-    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "fishaudio_snake_output");
+    let data_type = input.data_type();
+    if alpha.data_type() != data_type {
+        return Err(AudioError::Runtime(format!(
+            "snake alpha dtype mismatch: expected {:?}, got {:?}",
+            data_type,
+            alpha.data_type()
+        )));
+    }
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "fishaudio_snake_output");
 
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(
+        kernels.half_snake.encode(
             input.buffer(),
-            alpha_array.buffer(),
+            alpha.buffer(),
             output.buffer(),
             channels_i32,
             seq_len_i32,
@@ -1254,7 +1733,7 @@ fn causal_conv1d_grouped_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    layer: &FishAudioConv1dLayer,
+    layer: &FishAudioConv1dGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -1269,6 +1748,21 @@ fn causal_conv1d_grouped_enqueue(
     if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
+    let expected_weight_shape = [layer.cout, layer.cin / layer.groups, layer.kernel_size];
+    if layer.weight.shape() != expected_weight_shape {
+        return Err(AudioError::Runtime(format!(
+            "causal conv1d weight shape mismatch: expected {:?}, got {:?}",
+            expected_weight_shape,
+            layer.weight.shape()
+        )));
+    }
+    if layer.bias.shape() != [layer.cout] {
+        return Err(AudioError::Runtime(format!(
+            "causal conv1d bias shape mismatch: expected [{}], got {:?}",
+            layer.cout,
+            layer.bias.shape()
+        )));
+    }
     let expected_input = checked_product(&[batch_size, layer.cin, seq_len])?;
     if input.num_elements() != expected_input {
         return Err(AudioError::InvalidTokenShape {
@@ -1276,31 +1770,11 @@ fn causal_conv1d_grouped_enqueue(
             actual_tokens: input.num_elements(),
         });
     }
-    let cin_per_group = layer.cin / layer.groups;
-    let expected_weight = checked_product(&[layer.cout, cin_per_group, layer.kernel_size])?;
-    if layer.weight.len() != expected_weight {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_weight,
-            actual_tokens: layer.weight.len(),
-        });
+    let data_type = input.data_type();
+    if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
+        return Err(AudioError::Runtime("causal conv1d dtype mismatch".to_string()));
     }
-    if layer.bias.len() != layer.cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: layer.cout,
-            actual_tokens: layer.bias.len(),
-        });
-    }
-
-    let mut weight_array = context.create_array(
-        &[layer.cout, cin_per_group, layer.kernel_size],
-        DataType::F32,
-        "fishaudio_causal_conv1d_weight",
-    );
-    weight_array.as_slice_mut::<f32>().copy_from_slice(&layer.weight);
-    let mut bias_array = context.create_array(&[layer.cout], DataType::F32, "fishaudio_causal_conv1d_bias");
-    bias_array.as_slice_mut::<f32>().copy_from_slice(&layer.bias);
-    let output =
-        context.create_array(&[batch_size, layer.cout, seq_len], DataType::F32, "fishaudio_causal_conv1d_output");
+    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_causal_conv1d_output");
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
@@ -1308,14 +1782,13 @@ fn causal_conv1d_grouped_enqueue(
     let kernel_size_i32 = usize_to_i32(layer.kernel_size, "kernel_size")?;
     let dilation_i32 = usize_to_i32(layer.dilation, "dilation")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
+    let kernels = fishaudio_kernels(context, data_type)?;
     if layer.groups == 1 {
-        let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel::new(context, DataType::F32)
-            .map_err(|err| AudioError::Runtime(format!("failed to initialize causal conv1d kernel: {err}")))?;
         command_buffer.with_compute_encoder(|compute_encoder| {
-            kernel.encode(
+            kernels.causal_conv1d.encode(
                 input.buffer(),
-                weight_array.buffer(),
-                bias_array.buffer(),
+                layer.weight.buffer(),
+                layer.bias.buffer(),
                 output.buffer(),
                 lengths_array.buffer(),
                 cin_i32,
@@ -1329,16 +1802,11 @@ fn causal_conv1d_grouped_enqueue(
         });
     } else {
         let groups_i32 = usize_to_i32(layer.groups, "groups")?;
-        let kernel =
-            <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel::new(context, DataType::F32)
-                .map_err(|err| {
-                    AudioError::Runtime(format!("failed to initialize grouped causal conv1d kernel: {err}"))
-                })?;
         command_buffer.with_compute_encoder(|compute_encoder| {
-            kernel.encode(
+            kernels.causal_conv1d_grouped.encode(
                 input.buffer(),
-                weight_array.buffer(),
-                bias_array.buffer(),
+                layer.weight.buffer(),
+                layer.bias.buffer(),
                 output.buffer(),
                 lengths_array.buffer(),
                 cin_i32,
@@ -1360,78 +1828,72 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    spec: super::ops::CausalConvTranspose1dSpec<'_>,
+    layer: &FishAudioConvTranspose1dGpuLayer,
+    lengths: &[i32],
+    batch_size: usize,
+    seq_len_in: usize,
+    seq_len_out: usize,
     input_layout: SequenceLayout,
     lengths_array: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
-    let expected_input = checked_product(&[spec.batch_size, spec.cin, spec.seq_len_in])?;
+    if lengths.len() != batch_size {
+        return Err(AudioError::InvalidTokenLengths {
+            expected_lengths: batch_size,
+            actual_lengths: lengths.len(),
+        });
+    }
+    let expected_input = checked_product(&[batch_size, layer.cin, seq_len_in])?;
     if input.num_elements() != expected_input {
         return Err(AudioError::InvalidTokenShape {
             expected_tokens: expected_input,
             actual_tokens: input.num_elements(),
         });
     }
-    if spec.groups == 0 || spec.cin % spec.groups != 0 || spec.cout % spec.groups != 0 {
+    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    let weight_plane = checked_product(&[spec.cin, spec.cout / spec.groups])?;
-    if weight_plane == 0 || spec.weight.len() % weight_plane != 0 {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: weight_plane,
-            actual_tokens: spec.weight.len(),
-        });
+    let expected_weight_shape = [layer.cin, layer.cout / layer.groups, layer.kernel_size];
+    if layer.weight.shape() != expected_weight_shape {
+        return Err(AudioError::Runtime(format!(
+            "causal transpose weight shape mismatch: expected {:?}, got {:?}",
+            expected_weight_shape,
+            layer.weight.shape()
+        )));
     }
-    let kernel_size = spec.weight.len() / weight_plane;
-    if kernel_size == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    if spec.bias.len() != spec.cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: spec.cout,
-            actual_tokens: spec.bias.len(),
-        });
-    }
-    if spec.lengths.len() != spec.batch_size {
-        return Err(AudioError::InvalidTokenLengths {
-            expected_lengths: spec.batch_size,
-            actual_lengths: spec.lengths.len(),
-        });
+    if layer.bias.shape() != [layer.cout] {
+        return Err(AudioError::Runtime(format!(
+            "causal transpose bias shape mismatch: expected [{}], got {:?}",
+            layer.cout,
+            layer.bias.shape()
+        )));
     }
 
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(context, DataType::F32)
-            .map_err(|err| {
-            AudioError::Runtime(format!("failed to initialize causal-pad conv transpose kernel: {err}"))
-        })?;
-    let mut weight_array = context.create_array(
-        &[spec.cin, spec.cout / spec.groups, kernel_size],
-        DataType::F32,
-        "fishaudio_causal_conv_transpose_weight",
-    );
-    weight_array.as_slice_mut::<f32>().copy_from_slice(spec.weight);
-    let mut bias_array = context.create_array(&[spec.cout], DataType::F32, "fishaudio_causal_conv_transpose_bias");
-    bias_array.as_slice_mut::<f32>().copy_from_slice(spec.bias);
+    let data_type = input.data_type();
+    if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
+        return Err(AudioError::Runtime("causal transpose dtype mismatch".to_string()));
+    }
+    let kernels = fishaudio_kernels(context, data_type)?;
     let output = context.create_array(
-        &[spec.batch_size, spec.cout, spec.seq_len_out],
-        DataType::F32,
+        &[batch_size, layer.cout, seq_len_out],
+        data_type,
         "fishaudio_causal_conv_transpose_output",
     );
 
-    let cin_i32 = usize_to_i32(spec.cin, "cin")?;
-    let cout_i32 = usize_to_i32(spec.cout, "cout")?;
-    let seq_in_i32 = usize_to_i32(spec.seq_len_in, "seq_len_in")?;
-    let seq_out_i32 = usize_to_i32(spec.seq_len_out, "seq_len_out")?;
-    let kernel_size_i32 = usize_to_i32(kernel_size, "kernel_size")?;
-    let stride_i32 = usize_to_i32(spec.stride, "stride")?;
-    let groups_i32 = usize_to_i32(spec.groups, "groups")?;
+    let cin_i32 = usize_to_i32(layer.cin, "cin")?;
+    let cout_i32 = usize_to_i32(layer.cout, "cout")?;
+    let seq_in_i32 = usize_to_i32(seq_len_in, "seq_len_in")?;
+    let seq_out_i32 = usize_to_i32(seq_len_out, "seq_len_out")?;
+    let kernel_size_i32 = usize_to_i32(layer.kernel_size, "kernel_size")?;
+    let stride_i32 = usize_to_i32(layer.stride, "stride")?;
+    let groups_i32 = usize_to_i32(layer.groups, "groups")?;
     let input_layout_i32 = input_layout.as_i32();
-    let batch_i32 = usize_to_i32(spec.batch_size, "batch_size")?;
+    let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
 
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(
+        kernels.causal_conv_transpose1d_causal_pad.encode(
             input.buffer(),
-            weight_array.buffer(),
-            bias_array.buffer(),
+            layer.weight.buffer(),
+            layer.bias.buffer(),
             output.buffer(),
             lengths_array.buffer(),
             cin_i32,
@@ -1454,13 +1916,10 @@ fn conv1d_pointwise_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    weight: &[f32],
-    bias: &[f32],
+    layer: &FishAudioPointwiseConvGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
-    cin: usize,
-    cout: usize,
     seq_len: usize,
 ) -> AudioResult<Array<Metal>> {
     if lengths.len() != batch_size {
@@ -1469,44 +1928,46 @@ fn conv1d_pointwise_ncs_enqueue(
             actual_lengths: lengths.len(),
         });
     }
-    let expected_input = checked_product(&[batch_size, cin, seq_len])?;
+    let expected_input = checked_product(&[batch_size, layer.cin, seq_len])?;
     if input.num_elements() != expected_input {
         return Err(AudioError::Runtime(format!(
-            "pointwise conv input shape mismatch: expected {expected_input} elements ([batch={batch_size}, cin={cin}, seq_len={seq_len}]), got {}",
+            "pointwise conv input shape mismatch: expected {expected_input} elements ([batch={batch_size}, cin={}, seq_len={seq_len}]), got {}",
+            layer.cin,
             input.num_elements()
         )));
     }
-    let expected_weight = checked_product(&[cout, cin, 1])?;
-    if weight.len() != expected_weight {
+    if layer.weight.shape() != [layer.cout, layer.cin, 1] {
         return Err(AudioError::Runtime(format!(
-            "pointwise conv weight shape mismatch: expected {expected_weight} elements ([cout={cout}, cin={cin}, kernel=1]), got {}",
-            weight.len()
+            "pointwise conv weight shape mismatch: expected [{}, {}, 1], got {:?}",
+            layer.cout,
+            layer.cin,
+            layer.weight.shape()
         )));
     }
-    if bias.len() != cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: cout,
-            actual_tokens: bias.len(),
-        });
+    if layer.bias.shape() != [layer.cout] {
+        return Err(AudioError::Runtime(format!(
+            "pointwise conv bias shape mismatch: expected [{}], got {:?}",
+            layer.cout,
+            layer.bias.shape()
+        )));
     }
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize pointwise conv1d kernel: {err}")))?;
-    let mut weight_array = context.create_array(&[cout, cin, 1], DataType::F32, "fishaudio_pwconv_weight");
-    weight_array.as_slice_mut::<f32>().copy_from_slice(weight);
-    let mut bias_array = context.create_array(&[cout], DataType::F32, "fishaudio_pwconv_bias");
-    bias_array.as_slice_mut::<f32>().copy_from_slice(bias);
-    let output = context.create_array(&[batch_size, cout, seq_len], DataType::F32, "fishaudio_pwconv_output");
+    let data_type = input.data_type();
+    if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
+        return Err(AudioError::Runtime("pointwise conv dtype mismatch".to_string()));
+    }
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_pwconv_output");
 
-    let cin_i32 = usize_to_i32(cin, "cin")?;
-    let cout_i32 = usize_to_i32(cout, "cout")?;
+    let cin_i32 = usize_to_i32(layer.cin, "cin")?;
+    let cout_i32 = usize_to_i32(layer.cout, "cout")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(
+        kernels.conv1d.encode(
             input.buffer(),
-            weight_array.buffer(),
-            bias_array.buffer(),
+            layer.weight.buffer(),
+            layer.bias.buffer(),
             output.buffer(),
             lengths_array.buffer(),
             cin_i32,
@@ -1530,7 +1991,7 @@ fn norm_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    norm: &FishAudioNormLayer,
+    norm: &FishAudioNormGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -1543,19 +2004,17 @@ fn norm_ncs_enqueue(
             actual_lengths: lengths.len(),
         });
     }
-    if norm.scales.len() != channels {
+    if norm.scales.shape() != [channels] {
         return Err(AudioError::Runtime(format!(
-            "norm scale length mismatch: expected {channels}, got {}",
-            norm.scales.len()
+            "norm scale shape mismatch: expected [{channels}], got {:?}",
+            norm.scales.shape()
         )));
     }
-    if let Some(biases) = &norm.biases {
-        if biases.len() != channels {
-            return Err(AudioError::Runtime(format!(
-                "norm bias length mismatch: expected {channels}, got {}",
-                biases.len()
-            )));
-        }
+    if norm.bias.shape() != [channels] {
+        return Err(AudioError::Runtime(format!(
+            "norm bias shape mismatch: expected [{channels}], got {:?}",
+            norm.bias.shape()
+        )));
     }
 
     let expected_input = checked_product(&[batch_size, channels, seq_len])?;
@@ -1566,18 +2025,12 @@ fn norm_ncs_enqueue(
         });
     }
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize norm kernel: {err}")))?;
-    let mut scales_array = context.create_array(&[channels], DataType::F32, "fishaudio_norm_scales");
-    scales_array.as_slice_mut::<f32>().copy_from_slice(&norm.scales);
-
-    let mut bias_host = vec![0.0_f32; channels];
-    if let Some(biases) = &norm.biases {
-        bias_host.copy_from_slice(biases);
+    let data_type = input.data_type();
+    if norm.scales.data_type() != data_type || norm.bias.data_type() != data_type {
+        return Err(AudioError::Runtime("norm dtype mismatch".to_string()));
     }
-    let mut bias_array = context.create_array(&[channels], DataType::F32, "fishaudio_norm_bias");
-    bias_array.as_slice_mut::<f32>().copy_from_slice(&bias_host);
-    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "fishaudio_norm_output");
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "fishaudio_norm_output");
 
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
@@ -1588,10 +2041,10 @@ fn norm_ncs_enqueue(
         0
     };
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(
+        kernels.norm_ncs.encode(
             input.buffer(),
-            scales_array.buffer(),
-            bias_array.buffer(),
+            norm.scales.buffer(),
+            norm.bias.buffer(),
             output.buffer(),
             lengths_array.buffer(),
             channels_i32,
@@ -1611,14 +2064,14 @@ fn gelu_enqueue(
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize gelu kernel: {err}")))?;
-    let output = context.create_array(input.shape(), DataType::F32, "fishaudio_gelu_output");
+    let data_type = input.data_type();
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(input.shape(), data_type, "fishaudio_gelu_output");
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(input.buffer(), output.buffer(), n_u32, gelu_id, 0.0_f32, compute_encoder);
+        kernels.activation.encode(input.buffer(), output.buffer(), n_u32, gelu_id, 0.0_f32, compute_encoder);
     });
     Ok(output)
 }
@@ -1636,12 +2089,19 @@ fn add_enqueue(
             b.num_elements()
         )));
     }
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize add kernel: {err}")))?;
-    let output = context.create_array(a.shape(), DataType::F32, "fishaudio_add_out");
+    if a.data_type() != b.data_type() {
+        return Err(AudioError::Runtime(format!(
+            "elementwise add dtype mismatch: {:?} vs {:?}",
+            a.data_type(),
+            b.data_type()
+        )));
+    }
+    let data_type = a.data_type();
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(a.shape(), data_type, "fishaudio_add_out");
     let n_i32 = usize_to_i32(a.num_elements(), "n")?;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(a.buffer(), b.buffer(), output.buffer(), n_i32, compute_encoder);
+        kernels.add.encode(a.buffer(), b.buffer(), output.buffer(), n_i32, compute_encoder);
     });
     Ok(output)
 }
@@ -1651,14 +2111,14 @@ fn tanh_enqueue(
     command_buffer: &<Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(context, DataType::F32)
-        .map_err(|err| AudioError::Runtime(format!("failed to initialize tanh kernel: {err}")))?;
-    let output = context.create_array(input.shape(), DataType::F32, "fishaudio_tanh_output");
+    let data_type = input.data_type();
+    let kernels = fishaudio_kernels(context, data_type)?;
+    let output = context.create_array(input.shape(), data_type, "fishaudio_tanh_output");
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
     let tanh_id = 2_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernel.encode(input.buffer(), output.buffer(), n_u32, tanh_id, 0.0_f32, compute_encoder);
+        kernels.activation.encode(input.buffer(), output.buffer(), n_u32, tanh_id, 0.0_f32, compute_encoder);
     });
     Ok(output)
 }
@@ -2082,7 +2542,7 @@ impl FishAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &<Metal as Backend>::CommandBuffer,
         input: &Array<Metal>,
-        layer: &FishAudioConvNeXtLayer,
+        layer: &FishAudioConvNeXtGpuLayer,
         lengths: &[i32],
         lengths_array: &Array<Metal>,
         batch_size: usize,
@@ -2115,13 +2575,10 @@ impl FishAudioCodecGraph {
             context,
             command_buffer,
             &x,
-            &layer.pwconv1.values,
-            &layer.pwconv1_bias,
+            &layer.pwconv1,
             lengths,
             lengths_array,
             batch_size,
-            channels,
-            layer.pwconv1.rows,
             seq_len,
         )?;
         let x = gelu_enqueue(context, command_buffer, &x)?;
@@ -2129,13 +2586,10 @@ impl FishAudioCodecGraph {
             context,
             command_buffer,
             &x,
-            &layer.pwconv2.values,
-            &layer.pwconv2_bias,
+            &layer.pwconv2,
             lengths,
             lengths_array,
             batch_size,
-            layer.pwconv1.rows,
-            channels,
             seq_len,
         )?;
         add_enqueue(context, command_buffer, &x, &residual)
@@ -2297,6 +2751,110 @@ impl FishAudioCodecGraph {
         })
     }
 
+    fn build_vocoder_gpu_graph(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+    ) -> AudioResult<FishAudioDecoderGpuGraph> {
+        let data_type = self.vocoder_data_type;
+        let first_conv =
+            create_conv1d_gpu_layer(context, data_type, &self.decoder.first_conv, "fishaudio_decoder_first_conv")?;
+        let final_snake_alpha = create_alpha_gpu_array(
+            context,
+            data_type,
+            self.decoder.final_conv.cin,
+            &self.decoder.final_snake_alpha,
+            "fishaudio_decoder_final_snake_alpha",
+        )?;
+        let final_conv =
+            create_conv1d_gpu_layer(context, data_type, &self.decoder.final_conv, "fishaudio_decoder_final_conv")?;
+
+        let mut upsample_blocks = Vec::with_capacity(self.decoder.upsample_blocks.len());
+        for (index, (trans_conv, convnext)) in self.decoder.upsample_blocks.iter().enumerate() {
+            let trans_conv = create_conv_transpose1d_gpu_layer(
+                context,
+                data_type,
+                trans_conv,
+                &format!("fishaudio_upsample_{index}_trans_conv"),
+            )?;
+            let convnext = create_convnext_gpu_layer(
+                context,
+                data_type,
+                convnext,
+                &format!("fishaudio_upsample_{index}_convnext"),
+            )?;
+            upsample_blocks.push((trans_conv, convnext));
+        }
+
+        let mut decoder_blocks = Vec::with_capacity(self.decoder.decoder_blocks.len());
+        for (index, block) in self.decoder.decoder_blocks.iter().enumerate() {
+            let channels = block.trans_conv.cout;
+            let snake_alpha = create_alpha_gpu_array(
+                context,
+                data_type,
+                block.trans_conv.cin,
+                &block.snake_alpha,
+                &format!("fishaudio_decoder_block_{index}_snake_alpha"),
+            )?;
+            let trans_conv = create_conv_transpose1d_gpu_layer(
+                context,
+                data_type,
+                &block.trans_conv,
+                &format!("fishaudio_decoder_block_{index}_trans_conv"),
+            )?;
+            let res_unit1 = create_residual_unit_gpu_layer(
+                context,
+                data_type,
+                &block.res_unit1,
+                channels,
+                &format!("fishaudio_decoder_block_{index}_res1"),
+            )?;
+            let res_unit2 = create_residual_unit_gpu_layer(
+                context,
+                data_type,
+                &block.res_unit2,
+                channels,
+                &format!("fishaudio_decoder_block_{index}_res2"),
+            )?;
+            let res_unit3 = create_residual_unit_gpu_layer(
+                context,
+                data_type,
+                &block.res_unit3,
+                channels,
+                &format!("fishaudio_decoder_block_{index}_res3"),
+            )?;
+            decoder_blocks.push(FishAudioDecoderBlockGpuLayer {
+                snake_alpha,
+                trans_conv,
+                res_unit1,
+                res_unit2,
+                res_unit3,
+            });
+        }
+
+        Ok(FishAudioDecoderGpuGraph {
+            first_conv,
+            upsample_blocks,
+            decoder_blocks,
+            final_snake_alpha,
+            final_conv,
+        })
+    }
+
+    fn vocoder_gpu_graph(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+    ) -> AudioResult<Rc<FishAudioDecoderGpuGraph>> {
+        let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(fishaudio_dtype_key(self.vocoder_data_type));
+        FISHAUDIO_VOCODER_GRAPH_CACHE.with(|cache| {
+            if let Some(existing) = cache.borrow().get(&key) {
+                return Ok(existing.clone());
+            }
+            let graph = Rc::new(self.build_vocoder_gpu_graph(context)?);
+            cache.borrow_mut().insert(key, graph.clone());
+            Ok(graph)
+        })
+    }
+
     fn apply_post_module_gpu(
         &self,
         latent_nsc: &mut [f32],
@@ -2428,7 +2986,7 @@ impl FishAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &<Metal as Backend>::CommandBuffer,
         input: &Array<Metal>,
-        unit: &FishAudioResidualUnitLayer,
+        unit: &FishAudioResidualUnitGpuLayer,
         lengths: &[i32],
         lengths_array: &Array<Metal>,
         batch_size: usize,
@@ -2469,6 +3027,12 @@ impl FishAudioCodecGraph {
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+        let profile_enabled = fishaudio_profile_enabled();
+        let decode_start = if profile_enabled {
+            Some(Instant::now())
+        } else {
+            None
+        };
         if batch_size == 0 || frames == 0 {
             let out_lengths = lengths
                 .iter()
@@ -2493,21 +3057,52 @@ impl FishAudioCodecGraph {
             })
             .collect::<AudioResult<Vec<_>>>()?;
 
+        let quantizer_start = if profile_enabled {
+            Some(Instant::now())
+        } else {
+            None
+        };
         let mut latent_nsc = self.decode_quantizer_to_nsc(tokens, lengths, batch_size, codebooks, frames)?;
+        let quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+
+        let post_module_start = if profile_enabled {
+            Some(Instant::now())
+        } else {
+            None
+        };
         self.apply_post_module(&mut latent_nsc, lengths, batch_size, frames)?;
-        let context = <Metal as Backend>::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode context: {err}")))?;
+        let post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+
+        let vocoder_start = if profile_enabled {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        let context = FISHAUDIO_DECODE_CONTEXT_CACHE.with(|cache| -> AudioResult<Rc<<Metal as Backend>::Context>> {
+            if let Some(existing) = cache.borrow().get(&self.weights_path).cloned() {
+                return Ok(existing);
+            }
+            let created = <Metal as Backend>::Context::new()
+                .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode context: {err}")))?;
+            cache.borrow_mut().insert(self.weights_path.clone(), created.clone());
+            Ok(created)
+        })?;
+        let vocoder_graph = self.vocoder_gpu_graph(&context)?;
         let command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
-        let mut x =
-            context.create_array(&[batch_size, frames, self.input_dim], DataType::F32, "fishaudio_decoder_input_nsc");
-        x.as_slice_mut::<f32>().copy_from_slice(&latent_nsc);
+        let vocoder_data_type = self.vocoder_data_type;
+        let mut x = context.create_array(
+            &[batch_size, frames, self.input_dim],
+            vocoder_data_type,
+            "fishaudio_decoder_input_nsc",
+        );
+        write_f32_slice_to_array(&mut x, &latent_nsc)?;
         let mut x_layout = SequenceLayout::Nsc;
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
 
-        for (block_index, (trans_conv, convnext)) in self.decoder.upsample_blocks.iter().enumerate() {
+        for (block_index, (trans_conv, convnext)) in vocoder_graph.upsample_blocks.iter().enumerate() {
             if trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
                     "FishAudio upsampler input channel mismatch: expected {}, got {}",
@@ -2528,19 +3123,11 @@ impl FishAudioCodecGraph {
                 &context,
                 &command_buffer,
                 &x,
-                super::ops::CausalConvTranspose1dSpec {
-                    input: &[],
-                    weight: &trans_conv.weight,
-                    bias: &trans_conv.bias,
-                    lengths: &next_lengths,
-                    batch_size,
-                    cin: trans_conv.cin,
-                    cout: trans_conv.cout,
-                    seq_len_in: current_frames,
-                    seq_len_out: next_frames,
-                    stride: trans_conv.stride,
-                    groups: trans_conv.groups,
-                },
+                trans_conv,
+                &next_lengths,
+                batch_size,
+                current_frames,
+                next_frames,
                 x_layout,
                 &next_lengths_array,
             )
@@ -2589,10 +3176,10 @@ impl FishAudioCodecGraph {
         }
         debug_assert_eq!(x_layout, SequenceLayout::Ncs);
 
-        if self.decoder.first_conv.cin != current_channels {
+        if vocoder_graph.first_conv.cin != current_channels {
             return Err(AudioError::Runtime(format!(
                 "FishAudio decoder input channels mismatch: expected {}, got {}",
-                self.decoder.first_conv.cin, current_channels
+                vocoder_graph.first_conv.cin, current_channels
             )));
         }
         let mut lengths_array = create_i32_array(&context, &lengths_i32, "fishaudio_decoder_lengths");
@@ -2600,15 +3187,15 @@ impl FishAudioCodecGraph {
             &context,
             &command_buffer,
             &x,
-            &self.decoder.first_conv,
+            &vocoder_graph.first_conv,
             &lengths_i32,
             &lengths_array,
             batch_size,
             current_frames,
         )?;
-        current_channels = self.decoder.first_conv.cout;
+        current_channels = vocoder_graph.first_conv.cout;
 
-        for block in &self.decoder.decoder_blocks {
+        for block in &vocoder_graph.decoder_blocks {
             if block.trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
                     "FishAudio decoder block input mismatch: expected {}, got {}",
@@ -2639,19 +3226,11 @@ impl FishAudioCodecGraph {
                 &context,
                 &command_buffer,
                 &x,
-                super::ops::CausalConvTranspose1dSpec {
-                    input: &[],
-                    weight: &block.trans_conv.weight,
-                    bias: &block.trans_conv.bias,
-                    lengths: &next_lengths,
-                    batch_size,
-                    cin: block.trans_conv.cin,
-                    cout: block.trans_conv.cout,
-                    seq_len_in: current_frames,
-                    seq_len_out: next_frames,
-                    stride: block.trans_conv.stride,
-                    groups: block.trans_conv.groups,
-                },
+                &block.trans_conv,
+                &next_lengths,
+                batch_size,
+                current_frames,
+                next_frames,
                 SequenceLayout::Ncs,
                 &next_lengths_array,
             )?;
@@ -2700,7 +3279,7 @@ impl FishAudioCodecGraph {
             &context,
             &command_buffer,
             &x,
-            &self.decoder.final_snake_alpha,
+            &vocoder_graph.final_snake_alpha,
             batch_size,
             current_channels,
             current_frames,
@@ -2710,7 +3289,7 @@ impl FishAudioCodecGraph {
             &context,
             &command_buffer,
             &x,
-            &self.decoder.final_conv,
+            &vocoder_graph.final_conv,
             &lengths_i32,
             &lengths_array,
             batch_size,
@@ -2720,7 +3299,7 @@ impl FishAudioCodecGraph {
 
         command_buffer.submit();
         command_buffer.wait_until_completed();
-        let x = x.as_slice::<f32>().to_vec();
+        let x = read_array_to_f32_vec(&x)?;
 
         let out_lengths = lengths_i32
             .into_iter()
@@ -2730,12 +3309,23 @@ impl FishAudioCodecGraph {
             })
             .collect::<AudioResult<Vec<_>>>()?;
 
-        Ok(super::decoder::DecodedPaddedAudio {
+        let result = Ok(super::decoder::DecodedPaddedAudio {
             samples: x,
-            channels: self.decoder.final_conv.cout,
+            channels: vocoder_graph.final_conv.cout,
             frames: current_frames,
             lengths: out_lengths,
-        })
+        });
+
+        if profile_enabled {
+            let vocoder_s = vocoder_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+            let total_s = decode_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+            eprintln!(
+                "fishaudio_profile batch={} frames={} codebooks={} quantizer_s={:.3} post_module_s={:.3} vocoder_s={:.3} total_s={:.3}",
+                batch_size, frames, codebooks, quantizer_s, post_module_s, vocoder_s, total_s
+            );
+        }
+
+        result
     }
 }
 
@@ -2804,7 +3394,8 @@ impl NanoCodecFsqRuntimeConfig {
                         decoder: None,
                     };
                     let mut runtime = Self::from_runtime_config_json(parsed)?;
-                    runtime.fishaudio_decoder = Some(build_fishaudio_codec_graph(cfg, &fishaudio_weights)?);
+                    runtime.fishaudio_decoder =
+                        Some(build_fishaudio_codec_graph(&parsed_fishaudio, &fishaudio_weights)?);
                     return Ok(runtime);
                 }
             }
@@ -3280,9 +3871,13 @@ mod tests {
     use super::{
         FishAudioCodecGraph, FishAudioConv1dLayer, FishAudioDecoderGraph, FishAudioNormLayer, FishAudioVectorQuantizer,
         MatrixF32, NanoCodecFsqRuntimeConfig, RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog,
-        pack_pcm_to_padded, parse_lalamo_tts_config_json, parse_runtime_config_json, unpack_padded_to_pcm,
+        pack_pcm_to_padded, parse_fishaudio_tts_config_json, parse_lalamo_tts_config_json, parse_runtime_config_json,
+        resolve_fishaudio_vocoder_data_type, unpack_padded_to_pcm,
     };
-    use crate::audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenPacking};
+    use crate::{
+        DataType,
+        audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenPacking},
+    };
 
     #[derive(Debug, Clone)]
     struct CpuPostModuleLayer {
@@ -3817,6 +4412,140 @@ mod tests {
     }
 
     #[test]
+    fn fishaudio_vocoder_dtype_uses_lalamo_export_precision() {
+        let tts_config = serde_json::json!({
+            "activation_precision": "float16",
+            "audio_decoder_config": {
+                "type": "DescriptAudioCodecConfig",
+                "samplerate": 44100,
+                "n_codebooks": 9,
+                "codebook_size": 1024,
+                "semantic_codebook_size": 4096,
+                "input_dim": 1024,
+                "downsample_factor": [2, 2],
+                "decoder_rates": [8, 8, 4, 2],
+                "precision": "float16",
+                "quantizer_config": {
+                    "precision": "float16",
+                    "post_module_config": {
+                        "global_rope_config": null,
+                        "local_rope_config": null,
+                        "layer_configs": [],
+                        "output_norm_config": {
+                            "scale_precision": "float32",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-5,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer",
+                            "subtract_mean": true
+                        },
+                        "model_dim": 1024,
+                        "hidden_dim": 1024,
+                        "context_length": 1
+                    },
+                    "upsampler_config": {
+                        "block_configs": []
+                    }
+                }
+            }
+        });
+
+        let parsed = parse_fishaudio_tts_config_json(&tts_config).expect("parse fishaudio config");
+        let dtype = resolve_fishaudio_vocoder_data_type(&parsed).expect("resolve dtype");
+        assert_eq!(dtype, DataType::F16);
+    }
+
+    #[test]
+    fn fishaudio_vocoder_dtype_rejects_conflicting_export_precision() {
+        let tts_config = serde_json::json!({
+            "activation_precision": "float32",
+            "audio_decoder_config": {
+                "type": "DescriptAudioCodecConfig",
+                "samplerate": 44100,
+                "n_codebooks": 9,
+                "codebook_size": 1024,
+                "semantic_codebook_size": 4096,
+                "input_dim": 1024,
+                "downsample_factor": [2, 2],
+                "decoder_rates": [8, 8, 4, 2],
+                "precision": "float16",
+                "quantizer_config": {
+                    "post_module_config": {
+                        "global_rope_config": null,
+                        "local_rope_config": null,
+                        "layer_configs": [],
+                        "output_norm_config": {
+                            "scale_precision": "float32",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-5,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer",
+                            "subtract_mean": true
+                        },
+                        "model_dim": 1024,
+                        "hidden_dim": 1024,
+                        "context_length": 1
+                    },
+                    "upsampler_config": {
+                        "block_configs": []
+                    }
+                }
+            }
+        });
+
+        let parsed = parse_fishaudio_tts_config_json(&tts_config).expect("parse fishaudio config");
+        let error = resolve_fishaudio_vocoder_data_type(&parsed).expect_err("must reject conflicting precision");
+        match error {
+            AudioError::Runtime(message) => assert!(message.contains("conflicting FishAudio precision")),
+            other => panic!("unexpected error type: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fishaudio_vocoder_dtype_requires_export_precision() {
+        let tts_config = serde_json::json!({
+            "audio_decoder_config": {
+                "type": "DescriptAudioCodecConfig",
+                "samplerate": 44100,
+                "n_codebooks": 9,
+                "codebook_size": 1024,
+                "semantic_codebook_size": 4096,
+                "input_dim": 1024,
+                "downsample_factor": [2, 2],
+                "decoder_rates": [8, 8, 4, 2],
+                "quantizer_config": {
+                    "post_module_config": {
+                        "global_rope_config": null,
+                        "local_rope_config": null,
+                        "layer_configs": [],
+                        "output_norm_config": {
+                            "scale_precision": "float32",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-5,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer",
+                            "subtract_mean": true
+                        },
+                        "model_dim": 1024,
+                        "hidden_dim": 1024,
+                        "context_length": 1
+                    },
+                    "upsampler_config": {
+                        "block_configs": []
+                    }
+                }
+            }
+        });
+
+        let parsed = parse_fishaudio_tts_config_json(&tts_config).expect("parse fishaudio config");
+        let error = resolve_fishaudio_vocoder_data_type(&parsed).expect_err("must require export precision");
+        match error {
+            AudioError::Runtime(message) => assert!(message.contains("missing FishAudio precision")),
+            other => panic!("unexpected error type: {other:?}"),
+        }
+    }
+
+    #[test]
     fn fishaudio_runtime_decode_path_handles_empty_frames() {
         let mut config = NanoCodecFsqRuntimeConfig::new(
             44_100,
@@ -3896,6 +4625,7 @@ mod tests {
             input_dim: 1,
             total_codebooks: 2,
             upsample_factor: 1,
+            vocoder_data_type: DataType::F32,
         });
 
         let runtime = super::NanoCodecFsqRuntime::new(config);
@@ -4010,6 +4740,7 @@ mod tests {
             input_dim: 2,
             total_codebooks: 2,
             upsample_factor: 1,
+            vocoder_data_type: DataType::F32,
         };
 
         let batch_size = 2usize;

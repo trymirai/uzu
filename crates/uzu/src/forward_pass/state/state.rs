@@ -78,8 +78,13 @@ impl<B: Backend> ForwardPassState<B> {
     ) -> ArrayCell<B> {
         let suffix_length = token_positions.len();
         let token_positions_array = scratch.token_positions.view(&[suffix_length]);
-        let token_positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
-        token_positions_array.borrow_mut().copy_from_view(token_positions_i32.as_ref().into());
+        {
+            let mut positions = token_positions_array.borrow_mut();
+            let dst = positions.as_slice_mut::<i32>();
+            for (out, &position) in dst.iter_mut().zip(token_positions.iter()) {
+                *out = position as i32;
+            }
+        }
         token_positions_array
     }
 
@@ -96,7 +101,7 @@ impl<B: Backend> ForwardPassState<B> {
             let parents = token_parents.as_slice_mut::<i32>();
             parents.fill(-1);
 
-            if sampling_length > 0 {
+            if sampling_length > 1 {
                 let root_pos = token_positions.get(sampling_start).copied().unwrap_or(0);
 
                 let mut stack: Vec<usize> = Vec::new();

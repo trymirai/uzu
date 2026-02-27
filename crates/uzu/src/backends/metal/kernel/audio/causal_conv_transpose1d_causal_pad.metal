@@ -61,6 +61,11 @@ void causal_conv_transpose1d_causal_pad(
   const int seq_len_expanded =
       (seq_len_in > 0) ? (((seq_len_in - 1) * stride) + 1) : 0;
   const int left_pad = kernel_size - 1;
+  const bool fast_two_tap = (kernel_size == (stride * 2));
+  const int q = (int)t_out / stride;
+  const int r = (int)t_out % stride;
+  const int k_q_minus_one = (stride - 1) - r;
+  const int k_q = (kernel_size - 1) - r;
 
   float acc = float(bias[oc]);
   if (input_layout == AUDIO_LAYOUT_NCS) {
@@ -69,22 +74,32 @@ void causal_conv_transpose1d_causal_pad(
       const uint w_base =
           ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
           (uint)kernel_size;
+      if (fast_two_tap) {
+        if (q > 0 && q - 1 < seq_len_in) {
+          acc += float(input[in_base + (uint)(q - 1)]) *
+                 float(weight[w_base + (uint)k_q_minus_one]);
+        }
+        if (q >= 0 && q < seq_len_in) {
+          acc += float(input[in_base + (uint)q]) *
+                 float(weight[w_base + (uint)k_q]);
+        }
+      } else {
+        for (int k = 0; k < kernel_size; ++k) {
+          const int expanded_time = (int)t_out + k - left_pad;
+          if (expanded_time < 0 || expanded_time >= seq_len_expanded) {
+            continue;
+          }
+          if ((expanded_time % stride) != 0) {
+            continue;
+          }
 
-      for (int k = 0; k < kernel_size; ++k) {
-        const int expanded_time = (int)t_out + k - left_pad;
-        if (expanded_time < 0 || expanded_time >= seq_len_expanded) {
-          continue;
+          const int src_time = expanded_time / stride;
+          if (src_time < 0 || src_time >= seq_len_in) {
+            continue;
+          }
+          acc += float(input[in_base + (uint)src_time]) *
+                 float(weight[w_base + (uint)k]);
         }
-        if ((expanded_time % stride) != 0) {
-          continue;
-        }
-
-        const int src_time = expanded_time / stride;
-        if (src_time < 0 || src_time >= seq_len_in) {
-          continue;
-        }
-        acc += float(input[in_base + (uint)src_time]) *
-               float(weight[w_base + (uint)k]);
       }
     }
   } else {
@@ -92,23 +107,33 @@ void causal_conv_transpose1d_causal_pad(
       const uint w_base =
           ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
           (uint)kernel_size;
+      if (fast_two_tap) {
+        if (q > 0 && q - 1 < seq_len_in) {
+          const uint in_idx = (b * (uint)seq_len_in + (uint)(q - 1)) * (uint)cin + (uint)ic;
+          acc += float(input[in_idx]) * float(weight[w_base + (uint)k_q_minus_one]);
+        }
+        if (q >= 0 && q < seq_len_in) {
+          const uint in_idx = (b * (uint)seq_len_in + (uint)q) * (uint)cin + (uint)ic;
+          acc += float(input[in_idx]) * float(weight[w_base + (uint)k_q]);
+        }
+      } else {
+        for (int k = 0; k < kernel_size; ++k) {
+          const int expanded_time = (int)t_out + k - left_pad;
+          if (expanded_time < 0 || expanded_time >= seq_len_expanded) {
+            continue;
+          }
+          if ((expanded_time % stride) != 0) {
+            continue;
+          }
 
-      for (int k = 0; k < kernel_size; ++k) {
-        const int expanded_time = (int)t_out + k - left_pad;
-        if (expanded_time < 0 || expanded_time >= seq_len_expanded) {
-          continue;
+          const int src_time = expanded_time / stride;
+          if (src_time < 0 || src_time >= seq_len_in) {
+            continue;
+          }
+          const uint in_idx =
+              (b * (uint)seq_len_in + (uint)src_time) * (uint)cin + (uint)ic;
+          acc += float(input[in_idx]) * float(weight[w_base + (uint)k]);
         }
-        if ((expanded_time % stride) != 0) {
-          continue;
-        }
-
-        const int src_time = expanded_time / stride;
-        if (src_time < 0 || src_time >= seq_len_in) {
-          continue;
-        }
-        const uint in_idx =
-            (b * (uint)seq_len_in + (uint)src_time) * (uint)cin + (uint)ic;
-        acc += float(input[in_idx]) * float(weight[w_base + (uint)k]);
       }
     }
   }
