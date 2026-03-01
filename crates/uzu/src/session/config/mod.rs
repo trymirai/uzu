@@ -8,4 +8,6 @@ pub use decoding_config::DecodingConfig;
 pub use grammar_config::GrammarConfig;
 pub use run_config::RunConfig;
 pub use speculator_config::SpeculatorConfig;
-pub use tts_run_config::{TtsChunkPolicy, TtsNonStreamingMode, TtsPerformanceConfig, TtsRunConfig};
+pub use tts_run_config::{
+    TtsChunkPolicy, TtsNonStreamingMode, TtsPerformanceConfig, TtsRunConfig, TtsVocoderStreamingMode,
+};

@@ -17,7 +17,7 @@ use crate::{
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     backends::{
         common::{
-            Backend, CommandBuffer, Context, Kernels,
+            Backend, CommandBuffer, Context, CopyEncoder, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dKernel,
                 AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
@@ -78,14 +78,59 @@ fn checked_mul_i32(
         .ok_or(AudioError::Runtime("scaled length overflow".to_string()))
 }
 
+fn checked_div_ceil(
+    numerator: usize,
+    denominator: usize,
+) -> AudioResult<usize> {
+    if denominator == 0 {
+        return Err(AudioError::Runtime("division by zero".to_string()));
+    }
+    let addend = denominator.saturating_sub(1);
+    numerator
+        .checked_add(addend)
+        .ok_or(AudioError::Runtime("ceil-division overflow".to_string()))
+        .map(|value| value / denominator)
+}
+
+fn scale_lengths_i32_in_place(
+    source: &[i32],
+    destination: &mut [i32],
+    factor: usize,
+) -> AudioResult<()> {
+    if destination.len() != source.len() {
+        return Err(AudioError::Runtime(format!(
+            "scaled length buffer mismatch: expected {}, got {}",
+            source.len(),
+            destination.len()
+        )));
+    }
+    for (dst, &src) in destination.iter_mut().zip(source.iter()) {
+        *dst = checked_mul_i32(src, factor)?;
+    }
+    Ok(())
+}
+
+fn parse_env_bool(name: &str) -> Option<bool> {
+    std::env::var(name).ok().and_then(|value| {
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    })
+}
+
 fn fishaudio_profile_enabled() -> bool {
-    std::env::var("UZU_FISHAUDIO_PROFILE")
-        .ok()
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            value == "1" || value == "true" || value == "yes" || value == "on"
-        })
-        .unwrap_or(false)
+    parse_env_bool("UZU_FISHAUDIO_PROFILE").unwrap_or(false)
+}
+
+fn fishaudio_profile_ops_enabled() -> bool {
+    parse_env_bool("UZU_FISHAUDIO_PROFILE_OPS").unwrap_or(false)
+}
+
+fn fishaudio_chunked_command_buffers_enabled() -> bool {
+    parse_env_bool("UZU_FISHAUDIO_CHUNKED_CMD_BUFS").unwrap_or(true)
 }
 
 fn fishaudio_dtype_key(data_type: DataType) -> u8 {
@@ -152,6 +197,376 @@ impl SequenceLayout {
             Self::Nsc => 1,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioDecodeStreamingMode {
+    IncrementalStateful,
+    PrefixFallback,
+}
+
+#[derive(Debug, Clone)]
+pub struct AudioDecodeStreamState {
+    batch_size: usize,
+    codebooks: usize,
+    max_workspace_frames: usize,
+    mode: AudioDecodeStreamingMode,
+    row_tokens: Vec<Vec<u32>>,
+    flattened_tokens: Vec<u32>,
+    window_lengths: Vec<usize>,
+    semantic_lengths: Vec<usize>,
+    emitted_semantic_lengths: Vec<usize>,
+    emitted_audio_lengths: Vec<usize>,
+}
+
+impl AudioDecodeStreamState {
+    fn new(
+        batch_size: usize,
+        codebooks: usize,
+        max_workspace_frames: usize,
+        mode: AudioDecodeStreamingMode,
+    ) -> AudioResult<Self> {
+        if batch_size == 0 {
+            return Err(AudioError::Runtime("stream state batch_size must be > 0".to_string()));
+        }
+        if codebooks == 0 {
+            return Err(AudioError::Runtime("stream state codebooks must be > 0".to_string()));
+        }
+        if max_workspace_frames == 0 {
+            return Err(AudioError::Runtime("stream state max_workspace_frames must be > 0".to_string()));
+        }
+
+        let row_count = batch_size
+            .checked_mul(codebooks)
+            .ok_or(AudioError::Runtime("stream state row count overflow".to_string()))?;
+        let mut row_tokens = Vec::with_capacity(row_count);
+        for _ in 0..row_count {
+            row_tokens.push(Vec::with_capacity(max_workspace_frames));
+        }
+
+        Ok(Self {
+            batch_size,
+            codebooks,
+            max_workspace_frames,
+            mode,
+            row_tokens,
+            flattened_tokens: Vec::with_capacity(
+                row_count
+                    .checked_mul(max_workspace_frames)
+                    .ok_or(AudioError::Runtime("stream token capacity overflow".to_string()))?,
+            ),
+            window_lengths: Vec::with_capacity(batch_size),
+            semantic_lengths: vec![0; batch_size],
+            emitted_semantic_lengths: vec![0; batch_size],
+            emitted_audio_lengths: vec![0; batch_size],
+        })
+    }
+
+    fn total_frames(&self) -> usize {
+        self.row_tokens.first().map_or(0, Vec::len)
+    }
+
+    fn append_delta(
+        &mut self,
+        delta_tokens: &AudioTokenGrid,
+    ) -> AudioResult<()> {
+        if delta_tokens.batch_size() != self.batch_size {
+            return Err(AudioError::Runtime(format!(
+                "stream delta batch mismatch: expected {}, got {}",
+                self.batch_size,
+                delta_tokens.batch_size()
+            )));
+        }
+        if delta_tokens.codebooks() != self.codebooks {
+            return Err(AudioError::Runtime(format!(
+                "stream delta codebook mismatch: expected {}, got {}",
+                self.codebooks,
+                delta_tokens.codebooks()
+            )));
+        }
+        if delta_tokens.frames() == 0 {
+            return Ok(());
+        }
+
+        let delta_codebook_major = delta_tokens.to_packing(AudioTokenPacking::CodebookMajor);
+        let delta_frames = delta_codebook_major.frames();
+        let tokens = delta_codebook_major.tokens();
+        let target_frames = self.total_frames().saturating_add(delta_frames);
+        if target_frames > self.max_workspace_frames {
+            self.max_workspace_frames = target_frames;
+        }
+
+        for batch in 0..self.batch_size {
+            for codebook in 0..self.codebooks {
+                let row_index = batch
+                    .checked_mul(self.codebooks)
+                    .and_then(|value| value.checked_add(codebook))
+                    .ok_or(AudioError::Runtime("stream row index overflow".to_string()))?;
+                let row = &mut self.row_tokens[row_index];
+                if row.capacity() < self.max_workspace_frames {
+                    let missing_capacity = self.max_workspace_frames.saturating_sub(row.capacity());
+                    row.reserve(missing_capacity);
+                }
+                let src_start = row_index
+                    .checked_mul(delta_frames)
+                    .ok_or(AudioError::Runtime("stream source index overflow".to_string()))?;
+                let src_end = src_start
+                    .checked_add(delta_frames)
+                    .ok_or(AudioError::Runtime("stream source index overflow".to_string()))?;
+                row.extend_from_slice(&tokens[src_start..src_end]);
+            }
+        }
+
+        for (length, &delta_len) in self.semantic_lengths.iter_mut().zip(delta_codebook_major.lengths().iter()) {
+            *length = length
+                .checked_add(delta_len)
+                .ok_or(AudioError::Runtime("stream semantic length overflow".to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    fn to_full_grid(&mut self) -> AudioResult<AudioTokenGrid> {
+        let total_frames = self.total_frames();
+        for row in &self.row_tokens {
+            if row.len() != total_frames {
+                return Err(AudioError::Runtime("stream row token length mismatch".to_string()));
+            }
+        }
+
+        let expected_tokens = self
+            .batch_size
+            .checked_mul(self.codebooks)
+            .and_then(|value| value.checked_mul(total_frames))
+            .ok_or(AudioError::Runtime("stream token count overflow".to_string()))?;
+        self.flattened_tokens.clear();
+        self.flattened_tokens.reserve(expected_tokens.saturating_sub(self.flattened_tokens.capacity()));
+        for row in &self.row_tokens {
+            self.flattened_tokens.extend_from_slice(row);
+        }
+        if self.flattened_tokens.len() != expected_tokens {
+            return Err(AudioError::Runtime("stream flattened token count mismatch".to_string()));
+        }
+
+        AudioTokenGrid::new(
+            self.flattened_tokens.clone().into_boxed_slice(),
+            self.batch_size,
+            self.codebooks,
+            total_frames,
+            self.semantic_lengths.clone().into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+    }
+
+    fn flatten_window(
+        &mut self,
+        start_frame: usize,
+        end_frame: usize,
+    ) -> AudioResult<(&[u32], &[usize], usize)> {
+        if end_frame < start_frame {
+            return Err(AudioError::Runtime(format!(
+                "invalid stream window: start_frame={start_frame}, end_frame={end_frame}"
+            )));
+        }
+        let total_frames = self.total_frames();
+        if end_frame > total_frames {
+            return Err(AudioError::Runtime(format!(
+                "stream window end exceeds token frames: end={end_frame}, total={total_frames}"
+            )));
+        }
+
+        let window_frames = end_frame.saturating_sub(start_frame);
+        let row_count = self
+            .batch_size
+            .checked_mul(self.codebooks)
+            .ok_or(AudioError::Runtime("stream row count overflow".to_string()))?;
+        let required_capacity = row_count
+            .checked_mul(window_frames)
+            .ok_or(AudioError::Runtime("stream window token capacity overflow".to_string()))?;
+
+        if self.flattened_tokens.capacity() < required_capacity {
+            self.flattened_tokens.reserve(required_capacity.saturating_sub(self.flattened_tokens.capacity()));
+        }
+        self.flattened_tokens.clear();
+        for row in &self.row_tokens {
+            self.flattened_tokens.extend_from_slice(&row[start_frame..end_frame]);
+        }
+
+        self.window_lengths.clear();
+        for &length in &self.semantic_lengths {
+            self.window_lengths.push(length.saturating_sub(start_frame));
+        }
+
+        Ok((&self.flattened_tokens, &self.window_lengths, window_frames))
+    }
+
+    fn extract_delta_padded(
+        &mut self,
+        full_pcm: &AudioPcmBatch,
+    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+        if full_pcm.batch_size() != self.batch_size {
+            return Err(AudioError::Runtime(format!(
+                "stream decoded batch mismatch: expected {}, got {}",
+                self.batch_size,
+                full_pcm.batch_size()
+            )));
+        }
+        let channels = full_pcm.channels();
+        let mut delta_lengths = vec![0_usize; self.batch_size];
+        let mut delta_unpacked = Vec::<f32>::new();
+
+        let mut src_offset = 0usize;
+        for batch in 0..self.batch_size {
+            let full_frames = full_pcm.lengths()[batch];
+            let previous_frames = self.emitted_audio_lengths[batch].min(full_frames);
+            let delta_frames = full_frames.saturating_sub(previous_frames);
+            delta_lengths[batch] = delta_frames;
+
+            let batch_sample_count = full_frames
+                .checked_mul(channels)
+                .ok_or(AudioError::Runtime("stream batch sample count overflow".to_string()))?;
+            let src_end = src_offset
+                .checked_add(batch_sample_count)
+                .ok_or(AudioError::Runtime("stream sample offset overflow".to_string()))?;
+            let batch_slice = &full_pcm.samples()[src_offset..src_end];
+
+            let delta_start = previous_frames
+                .checked_mul(channels)
+                .ok_or(AudioError::Runtime("stream delta offset overflow".to_string()))?;
+            let delta_end = full_frames
+                .checked_mul(channels)
+                .ok_or(AudioError::Runtime("stream delta offset overflow".to_string()))?;
+            delta_unpacked.extend_from_slice(&batch_slice[delta_start..delta_end]);
+
+            src_offset = src_end;
+            self.emitted_audio_lengths[batch] = full_frames;
+            self.emitted_semantic_lengths[batch] = self.semantic_lengths[batch];
+        }
+
+        let (delta_padded, delta_frames) = pack_unpacked_to_padded(&delta_unpacked, channels, &delta_lengths)?;
+        Ok(super::decoder::DecodedPaddedAudio {
+            samples: delta_padded,
+            channels,
+            frames: delta_frames,
+            lengths: delta_lengths,
+        })
+    }
+
+    fn extract_delta_from_padded_with_offset(
+        &mut self,
+        full_padded: &super::decoder::DecodedPaddedAudio,
+        audio_offset_frames: usize,
+        upsample_factor: usize,
+    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+        if full_padded.lengths.len() != self.batch_size {
+            return Err(AudioError::Runtime(format!(
+                "stream decoded batch mismatch: expected {}, got {}",
+                self.batch_size,
+                full_padded.lengths.len()
+            )));
+        }
+        if upsample_factor == 0 {
+            return Err(AudioError::Runtime("stream upsample_factor must be > 0".to_string()));
+        }
+
+        let channels = full_padded.channels;
+        let decoded_frames = full_padded.frames;
+        let mut delta_lengths = vec![0usize; self.batch_size];
+        let mut max_delta_frames = 0usize;
+        let mut local_delta_ranges = vec![(0usize, 0usize); self.batch_size];
+
+        for batch in 0..self.batch_size {
+            let semantic_length = self.semantic_lengths[batch];
+            let full_audio_length = semantic_length
+                .checked_mul(upsample_factor)
+                .ok_or(AudioError::Runtime("stream audio length overflow".to_string()))?;
+            let previous_audio_length = self.emitted_audio_lengths[batch].min(full_audio_length);
+            let decoded_batch_length = full_padded.lengths[batch];
+            let target_end_local = full_audio_length.saturating_sub(audio_offset_frames).min(decoded_batch_length);
+            let target_start_local = previous_audio_length.saturating_sub(audio_offset_frames).min(target_end_local);
+            let delta = target_end_local.saturating_sub(target_start_local);
+            local_delta_ranges[batch] = (target_start_local, target_end_local);
+            delta_lengths[batch] = delta;
+            max_delta_frames = max_delta_frames.max(delta);
+            self.emitted_audio_lengths[batch] = full_audio_length;
+            self.emitted_semantic_lengths[batch] = semantic_length;
+        }
+
+        let padded_len = checked_product(&[self.batch_size, channels, max_delta_frames])?;
+        let mut delta_padded = vec![0.0_f32; padded_len];
+        for (batch, &(start_local, end_local)) in local_delta_ranges.iter().enumerate() {
+            let delta_len = end_local.saturating_sub(start_local);
+            if delta_len == 0 {
+                continue;
+            }
+            for channel in 0..channels {
+                let src_start = (batch * channels + channel)
+                    .checked_mul(decoded_frames)
+                    .and_then(|value| value.checked_add(start_local))
+                    .ok_or(AudioError::Runtime("stream padded source offset overflow".to_string()))?;
+                let src_end = src_start
+                    .checked_add(delta_len)
+                    .ok_or(AudioError::Runtime("stream padded source offset overflow".to_string()))?;
+                let dst_start = (batch * channels + channel)
+                    .checked_mul(max_delta_frames)
+                    .ok_or(AudioError::Runtime("stream padded destination offset overflow".to_string()))?;
+                let dst_end = dst_start
+                    .checked_add(delta_len)
+                    .ok_or(AudioError::Runtime("stream padded destination offset overflow".to_string()))?;
+                delta_padded[dst_start..dst_end].copy_from_slice(&full_padded.samples[src_start..src_end]);
+            }
+        }
+
+        Ok(super::decoder::DecodedPaddedAudio {
+            samples: delta_padded,
+            channels,
+            frames: max_delta_frames,
+            lengths: delta_lengths,
+        })
+    }
+}
+
+fn pack_unpacked_to_padded(
+    unpacked: &[f32],
+    channels: usize,
+    lengths: &[usize],
+) -> AudioResult<(Vec<f32>, usize)> {
+    if channels == 0 {
+        return Err(AudioError::InvalidChannelCount);
+    }
+    let batch_size = lengths.len();
+    let frames = lengths.iter().copied().max().unwrap_or(0);
+    let expected_unpacked = lengths
+        .iter()
+        .try_fold(0usize, |acc, &length| acc.checked_add(length.checked_mul(channels)?))
+        .ok_or(AudioError::Runtime("stream unpacked size overflow".to_string()))?;
+    if unpacked.len() != expected_unpacked {
+        return Err(AudioError::InvalidPcmShape {
+            expected_samples: expected_unpacked,
+            actual_samples: unpacked.len(),
+        });
+    }
+
+    let padded_len = checked_product(&[batch_size, channels, frames])?;
+    let mut padded = vec![0.0_f32; padded_len];
+    let mut src_offset = 0usize;
+    for (batch, &frame_count) in lengths.iter().enumerate() {
+        let batch_samples = frame_count
+            .checked_mul(channels)
+            .ok_or(AudioError::Runtime("stream batch sample count overflow".to_string()))?;
+        for frame in 0..frame_count {
+            let src_frame_base = src_offset + frame * channels;
+            for channel in 0..channels {
+                let dst_index = (batch * channels + channel) * frames + frame;
+                padded[dst_index] = unpacked[src_frame_base + channel];
+            }
+        }
+        src_offset = src_offset
+            .checked_add(batch_samples)
+            .ok_or(AudioError::Runtime("stream source offset overflow".to_string()))?;
+    }
+
+    Ok((padded, frames))
 }
 
 fn pack_pcm_to_padded(
@@ -451,6 +866,7 @@ struct FishAudioConvTranspose1dLayer {
     bias: Vec<f32>,
     cin: usize,
     cout: usize,
+    kernel_size: usize,
     stride: usize,
     groups: usize,
 }
@@ -611,6 +1027,21 @@ struct FishAudioKernelCache {
     add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel,
 }
 
+struct FishAudioQuantizerGpuResources {
+    data_type: DataType,
+    codebook_dim: usize,
+    residual_quantizers: usize,
+    semantic_cardinality: usize,
+    residual_cardinality: usize,
+    kernel: <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel,
+    semantic_codebook: Array<Metal>,
+    semantic_out_proj: Array<Metal>,
+    semantic_out_bias: Array<Metal>,
+    residual_codebooks: Array<Metal>,
+    residual_out_proj: Array<Metal>,
+    residual_out_bias: Array<Metal>,
+}
+
 thread_local! {
     static FISHAUDIO_POST_MODULE_RUNTIME_CACHE: RefCell<HashMap<String, Rc<FishAudioPostModuleRuntime>>> =
         RefCell::new(HashMap::new());
@@ -619,6 +1050,8 @@ thread_local! {
     static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<FishAudioKernelCache>>> =
         RefCell::new(HashMap::new());
     static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<FishAudioDecoderGpuGraph>>> =
+        RefCell::new(HashMap::new());
+    static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerGpuResources>>> =
         RefCell::new(HashMap::new());
 }
 
@@ -1107,6 +1540,7 @@ fn read_fishaudio_transpose_conv_layer(
         bias,
         cin: in_channels,
         cout: out_channels,
+        kernel_size: converted.shape[2],
         stride,
         groups,
     })
@@ -1360,16 +1794,25 @@ fn build_fishaudio_codec_graph(
     })
 }
 
-fn create_i32_array(
-    context: &Rc<<Metal as Backend>::Context>,
+fn write_i32_slice_to_array(
+    array: &mut Array<Metal>,
     values: &[i32],
     label: &str,
-) -> Array<Metal> {
-    let mut array = context.create_array(&[values.len()], DataType::I32, label);
+) -> AudioResult<()> {
+    if array.data_type() != DataType::I32 {
+        return Err(AudioError::Runtime(format!("{label} expected I32 array, got {:?}", array.data_type())));
+    }
+    if array.num_elements() != values.len() {
+        return Err(AudioError::Runtime(format!(
+            "{label} length mismatch: expected {}, got {}",
+            array.num_elements(),
+            values.len()
+        )));
+    }
     if !values.is_empty() {
         array.as_slice_mut::<i32>().copy_from_slice(values);
     }
-    array
+    Ok(())
 }
 
 fn create_data_array(
@@ -1445,7 +1888,18 @@ fn create_conv_transpose1d_gpu_layer(
     if weight_plane == 0 || layer.weight.len() % weight_plane != 0 {
         return Err(AudioError::Runtime(format!("transpose layer '{label_prefix}' has invalid weight shape")));
     }
-    let kernel_size = layer.weight.len() / weight_plane;
+    let kernel_size = layer.kernel_size;
+    if kernel_size == 0
+        || layer.weight.len()
+            != weight_plane
+                .checked_mul(kernel_size)
+                .ok_or(AudioError::Runtime(format!("transpose layer '{label_prefix}' kernel shape overflow")))?
+    {
+        return Err(AudioError::Runtime(format!(
+            "transpose layer '{label_prefix}' has invalid kernel_size={kernel_size} for weight len {}",
+            layer.weight.len()
+        )));
+    }
     let weight = create_data_array(
         context,
         data_type,
@@ -2124,6 +2578,92 @@ fn tanh_enqueue(
 }
 
 impl FishAudioCodecGraph {
+    fn conv1d_input_context(layer: &FishAudioConv1dLayer) -> AudioResult<usize> {
+        layer
+            .kernel_size
+            .checked_sub(1)
+            .and_then(|value| value.checked_mul(layer.dilation))
+            .ok_or(AudioError::Runtime("conv1d streaming context overflow".to_string()))
+    }
+
+    fn convtranspose_input_context(
+        output_context: usize,
+        layer: &FishAudioConvTranspose1dLayer,
+    ) -> AudioResult<usize> {
+        let kernel_minus_one = layer.kernel_size.saturating_sub(1);
+        let numerator = output_context
+            .checked_add(kernel_minus_one)
+            .ok_or(AudioError::Runtime("transpose streaming context overflow".to_string()))?;
+        checked_div_ceil(numerator, layer.stride)
+    }
+
+    fn residual_unit_input_context(
+        output_context: usize,
+        layer: &FishAudioResidualUnitLayer,
+    ) -> AudioResult<usize> {
+        let conv2 = Self::conv1d_input_context(&layer.conv2)?;
+        let conv1 = Self::conv1d_input_context(&layer.conv1)?;
+        output_context
+            .checked_add(conv2)
+            .and_then(|value| value.checked_add(conv1))
+            .ok_or(AudioError::Runtime("residual-unit streaming context overflow".to_string()))
+    }
+
+    fn convnext_input_context(
+        output_context: usize,
+        layer: &FishAudioConvNeXtLayer,
+    ) -> AudioResult<usize> {
+        output_context
+            .checked_add(Self::conv1d_input_context(&layer.depthwise_conv)?)
+            .ok_or(AudioError::Runtime("convnext streaming context overflow".to_string()))
+    }
+
+    fn decoder_block_input_context(
+        output_context: usize,
+        layer: &FishAudioDecoderBlockLayer,
+    ) -> AudioResult<usize> {
+        let after_res3 = Self::residual_unit_input_context(output_context, &layer.res_unit3)?;
+        let after_res2 = Self::residual_unit_input_context(after_res3, &layer.res_unit2)?;
+        let after_res1 = Self::residual_unit_input_context(after_res2, &layer.res_unit1)?;
+        Self::convtranspose_input_context(after_res1, &layer.trans_conv)
+    }
+
+    fn streaming_vocoder_context_frames(&self) -> AudioResult<usize> {
+        let mut context = Self::conv1d_input_context(&self.decoder.final_conv)?;
+
+        for block in self.decoder.decoder_blocks.iter().rev() {
+            context = Self::decoder_block_input_context(context, block)?;
+        }
+
+        context = context
+            .checked_add(Self::conv1d_input_context(&self.decoder.first_conv)?)
+            .ok_or(AudioError::Runtime("decoder-first streaming context overflow".to_string()))?;
+
+        for (trans_conv, convnext) in self.decoder.upsample_blocks.iter().rev() {
+            context = Self::convnext_input_context(context, convnext)?;
+            context = Self::convtranspose_input_context(context, trans_conv)?;
+        }
+
+        Ok(context)
+    }
+
+    fn post_module_streaming_context_frames(&self) -> Option<usize> {
+        let mut context = 0usize;
+        for layer in &self.post_module_transformer_config.layer_configs {
+            let window = layer.mixer_config.sliding_window_size()?;
+            context = context.max(window.saturating_sub(1));
+        }
+        Some(context)
+    }
+
+    fn streaming_decode_context_frames(&self) -> AudioResult<Option<usize>> {
+        let vocoder_context = self.streaming_vocoder_context_frames()?;
+        let Some(post_module_context) = self.post_module_streaming_context_frames() else {
+            return Ok(None);
+        };
+        Ok(Some(vocoder_context.max(post_module_context)))
+    }
+
     #[cfg(test)]
     fn add_quantized_code_to_latent(
         target: &mut [f32],
@@ -2207,6 +2747,7 @@ impl FishAudioCodecGraph {
         Ok(latent_nsc)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn decode_quantizer_to_nsc(
         &self,
         tokens: &[u32],
@@ -2215,6 +2756,19 @@ impl FishAudioCodecGraph {
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<Vec<f32>> {
+        let context = self.decode_context()?;
+        self.decode_quantizer_to_nsc_on_context(&context, tokens, lengths, batch_size, codebooks, frames)
+    }
+
+    fn decode_quantizer_to_nsc_array_on_context(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<Array<Metal>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
                 "FishAudio codebook mismatch: expected {}, got {codebooks}",
@@ -2242,64 +2796,23 @@ impl FishAudioCodecGraph {
                 });
             }
         }
-        if self.semantic_codebook_size == 0 || self.codebook_size == 0 {
-            return Err(AudioError::InvalidTokenCardinality);
-        }
-
-        let codebook_dim = self.semantic_quantizer.codebook.cols;
-        if codebook_dim == 0 {
-            return Err(AudioError::InvalidTokenCardinality);
-        }
-        if self.semantic_quantizer.codebook.rows != self.semantic_codebook_size {
-            return Err(AudioError::Runtime(format!(
-                "semantic codebook row mismatch: expected {}, got {}",
-                self.semantic_codebook_size, self.semantic_quantizer.codebook.rows
-            )));
-        }
-        if self.semantic_quantizer.out_proj.rows != self.input_dim
-            || self.semantic_quantizer.out_proj.cols != codebook_dim
-        {
-            return Err(AudioError::Runtime("semantic out_proj shape mismatch".to_string()));
-        }
-        if self.semantic_quantizer.out_bias.len() != self.input_dim {
-            return Err(AudioError::Runtime("semantic out_bias shape mismatch".to_string()));
-        }
-        let residual_quantizers = self.residual_quantizers.len();
-        if residual_quantizers + 1 != codebooks {
+        let quantizer_resources = self.quantizer_gpu_resources(context)?;
+        if quantizer_resources.residual_quantizers + 1 != codebooks {
             return Err(AudioError::Runtime(format!(
                 "FishAudio residual quantizer count mismatch: expected {}, got {}",
                 codebooks.saturating_sub(1),
-                residual_quantizers
+                quantizer_resources.residual_quantizers
             )));
         }
-        for (index, quantizer) in self.residual_quantizers.iter().enumerate() {
-            if quantizer.codebook.rows != self.codebook_size || quantizer.codebook.cols != codebook_dim {
-                return Err(AudioError::Runtime(format!("residual quantizer {index} codebook shape mismatch")));
-            }
-            if quantizer.out_proj.rows != self.input_dim || quantizer.out_proj.cols != codebook_dim {
-                return Err(AudioError::Runtime(format!("residual quantizer {index} out_proj shape mismatch")));
-            }
-            if quantizer.out_bias.len() != self.input_dim {
-                return Err(AudioError::Runtime(format!("residual quantizer {index} out_bias shape mismatch")));
-            }
-        }
 
-        let mut tokens_i32 = vec![0_i32; tokens.len()];
-        for (index, &token) in tokens.iter().enumerate() {
-            if token > i32::MAX as u32 {
-                return Err(AudioError::Runtime(format!(
-                    "FishAudio token at index {index} exceeds i32 range: {token}"
-                )));
-            }
-            tokens_i32[index] = token as i32;
-        }
-        let lengths_i32 =
-            lengths.iter().map(|&length| usize_to_i32(length, "length")).collect::<AudioResult<Vec<_>>>()?;
-
-        let context = <Metal as Backend>::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio quantizer context: {err}")))?;
-        let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(&context, DataType::F32)
-            .map_err(|err| AudioError::Runtime(format!("failed to initialize quantizer decode kernel: {err}")))?;
+        let tokens_i32 = tokens
+            .iter()
+            .copied()
+            .map(|token| {
+                i32::try_from(token).map_err(|_| AudioError::Runtime(format!("token id out of i32 range: {token}")))
+            })
+            .collect::<AudioResult<Vec<_>>>()?;
+        let lengths_i32 = convert_lengths_to_i32(lengths, frames)?;
 
         let mut tokens_array =
             context.create_array(&[batch_size, codebooks, frames], DataType::I32, "fishaudio_quantizer_tokens");
@@ -2307,105 +2820,33 @@ impl FishAudioCodecGraph {
         let mut lengths_array = context.create_array(&[batch_size], DataType::I32, "fishaudio_quantizer_lengths");
         lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
 
-        let mut semantic_codebook = context.create_array(
-            &[self.semantic_codebook_size, codebook_dim],
-            DataType::F32,
-            "fishaudio_quantizer_semantic_codebook",
-        );
-        semantic_codebook.as_slice_mut::<f32>().copy_from_slice(&self.semantic_quantizer.codebook.values);
-        let mut semantic_out_proj = context.create_array(
-            &[self.input_dim, codebook_dim],
-            DataType::F32,
-            "fishaudio_quantizer_semantic_out_proj",
-        );
-        semantic_out_proj.as_slice_mut::<f32>().copy_from_slice(&self.semantic_quantizer.out_proj.values);
-        let mut semantic_out_bias =
-            context.create_array(&[self.input_dim], DataType::F32, "fishaudio_quantizer_semantic_out_bias");
-        semantic_out_bias.as_slice_mut::<f32>().copy_from_slice(&self.semantic_quantizer.out_bias);
-
-        let residual_count_for_shape = residual_quantizers.max(1);
-        let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-        let residual_codebook_len =
-            checked_product(&[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim])?;
-        let residual_proj_len = checked_product(&[residual_count_for_shape, self.input_dim, codebook_dim])?;
-        let residual_bias_len = checked_product(&[residual_count_for_shape, self.input_dim])?;
-        let mut residual_codebook_host = vec![0.0_f32; residual_codebook_len];
-        let mut residual_proj_host = vec![0.0_f32; residual_proj_len];
-        let mut residual_bias_host = vec![0.0_f32; residual_bias_len];
-        for (index, quantizer) in self.residual_quantizers.iter().enumerate() {
-            let codebook_offset = index
-                .checked_mul(self.codebook_size)
-                .and_then(|value| value.checked_mul(codebook_dim))
-                .ok_or(AudioError::Runtime("residual codebook offset overflow".to_string()))?;
-            let codebook_end = codebook_offset
-                .checked_add(checked_product(&[self.codebook_size, codebook_dim])?)
-                .ok_or(AudioError::Runtime("residual codebook offset overflow".to_string()))?;
-            residual_codebook_host[codebook_offset..codebook_end].copy_from_slice(&quantizer.codebook.values);
-
-            let proj_offset = index
-                .checked_mul(self.input_dim)
-                .and_then(|value| value.checked_mul(codebook_dim))
-                .ok_or(AudioError::Runtime("residual proj offset overflow".to_string()))?;
-            let proj_end = proj_offset
-                .checked_add(checked_product(&[self.input_dim, codebook_dim])?)
-                .ok_or(AudioError::Runtime("residual proj offset overflow".to_string()))?;
-            residual_proj_host[proj_offset..proj_end].copy_from_slice(&quantizer.out_proj.values);
-
-            let bias_offset = index
-                .checked_mul(self.input_dim)
-                .ok_or(AudioError::Runtime("residual bias offset overflow".to_string()))?;
-            let bias_end = bias_offset
-                .checked_add(self.input_dim)
-                .ok_or(AudioError::Runtime("residual bias offset overflow".to_string()))?;
-            residual_bias_host[bias_offset..bias_end].copy_from_slice(&quantizer.out_bias);
-        }
-
-        let mut residual_codebooks = context.create_array(
-            &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
-            DataType::F32,
-            "fishaudio_quantizer_residual_codebooks",
-        );
-        residual_codebooks.as_slice_mut::<f32>().copy_from_slice(&residual_codebook_host);
-        let mut residual_out_proj = context.create_array(
-            &[residual_count_for_shape, self.input_dim, codebook_dim],
-            DataType::F32,
-            "fishaudio_quantizer_residual_out_proj",
-        );
-        residual_out_proj.as_slice_mut::<f32>().copy_from_slice(&residual_proj_host);
-        let mut residual_out_bias = context.create_array(
-            &[residual_count_for_shape, self.input_dim],
-            DataType::F32,
-            "fishaudio_quantizer_residual_out_bias",
-        );
-        residual_out_bias.as_slice_mut::<f32>().copy_from_slice(&residual_bias_host);
-
         let output = context.create_array(
             &[batch_size, frames, self.input_dim],
-            DataType::F32,
+            quantizer_resources.data_type,
             "fishaudio_quantizer_output_nsc",
         );
         let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
         let codebooks_i32 = usize_to_i32(codebooks, "codebooks")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
         let input_dim_i32 = usize_to_i32(self.input_dim, "input_dim")?;
-        let codebook_dim_i32 = usize_to_i32(codebook_dim, "codebook_dim")?;
-        let residual_quantizers_i32 = usize_to_i32(residual_quantizers, "residual_quantizers")?;
-        let semantic_cardinality_i32 = usize_to_i32(self.semantic_codebook_size, "semantic_cardinality")?;
-        let residual_cardinality_i32 = usize_to_i32(self.codebook_size, "residual_cardinality")?;
+        let codebook_dim_i32 = usize_to_i32(quantizer_resources.codebook_dim, "codebook_dim")?;
+        let residual_quantizers_i32 = usize_to_i32(quantizer_resources.residual_quantizers, "residual_quantizers")?;
+        let semantic_cardinality_i32 = usize_to_i32(quantizer_resources.semantic_cardinality, "semantic_cardinality")?;
+        let residual_cardinality_i32 = usize_to_i32(quantizer_resources.residual_cardinality, "residual_cardinality")?;
 
         let command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create quantizer command buffer: {err}")))?;
         command_buffer.with_compute_encoder(|compute_encoder| {
-            kernel.encode(
+            quantizer_resources.kernel.encode(
                 tokens_array.buffer(),
                 lengths_array.buffer(),
-                semantic_codebook.buffer(),
-                semantic_out_proj.buffer(),
-                semantic_out_bias.buffer(),
-                residual_codebooks.buffer(),
-                residual_out_proj.buffer(),
-                residual_out_bias.buffer(),
+                quantizer_resources.semantic_codebook.buffer(),
+                quantizer_resources.semantic_out_proj.buffer(),
+                quantizer_resources.semantic_out_bias.buffer(),
+                quantizer_resources.residual_codebooks.buffer(),
+                quantizer_resources.residual_out_proj.buffer(),
+                quantizer_resources.residual_out_bias.buffer(),
                 output.buffer(),
                 batch_i32,
                 codebooks_i32,
@@ -2421,7 +2862,21 @@ impl FishAudioCodecGraph {
         command_buffer.submit();
         command_buffer.wait_until_completed();
 
-        Ok(output.as_slice::<f32>().to_vec())
+        Ok(output)
+    }
+
+    fn decode_quantizer_to_nsc_on_context(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<Vec<f32>> {
+        let output =
+            self.decode_quantizer_to_nsc_array_on_context(context, tokens, lengths, batch_size, codebooks, frames)?;
+        read_array_to_f32_vec(&output)
     }
 
     #[cfg(test)]
@@ -2597,6 +3052,7 @@ impl FishAudioCodecGraph {
 
     fn build_post_module_runtime(
         &self,
+        context: Rc<<Metal as Backend>::Context>,
         required_sequence_length: usize,
     ) -> AudioResult<FishAudioPostModuleRuntime> {
         let inner_model_config = InnerModelConfig {
@@ -2616,8 +3072,6 @@ impl FishAudioCodecGraph {
             })?);
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
-        let context = <Metal as Backend>::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create post_module context: {err}")))?;
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
             AudioError::Runtime(format!("failed to open post_module weights '{}': {err}", self.weights_path))
         })?;
@@ -2733,21 +3187,191 @@ impl FishAudioCodecGraph {
         })
     }
 
-    fn post_module_runtime(
+    fn post_module_runtime_on_context(
         &self,
+        context: &Rc<<Metal as Backend>::Context>,
         required_sequence_length: usize,
     ) -> AudioResult<Rc<FishAudioPostModuleRuntime>> {
+        let cache_key = format!("{}::{}", self.weights_path, Rc::as_ptr(context) as usize);
         FISHAUDIO_POST_MODULE_RUNTIME_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
-            if let Some(runtime) = cache.get(self.weights_path.as_str()) {
+            if let Some(runtime) = cache.get(cache_key.as_str()) {
                 if runtime.max_sequence_length >= required_sequence_length.max(1) {
                     return Ok(runtime.clone());
                 }
             }
 
-            let runtime = Rc::new(self.build_post_module_runtime(required_sequence_length)?);
-            cache.insert(self.weights_path.clone(), runtime.clone());
+            let runtime = Rc::new(self.build_post_module_runtime(context.clone(), required_sequence_length)?);
+            cache.insert(cache_key, runtime.clone());
             Ok(runtime)
+        })
+    }
+
+    fn post_module_runtime(
+        &self,
+        required_sequence_length: usize,
+    ) -> AudioResult<Rc<FishAudioPostModuleRuntime>> {
+        let context = self.decode_context()?;
+        self.post_module_runtime_on_context(&context, required_sequence_length)
+    }
+
+    fn decode_context(&self) -> AudioResult<Rc<<Metal as Backend>::Context>> {
+        FISHAUDIO_DECODE_CONTEXT_CACHE.with(|cache| {
+            if let Some(existing) = cache.borrow().get(&self.weights_path).cloned() {
+                return Ok(existing);
+            }
+            let created = <Metal as Backend>::Context::new()
+                .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode context: {err}")))?;
+            cache.borrow_mut().insert(self.weights_path.clone(), created.clone());
+            Ok(created)
+        })
+    }
+
+    fn build_quantizer_gpu_resources(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+    ) -> AudioResult<FishAudioQuantizerGpuResources> {
+        if self.semantic_codebook_size == 0 || self.codebook_size == 0 {
+            return Err(AudioError::InvalidTokenCardinality);
+        }
+        let codebook_dim = self.semantic_quantizer.codebook.cols;
+        if codebook_dim == 0 {
+            return Err(AudioError::InvalidTokenCardinality);
+        }
+        if self.semantic_quantizer.codebook.rows != self.semantic_codebook_size {
+            return Err(AudioError::Runtime(format!(
+                "semantic codebook row mismatch: expected {}, got {}",
+                self.semantic_codebook_size, self.semantic_quantizer.codebook.rows
+            )));
+        }
+        if self.semantic_quantizer.out_proj.rows != self.input_dim
+            || self.semantic_quantizer.out_proj.cols != codebook_dim
+        {
+            return Err(AudioError::Runtime("semantic out_proj shape mismatch".to_string()));
+        }
+        if self.semantic_quantizer.out_bias.len() != self.input_dim {
+            return Err(AudioError::Runtime("semantic out_bias shape mismatch".to_string()));
+        }
+
+        let residual_quantizers = self.residual_quantizers.len();
+        for (index, quantizer) in self.residual_quantizers.iter().enumerate() {
+            if quantizer.codebook.rows != self.codebook_size || quantizer.codebook.cols != codebook_dim {
+                return Err(AudioError::Runtime(format!("residual quantizer {index} codebook shape mismatch")));
+            }
+            if quantizer.out_proj.rows != self.input_dim || quantizer.out_proj.cols != codebook_dim {
+                return Err(AudioError::Runtime(format!("residual quantizer {index} out_proj shape mismatch")));
+            }
+            if quantizer.out_bias.len() != self.input_dim {
+                return Err(AudioError::Runtime(format!("residual quantizer {index} out_bias shape mismatch")));
+            }
+        }
+
+        let data_type = self.vocoder_data_type;
+        let kernel =
+            <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize quantizer decode kernel: {err}")))?;
+
+        let mut semantic_codebook = context.create_array(
+            &[self.semantic_codebook_size, codebook_dim],
+            data_type,
+            "fishaudio_quantizer_semantic_codebook",
+        );
+        write_f32_slice_to_array(&mut semantic_codebook, &self.semantic_quantizer.codebook.values)?;
+
+        let mut semantic_out_proj =
+            context.create_array(&[self.input_dim, codebook_dim], data_type, "fishaudio_quantizer_semantic_out_proj");
+        write_f32_slice_to_array(&mut semantic_out_proj, &self.semantic_quantizer.out_proj.values)?;
+
+        let mut semantic_out_bias =
+            context.create_array(&[self.input_dim], data_type, "fishaudio_quantizer_semantic_out_bias");
+        write_f32_slice_to_array(&mut semantic_out_bias, &self.semantic_quantizer.out_bias)?;
+
+        let residual_count_for_shape = residual_quantizers.max(1);
+        let residual_codebook_rows_for_shape = self.codebook_size.max(1);
+        let residual_codebook_len =
+            checked_product(&[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim])?;
+        let residual_proj_len = checked_product(&[residual_count_for_shape, self.input_dim, codebook_dim])?;
+        let residual_bias_len = checked_product(&[residual_count_for_shape, self.input_dim])?;
+        let mut residual_codebook_host = vec![0.0_f32; residual_codebook_len];
+        let mut residual_proj_host = vec![0.0_f32; residual_proj_len];
+        let mut residual_bias_host = vec![0.0_f32; residual_bias_len];
+        for (index, quantizer) in self.residual_quantizers.iter().enumerate() {
+            let codebook_offset = index
+                .checked_mul(self.codebook_size)
+                .and_then(|value| value.checked_mul(codebook_dim))
+                .ok_or(AudioError::Runtime("residual codebook offset overflow".to_string()))?;
+            let codebook_end = codebook_offset
+                .checked_add(checked_product(&[self.codebook_size, codebook_dim])?)
+                .ok_or(AudioError::Runtime("residual codebook offset overflow".to_string()))?;
+            residual_codebook_host[codebook_offset..codebook_end].copy_from_slice(&quantizer.codebook.values);
+
+            let proj_offset = index
+                .checked_mul(self.input_dim)
+                .and_then(|value| value.checked_mul(codebook_dim))
+                .ok_or(AudioError::Runtime("residual proj offset overflow".to_string()))?;
+            let proj_end = proj_offset
+                .checked_add(checked_product(&[self.input_dim, codebook_dim])?)
+                .ok_or(AudioError::Runtime("residual proj offset overflow".to_string()))?;
+            residual_proj_host[proj_offset..proj_end].copy_from_slice(&quantizer.out_proj.values);
+
+            let bias_offset = index
+                .checked_mul(self.input_dim)
+                .ok_or(AudioError::Runtime("residual bias offset overflow".to_string()))?;
+            let bias_end = bias_offset
+                .checked_add(self.input_dim)
+                .ok_or(AudioError::Runtime("residual bias offset overflow".to_string()))?;
+            residual_bias_host[bias_offset..bias_end].copy_from_slice(&quantizer.out_bias);
+        }
+
+        let mut residual_codebooks = context.create_array(
+            &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
+            data_type,
+            "fishaudio_quantizer_residual_codebooks",
+        );
+        write_f32_slice_to_array(&mut residual_codebooks, &residual_codebook_host)?;
+
+        let mut residual_out_proj = context.create_array(
+            &[residual_count_for_shape, self.input_dim, codebook_dim],
+            data_type,
+            "fishaudio_quantizer_residual_out_proj",
+        );
+        write_f32_slice_to_array(&mut residual_out_proj, &residual_proj_host)?;
+
+        let mut residual_out_bias = context.create_array(
+            &[residual_count_for_shape, self.input_dim],
+            data_type,
+            "fishaudio_quantizer_residual_out_bias",
+        );
+        write_f32_slice_to_array(&mut residual_out_bias, &residual_bias_host)?;
+
+        Ok(FishAudioQuantizerGpuResources {
+            data_type,
+            codebook_dim,
+            residual_quantizers,
+            semantic_cardinality: self.semantic_codebook_size,
+            residual_cardinality: self.codebook_size,
+            kernel,
+            semantic_codebook,
+            semantic_out_proj,
+            semantic_out_bias,
+            residual_codebooks,
+            residual_out_proj,
+            residual_out_bias,
+        })
+    }
+
+    fn quantizer_gpu_resources(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+    ) -> AudioResult<Rc<FishAudioQuantizerGpuResources>> {
+        let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(fishaudio_dtype_key(self.vocoder_data_type));
+        FISHAUDIO_QUANTIZER_RESOURCES_CACHE.with(|cache| {
+            if let Some(existing) = cache.borrow().get(&key) {
+                return Ok(existing.clone());
+            }
+            let resources = Rc::new(self.build_quantizer_gpu_resources(context)?);
+            cache.borrow_mut().insert(key, resources.clone());
+            Ok(resources)
         })
     }
 
@@ -2971,6 +3595,84 @@ impl FishAudioCodecGraph {
         Ok(())
     }
 
+    fn apply_post_module_gpu_on_array_single_batch(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+        latent_nsc: &Array<Metal>,
+        frames: usize,
+    ) -> AudioResult<Array<Metal>> {
+        if self.post_module_model_dim != self.input_dim {
+            return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
+        }
+        if frames == 0 {
+            return Ok(latent_nsc.clone());
+        }
+
+        let expected_elements = checked_product(&[frames, self.input_dim])?;
+        if latent_nsc.num_elements() != expected_elements {
+            return Err(AudioError::InvalidTokenShape {
+                expected_tokens: expected_elements,
+                actual_tokens: latent_nsc.num_elements(),
+            });
+        }
+
+        let runtime = self.post_module_runtime_on_context(context, frames.max(1))?;
+        let token_ids = vec![0_u64; frames];
+        let token_positions = (0..frames).collect::<Vec<_>>();
+        let mut state = ForwardPassState::new_classifier(
+            runtime.context.clone(),
+            &runtime.model_shape,
+            &runtime.scratch_buffers,
+            runtime.shared_buffers.clone(),
+            &token_ids,
+            &token_positions,
+            false,
+            1,
+        );
+
+        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main_output = {
+            let main_ref = main.borrow();
+            if main_ref.shape() != [frames, self.input_dim] {
+                return Err(AudioError::Runtime(format!(
+                    "post_module main shape mismatch: expected [{frames}, {}], got {:?}",
+                    self.input_dim,
+                    main_ref.shape()
+                )));
+            }
+            if main_ref.data_type() != latent_nsc.data_type() {
+                return Err(AudioError::Runtime(format!(
+                    "post_module dtype mismatch: main={:?}, latent={:?}",
+                    main_ref.data_type(),
+                    latent_nsc.data_type()
+                )));
+            }
+            main_ref.clone()
+        };
+
+        let copy_bytes = latent_nsc
+            .num_elements()
+            .checked_mul(latent_nsc.data_type().size_in_bytes())
+            .ok_or(AudioError::Runtime("post_module copy size overflow".to_string()))?;
+        let command_buffer = runtime
+            .context
+            .create_command_buffer()
+            .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
+        command_buffer.with_copy_encoder(|copy_encoder| {
+            copy_encoder.encode_copy(latent_nsc.buffer(), main_output.buffer(), copy_bytes);
+        });
+
+        let encoding_parameters = EncodingParameters::new(false, false, false);
+        for layer in runtime.layers.iter() {
+            layer.encode(&mut state, &encoding_parameters, &command_buffer);
+        }
+        runtime.output_norm.encode(&mut state, &encoding_parameters, &command_buffer);
+        command_buffer.submit();
+        command_buffer.wait_until_completed();
+
+        Ok(main_output)
+    }
+
     fn apply_post_module(
         &self,
         latent_nsc: &mut [f32],
@@ -3056,51 +3758,89 @@ impl FishAudioCodecGraph {
                 i32::try_from(length).map_err(|_| AudioError::Runtime("FishAudio length exceeds i32 range".to_string()))
             })
             .collect::<AudioResult<Vec<_>>>()?;
+        let context = self.decode_context()?;
 
         let quantizer_start = if profile_enabled {
             Some(Instant::now())
         } else {
             None
         };
-        let mut latent_nsc = self.decode_quantizer_to_nsc(tokens, lengths, batch_size, codebooks, frames)?;
-        let quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+        let can_use_gpu_latent_path = batch_size == 1 && lengths.first().copied() == Some(frames);
+        let quantizer_s;
+        let post_module_s;
+        let mut x;
+        let mut x_layout = SequenceLayout::Nsc;
+        if can_use_gpu_latent_path {
+            let quantized_nsc = self
+                .decode_quantizer_to_nsc_array_on_context(&context, tokens, lengths, batch_size, codebooks, frames)?;
+            quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
 
-        let post_module_start = if profile_enabled {
-            Some(Instant::now())
+            let post_module_start = if profile_enabled {
+                Some(Instant::now())
+            } else {
+                None
+            };
+            x = self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames)?;
+            post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
         } else {
-            None
-        };
-        self.apply_post_module(&mut latent_nsc, lengths, batch_size, frames)?;
-        let post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+            let mut latent_nsc =
+                self.decode_quantizer_to_nsc_on_context(&context, tokens, lengths, batch_size, codebooks, frames)?;
+            quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+
+            let post_module_start = if profile_enabled {
+                Some(Instant::now())
+            } else {
+                None
+            };
+            self.apply_post_module(&mut latent_nsc, lengths, batch_size, frames)?;
+            post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+
+            let vocoder_data_type = self.vocoder_data_type;
+            x = context.create_array(
+                &[batch_size, frames, self.input_dim],
+                vocoder_data_type,
+                "fishaudio_decoder_input_nsc",
+            );
+            write_f32_slice_to_array(&mut x, &latent_nsc)?;
+            x_layout = SequenceLayout::Nsc;
+        }
 
         let vocoder_start = if profile_enabled {
             Some(Instant::now())
         } else {
             None
         };
-        let context = FISHAUDIO_DECODE_CONTEXT_CACHE.with(|cache| -> AudioResult<Rc<<Metal as Backend>::Context>> {
-            if let Some(existing) = cache.borrow().get(&self.weights_path).cloned() {
-                return Ok(existing);
-            }
-            let created = <Metal as Backend>::Context::new()
-                .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode context: {err}")))?;
-            cache.borrow_mut().insert(self.weights_path.clone(), created.clone());
-            Ok(created)
-        })?;
         let vocoder_graph = self.vocoder_gpu_graph(&context)?;
-        let command_buffer = context
+        let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
-        let vocoder_data_type = self.vocoder_data_type;
-        let mut x = context.create_array(
-            &[batch_size, frames, self.input_dim],
-            vocoder_data_type,
-            "fishaudio_decoder_input_nsc",
-        );
-        write_f32_slice_to_array(&mut x, &latent_nsc)?;
-        let mut x_layout = SequenceLayout::Nsc;
+        let profile_ops_enabled = fishaudio_profile_ops_enabled();
+        let chunked_command_buffers = fishaudio_chunked_command_buffers_enabled();
+        let mut profile_stages = Vec::<(String, f64)>::new();
+        let mut profile_stage_start = profile_ops_enabled.then(Instant::now);
+        let mut flush_stage =
+            |label: String, command_buffer: &mut <Metal as Backend>::CommandBuffer| -> AudioResult<()> {
+                if !(profile_ops_enabled || chunked_command_buffers) {
+                    return Ok(());
+                }
+                command_buffer.submit();
+                if profile_ops_enabled {
+                    command_buffer.wait_until_completed();
+                    if let Some(start) = profile_stage_start.replace(Instant::now()) {
+                        profile_stages.push((label, start.elapsed().as_secs_f64()));
+                    }
+                }
+                *command_buffer = context.create_command_buffer().map_err(|err| {
+                    AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}"))
+                })?;
+                Ok(())
+            };
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
+        let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
+        let mut lengths_array = context.create_array(&[lengths_i32.len()], DataType::I32, "fishaudio_lengths_a");
+        write_i32_slice_to_array(&mut lengths_array, &lengths_i32, "fishaudio_lengths_a")?;
+        let mut next_lengths_array = context.create_array(&[lengths_i32.len()], DataType::I32, "fishaudio_lengths_b");
 
         for (block_index, (trans_conv, convnext)) in vocoder_graph.upsample_blocks.iter().enumerate() {
             if trans_conv.cin != current_channels {
@@ -3112,19 +3852,15 @@ impl FishAudioCodecGraph {
             let next_frames = current_frames
                 .checked_mul(trans_conv.stride)
                 .ok_or(AudioError::Runtime("FishAudio upsampler frame overflow".to_string()))?;
-            let next_lengths = lengths_i32
-                .iter()
-                .copied()
-                .map(|length| checked_mul_i32(length, trans_conv.stride))
-                .collect::<AudioResult<Vec<_>>>()?;
-            let next_lengths_array = create_i32_array(&context, &next_lengths, "fishaudio_upsample_lengths");
+            scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, trans_conv.stride)?;
+            write_i32_slice_to_array(&mut next_lengths_array, &next_lengths_i32, "fishaudio_upsample_lengths")?;
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
                 &command_buffer,
                 &x,
                 trans_conv,
-                &next_lengths,
+                &next_lengths_i32,
                 batch_size,
                 current_frames,
                 next_frames,
@@ -3147,7 +3883,7 @@ impl FishAudioCodecGraph {
                     &command_buffer,
                     &x,
                     convnext,
-                    &next_lengths,
+                    &next_lengths_i32,
                     &next_lengths_array,
                     batch_size,
                     trans_conv.cout,
@@ -3156,11 +3892,13 @@ impl FishAudioCodecGraph {
                 .map_err(|err| {
                     AudioError::Runtime(format!("FishAudio upsample block {block_index} convnext failed: {err}"))
                 })?;
+            flush_stage(format!("upsample_block_{block_index}"), &mut command_buffer)?;
 
             x_layout = SequenceLayout::Ncs;
             current_frames = next_frames;
             current_channels = trans_conv.cout;
-            lengths_i32 = next_lengths;
+            std::mem::swap(&mut lengths_i32, &mut next_lengths_i32);
+            std::mem::swap(&mut lengths_array, &mut next_lengths_array);
         }
 
         if x_layout == SequenceLayout::Nsc {
@@ -3173,6 +3911,7 @@ impl FishAudioCodecGraph {
                 current_channels,
             )?;
             x_layout = SequenceLayout::Ncs;
+            flush_stage("upsample_to_decoder_layout".to_string(), &mut command_buffer)?;
         }
         debug_assert_eq!(x_layout, SequenceLayout::Ncs);
 
@@ -3182,7 +3921,6 @@ impl FishAudioCodecGraph {
                 vocoder_graph.first_conv.cin, current_channels
             )));
         }
-        let mut lengths_array = create_i32_array(&context, &lengths_i32, "fishaudio_decoder_lengths");
         x = causal_conv1d_grouped_enqueue(
             &context,
             &command_buffer,
@@ -3194,8 +3932,9 @@ impl FishAudioCodecGraph {
             current_frames,
         )?;
         current_channels = vocoder_graph.first_conv.cout;
+        flush_stage("decoder_first_conv".to_string(), &mut command_buffer)?;
 
-        for block in &vocoder_graph.decoder_blocks {
+        for (block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
             if block.trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
                     "FishAudio decoder block input mismatch: expected {}, got {}",
@@ -3215,19 +3954,15 @@ impl FishAudioCodecGraph {
             let next_frames = current_frames
                 .checked_mul(block.trans_conv.stride)
                 .ok_or(AudioError::Runtime("FishAudio decoder frame overflow".to_string()))?;
-            let next_lengths = lengths_i32
-                .iter()
-                .copied()
-                .map(|length| checked_mul_i32(length, block.trans_conv.stride))
-                .collect::<AudioResult<Vec<_>>>()?;
-            let next_lengths_array = create_i32_array(&context, &next_lengths, "fishaudio_decoder_block_lengths");
+            scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, block.trans_conv.stride)?;
+            write_i32_slice_to_array(&mut next_lengths_array, &next_lengths_i32, "fishaudio_decoder_block_lengths")?;
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
                 &command_buffer,
                 &x,
                 &block.trans_conv,
-                &next_lengths,
+                &next_lengths_i32,
                 batch_size,
                 current_frames,
                 next_frames,
@@ -3237,8 +3972,8 @@ impl FishAudioCodecGraph {
 
             current_frames = next_frames;
             current_channels = block.trans_conv.cout;
-            lengths_i32 = next_lengths;
-            lengths_array = create_i32_array(&context, &lengths_i32, "fishaudio_residual_lengths");
+            std::mem::swap(&mut lengths_i32, &mut next_lengths_i32);
+            std::mem::swap(&mut lengths_array, &mut next_lengths_array);
 
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -3273,6 +4008,7 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
+            flush_stage(format!("decoder_block_{block_index}"), &mut command_buffer)?;
         }
 
         x = snake1d_enqueue(
@@ -3284,7 +4020,6 @@ impl FishAudioCodecGraph {
             current_channels,
             current_frames,
         )?;
-        lengths_array = create_i32_array(&context, &lengths_i32, "fishaudio_final_lengths");
         x = causal_conv1d_grouped_enqueue(
             &context,
             &command_buffer,
@@ -3297,8 +4032,12 @@ impl FishAudioCodecGraph {
         )?;
         x = tanh_enqueue(&context, &command_buffer, &x)?;
 
-        command_buffer.submit();
-        command_buffer.wait_until_completed();
+        if profile_ops_enabled {
+            flush_stage("decoder_final".to_string(), &mut command_buffer)?;
+        } else {
+            command_buffer.submit();
+            command_buffer.wait_until_completed();
+        }
         let x = read_array_to_f32_vec(&x)?;
 
         let out_lengths = lengths_i32
@@ -3320,9 +4059,14 @@ impl FishAudioCodecGraph {
             let vocoder_s = vocoder_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
             let total_s = decode_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
             eprintln!(
-                "fishaudio_profile batch={} frames={} codebooks={} quantizer_s={:.3} post_module_s={:.3} vocoder_s={:.3} total_s={:.3}",
-                batch_size, frames, codebooks, quantizer_s, post_module_s, vocoder_s, total_s
+                "fishaudio_profile batch={} frames={} codebooks={} chunked_cmd_bufs={} quantizer_s={:.3} post_module_s={:.3} vocoder_s={:.3} total_s={:.3}",
+                batch_size, frames, codebooks, chunked_command_buffers, quantizer_s, post_module_s, vocoder_s, total_s
             );
+        }
+        if profile_ops_enabled {
+            for (stage, seconds) in profile_stages {
+                eprintln!("fishaudio_profile_stage stage={} s={:.3}", stage, seconds);
+            }
         }
 
         result
@@ -3563,6 +4307,179 @@ impl NanoCodecFsqRuntime {
 
     pub fn config(&self) -> &NanoCodecFsqRuntimeConfig {
         &self.config
+    }
+
+    fn validate_fishaudio_token_delta(
+        &self,
+        tokens: &AudioTokenGrid,
+        fishaudio: &FishAudioCodecGraph,
+    ) -> AudioResult<()> {
+        let semantic_cardinality = u32::try_from(fishaudio.semantic_codebook_size).map_err(|_| {
+            AudioError::Runtime("FishAudio semantic codebook cardinality exceeds u32 range".to_string())
+        })?;
+        let residual_cardinality = u32::try_from(fishaudio.codebook_size).map_err(|_| {
+            AudioError::Runtime("FishAudio residual codebook cardinality exceeds u32 range".to_string())
+        })?;
+        let codebook_major = tokens.to_packing(AudioTokenPacking::CodebookMajor);
+        let frames = codebook_major.frames();
+        for batch in 0..codebook_major.batch_size() {
+            for codebook in 0..codebook_major.codebooks() {
+                let cardinality = if codebook == 0 {
+                    semantic_cardinality
+                } else {
+                    residual_cardinality
+                };
+                for frame in 0..frames {
+                    let token = codebook_major.get(batch, codebook, frame);
+                    if token >= cardinality {
+                        return Err(AudioError::InvalidCodecToken {
+                            token,
+                            cardinality,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_fishaudio_stream_delta(
+        &self,
+        state: &mut AudioDecodeStreamState,
+        fishaudio: &FishAudioCodecGraph,
+    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+        if state.total_frames() == 0 {
+            return Ok(super::decoder::DecodedPaddedAudio {
+                samples: Vec::new(),
+                channels: 1,
+                frames: 0,
+                lengths: vec![0usize; state.batch_size],
+            });
+        }
+
+        let Some(context_frames) = fishaudio.streaming_decode_context_frames()? else {
+            let full_grid = state.to_full_grid()?;
+            let full_pcm = self.decode(&full_grid)?;
+            return state.extract_delta_padded(&full_pcm);
+        };
+        let mut window_start = state.total_frames();
+        for &emitted in &state.emitted_semantic_lengths {
+            window_start = window_start.min(emitted.saturating_sub(context_frames));
+        }
+        let window_end = state.total_frames();
+        let batch_size = state.batch_size;
+        let codebooks = state.codebooks;
+        let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
+        let decoded_window =
+            fishaudio.decode_padded(window_tokens, window_lengths, batch_size, codebooks, window_frames)?;
+        let audio_offset_frames = window_start
+            .checked_mul(fishaudio.upsample_factor)
+            .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;
+        state.extract_delta_from_padded_with_offset(&decoded_window, audio_offset_frames, fishaudio.upsample_factor)
+    }
+
+    pub fn begin_decode_stream(
+        &self,
+        batch_size: usize,
+        codebooks: usize,
+    ) -> AudioResult<AudioDecodeStreamState> {
+        self.begin_decode_stream_with_options(batch_size, codebooks, AudioDecodeStreamingMode::IncrementalStateful, 256)
+    }
+
+    pub fn begin_decode_stream_with_options(
+        &self,
+        batch_size: usize,
+        codebooks: usize,
+        mode: AudioDecodeStreamingMode,
+        max_workspace_frames: usize,
+    ) -> AudioResult<AudioDecodeStreamState> {
+        if codebooks != self.config.num_groups() {
+            return Err(AudioError::Runtime(format!(
+                "stream codebook mismatch: expected {}, got {}",
+                self.config.num_groups(),
+                codebooks
+            )));
+        }
+        AudioDecodeStreamState::new(batch_size, codebooks, max_workspace_frames, mode)
+    }
+
+    pub fn decode_stream_step(
+        &self,
+        state: &mut AudioDecodeStreamState,
+        new_tokens: &AudioTokenGrid,
+        _is_final: bool,
+    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+        if new_tokens.codebooks() != state.codebooks {
+            return Err(AudioError::Runtime(format!(
+                "stream delta codebook mismatch: expected {}, got {}",
+                state.codebooks,
+                new_tokens.codebooks()
+            )));
+        }
+        if new_tokens.batch_size() != state.batch_size {
+            return Err(AudioError::Runtime(format!(
+                "stream delta batch mismatch: expected {}, got {}",
+                state.batch_size,
+                new_tokens.batch_size()
+            )));
+        }
+        if new_tokens.frames() == 0 {
+            return Ok(super::decoder::DecodedPaddedAudio {
+                samples: Vec::new(),
+                channels: if let Some(decoder) = self.config.decoder() {
+                    decoder.output_channels()
+                } else if self.config.fishaudio_decoder().is_some() {
+                    1
+                } else {
+                    self.config.channels()
+                },
+                frames: 0,
+                lengths: vec![0; state.batch_size],
+            });
+        }
+
+        state.append_delta(new_tokens)?;
+        if let Some(fishaudio) = self.config.fishaudio_decoder() {
+            self.validate_fishaudio_token_delta(new_tokens, fishaudio)?;
+            return match state.mode {
+                AudioDecodeStreamingMode::IncrementalStateful => self.decode_fishaudio_stream_delta(state, fishaudio),
+                AudioDecodeStreamingMode::PrefixFallback => {
+                    let full_grid = state.to_full_grid()?;
+                    let full_pcm = self.decode(&full_grid)?;
+                    state.extract_delta_padded(&full_pcm)
+                },
+            };
+        }
+
+        let full_grid = state.to_full_grid()?;
+        let full_pcm = self.decode(&full_grid)?;
+        state.extract_delta_padded(&full_pcm)
+    }
+
+    pub fn decoded_padded_to_pcm_batch(
+        &self,
+        decoded: &super::decoder::DecodedPaddedAudio,
+    ) -> AudioResult<AudioPcmBatch> {
+        let samples = unpack_padded_to_pcm(
+            &decoded.samples,
+            decoded.lengths.len(),
+            decoded.channels,
+            decoded.frames,
+            &decoded.lengths,
+        )?;
+        AudioPcmBatch::new(
+            samples.into_boxed_slice(),
+            self.config.sample_rate(),
+            decoded.channels,
+            decoded.lengths.clone().into_boxed_slice(),
+        )
+    }
+
+    pub fn end_decode_stream(
+        &self,
+        _state: AudioDecodeStreamState,
+    ) -> AudioResult<()> {
+        Ok(())
     }
 
     fn create_context() -> AudioResult<Rc<<Metal as Backend>::Context>> {
@@ -3869,14 +4786,16 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        FishAudioCodecGraph, FishAudioConv1dLayer, FishAudioDecoderGraph, FishAudioNormLayer, FishAudioVectorQuantizer,
-        MatrixF32, NanoCodecFsqRuntimeConfig, RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog,
-        pack_pcm_to_padded, parse_fishaudio_tts_config_json, parse_lalamo_tts_config_json, parse_runtime_config_json,
+        AudioDecodeStreamState, AudioDecodeStreamingMode, FishAudioCodecGraph, FishAudioConv1dLayer,
+        FishAudioConvNeXtLayer, FishAudioConvTranspose1dLayer, FishAudioDecoderBlockLayer, FishAudioDecoderGraph,
+        FishAudioNormLayer, FishAudioResidualUnitLayer, FishAudioVectorQuantizer, MatrixF32, NanoCodecFsqRuntimeConfig,
+        RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded,
+        parse_fishaudio_tts_config_json, parse_lalamo_tts_config_json, parse_runtime_config_json,
         resolve_fishaudio_vocoder_data_type, unpack_padded_to_pcm,
     };
     use crate::{
         DataType,
-        audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenPacking},
+        audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     };
 
     #[derive(Debug, Clone)]
@@ -4859,5 +5778,205 @@ mod tests {
                 7.0, 8.0, // in=3, out_group=0
             ]
         );
+    }
+
+    #[test]
+    fn fishaudio_streaming_context_matches_expected_value() {
+        let convnext = FishAudioConvNeXtLayer {
+            depthwise_conv: FishAudioConv1dLayer {
+                weight: vec![1.0; 6],
+                bias: vec![0.0; 2],
+                cin: 2,
+                cout: 2,
+                kernel_size: 3,
+                dilation: 1,
+                groups: 2,
+            },
+            norm: FishAudioNormLayer {
+                scales: vec![1.0, 1.0],
+                biases: Some(vec![0.0, 0.0]),
+                epsilon: 1e-5,
+                subtract_mean: true,
+            },
+            pwconv1: MatrixF32 {
+                rows: 2,
+                cols: 2,
+                values: vec![1.0, 0.0, 0.0, 1.0],
+            },
+            pwconv1_bias: vec![0.0, 0.0],
+            pwconv2: MatrixF32 {
+                rows: 2,
+                cols: 2,
+                values: vec![1.0, 0.0, 0.0, 1.0],
+            },
+            pwconv2_bias: vec![0.0, 0.0],
+        };
+        let residual_unit = FishAudioResidualUnitLayer {
+            snake1_alpha: vec![1.0, 1.0],
+            conv1: FishAudioConv1dLayer {
+                weight: vec![1.0; 12],
+                bias: vec![0.0, 0.0],
+                cin: 2,
+                cout: 2,
+                kernel_size: 3,
+                dilation: 1,
+                groups: 1,
+            },
+            snake2_alpha: vec![1.0, 1.0],
+            conv2: FishAudioConv1dLayer {
+                weight: vec![1.0; 12],
+                bias: vec![0.0, 0.0],
+                cin: 2,
+                cout: 2,
+                kernel_size: 3,
+                dilation: 1,
+                groups: 1,
+            },
+        };
+
+        let graph = FishAudioCodecGraph {
+            semantic_quantizer: FishAudioVectorQuantizer {
+                codebook: MatrixF32 {
+                    rows: 2,
+                    cols: 2,
+                    values: vec![0.0, 0.0, 0.0, 0.0],
+                },
+                out_proj: MatrixF32 {
+                    rows: 2,
+                    cols: 2,
+                    values: vec![1.0, 0.0, 0.0, 1.0],
+                },
+                out_bias: vec![0.0, 0.0],
+            },
+            residual_quantizers: vec![],
+            post_module_model_dim: 2,
+            post_module_transformer_config: serde_json::from_value(serde_json::json!({
+                "global_rope_config": null,
+                "local_rope_config": null,
+                "layer_configs": [],
+                "output_norm_config": {
+                    "scale_precision": "float32",
+                    "accumulation_precision": "float32",
+                    "epsilon": 1e-5,
+                    "scale_offset": null,
+                    "upcast_mode": "full_layer",
+                    "subtract_mean": true
+                },
+                "model_dim": 2,
+                "hidden_dim": 2,
+                "context_length": 1
+            }))
+            .expect("post module transformer config"),
+            weights_path: String::new(),
+            decoder: FishAudioDecoderGraph {
+                first_conv: FishAudioConv1dLayer {
+                    weight: vec![1.0; 8],
+                    bias: vec![0.0, 0.0],
+                    cin: 2,
+                    cout: 2,
+                    kernel_size: 3,
+                    dilation: 1,
+                    groups: 1,
+                },
+                upsample_blocks: vec![(
+                    FishAudioConvTranspose1dLayer {
+                        weight: vec![1.0; 16],
+                        bias: vec![0.0, 0.0],
+                        cin: 2,
+                        cout: 2,
+                        kernel_size: 4,
+                        stride: 2,
+                        groups: 1,
+                    },
+                    convnext,
+                )],
+                decoder_blocks: vec![FishAudioDecoderBlockLayer {
+                    snake_alpha: vec![1.0, 1.0],
+                    trans_conv: FishAudioConvTranspose1dLayer {
+                        weight: vec![1.0; 16],
+                        bias: vec![0.0, 0.0],
+                        cin: 2,
+                        cout: 2,
+                        kernel_size: 4,
+                        stride: 2,
+                        groups: 1,
+                    },
+                    res_unit1: residual_unit.clone(),
+                    res_unit2: residual_unit.clone(),
+                    res_unit3: residual_unit,
+                }],
+                final_snake_alpha: vec![1.0, 1.0],
+                final_conv: FishAudioConv1dLayer {
+                    weight: vec![1.0; 10],
+                    bias: vec![0.0],
+                    cin: 2,
+                    cout: 1,
+                    kernel_size: 5,
+                    dilation: 1,
+                    groups: 1,
+                },
+                upsample_factor: 4,
+            },
+            codebook_size: 2,
+            semantic_codebook_size: 2,
+            input_dim: 2,
+            total_codebooks: 1,
+            upsample_factor: 4,
+            vocoder_data_type: DataType::F32,
+        };
+
+        // Manual derivation:
+        // final_conv (k=5): 4
+        // decoder block residual stack: +12 => 16, then trans_conv (k=4,s=2): ceil((16+3)/2)=10
+        // first_conv (k=3): +2 => 12
+        // upsample block convnext dwconv (k=3): +2 => 14, then trans_conv (k=4,s=2): ceil((14+3)/2)=9
+        assert_eq!(graph.streaming_vocoder_context_frames().expect("stream context"), 9);
+    }
+
+    #[test]
+    fn stream_delta_extraction_with_window_offset_matches_expected_slice() {
+        let mut state =
+            AudioDecodeStreamState::new(1, 2, 16, AudioDecodeStreamingMode::IncrementalStateful).expect("state");
+        let first_delta = AudioTokenGrid::new(
+            vec![1_u32, 2, 3, 4, 5, 6, 7, 8].into_boxed_slice(),
+            1,
+            2,
+            4,
+            vec![4usize].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .expect("first token grid");
+        state.append_delta(&first_delta).expect("append first delta");
+        let first_decoded = crate::audio::nanocodec::decoder::DecodedPaddedAudio {
+            samples: (0..8).map(|value| value as f32).collect(),
+            channels: 1,
+            frames: 8,
+            lengths: vec![8],
+        };
+        let first_out = state.extract_delta_from_padded_with_offset(&first_decoded, 0, 2).expect("first extract");
+        assert_eq!(first_out.lengths, vec![8]);
+        assert_eq!(first_out.samples, (0..8).map(|value| value as f32).collect::<Vec<_>>());
+
+        let second_delta = AudioTokenGrid::new(
+            vec![9_u32, 10, 11, 12].into_boxed_slice(),
+            1,
+            2,
+            2,
+            vec![2usize].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .expect("second token grid");
+        state.append_delta(&second_delta).expect("append second delta");
+        let window_decoded = crate::audio::nanocodec::decoder::DecodedPaddedAudio {
+            // Global output range is [4, 12), local window starts at global sample 4.
+            samples: (4..12).map(|value| value as f32).collect(),
+            channels: 1,
+            frames: 8,
+            lengths: vec![8],
+        };
+        let second_out = state.extract_delta_from_padded_with_offset(&window_decoded, 4, 2).expect("second extract");
+        assert_eq!(second_out.lengths, vec![4]);
+        assert_eq!(second_out.frames, 4);
+        assert_eq!(second_out.samples, vec![8.0, 9.0, 10.0, 11.0]);
     }
 }

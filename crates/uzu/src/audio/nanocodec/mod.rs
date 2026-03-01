@@ -6,4 +6,4 @@ pub mod ops;
 pub mod runtime;
 
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
-pub use runtime::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
+pub use runtime::{AudioDecodeStreamState, AudioDecodeStreamingMode, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
