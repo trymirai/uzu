@@ -3,6 +3,8 @@ from __future__ import annotations
 import bisect
 import subprocess
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 
 from .models import (
@@ -63,15 +65,48 @@ def _resolve_text(el: ET.Element | None, id_to_text: dict[str, str]) -> str | No
     return id_to_text.get(ref) if ref else None
 
 
+# Cache TOC parsing — avoids redundant xctrace subprocess calls across
+# extract_metadata, extract_gpu_utilization, extract_kernel_dispatches, etc.
+@lru_cache(maxsize=4)
 def _toc_root(trace: Path) -> ET.Element:
     xml = _check_output(_xctrace_cmd("export", "--input", str(trace), "--toc"))
     return ET.fromstring(xml)
 
 
+_export_cache: dict[tuple[str, int, str], ET.Element] = {}
+
+
 def _export_table(trace: Path, run_number: int, schema: str) -> ET.Element:
+    key = (str(trace), run_number, schema)
+    cached = _export_cache.get(key)
+    if cached is not None:
+        return cached
     xpath = f'/trace-toc/run[@number="{run_number}"]/data/table[@schema="{schema}"]'
     xml = _check_output(_xctrace_cmd("export", "--input", str(trace), "--xpath", xpath))
-    return ET.fromstring(xml)
+    result = ET.fromstring(xml)
+    _export_cache[key] = result
+    return result
+
+
+def export_tables_parallel(
+    trace: Path, run_number: int, schemas: list[str]
+) -> dict[str, ET.Element | None]:
+    """Export multiple schemas in parallel via ThreadPoolExecutor.
+
+    Returns {schema: ET.Element | None} — None for schemas that failed.
+    """
+
+    def _export_one(schema: str) -> tuple[str, ET.Element | None]:
+        try:
+            return schema, _export_table(trace, run_number, schema)
+        except subprocess.CalledProcessError:
+            return schema, None
+
+    results: dict[str, ET.Element | None] = {}
+    with ThreadPoolExecutor(max_workers=len(schemas)) as pool:
+        for schema, root in pool.map(_export_one, schemas):
+            results[schema] = root
+    return results
 
 
 def _union_ns(intervals: list[tuple[int, int]]) -> int:
@@ -90,8 +125,8 @@ def _union_ns(intervals: list[tuple[int, int]]) -> int:
     return total
 
 
-def extract_metadata(trace: Path, run_number: int) -> TraceMetadata:
-    toc = _toc_root(trace)
+def extract_metadata_from_toc(toc: ET.Element, run_number: int) -> TraceMetadata:
+    """Extract metadata from an already-parsed TOC element."""
     run = toc.find(f".//run[@number='{run_number}']")
     if run is None:
         raise ValueError(f"Run {run_number} not found in trace TOC")
@@ -134,6 +169,11 @@ def extract_metadata(trace: Path, run_number: int) -> TraceMetadata:
         end_date=end_date or "",
         template_name=template_name or "",
     )
+
+
+def extract_metadata(trace: Path, run_number: int) -> TraceMetadata:
+    toc = _toc_root(trace)
+    return extract_metadata_from_toc(toc, run_number)
 
 
 def extract_gpu_utilization(trace: Path, run_number: int) -> GpuUtilization:
