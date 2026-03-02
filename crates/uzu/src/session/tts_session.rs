@@ -23,16 +23,17 @@ use crate::{
     audio::{AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, nanocodec::AudioDecodeStreamingMode},
     backends::{
         common::{
-            Backend, CommandBuffer, Context as BackendContext, Kernels,
+            Backend, CommandBuffer, Context as BackendContext, Kernels, NativeBuffer,
             kernel::{
-                EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel,
+                EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
+                TokenCopyToResultsKernel,
                 kv_cache_update::KVCacheUpdate,
                 matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
             },
         },
         metal::Metal,
     },
-    config::{InnerModelConfig, LinearConfig, ModelMetadata, ModelType, TtsModelConfig},
+    config::{ConfigDataType, InnerModelConfig, LinearConfig, ModelMetadata, ModelType, TtsModelConfig},
     encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
@@ -57,6 +58,7 @@ const DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE: usize = 16;
 const DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE: f32 = 0.8008;
 const DEFAULT_FISHAUDIO_SAMPLING_TOP_P: f32 = 0.8008;
 const DEFAULT_FISHAUDIO_MIN_FRAMES_BEFORE_IM_END: usize = 8;
+const DEFAULT_FISHAUDIO_PREFILL_STEP_SIZE: usize = 128;
 const DEFAULT_CHUNK_EMA_ALPHA: f64 = 0.2;
 const DEFAULT_CHUNK_HYSTERESIS_FRACTION: f64 = 0.25;
 
@@ -149,6 +151,12 @@ struct TokenDecoderRunner {
     kv_cache_update: KVCacheUpdate<Metal>,
     tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
     tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
+    token_copy_sampled: <<Metal as Backend>::Kernels as Kernels>::TokenCopySampledKernel,
+    token_copy_results: <<Metal as Backend>::Kernels as Kernels>::TokenCopyToResultsKernel,
+    async_chain_positions: Rc<<Metal as Backend>::NativeBuffer>,
+    async_chain_seeds: Rc<<Metal as Backend>::NativeBuffer>,
+    async_chain_results: Rc<<Metal as Backend>::NativeBuffer>,
+    async_chain_capacity: usize,
     single_hidden_capture: ArrayCell<Metal>,
     single_override_embedding: ArrayCell<Metal>,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
@@ -342,6 +350,51 @@ fn fishaudio_max_new_tokens_override() -> Option<usize> {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
+}
+
+fn fishaudio_force_semantic_sampling_mask() -> Option<bool> {
+    std::env::var("UZU_FISHAUDIO_FORCE_SEMANTIC_MASK").ok().and_then(|value| {
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    })
+}
+
+fn fishaudio_prefill_step_size(context_length: usize) -> usize {
+    std::env::var("UZU_FISHAUDIO_PREFILL_STEP_SIZE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_FISHAUDIO_PREFILL_STEP_SIZE)
+        .min(context_length.max(1))
+        .max(1)
+}
+
+fn promote_transformer_norm_accumulation_to_f32(transformer: &mut crate::config::TransformerConfig) {
+    for layer in transformer.layer_configs.iter_mut() {
+        if let Some(norm) = layer.pre_attention_norm_config.as_mut() {
+            norm.accumulation_precision = ConfigDataType::Float32;
+        }
+        layer.pre_mlp_norm_config.accumulation_precision = ConfigDataType::Float32;
+        if let Some(norm) = layer.post_attention_norm_config.as_mut() {
+            norm.accumulation_precision = ConfigDataType::Float32;
+        }
+        if let Some(norm) = layer.post_mlp_norm_config.as_mut() {
+            norm.accumulation_precision = ConfigDataType::Float32;
+        }
+        if let crate::config::MixerConfig::Attention(attention) = &mut layer.mixer_config {
+            if let Some(norm) = attention.query_norm_config.as_mut() {
+                norm.accumulation_precision = ConfigDataType::Float32;
+            }
+            if let Some(norm) = attention.key_norm_config.as_mut() {
+                norm.accumulation_precision = ConfigDataType::Float32;
+            }
+        }
+    }
+    transformer.output_norm_config.accumulation_precision = ConfigDataType::Float32;
 }
 
 impl FishAudioGpuPath {
@@ -606,6 +659,54 @@ impl StreamingTokenAccumulator {
     }
 }
 
+fn slice_codebook_major_grid_range(
+    grid: &AudioTokenGrid,
+    frame_start: usize,
+    frame_end: usize,
+) -> Result<AudioTokenGrid, Error> {
+    if frame_start > frame_end || frame_end > grid.frames() {
+        return Err(Error::GenerateFailed);
+    }
+    let range_frames = frame_end.saturating_sub(frame_start);
+    let packed = grid.to_packing(AudioTokenPacking::CodebookMajor);
+    let batch_size = packed.batch_size();
+    let codebooks = packed.codebooks();
+    let frames = packed.frames();
+    if frames != grid.frames() {
+        return Err(Error::GenerateFailed);
+    }
+
+    let mut tokens = Vec::with_capacity(batch_size * codebooks * range_frames);
+    let row_stride = frames;
+    for batch in 0..batch_size {
+        for codebook in 0..codebooks {
+            let row_index = batch
+                .checked_mul(codebooks)
+                .and_then(|value| value.checked_add(codebook))
+                .ok_or(Error::GenerateFailed)?;
+            let row_start = row_index.checked_mul(row_stride).ok_or(Error::GenerateFailed)?;
+            let src_start = row_start.checked_add(frame_start).ok_or(Error::GenerateFailed)?;
+            let src_end = row_start.checked_add(frame_end).ok_or(Error::GenerateFailed)?;
+            tokens.extend_from_slice(&packed.tokens()[src_start..src_end]);
+        }
+    }
+
+    let mut lengths = Vec::with_capacity(batch_size);
+    for &length in packed.lengths() {
+        lengths.push(length.saturating_sub(frame_start).min(range_frames));
+    }
+
+    AudioTokenGrid::new(
+        tokens.into_boxed_slice(),
+        batch_size,
+        codebooks,
+        range_frames,
+        lengths.into_boxed_slice(),
+        AudioTokenPacking::CodebookMajor,
+    )
+    .map_err(Error::from)
+}
+
 impl TtsSession {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
         if !model_path.exists() {
@@ -691,9 +792,60 @@ impl TtsSession {
                 self.runtime.decode(&semantic_tokens).map_err(Error::from)?
             },
             crate::session::config::TtsNonStreamingMode::ChunkedIfNeeded => {
-                // Incremental decode state is introduced in the runtime separately.
-                // Until that lands, keep full decode for parity.
-                self.runtime.decode(&semantic_tokens).map_err(Error::from)?
+                let total_frames = semantic_tokens.frames();
+                let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
+                if total_frames < chunked_threshold {
+                    self.runtime.decode(&semantic_tokens).map_err(Error::from)?
+                } else {
+                    let chunk_frames = config.max_chunk_frames.max(config.min_chunk_frames.max(1));
+                    let workspace_frames = config.max_stream_workspace_frames.max(chunk_frames);
+                    let mut stream_state = self
+                        .runtime
+                        .begin_decode_stream_with_options(
+                            semantic_tokens.batch_size(),
+                            semantic_tokens.codebooks(),
+                            AudioDecodeStreamingMode::IncrementalStateful,
+                            workspace_frames,
+                        )
+                        .map_err(Error::from)?;
+
+                    let mut all_samples = Vec::<f32>::new();
+                    let mut accumulated_lengths = vec![0usize; semantic_tokens.batch_size()];
+                    let mut sample_rate = self.runtime.config().sample_rate();
+                    let mut channels = 1usize;
+
+                    let mut frame_start = 0usize;
+                    while frame_start < total_frames {
+                        let frame_end = (frame_start + chunk_frames).min(total_frames);
+                        let delta_grid = slice_codebook_major_grid_range(&semantic_tokens, frame_start, frame_end)?;
+                        let decoded_delta = self
+                            .runtime
+                            .decode_stream_step(&mut stream_state, &delta_grid, frame_end == total_frames)
+                            .map_err(Error::from)?;
+                        let partial_pcm =
+                            self.runtime.decoded_padded_to_pcm_batch(&decoded_delta).map_err(Error::from)?;
+                        if partial_pcm.lengths().len() != accumulated_lengths.len() {
+                            return Err(Error::GenerateFailed);
+                        }
+                        for (acc, &len) in accumulated_lengths.iter_mut().zip(partial_pcm.lengths().iter()) {
+                            *acc = acc.saturating_add(len);
+                        }
+                        if !partial_pcm.samples().is_empty() {
+                            all_samples.extend_from_slice(partial_pcm.samples());
+                        }
+                        sample_rate = partial_pcm.sample_rate();
+                        channels = partial_pcm.channels();
+                        frame_start = frame_end;
+                    }
+                    self.runtime.end_decode_stream(stream_state).map_err(Error::from)?;
+                    AudioPcmBatch::new(
+                        all_samples.into_boxed_slice(),
+                        sample_rate,
+                        channels,
+                        accumulated_lengths.into_boxed_slice(),
+                    )
+                    .map_err(Error::from)?
+                }
             },
         };
         let audio_decode_seconds = audio_start.elapsed().as_secs_f64();
@@ -1221,14 +1373,20 @@ fn parse_text_decoder_runtime(
             clear_token_in_sampling_mask(&mut semantic_sampling_mask_without_im_end_row, config.im_end_token_id)?;
             let min_frames_before_im_end = fishaudio_min_frames_before_im_end();
 
+            let mut slow_transformer_config = config.slow_model_config.clone();
+            let mut fast_transformer_config = config.fast_model_config.clone();
+            // Keep f16 activation/storage, but enforce stable normalization accumulation.
+            promote_transformer_norm_accumulation_to_f32(&mut slow_transformer_config);
+            promote_transformer_norm_accumulation_to_f32(&mut fast_transformer_config);
+
             let slow_inner_config = InnerModelConfig {
                 embedding_config: config.slow_embeddings_config.to_embedding_config(),
-                transformer_config: config.slow_model_config.clone(),
+                transformer_config: slow_transformer_config,
                 vocab_size: config.vocab_size,
             };
             let fast_inner_config = InnerModelConfig {
                 embedding_config: config.fast_embeddings_config.to_embedding_config(),
-                transformer_config: config.fast_model_config.clone(),
+                transformer_config: fast_transformer_config,
                 vocab_size: config.codebook_size,
             };
 
@@ -1286,7 +1444,8 @@ fn parse_text_decoder_runtime(
                     return Err(Error::UnableToLoadConfig);
                 }
             }
-            let apply_semantic_sampling_mask = !matches!(activation_data_type, DataType::F32);
+            let apply_semantic_sampling_mask =
+                fishaudio_force_semantic_sampling_mask().unwrap_or(!matches!(activation_data_type, DataType::F32));
 
             let gpu_path = FishAudioGpuPath::new(
                 text_decoder_context.as_ref(),
@@ -1402,21 +1561,33 @@ impl FishAudioTextDecoderRuntime {
         } else {
             None
         };
-        let semantic_prefill_mask = if let Some(mask_row) = semantic_sampling_mask_row.as_ref() {
-            let initial_sampling_row = if self.min_frames_before_im_end > 0 {
+        let initial_sampling_row = if let Some(mask_row) = semantic_sampling_mask_row.as_ref() {
+            if self.min_frames_before_im_end > 0 {
                 semantic_sampling_mask_without_im_end_row.as_deref().ok_or(Error::GenerateFailed)?
             } else {
                 mask_row.as_ref()
-            };
-            Some(expand_token_mask_for_sampling_row(initial_sampling_row, text_tokens.len())?)
+            }
         } else {
+            &[]
+        };
+        let prefill_step_size = fishaudio_prefill_step_size(self.max_seq_len);
+        if text_tokens.len() > prefill_step_size {
+            for chunk in text_tokens[..text_tokens.len() - prefill_step_size].chunks(prefill_step_size) {
+                self.slow_runner.prefill_without_sampling(chunk)?;
+            }
+        }
+        let prefill_tail_start = text_tokens.len().saturating_sub(prefill_step_size);
+        let prefill_tail = &text_tokens[prefill_tail_start..];
+        let prefill_mask = if initial_sampling_row.is_empty() {
             None
+        } else {
+            Some(expand_token_mask_for_sampling_row(initial_sampling_row, prefill_tail.len())?)
         };
         let mut current_semantic_token = self.slow_runner.decode_next_token_with_hidden_capture(
-            text_tokens,
+            prefill_tail,
             EmbeddingInjection::None,
             &mut sampling,
-            semantic_prefill_mask.as_deref(),
+            prefill_mask.as_deref(),
         )?;
         let post_scale = if self.scale_codebook_embeddings {
             Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
@@ -1502,22 +1673,23 @@ impl FishAudioTextDecoderRuntime {
                     fast_token = u64::from(clamped);
                 }
 
-                for codebook_index in 2..self.num_codebooks {
-                    fast_token = fast_runner.decode_next_step(
-                        &[fast_token],
-                        EmbeddingInjection::None,
+                let followup_count = self.num_codebooks.saturating_sub(2);
+                if followup_count > 0 {
+                    fast_runner.decode_followup_tokens_batched(
+                        fast_token,
+                        followup_count,
                         Some(fast_vocab_limit),
                         &mut sampling,
-                        None,
-                        false,
-                        None,
+                        |relative_index, sampled| {
+                            let codebook_index = relative_index + 2;
+                            let clamped =
+                                u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                                    .map_err(|_| Error::GenerateFailed)?;
+                            by_codebook[codebook_index].push(clamped);
+                            self.current_codes_scratch[codebook_index] = clamped;
+                            Ok(())
+                        },
                     )?;
-                    let clamped =
-                        u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                            .map_err(|_| Error::GenerateFailed)?;
-                    by_codebook[codebook_index].push(clamped);
-                    self.current_codes_scratch[codebook_index] = clamped;
-                    fast_token = u64::from(clamped);
                 }
             }
 
@@ -1821,7 +1993,7 @@ impl TokenDecoderRunner {
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
         let max_prefix_length = decoder_config.context_length;
-        let max_suffix_length = decoder_config.context_length.max(1);
+        let max_suffix_length = fishaudio_prefill_step_size(decoder_config.context_length).max(32);
         let should_fill_attention_bias =
             model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
 
@@ -1854,6 +2026,28 @@ impl TokenDecoderRunner {
         let tensor_add_scale =
             <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let token_copy_sampled =
+            <<Metal as Backend>::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref())
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let token_copy_results =
+            <<Metal as Backend>::Kernels as Kernels>::TokenCopyToResultsKernel::new(context.as_ref())
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let async_chain_capacity = max_suffix_length.max(1);
+        let async_chain_positions = Rc::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<i32>())
+                .map_err(|_| Error::UnableToCreateBackendContext)?,
+        );
+        let async_chain_seeds = Rc::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<u64>())
+                .map_err(|_| Error::UnableToCreateBackendContext)?,
+        );
+        let async_chain_results = Rc::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
+                .map_err(|_| Error::UnableToCreateBackendContext)?,
+        );
         let single_hidden_capture = RefCell::new(context.create_array(
             &[1, decoder_config.model_dim],
             activation_data_type,
@@ -1889,6 +2083,12 @@ impl TokenDecoderRunner {
             kv_cache_update,
             tensor_copy,
             tensor_add_scale,
+            token_copy_sampled,
+            token_copy_results,
+            async_chain_positions,
+            async_chain_seeds,
+            async_chain_results,
+            async_chain_capacity,
             single_hidden_capture,
             single_override_embedding,
             single_token_vocab_masks: HashMap::new(),
@@ -1902,6 +2102,18 @@ impl TokenDecoderRunner {
     fn reset(&mut self) {
         self.cache_layers.borrow_mut().clear();
         self.next_position = 0;
+    }
+
+    fn prefill_without_sampling(
+        &mut self,
+        token_ids: &[u64],
+    ) -> Result<(), Error> {
+        if token_ids.is_empty() {
+            return Ok(());
+        }
+        let mut sampling = FishAudioSamplingState::with_params(0, 0.0, 1.0);
+        let _ = self.decode_next_step(token_ids, EmbeddingInjection::None, None, &mut sampling, None, false, None)?;
+        Ok(())
     }
 
     fn decode_next_token_with_hidden_capture(
@@ -1949,6 +2161,142 @@ impl TokenDecoderRunner {
             false,
             pre_injection_encode,
         )
+    }
+
+    fn decode_followup_tokens_batched(
+        &mut self,
+        first_token: u64,
+        followup_count: usize,
+        vocab_limit: Option<usize>,
+        sampling: &mut FishAudioSamplingState,
+        mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        if followup_count == 0 {
+            return Ok(());
+        }
+
+        if followup_count > self.async_chain_capacity {
+            return Err(Error::GenerateFailed);
+        }
+
+        let vocab_mask_limit = if let Some(limit_raw) = vocab_limit {
+            let limit = limit_raw.min(self.decoder_config.vocab_size);
+            if limit == 0 || limit >= self.decoder_config.vocab_size {
+                None
+            } else {
+                self.prepare_two_token_vocab_mask(limit)?;
+                self.prepare_single_token_vocab_mask(limit)?;
+                Some(limit)
+            }
+        } else {
+            None
+        };
+
+        {
+            let positions_ptr = self.async_chain_positions.cpu_ptr().as_ptr() as *mut i32;
+            for pass in 0..followup_count {
+                unsafe {
+                    *positions_ptr.add(pass) = (self.next_position + pass) as i32;
+                }
+            }
+        }
+
+        {
+            let seeds_ptr = self.async_chain_seeds.cpu_ptr().as_ptr() as *mut u64;
+            if matches!(sampling.method(), SamplingMethod::Stochastic { .. }) {
+                for pass in 0..followup_count {
+                    unsafe {
+                        *seeds_ptr.add(pass) = sampling.next_seed();
+                    }
+                }
+            } else {
+                for pass in 0..followup_count {
+                    unsafe {
+                        *seeds_ptr.add(pass) = 0;
+                    }
+                }
+            }
+        }
+
+        self.command_buffer =
+            Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
+        for pass in 0..followup_count {
+            let token_ids = [if pass == 0 {
+                first_token
+            } else {
+                0
+            }];
+            let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
+            let mut state = ForwardPassState::new_llm(
+                self.context.clone(),
+                &self.decoder_config,
+                &self.model_shape,
+                &self.scratch_buffers,
+                self.cache_layers.clone(),
+                self.shared_buffers.clone(),
+                &token_ids,
+                &[self.next_position + pass],
+                token_bitmask,
+                &[0],
+                1,
+                0,
+                1,
+                false,
+                None,
+                pass > 0,
+                self.should_fill_attention_bias,
+                Some((self.async_chain_positions.clone(), pass)),
+                Some((self.async_chain_seeds.clone(), pass)),
+            );
+            if let Some(method) = state.sampling_method_mut() {
+                *method = Some(sampling.method());
+            }
+
+            let encoding_parameters = EncodingParameters::new(false, false, false);
+            self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            for layer in self.executables.layers.iter() {
+                layer.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            }
+            self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+
+            let sampling_output = state.sampling_output().ok_or(Error::GenerateFailed)?;
+            let sampling_output_binding = sampling_output.borrow();
+            let sampling_output_buffer = sampling_output_binding.buffer();
+            let token_ids_binding = self.scratch_buffers.token_ids.borrow();
+            let token_ids_buffer = token_ids_binding.buffer();
+
+            self.command_buffer.borrow().with_compute_encoder(|encoder| {
+                if pass + 1 < followup_count {
+                    self.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
+                }
+                let results_offset = pass * std::mem::size_of::<u32>();
+                self.token_copy_results.encode(
+                    sampling_output_buffer,
+                    (self.async_chain_results.as_ref(), results_offset),
+                    encoder,
+                );
+            });
+
+            self.cache_layers.borrow_mut().update_after_acceptance(
+                &[0],
+                None,
+                self.command_buffer.borrow().deref(),
+                &self.kv_cache_update,
+            );
+            self.cache_layers.borrow_mut().register_accepted_tokens(&[self.next_position + pass]);
+        }
+
+        self.next_position = self.next_position.saturating_add(followup_count);
+        self.submit_and_wait_current_command_buffer();
+
+        let results_ptr = self.async_chain_results.cpu_ptr().as_ptr() as *const u32;
+        for pass in 0..followup_count {
+            let sampled = unsafe { *results_ptr.add(pass) };
+            on_token(pass, u64::from(sampled))?;
+        }
+        Ok(())
     }
 
     fn prepare_single_token_vocab_mask(

@@ -133,6 +133,13 @@ fn fishaudio_chunked_command_buffers_enabled() -> bool {
     parse_env_bool("UZU_FISHAUDIO_CHUNKED_CMD_BUFS").unwrap_or(true)
 }
 
+fn fishaudio_decode_micro_flush_elements_threshold() -> usize {
+    std::env::var("UZU_FISHAUDIO_MICRO_FLUSH_MIN_ELEMENTS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(8_000_000)
+}
+
 fn fishaudio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
         DataType::F16 => 1,
@@ -211,6 +218,8 @@ pub struct AudioDecodeStreamState {
     codebooks: usize,
     max_workspace_frames: usize,
     mode: AudioDecodeStreamingMode,
+    stored_frame_start: usize,
+    total_frames_generated: usize,
     row_tokens: Vec<Vec<u32>>,
     flattened_tokens: Vec<u32>,
     window_lengths: Vec<usize>,
@@ -249,6 +258,8 @@ impl AudioDecodeStreamState {
             codebooks,
             max_workspace_frames,
             mode,
+            stored_frame_start: 0,
+            total_frames_generated: 0,
             row_tokens,
             flattened_tokens: Vec::with_capacity(
                 row_count
@@ -263,7 +274,15 @@ impl AudioDecodeStreamState {
     }
 
     fn total_frames(&self) -> usize {
+        self.total_frames_generated
+    }
+
+    fn stored_frames(&self) -> usize {
         self.row_tokens.first().map_or(0, Vec::len)
+    }
+
+    fn stored_frame_end(&self) -> usize {
+        self.stored_frame_start.saturating_add(self.stored_frames())
     }
 
     fn append_delta(
@@ -292,8 +311,11 @@ impl AudioDecodeStreamState {
         let delta_frames = delta_codebook_major.frames();
         let tokens = delta_codebook_major.tokens();
         let target_frames = self.total_frames().saturating_add(delta_frames);
-        if target_frames > self.max_workspace_frames {
-            self.max_workspace_frames = target_frames;
+        if self.mode == AudioDecodeStreamingMode::PrefixFallback && target_frames > self.max_workspace_frames {
+            return Err(AudioError::Runtime(format!(
+                "stream workspace exceeded: target_frames={target_frames}, max_workspace_frames={}",
+                self.max_workspace_frames
+            )));
         }
 
         for batch in 0..self.batch_size {
@@ -303,10 +325,6 @@ impl AudioDecodeStreamState {
                     .and_then(|value| value.checked_add(codebook))
                     .ok_or(AudioError::Runtime("stream row index overflow".to_string()))?;
                 let row = &mut self.row_tokens[row_index];
-                if row.capacity() < self.max_workspace_frames {
-                    let missing_capacity = self.max_workspace_frames.saturating_sub(row.capacity());
-                    row.reserve(missing_capacity);
-                }
                 let src_start = row_index
                     .checked_mul(delta_frames)
                     .ok_or(AudioError::Runtime("stream source index overflow".to_string()))?;
@@ -315,6 +333,16 @@ impl AudioDecodeStreamState {
                     .ok_or(AudioError::Runtime("stream source index overflow".to_string()))?;
                 row.extend_from_slice(&tokens[src_start..src_end]);
             }
+        }
+        self.total_frames_generated = target_frames;
+
+        let stored_frames = self.stored_frames();
+        if stored_frames > self.max_workspace_frames {
+            let evict = stored_frames - self.max_workspace_frames;
+            for row in &mut self.row_tokens {
+                row.drain(..evict);
+            }
+            self.stored_frame_start = self.stored_frame_start.saturating_add(evict);
         }
 
         for (length, &delta_len) in self.semantic_lengths.iter_mut().zip(delta_codebook_major.lengths().iter()) {
@@ -327,7 +355,13 @@ impl AudioDecodeStreamState {
     }
 
     fn to_full_grid(&mut self) -> AudioResult<AudioTokenGrid> {
-        let total_frames = self.total_frames();
+        if self.stored_frame_start != 0 {
+            return Err(AudioError::Runtime(format!(
+                "full-grid decode requires retained prefix, but {} frames were evicted",
+                self.stored_frame_start
+            )));
+        }
+        let total_frames = self.stored_frames();
         for row in &self.row_tokens {
             if row.len() != total_frames {
                 return Err(AudioError::Runtime("stream row token length mismatch".to_string()));
@@ -339,8 +373,13 @@ impl AudioDecodeStreamState {
             .checked_mul(self.codebooks)
             .and_then(|value| value.checked_mul(total_frames))
             .ok_or(AudioError::Runtime("stream token count overflow".to_string()))?;
+        if self.flattened_tokens.capacity() < expected_tokens {
+            return Err(AudioError::Runtime(format!(
+                "stream flattened token capacity exceeded: required={expected_tokens}, capacity={}",
+                self.flattened_tokens.capacity()
+            )));
+        }
         self.flattened_tokens.clear();
-        self.flattened_tokens.reserve(expected_tokens.saturating_sub(self.flattened_tokens.capacity()));
         for row in &self.row_tokens {
             self.flattened_tokens.extend_from_slice(row);
         }
@@ -374,8 +413,17 @@ impl AudioDecodeStreamState {
                 "stream window end exceeds token frames: end={end_frame}, total={total_frames}"
             )));
         }
+        if start_frame < self.stored_frame_start || end_frame > self.stored_frame_end() {
+            return Err(AudioError::Runtime(format!(
+                "stream window [{start_frame}, {end_frame}) exceeds retained workspace [{}, {})",
+                self.stored_frame_start,
+                self.stored_frame_end()
+            )));
+        }
 
         let window_frames = end_frame.saturating_sub(start_frame);
+        let local_start = start_frame.saturating_sub(self.stored_frame_start);
+        let local_end = local_start.saturating_add(window_frames);
         let row_count = self
             .batch_size
             .checked_mul(self.codebooks)
@@ -385,11 +433,14 @@ impl AudioDecodeStreamState {
             .ok_or(AudioError::Runtime("stream window token capacity overflow".to_string()))?;
 
         if self.flattened_tokens.capacity() < required_capacity {
-            self.flattened_tokens.reserve(required_capacity.saturating_sub(self.flattened_tokens.capacity()));
+            return Err(AudioError::Runtime(format!(
+                "stream flattened window capacity exceeded: required={required_capacity}, capacity={}",
+                self.flattened_tokens.capacity()
+            )));
         }
         self.flattened_tokens.clear();
         for row in &self.row_tokens {
-            self.flattened_tokens.extend_from_slice(&row[start_frame..end_frame]);
+            self.flattened_tokens.extend_from_slice(&row[local_start..local_end]);
         }
 
         self.window_lengths.clear();
@@ -3061,7 +3112,7 @@ impl FishAudioCodecGraph {
                     input_scale: None,
                     logit_soft_cap: None,
                 },
-                precision: ConfigDataType::Float32,
+                precision: self.vocoder_data_type.into(),
             },
             transformer_config: self.post_module_transformer_config.clone(),
             vocab_size: 1,
@@ -3816,6 +3867,7 @@ impl FishAudioCodecGraph {
             .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
         let profile_ops_enabled = fishaudio_profile_ops_enabled();
         let chunked_command_buffers = fishaudio_chunked_command_buffers_enabled();
+        let micro_flush_min_elements = fishaudio_decode_micro_flush_elements_threshold();
         let mut profile_stages = Vec::<(String, f64)>::new();
         let mut profile_stage_start = profile_ops_enabled.then(Instant::now);
         let mut flush_stage =
@@ -3974,6 +4026,10 @@ impl FishAudioCodecGraph {
             current_channels = block.trans_conv.cout;
             std::mem::swap(&mut lengths_i32, &mut next_lengths_i32);
             std::mem::swap(&mut lengths_array, &mut next_lengths_array);
+            let active_elements = batch_size
+                .checked_mul(current_channels)
+                .and_then(|value| value.checked_mul(current_frames))
+                .ok_or(AudioError::Runtime("FishAudio decoder element count overflow".to_string()))?;
 
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -3986,6 +4042,9 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
+            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
+                flush_stage(format!("decoder_block_{block_index}_res1"), &mut command_buffer)?;
+            }
             x = self.run_residual_unit_enqueued(
                 &context,
                 &command_buffer,
@@ -3997,6 +4056,9 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
+            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
+                flush_stage(format!("decoder_block_{block_index}_res2"), &mut command_buffer)?;
+            }
             x = self.run_residual_unit_enqueued(
                 &context,
                 &command_buffer,
@@ -5978,5 +6040,69 @@ mod tests {
         assert_eq!(second_out.lengths, vec![4]);
         assert_eq!(second_out.frames, 4);
         assert_eq!(second_out.samples, vec![8.0, 9.0, 10.0, 11.0]);
+    }
+
+    #[test]
+    fn incremental_stream_state_evicts_old_frames_with_bounded_workspace() {
+        let mut state =
+            AudioDecodeStreamState::new(1, 2, 4, AudioDecodeStreamingMode::IncrementalStateful).expect("state");
+        let first_delta = AudioTokenGrid::new(
+            vec![10_u32, 11, 12, 20, 21, 22].into_boxed_slice(),
+            1,
+            2,
+            3,
+            vec![3usize].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .expect("first token grid");
+        state.append_delta(&first_delta).expect("append first delta");
+
+        let second_delta = AudioTokenGrid::new(
+            vec![13_u32, 14, 15, 23, 24, 25].into_boxed_slice(),
+            1,
+            2,
+            3,
+            vec![3usize].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .expect("second token grid");
+        state.append_delta(&second_delta).expect("append second delta");
+
+        assert_eq!(state.total_frames(), 6);
+        assert_eq!(state.stored_frame_start, 2);
+        assert_eq!(state.stored_frames(), 4);
+
+        let (tokens, lengths, frames) = state.flatten_window(2, 6).expect("flatten retained window");
+        assert_eq!(frames, 4);
+        assert_eq!(lengths, &[4usize]);
+        assert_eq!(tokens, &[12, 13, 14, 15, 22, 23, 24, 25]);
+        assert!(state.to_full_grid().is_err(), "full-grid decode should fail after eviction");
+    }
+
+    #[test]
+    fn prefix_fallback_stream_state_rejects_workspace_overflow() {
+        let mut state = AudioDecodeStreamState::new(1, 2, 4, AudioDecodeStreamingMode::PrefixFallback).expect("state");
+        let first_delta = AudioTokenGrid::new(
+            vec![1_u32, 2, 3, 4, 5, 6].into_boxed_slice(),
+            1,
+            2,
+            3,
+            vec![3usize].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .expect("first token grid");
+        state.append_delta(&first_delta).expect("append first delta");
+
+        let overflow_delta = AudioTokenGrid::new(
+            vec![7_u32, 8, 9, 10].into_boxed_slice(),
+            1,
+            2,
+            2,
+            vec![2usize].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .expect("overflow token grid");
+        let err = state.append_delta(&overflow_delta).expect_err("prefix fallback must reject overflow");
+        assert!(err.to_string().contains("workspace exceeded"), "unexpected prefix overflow error: {err}");
     }
 }

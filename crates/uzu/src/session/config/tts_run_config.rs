@@ -73,10 +73,10 @@ impl Default for TtsRunConfig {
             initial_chunk_frames: 1,
             min_chunk_frames: 16,
             max_chunk_frames: 256,
-            max_stream_workspace_frames: 256,
+            max_stream_workspace_frames: 768,
             max_semantic_frames: 768,
             chunk_policy: TtsChunkPolicy::Adaptive,
-            non_streaming_mode: TtsNonStreamingMode::FullDecode,
+            non_streaming_mode: TtsNonStreamingMode::ChunkedIfNeeded,
         }
     }
 }
@@ -94,7 +94,7 @@ impl Default for TtsPerformanceConfig {
         let non_streaming = TtsRunConfig {
             streaming_enabled: false,
             chunk_policy: TtsChunkPolicy::Fixed,
-            non_streaming_mode: TtsNonStreamingMode::FullDecode,
+            non_streaming_mode: TtsNonStreamingMode::ChunkedIfNeeded,
             initial_chunk_frames: 128,
             min_chunk_frames: 128,
             max_chunk_frames: 128,
@@ -121,10 +121,10 @@ mod tests {
         assert_eq!(config.initial_chunk_frames, 1);
         assert_eq!(config.min_chunk_frames, 16);
         assert_eq!(config.max_chunk_frames, 256);
-        assert_eq!(config.max_stream_workspace_frames, 256);
+        assert_eq!(config.max_stream_workspace_frames, 768);
         assert_eq!(config.max_semantic_frames, 768);
         assert_eq!(config.chunk_policy, TtsChunkPolicy::Adaptive);
-        assert_eq!(config.non_streaming_mode, TtsNonStreamingMode::FullDecode);
+        assert_eq!(config.non_streaming_mode, TtsNonStreamingMode::ChunkedIfNeeded);
     }
 
     #[test]
@@ -179,5 +179,6 @@ mod tests {
         assert_eq!(config.streaming.chunk_policy, TtsChunkPolicy::Adaptive);
         assert_eq!(config.non_streaming.chunk_policy, TtsChunkPolicy::Fixed);
         assert_eq!(config.non_streaming.min_chunk_frames, config.non_streaming.max_chunk_frames);
+        assert_eq!(config.non_streaming.non_streaming_mode, TtsNonStreamingMode::ChunkedIfNeeded);
     }
 }
