@@ -4,6 +4,11 @@ use super::{
     FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, QuantizedEmbeddingLookup,
     QuantizedEmbeddingReadout, QuantizedLinear,
 };
+#[cfg(feature = "fwht")]
+use super::{
+    fwht::{Fwht, FwhtMode},
+    fwht_linear::FwhtLinear,
+};
 use crate::{
     DataType,
     backends::common::{Backend, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
@@ -13,12 +18,6 @@ use crate::{
     },
     forward_pass::state::ArrayId,
     parameters::{ParameterLoaderError, ParameterTree},
-};
-
-#[cfg(feature = "fwht")]
-use super::{
-    fwht::{Fwht, FwhtMode},
-    fwht_linear::FwhtLinear,
 };
 
 #[derive(Debug, Error)]
@@ -53,19 +52,39 @@ fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
             if dim.is_power_of_two() && dim >= 64 && dim <= 8192 {
                 Some(FwhtMode::Full)
             } else if dim % 32 == 0 {
-                Some(FwhtMode::Block { block_size: 32 })
+                Some(FwhtMode::Block {
+                    block_size: 32,
+                })
             } else {
                 None
             }
         },
         "block32" => {
-            if dim % 32 == 0 { Some(FwhtMode::Block { block_size: 32 }) } else { None }
+            if dim % 32 == 0 {
+                Some(FwhtMode::Block {
+                    block_size: 32,
+                })
+            } else {
+                None
+            }
         },
         "block64" => {
-            if dim % 64 == 0 { Some(FwhtMode::Block { block_size: 64 }) } else { None }
+            if dim % 64 == 0 {
+                Some(FwhtMode::Block {
+                    block_size: 64,
+                })
+            } else {
+                None
+            }
         },
         "block128" => {
-            if dim % 128 == 0 { Some(FwhtMode::Block { block_size: 128 }) } else { None }
+            if dim % 128 == 0 {
+                Some(FwhtMode::Block {
+                    block_size: 128,
+                })
+            } else {
+                None
+            }
         },
         _ => None, // "off", unset, or unknown → no FWHT
     }
@@ -91,11 +110,9 @@ fn wrap_with_fwht<B: Backend>(
     };
 
     let post_fwht = if let Some(mode) = fwht_mode_for_dim(output_dim) {
-        Some(
-            Box::new(
-                Fwht::new(context, data_type, mode, output_array_id, output_dim).map_err(LayerError::BackendError)?,
-            ) as Box<dyn EncodableBlock<B>>,
-        )
+        Some(Box::new(
+            Fwht::new(context, data_type, mode, output_array_id, output_dim).map_err(LayerError::BackendError)?,
+        ) as Box<dyn EncodableBlock<B>>)
     } else {
         None
     };
