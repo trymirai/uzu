@@ -195,34 +195,35 @@ def extract_shader_info(
 
 # ── buffer reading ────────────────────────────────────────────────────────
 
-_LAYOUT_FORMATS: dict[str, tuple[str, int]] = {
-    "float": ("f", 1),
-    "float2": ("ff", 2),
-    "float3": ("fff", 3),
-    "float4": ("ffff", 4),
-    "uint32": ("I", 1),
-    "int32": ("i", 1),
-    "half": ("e", 1),
-    "half2": ("ee", 2),
-    "half4": ("eeee", 4),
+_LAYOUT_FORMATS: dict[str, tuple[str, int, int]] = {
+    "float": ("f", 1, 1),
+    "float2": ("ff", 2, 2),
+    "float3": ("ffff", 4, 3),        # Metal simd_float3 is 16-byte aligned; 4th float is padding
+    "packed_float3": ("fff", 3, 3),  # Metal packed_float3, no alignment padding
+    "float4": ("ffff", 4, 4),
+    "uint32": ("I", 1, 1),
+    "int32": ("i", 1, 1),
+    "half": ("e", 1, 1),
+    "half2": ("ee", 2, 2),
+    "half4": ("eeee", 4, 4),
 }
 
 
-def parse_layout(layout: str) -> tuple[str, list[tuple[str, int]]]:
+def parse_layout(layout: str) -> tuple[str, list[tuple[str, int, int]]]:
     """Parse a layout string into a struct format and field descriptors.
 
-    Returns (struct_format, [(component_name, n_values), ...]).
+    Returns (struct_format, [(component_name, n_read, n_report), ...]).
     """
     components = [c.strip() for c in layout.split(",")]
     fmt_parts: list[str] = []
-    fields: list[tuple[str, int]] = []
+    fields: list[tuple[str, int, int]] = []
 
     for comp in components:
         if comp not in _LAYOUT_FORMATS:
             raise ValueError(f"Unknown layout component: {comp}")
-        fmt, n = _LAYOUT_FORMATS[comp]
+        fmt, n_read, n_report = _LAYOUT_FORMATS[comp]
         fmt_parts.append(fmt)
-        fields.append((comp, n))
+        fields.append((comp, n_read, n_report))
 
     return "<" + "".join(fmt_parts), fields
 
@@ -260,15 +261,14 @@ def read_buffer(
 
         field_entries: list[tuple[str, object]] = []
         vi = 0
-        for ci, (comp_name, n_vals) in enumerate(fields):
-            if n_vals == 1:
+        for ci, (comp_name, n_read, n_report) in enumerate(fields):
+            if n_report == 1:
                 field_entries.append((f"field{ci}", values[vi]))
-                vi += 1
             else:
                 field_entries.append(
-                    (f"field{ci}", list(values[vi : vi + n_vals]))
+                    (f"field{ci}", list(values[vi : vi + n_report]))
                 )
-                vi += n_vals
+            vi += n_read
         results.append(BufferElement(index=idx, fields=tuple(field_entries)))
 
     return results
