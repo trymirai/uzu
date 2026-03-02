@@ -6,7 +6,7 @@ use super::{
 };
 #[cfg(feature = "fwht")]
 use super::{
-    fwht::{Fwht, FwhtMode},
+    fwht::{Fwht, FwhtMode, decompose_hadamard},
     fwht_linear::FwhtLinear,
 };
 use crate::{
@@ -39,10 +39,10 @@ pub enum LayerError<B: Backend> {
 /// Returns the FWHT mode for a given dimension, based on `UZU_FWHT_MODE` env var.
 ///
 /// Supported values:
-///   `full`     — full-vector transform (threadgroup memory, radix-16)
-///   `block32`  — block-wise with block_size=32 (simd_shuffle path)
-///   `block64`  — block-wise with block_size=64
-///   `block128` — block-wise with block_size=128
+///   `full`    — full-vector transform; uses power-of-2 kernel directly when dim
+///               is a power of two in [64, 8192], or m×2^k decomposition when
+///               dim = m × 2^k with m in {12, 20, 28} and 2^k in [64, 8192]
+///   `block32` — block-wise with block_size=32 (simd_shuffle path)
 ///   `off` or unset — no FWHT
 #[cfg(feature = "fwht")]
 fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
@@ -51,42 +51,20 @@ fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
         "full" => {
             if dim.is_power_of_two() && dim >= 64 && dim <= 8192 {
                 Some(FwhtMode::Full)
-            } else if dim % 32 == 0 {
-                Some(FwhtMode::Block {
-                    block_size: 32,
-                })
+            } else if let Some((n, m)) = decompose_hadamard(dim) {
+                Some(FwhtMode::Decomposed { n, m })
             } else {
                 None
             }
         },
         "block32" => {
             if dim % 32 == 0 {
-                Some(FwhtMode::Block {
-                    block_size: 32,
-                })
+                Some(FwhtMode::Block { block_size: 32 })
             } else {
                 None
             }
         },
-        "block64" => {
-            if dim % 64 == 0 {
-                Some(FwhtMode::Block {
-                    block_size: 64,
-                })
-            } else {
-                None
-            }
-        },
-        "block128" => {
-            if dim % 128 == 0 {
-                Some(FwhtMode::Block {
-                    block_size: 128,
-                })
-            } else {
-                None
-            }
-        },
-        _ => None, // "off", unset, or unknown → no FWHT
+        _ => None,
     }
 }
 

@@ -1,8 +1,10 @@
 //! Fast Walsh-Hadamard Transform encodable block.
 //!
-//! Two modes:
-//! - `Full`: transforms the entire row (N must be power of 2 and match a compiled variant)
+//! Three modes:
+//! - `Full`: transforms the entire row (N must be power of 2 in [64, 8192])
 //! - `Block`: divides the row into chunks of `block_size` and transforms each independently
+//! - `Decomposed`: factors the dimension as m * 2^k (m in {12, 20, 28}), applies
+//!    a power-of-2 Hadamard for the 2^k part then a dense O(m^2) codelet for the m part
 
 use std::ops::Deref;
 
@@ -11,7 +13,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend,
-        kernel::{FwhtBlockKernel, FwhtKernel, Kernels},
+        kernel::{FwhtBlockKernel, FwhtKernel, FwhtMKernel, Kernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
@@ -19,11 +21,26 @@ use crate::{
 pub enum FwhtMode {
     Full,
     Block { block_size: u32 },
+    Decomposed { n: u32, m: u32 },
+}
+
+/// Factors `dim` as `m * 2^k` where m in {12, 20, 28} and 2^k in [64, 8192].
+pub fn decompose_hadamard(dim: usize) -> Option<(u32, u32)> {
+    for m in [12, 20, 28] {
+        if dim % m == 0 {
+            let n = dim / m;
+            if n.is_power_of_two() && n >= 64 && n <= 8192 {
+                return Some((n as u32, m as u32));
+            }
+        }
+    }
+    None
 }
 
 pub struct Fwht<B: Backend> {
     full_kernel: Option<<B::Kernels as Kernels>::FwhtKernel>,
     block_kernel: Option<<B::Kernels as Kernels>::FwhtBlockKernel>,
+    m_kernel: Option<<B::Kernels as Kernels>::FwhtMKernel>,
     mode: FwhtMode,
     array_id: ArrayId,
     row_dimension: usize,
@@ -38,24 +55,29 @@ impl<B: Backend> Fwht<B> {
         array_id: ArrayId,
         row_dimension: usize,
     ) -> Result<Self, B::Error> {
-        let (full_kernel, block_kernel, scale) = match &mode {
+        let (full_kernel, block_kernel, m_kernel, scale) = match &mode {
             FwhtMode::Full => {
                 let kernel = <B::Kernels as Kernels>::FwhtKernel::new(context, data_type, row_dimension as i32)?;
                 let scale = 1.0f32 / (row_dimension as f32).sqrt();
-                (Some(kernel), None, scale)
+                (Some(kernel), None, None, scale)
             },
-            FwhtMode::Block {
-                block_size,
-            } => {
+            FwhtMode::Block { block_size } => {
                 let kernel = <B::Kernels as Kernels>::FwhtBlockKernel::new(context, data_type, *block_size as i32)?;
                 let scale = 1.0f32 / (*block_size as f32).sqrt();
-                (None, Some(kernel), scale)
+                (None, Some(kernel), None, scale)
+            },
+            FwhtMode::Decomposed { n, m } => {
+                let fwht_kernel = <B::Kernels as Kernels>::FwhtKernel::new(context, data_type, *n as i32)?;
+                let m_kernel = <B::Kernels as Kernels>::FwhtMKernel::new(context, data_type, *m as i32)?;
+                let scale = 1.0f32 / (row_dimension as f32).sqrt();
+                (Some(fwht_kernel), None, Some(m_kernel), scale)
             },
         };
 
         Ok(Self {
             full_kernel,
             block_kernel,
+            m_kernel,
             mode,
             array_id,
             row_dimension,
@@ -90,13 +112,28 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
                     encoder,
                 );
             },
-            FwhtMode::Block {
-                ..
-            } => {
+            FwhtMode::Block { .. } => {
                 self.block_kernel.as_ref().expect("FwhtBlockKernel missing for Block mode").encode(
                     buffer.deref(),
                     batch_size as u32,
                     self.row_dimension as u32,
+                    self.scale,
+                    encoder,
+                );
+            },
+            FwhtMode::Decomposed { n, m } => {
+                // Pass 1: power-of-2 Hadamard on each of the m sub-blocks per row (no scaling)
+                self.full_kernel.as_ref().expect("FwhtKernel missing for Decomposed mode").encode(
+                    buffer.deref(),
+                    batch_size as u32 * m,
+                    1.0f32,
+                    encoder,
+                );
+                // Pass 2: dense m-point Hadamard across sub-blocks (applies full scale)
+                self.m_kernel.as_ref().expect("FwhtMKernel missing for Decomposed mode").encode(
+                    buffer.deref(),
+                    batch_size as u32,
+                    *n,
                     self.scale,
                     encoder,
                 );
