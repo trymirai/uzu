@@ -11,5 +11,11 @@ pub fn tensor_add_swap<T: ArrayElement + Float>(
     #[allow(unused)] main_buffer: *mut T,
     #[allow(unused)] length: u32,
 ) {
-    todo!()
+    unsafe {
+        for i in 0..length {
+            let result = *skip_buffer.add(i as usize) + *main_buffer.add(i as usize);
+            *skip_buffer.add(i as usize) = result;
+            *main_buffer.add(i as usize) = result;
+        }
+    }
 }
