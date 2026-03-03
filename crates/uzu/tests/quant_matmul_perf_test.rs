@@ -210,23 +210,24 @@ fn benchmark_single(
     fill_buffer_random(&s_buf, s_bytes);
     fill_buffer_random(&b_buf, b_bytes);
 
-    let make_args = || QuantizedMatmulArguments {
-        a_buffer: &x_buf,
-        a_offset: 0,
-        b_buffer: &w_buf,
-        scales_buffer: &s_buf,
-        zero_points_or_biases_buffer: &b_buf,
-        output_buffer: &y_buf,
-        batch: shape.batch,
-        input_dim: shape.input_dim,
-        output_dim: shape.output_dim,
-        quantization_type: config.quant_type,
-    };
+    let mut y_buf = y_buf;
 
     for _ in 0..WARMUP_ITERATIONS {
         let cb = ctx.command_queue.command_buffer().expect("cb").to_owned();
-        let enc = cb.new_compute_command_encoder().expect("enc");
-        if let Err(e) = kernel.encode(&enc, make_args()) {
+        let mut enc = cb.new_compute_command_encoder().expect("enc");
+        let arguments = QuantizedMatmulArguments {
+            a_buffer: &x_buf,
+            a_offset: 0,
+            b_buffer: &w_buf,
+            scales_buffer: &s_buf,
+            zero_points_or_biases_buffer: &b_buf,
+            output_buffer: &mut y_buf,
+            batch: shape.batch,
+            input_dim: shape.input_dim,
+            output_dim: shape.output_dim,
+            quantization_type: config.quant_type,
+        };
+        if let Err(e) = kernel.encode(&mut enc, arguments) {
             return error_result(format!("warmup encode: {e}"));
         }
         enc.end_encoding();
@@ -237,8 +238,20 @@ fn benchmark_single(
     let start = Instant::now();
     for _ in 0..BENCHMARK_ITERATIONS {
         let cb = ctx.command_queue.command_buffer().expect("cb").to_owned();
-        let enc = cb.new_compute_command_encoder().expect("enc");
-        if let Err(e) = kernel.encode(&enc, make_args()) {
+        let mut enc = cb.new_compute_command_encoder().expect("enc");
+        let arguments = QuantizedMatmulArguments {
+            a_buffer: &x_buf,
+            a_offset: 0,
+            b_buffer: &w_buf,
+            scales_buffer: &s_buf,
+            zero_points_or_biases_buffer: &b_buf,
+            output_buffer: &mut y_buf,
+            batch: shape.batch,
+            input_dim: shape.input_dim,
+            output_dim: shape.output_dim,
+            quantization_type: config.quant_type,
+        };
+        if let Err(e) = kernel.encode(&mut enc, arguments) {
             return error_result(format!("bench encode: {e}"));
         }
         enc.end_encoding();

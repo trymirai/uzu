@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+
 use super::{super::matmul_arguments::MatmulArguments, dispatch_descriptor::DispatchDescriptor};
 use crate::{
     DataType,
@@ -76,9 +78,9 @@ where
     pub fn encode(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
         let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x).map_err(|_| {
             B::Error::from(format!("GemmMixedTypesSimple group count x overflows u32: {}", dispatch_descriptor.threadgroups.x))
@@ -99,7 +101,7 @@ where
                 p.encode(
                     (arguments.a, arguments.a_offset as usize),
                     arguments.b,
-                    arguments.d,
+                    arguments.d.deref_mut(),
                     std::slice::from_ref(&dispatch_descriptor.params),
                     group_count_x,
                     group_count_y,
@@ -116,7 +118,7 @@ where
                 p.encode(
                     (arguments.a, arguments.a_offset as usize),
                     arguments.b,
-                    arguments.d,
+                    arguments.d.deref_mut(),
                     std::slice::from_ref(&dispatch_descriptor.params),
                     group_count_x,
                     group_count_y,
@@ -133,7 +135,7 @@ where
                 p.encode(
                     (arguments.a, arguments.a_offset as usize),
                     arguments.b,
-                    arguments.d,
+                    arguments.d.deref_mut(),
                     std::slice::from_ref(&dispatch_descriptor.params),
                     group_count_x,
                     group_count_y,
@@ -150,7 +152,7 @@ where
                 p.encode(
                     (arguments.a, arguments.a_offset as usize),
                     arguments.b,
-                    arguments.d,
+                    arguments.d.deref_mut(),
                     std::slice::from_ref(&dispatch_descriptor.params),
                     group_count_x,
                     group_count_y,

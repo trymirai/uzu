@@ -189,7 +189,7 @@ where
         }
 
         if self.bias_add.is_none() {
-            self.bias_add = Some(<B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.data_type, true)?);
+            self.bias_add = Some(<B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.output_dtype, true)?);
         }
         let bias_add = self.bias_add.as_ref().unwrap();
         bias_add.encode(None::<&B::Buffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, command_buffer);
