@@ -9,27 +9,26 @@ using namespace metal;
 #define STEEL_PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
 #endif
 
-// Thread-local Hadamard transform for 2^R elements.
+// Thread-local Hadamard transform for 2^RADIX_SIZE elements.
 // Ported from MLX (external/mlx/mlx/backend/metal/kernels/hadamard.h).
 // Operates entirely in thread-private registers — no barriers needed.
-// All loops are unrolled at compile time.
-template <short R>
-METAL_FUNC void radix_func(thread float* x) {
-  constexpr short logR = __builtin_ctz(R);
-  short h = 1;
-  STEEL_PRAGMA_UNROLL
-  for (short s = 0; s < logR; s++) {
+template <short RADIX_SIZE>
+METAL_FUNC void radix_func(thread float* elements) {
+    constexpr short log_radix = __builtin_ctz(RADIX_SIZE);
+    short butterfly_stride = 1;
     STEEL_PRAGMA_UNROLL
-    for (short i = 0; i < R / 2; i++) {
-      short k = i & (h - 1);
-      short j = ((i - k) << 1) + k;
-      float a = x[j];
-      float b = x[j + h];
-      x[j] = a + b;
-      x[j + h] = a - b;
+    for (short stage = 0; stage < log_radix; stage++) {
+        STEEL_PRAGMA_UNROLL
+        for (short pair_index = 0; pair_index < RADIX_SIZE / 2; pair_index++) {
+            short low_bits = pair_index & (butterfly_stride - 1);
+            short base_index = ((pair_index - low_bits) << 1) + low_bits;
+            float first = elements[base_index];
+            float second = elements[base_index + butterfly_stride];
+            elements[base_index] = first + second;
+            elements[base_index + butterfly_stride] = first - second;
+        }
+        butterfly_stride <<= 1;
     }
-    h <<= 1;
-  }
 }
 
 #endif /* fwht_h */

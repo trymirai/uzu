@@ -1,8 +1,8 @@
 //! Fast Walsh-Hadamard Transform encodable block.
 //!
 //! Four modes:
-//! - `Full`: transforms the entire row (N must be power of 2 in [64, 8192])
-//! - `SimdShuffleBlock`: block-wise using simd_shuffle_xor with threadgroup preloading
+//! - `Full`: transforms the entire row (N must be power of 2 in [32, 8192])
+//! - `SimdShuffle`: 32-point Hadamard via simd_shuffle_xor with 128-element threadgroup preloading
 //! - `Block`: block-wise using the radix-16 Fwht kernel per block
 //! - `Decomposed`: factors the dimension as m * 2^k (m in {12, 20, 28}), applies
 //!    a power-of-2 Hadamard for the 2^k part then a dense O(m^2) codelet for the m part
@@ -21,7 +21,7 @@ use crate::{
 
 pub enum FwhtMode {
     Full,
-    SimdShuffleBlock { block_size: u32 },
+    SimdShuffle,
     Block { block_size: u32 },
     Decomposed { n: u32, m: u32 },
 }
@@ -39,9 +39,12 @@ pub fn decompose_hadamard(dim: usize) -> Option<(u32, u32)> {
     None
 }
 
+const SIMD_SHUFFLE_PRELOAD_SIZE: u32 = 128;
+const SIMD_GROUP_SIZE: u32 = 32;
+
 pub struct Fwht<B: Backend> {
     full_kernel: Option<<B::Kernels as Kernels>::FwhtKernel>,
-    simd_block_kernel: Option<<B::Kernels as Kernels>::FwhtSimdBlockKernel>,
+    simd_shuffle_kernel: Option<<B::Kernels as Kernels>::FwhtSimdBlockKernel>,
     m_kernel: Option<<B::Kernels as Kernels>::FwhtMKernel>,
     mode: FwhtMode,
     array_id: ArrayId,
@@ -57,15 +60,15 @@ impl<B: Backend> Fwht<B> {
         array_id: ArrayId,
         row_dimension: usize,
     ) -> Result<Self, B::Error> {
-        let (full_kernel, simd_block_kernel, m_kernel, scale) = match &mode {
+        let (full_kernel, simd_shuffle_kernel, m_kernel, scale) = match &mode {
             FwhtMode::Full => {
                 let kernel = <B::Kernels as Kernels>::FwhtKernel::new(context, data_type, row_dimension as i32)?;
                 let scale = 1.0f32 / (row_dimension as f32).sqrt();
                 (Some(kernel), None, None, scale)
             },
-            FwhtMode::SimdShuffleBlock { block_size } => {
-                let kernel = <B::Kernels as Kernels>::FwhtSimdBlockKernel::new(context, data_type, *block_size as i32)?;
-                let scale = 1.0f32 / (32f32).sqrt();
+            FwhtMode::SimdShuffle => {
+                let kernel = <B::Kernels as Kernels>::FwhtSimdBlockKernel::new(context, data_type, SIMD_SHUFFLE_PRELOAD_SIZE as i32)?;
+                let scale = 1.0f32 / (SIMD_GROUP_SIZE as f32).sqrt();
                 (None, Some(kernel), None, scale)
             },
             FwhtMode::Block { block_size } => {
@@ -83,7 +86,7 @@ impl<B: Backend> Fwht<B> {
 
         Ok(Self {
             full_kernel,
-            simd_block_kernel,
+            simd_shuffle_kernel,
             m_kernel,
             mode,
             array_id,
@@ -119,11 +122,11 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
                     encoder,
                 );
             },
-            FwhtMode::SimdShuffleBlock { block_size } => {
-                let num_blocks = self.row_dimension as u32 / block_size;
-                self.simd_block_kernel.as_ref().expect("FwhtSimdBlockKernel missing").encode(
+            FwhtMode::SimdShuffle => {
+                let num_groups = self.row_dimension as u32 / SIMD_SHUFFLE_PRELOAD_SIZE;
+                self.simd_shuffle_kernel.as_ref().expect("FwhtSimdBlockKernel missing").encode(
                     buffer.deref(),
-                    batch_size as u32 * num_blocks,
+                    batch_size as u32 * num_groups,
                     self.scale,
                     encoder,
                 );

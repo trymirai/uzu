@@ -17,82 +17,77 @@ KERNEL(Fwht)(
     device T* data,
     constant uint& batch_size,
     constant float& scale,
-    threadgroup T shared_buf[N],
-    const uint batch_idx GROUPS(batch_size),
-    const uint tid THREADS(512)
+    threadgroup T threadgroup_buffer[N],
+    const uint batch_index GROUPS(batch_size),
+    const uint thread_index THREADS(512)
 ) {
-  constexpr short max_radix = MAX_RADIX;
-  constexpr short num_threads = N / max_radix;
-  if (tid >= num_threads)
-    return;
-  constexpr short logN = __builtin_ctz(N);
-  constexpr short logR = __builtin_ctz(max_radix);
-  constexpr short num_steps = logN / logR;
-  constexpr short logFinal = logN % logR;
-  constexpr short final_radix = 1 << logFinal;
+    constexpr short max_radix = MAX_RADIX;
+    constexpr short num_threads = N / max_radix;
+    if (thread_index >= num_threads) return;
+    constexpr short log_n = __builtin_ctz(N);
+    constexpr short log_radix = __builtin_ctz(max_radix);
+    constexpr short num_stages = log_n / log_radix;
+    constexpr short log_final_radix = log_n % log_radix;
+    constexpr short final_radix = 1 << log_final_radix;
 
-  device T* row = data + batch_idx * N;
-  short i = tid;
-
-  // Load row into threadgroup memory
-  STEEL_PRAGMA_UNROLL
-  for (short j = 0; j < max_radix; j++) {
-    shared_buf[j * num_threads + i] = row[j * num_threads + i];
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-
-  // Main radix stages
-  float x[max_radix];
-  short h = 1;
-
-  STEEL_PRAGMA_UNROLL
-  for (short s = 0; s < num_steps; s++) {
-    short k = i & (h - 1);
-    short j = ((i - k) << logR) + k;
+    device T* row = data + batch_index * N;
+    short thread_id = thread_index;
 
     STEEL_PRAGMA_UNROLL
-    for (short r = 0; r < max_radix; r++) {
-      x[r] = float(shared_buf[j + h * r]);
-    }
-
-    radix_func<max_radix>(x);
-
-    STEEL_PRAGMA_UNROLL
-    for (short r = 0; r < max_radix; r++) {
-      shared_buf[j + h * r] = T(x[r]);
-    }
-
-    h <<= logR;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-  }
-
-  // Final partial radix stage (when logN is not a multiple of logR)
-  IF_CONSTEXPR(final_radix > 1) {
-    STEEL_PRAGMA_UNROLL
-    for (int t = 0; t < max_radix / final_radix; t++) {
-      short index = i + t * num_threads;
-      short k = index & (h - 1);
-      short j = ((index - k) << logFinal) + k;
-
-      STEEL_PRAGMA_UNROLL
-      for (short r = 0; r < final_radix; r++) {
-        x[r] = float(shared_buf[j + h * r]);
-      }
-
-      radix_func<final_radix>(x);
-
-      STEEL_PRAGMA_UNROLL
-      for (short r = 0; r < final_radix; r++) {
-        shared_buf[j + h * r] = T(x[r]);
-      }
+    for (short element_index = 0; element_index < max_radix; element_index++) {
+        threadgroup_buffer[element_index * num_threads + thread_id] = row[element_index * num_threads + thread_id];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-  }
 
-  // Write back to device memory with scale
-  STEEL_PRAGMA_UNROLL
-  for (short j = 0; j < max_radix; j++) {
-    row[j * num_threads + i] =
-        T(float(shared_buf[j * num_threads + i]) * scale);
-  }
+    float register_buffer[max_radix];
+    short butterfly_stride = 1;
+
+    STEEL_PRAGMA_UNROLL
+    for (short stage = 0; stage < num_stages; stage++) {
+        short low_bits = thread_id & (butterfly_stride - 1);
+        short base_index = ((thread_id - low_bits) << log_radix) + low_bits;
+
+        STEEL_PRAGMA_UNROLL
+        for (short radix_index = 0; radix_index < max_radix; radix_index++) {
+            register_buffer[radix_index] = float(threadgroup_buffer[base_index + butterfly_stride * radix_index]);
+        }
+
+        radix_func<max_radix>(register_buffer);
+
+        STEEL_PRAGMA_UNROLL
+        for (short radix_index = 0; radix_index < max_radix; radix_index++) {
+            threadgroup_buffer[base_index + butterfly_stride * radix_index] = T(register_buffer[radix_index]);
+        }
+
+        butterfly_stride <<= log_radix;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    IF_CONSTEXPR(final_radix > 1) {
+        STEEL_PRAGMA_UNROLL
+        for (int sub_block = 0; sub_block < max_radix / final_radix; sub_block++) {
+            short expanded_index = thread_id + sub_block * num_threads;
+            short low_bits = expanded_index & (butterfly_stride - 1);
+            short base_index = ((expanded_index - low_bits) << log_final_radix) + low_bits;
+
+            STEEL_PRAGMA_UNROLL
+            for (short radix_index = 0; radix_index < final_radix; radix_index++) {
+                register_buffer[radix_index] = float(threadgroup_buffer[base_index + butterfly_stride * radix_index]);
+            }
+
+            radix_func<final_radix>(register_buffer);
+
+            STEEL_PRAGMA_UNROLL
+            for (short radix_index = 0; radix_index < final_radix; radix_index++) {
+                threadgroup_buffer[base_index + butterfly_stride * radix_index] = T(register_buffer[radix_index]);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    STEEL_PRAGMA_UNROLL
+    for (short element_index = 0; element_index < max_radix; element_index++) {
+        row[element_index * num_threads + thread_id] =
+            T(float(threadgroup_buffer[element_index * num_threads + thread_id]) * scale);
+    }
 }

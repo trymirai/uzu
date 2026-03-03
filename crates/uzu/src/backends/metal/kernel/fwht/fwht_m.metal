@@ -4,11 +4,12 @@
 #include "fwht.h"
 #include "fwht_m.h"
 
-// Dense Hadamard transform for the non-power-of-two factor m in {12, 20, 28}.
+// Dense Hadamard transform for the non-power-of-two factor M in {12, 20, 28}.
 //
-// Data layout: each row has m*n contiguous elements, viewed as m groups of n.
-// Each thread applies the O(m^2) codelet to one column position, loading
-// m values strided by n, transforming, and writing back.
+// Data layout: each row has M * power_of_two_size contiguous elements,
+// viewed as M groups of power_of_two_size.
+// Each thread applies the O(M^2) codelet to one column position, loading
+// M values strided by power_of_two_size, transforming, and writing back.
 
 template <typename T, int M>
 VARIANTS(T, half, float, bfloat)
@@ -18,26 +19,26 @@ KERNEL(FwhtM)(
     constant uint& batch_size,
     constant uint& n,
     constant float& scale,
-    const uint group_idx GROUPS(batch_size),
-    const uint tid THREADS(256)
+    const uint group_index GROUPS(batch_size),
+    const uint thread_index THREADS(256)
 ) {
-  device T* row = data + group_idx * M * n;
+    device T* row = data + group_index * M * n;
 
-  for (uint pos = tid; pos < n; pos += 256) {
-    float x[M];
+    for (uint column_position = thread_index; column_position < n; column_position += 256) {
+        float column_values[M];
 
-    STEEL_PRAGMA_UNROLL
-    for (short c = 0; c < M; c++) {
-      x[c] = float(row[c * n + pos]);
+        STEEL_PRAGMA_UNROLL
+        for (short m_index = 0; m_index < M; m_index++) {
+            column_values[m_index] = float(row[m_index * n + column_position]);
+        }
+
+        IF_CONSTEXPR(M == 12) { hadamard_radix_12(column_values); }
+        IF_CONSTEXPR(M == 20) { hadamard_radix_20(column_values); }
+        IF_CONSTEXPR(M == 28) { hadamard_radix_28(column_values); }
+
+        STEEL_PRAGMA_UNROLL
+        for (short m_index = 0; m_index < M; m_index++) {
+            row[m_index * n + column_position] = T(column_values[m_index] * scale);
+        }
     }
-
-    IF_CONSTEXPR(M == 12) { hadamard_radix_12(x); }
-    IF_CONSTEXPR(M == 20) { hadamard_radix_20(x); }
-    IF_CONSTEXPR(M == 28) { hadamard_radix_28(x); }
-
-    STEEL_PRAGMA_UNROLL
-    for (short c = 0; c < M; c++) {
-      row[c * n + pos] = T(x[c] * scale);
-    }
-  }
 }

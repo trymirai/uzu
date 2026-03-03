@@ -39,12 +39,9 @@ pub enum LayerError<B: Backend> {
 /// Returns the FWHT mode for a given dimension, based on `UZU_FWHT_MODE` env var.
 ///
 /// Supported values:
-///   `full`     — full-vector transform; uses power-of-2 kernel directly when dim
-///                is a power of two in [64, 8192], or m×2^k decomposition when
-///                dim = m × 2^k with m in {12, 20, 28} and 2^k in [64, 8192]
-///   `block32`  / `block64`  / `block128`  — radix-16 kernel per block
-///   `simd_shuffle_block32` / `simd_shuffle_block64` / `simd_shuffle_block128`
-///                                         — simd_shuffle with threadgroup preload
+///   `full`                              — full-vector transform; power-of-2 or m×2^k decomposition
+///   `simd_shuffle`                      — 32-point Hadamard via simd_shuffle_xor (128-element preload)
+///   `block32` / `block64` / `block128`  — radix-16 kernel per block
 ///   `off` or unset — no FWHT
 #[cfg(feature = "fwht")]
 fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
@@ -59,18 +56,17 @@ fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
                 None
             }
         },
-        "block32" | "block64" | "block128" => {
-            let block_size: usize = mode_str[5..].parse().unwrap();
-            if dim % block_size == 0 {
-                Some(FwhtMode::Block { block_size: block_size as u32 })
+        "simd_shuffle" => {
+            if dim % 128 == 0 {
+                Some(FwhtMode::SimdShuffle)
             } else {
                 None
             }
         },
-        "simd_shuffle_block32" | "simd_shuffle_block64" | "simd_shuffle_block128" => {
-            let block_size: usize = mode_str[18..].parse().unwrap();
+        "block32" | "block64" | "block128" => {
+            let block_size: usize = mode_str[5..].parse().unwrap();
             if dim % block_size == 0 {
-                Some(FwhtMode::SimdShuffleBlock { block_size: block_size as u32 })
+                Some(FwhtMode::Block { block_size: block_size as u32 })
             } else {
                 None
             }
