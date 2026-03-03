@@ -1,5 +1,6 @@
-use std::ops::Deref;
+use std::{fmt::Debug, ops::Deref};
 
+use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayElement,
@@ -16,28 +17,26 @@ struct Input<T: ArrayElement + Float> {
     input_scale: f32,
 }
 
-fn get_test_data() -> (Input<f32>, Vec<f32>) {
+fn get_test_data<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let vocab_size = 11;
     let model_dim = 513;
     let batch_size = 7;
     let input_scale = 2.0_f32;
 
     let token_ids: Box<[u64]> = Box::new([3, 7, 1, 10, 0, 5, 8]);
-
-    let weights: Box<[f32]> =
-        (0..vocab_size * model_dim).map(|i| (i as f32 + 1.0) * 0.01).collect::<Vec<_>>().into_boxed_slice();
-
-    let mut expected = Vec::with_capacity(batch_size * model_dim);
+    let weights: Vec<T> =
+        (0..vocab_size * model_dim).map(|i| T::from((i as f32).sin() * 30.0f32).unwrap()).collect::<Vec<_>>();
+    let mut expected: Vec<T> = Vec::with_capacity(batch_size * model_dim);
     for &tid in token_ids.iter() {
         let row_start = tid as usize * model_dim;
         for j in 0..model_dim {
-            expected.push(weights[row_start + j] * input_scale);
+            expected.push(weights[row_start + j] * T::from(input_scale).unwrap());
         }
     }
 
     let input = Input {
         token_ids,
-        weights,
+        weights: weights.iter().map(|&v| T::from(v).unwrap()).collect(),
         batch_size,
         vocab_size,
         model_dim,
@@ -77,11 +76,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     output_array.as_slice().to_vec()
 }
 
-#[test]
-fn test() {
-    let (input, expected) = get_test_data();
+fn test<T: ArrayElement + Float + Debug>() {
+    let (input, expected) = get_test_data::<T>();
     for_each_backend!(|B| {
-        let output = get_output::<f32, B>(&input);
+        let output = get_output::<T, B>(&input);
         assert_eq!(output, expected, "Results are not equals for backend {}", std::any::type_name::<B>());
     });
+}
+
+#[test]
+fn test_f32() {
+    test::<f32>()
+}
+
+#[test]
+fn test_f16() {
+    test::<f16>()
+}
+
+#[test]
+fn test_bf16() {
+    test::<bf16>()
 }
