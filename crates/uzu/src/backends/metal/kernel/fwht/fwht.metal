@@ -12,7 +12,7 @@
 
 template <typename T, int N>
 VARIANTS(T, half, float, bfloat)
-VARIANTS(N, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
+VARIANTS(N, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
 KERNEL(Fwht)(
     device T* data,
     constant uint& batch_size,
@@ -23,7 +23,8 @@ KERNEL(Fwht)(
 ) {
   constexpr short max_radix = MAX_RADIX;
   constexpr short num_threads = N / max_radix;
-  if (tid >= num_threads) return;
+  if (tid >= num_threads)
+    return;
   constexpr short logN = __builtin_ctz(N);
   constexpr short logR = __builtin_ctz(max_radix);
   constexpr short num_steps = logN / logR;
@@ -91,6 +92,7 @@ KERNEL(Fwht)(
   // Write back to device memory with scale
   STEEL_PRAGMA_UNROLL
   for (short j = 0; j < max_radix; j++) {
-    row[j * num_threads + i] = T(float(shared_buf[j * num_threads + i]) * scale);
+    row[j * num_threads + i] =
+        T(float(shared_buf[j * num_threads + i]) * scale);
   }
 }

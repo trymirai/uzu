@@ -39,17 +39,19 @@ pub enum LayerError<B: Backend> {
 /// Returns the FWHT mode for a given dimension, based on `UZU_FWHT_MODE` env var.
 ///
 /// Supported values:
-///   `full`    — full-vector transform; uses power-of-2 kernel directly when dim
-///               is a power of two in [64, 8192], or m×2^k decomposition when
-///               dim = m × 2^k with m in {12, 20, 28} and 2^k in [64, 8192]
-///   `block32` — block-wise with block_size=32 (simd_shuffle path)
+///   `full`     — full-vector transform; uses power-of-2 kernel directly when dim
+///                is a power of two in [64, 8192], or m×2^k decomposition when
+///                dim = m × 2^k with m in {12, 20, 28} and 2^k in [64, 8192]
+///   `block32`  / `block64`  / `block128`  — radix-16 kernel per block
+///   `simd_shuffle_block32` / `simd_shuffle_block64` / `simd_shuffle_block128`
+///                                         — simd_shuffle with threadgroup preload
 ///   `off` or unset — no FWHT
 #[cfg(feature = "fwht")]
 fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
     let mode_str = std::env::var("UZU_FWHT_MODE").unwrap_or_default();
     match mode_str.as_str() {
         "full" => {
-            if dim.is_power_of_two() && dim >= 64 && dim <= 8192 {
+            if dim.is_power_of_two() && dim >= 32 && dim <= 8192 {
                 Some(FwhtMode::Full)
             } else if let Some((n, m)) = decompose_hadamard(dim) {
                 Some(FwhtMode::Decomposed { n, m })
@@ -57,9 +59,18 @@ fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
                 None
             }
         },
-        "block32" => {
-            if dim % 32 == 0 {
-                Some(FwhtMode::Block { block_size: 32 })
+        "block32" | "block64" | "block128" => {
+            let block_size: usize = mode_str[5..].parse().unwrap();
+            if dim % block_size == 0 {
+                Some(FwhtMode::Block { block_size: block_size as u32 })
+            } else {
+                None
+            }
+        },
+        "simd_shuffle_block32" | "simd_shuffle_block64" | "simd_shuffle_block128" => {
+            let block_size: usize = mode_str[18..].parse().unwrap();
+            if dim % block_size == 0 {
+                Some(FwhtMode::SimdShuffleBlock { block_size: block_size as u32 })
             } else {
                 None
             }

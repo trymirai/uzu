@@ -1,8 +1,9 @@
 //! Fast Walsh-Hadamard Transform encodable block.
 //!
-//! Three modes:
+//! Four modes:
 //! - `Full`: transforms the entire row (N must be power of 2 in [64, 8192])
-//! - `Block`: divides the row into chunks of `block_size` and transforms each independently
+//! - `SimdShuffleBlock`: block-wise using simd_shuffle_xor with threadgroup preloading
+//! - `Block`: block-wise using the radix-16 Fwht kernel per block
 //! - `Decomposed`: factors the dimension as m * 2^k (m in {12, 20, 28}), applies
 //!    a power-of-2 Hadamard for the 2^k part then a dense O(m^2) codelet for the m part
 
@@ -13,23 +14,24 @@ use crate::{
     DataType,
     backends::common::{
         Backend,
-        kernel::{FwhtBlockKernel, FwhtKernel, FwhtMKernel, Kernels},
+        kernel::{FwhtKernel, FwhtMKernel, FwhtSimdBlockKernel, Kernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
 
 pub enum FwhtMode {
     Full,
+    SimdShuffleBlock { block_size: u32 },
     Block { block_size: u32 },
     Decomposed { n: u32, m: u32 },
 }
 
-/// Factors `dim` as `m * 2^k` where m in {12, 20, 28} and 2^k in [64, 8192].
+/// Factors `dim` as `m * 2^k` where m in {12, 20, 28} and 2^k in [32, 8192].
 pub fn decompose_hadamard(dim: usize) -> Option<(u32, u32)> {
     for m in [12, 20, 28] {
         if dim % m == 0 {
             let n = dim / m;
-            if n.is_power_of_two() && n >= 64 && n <= 8192 {
+            if n.is_power_of_two() && n >= 32 && n <= 8192 {
                 return Some((n as u32, m as u32));
             }
         }
@@ -39,7 +41,7 @@ pub fn decompose_hadamard(dim: usize) -> Option<(u32, u32)> {
 
 pub struct Fwht<B: Backend> {
     full_kernel: Option<<B::Kernels as Kernels>::FwhtKernel>,
-    block_kernel: Option<<B::Kernels as Kernels>::FwhtBlockKernel>,
+    simd_block_kernel: Option<<B::Kernels as Kernels>::FwhtSimdBlockKernel>,
     m_kernel: Option<<B::Kernels as Kernels>::FwhtMKernel>,
     mode: FwhtMode,
     array_id: ArrayId,
@@ -55,16 +57,21 @@ impl<B: Backend> Fwht<B> {
         array_id: ArrayId,
         row_dimension: usize,
     ) -> Result<Self, B::Error> {
-        let (full_kernel, block_kernel, m_kernel, scale) = match &mode {
+        let (full_kernel, simd_block_kernel, m_kernel, scale) = match &mode {
             FwhtMode::Full => {
                 let kernel = <B::Kernels as Kernels>::FwhtKernel::new(context, data_type, row_dimension as i32)?;
                 let scale = 1.0f32 / (row_dimension as f32).sqrt();
                 (Some(kernel), None, None, scale)
             },
-            FwhtMode::Block { block_size } => {
-                let kernel = <B::Kernels as Kernels>::FwhtBlockKernel::new(context, data_type, *block_size as i32)?;
-                let scale = 1.0f32 / (*block_size as f32).sqrt();
+            FwhtMode::SimdShuffleBlock { block_size } => {
+                let kernel = <B::Kernels as Kernels>::FwhtSimdBlockKernel::new(context, data_type, *block_size as i32)?;
+                let scale = 1.0f32 / (32f32).sqrt();
                 (None, Some(kernel), None, scale)
+            },
+            FwhtMode::Block { block_size } => {
+                let kernel = <B::Kernels as Kernels>::FwhtKernel::new(context, data_type, *block_size as i32)?;
+                let scale = 1.0f32 / (*block_size as f32).sqrt();
+                (Some(kernel), None, None, scale)
             },
             FwhtMode::Decomposed { n, m } => {
                 let fwht_kernel = <B::Kernels as Kernels>::FwhtKernel::new(context, data_type, *n as i32)?;
@@ -76,7 +83,7 @@ impl<B: Backend> Fwht<B> {
 
         Ok(Self {
             full_kernel,
-            block_kernel,
+            simd_block_kernel,
             m_kernel,
             mode,
             array_id,
@@ -112,24 +119,31 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
                     encoder,
                 );
             },
-            FwhtMode::Block { .. } => {
-                self.block_kernel.as_ref().expect("FwhtBlockKernel missing for Block mode").encode(
+            FwhtMode::SimdShuffleBlock { block_size } => {
+                let num_blocks = self.row_dimension as u32 / block_size;
+                self.simd_block_kernel.as_ref().expect("FwhtSimdBlockKernel missing").encode(
                     buffer.deref(),
-                    batch_size as u32,
-                    self.row_dimension as u32,
+                    batch_size as u32 * num_blocks,
+                    self.scale,
+                    encoder,
+                );
+            },
+            FwhtMode::Block { block_size } => {
+                let num_blocks = self.row_dimension as u32 / block_size;
+                self.full_kernel.as_ref().expect("FwhtKernel missing for Block mode").encode(
+                    buffer.deref(),
+                    batch_size as u32 * num_blocks,
                     self.scale,
                     encoder,
                 );
             },
             FwhtMode::Decomposed { n, m } => {
-                // Pass 1: power-of-2 Hadamard on each of the m sub-blocks per row (no scaling)
                 self.full_kernel.as_ref().expect("FwhtKernel missing for Decomposed mode").encode(
                     buffer.deref(),
                     batch_size as u32 * m,
                     1.0f32,
                     encoder,
                 );
-                // Pass 2: dense m-point Hadamard across sub-blocks (applies full scale)
                 self.m_kernel.as_ref().expect("FwhtMKernel missing for Decomposed mode").encode(
                     buffer.deref(),
                     batch_size as u32,

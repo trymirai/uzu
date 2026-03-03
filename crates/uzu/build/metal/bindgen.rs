@@ -325,9 +325,12 @@ pub fn bindgen(
 
             fn encode<#(#encode_generics, )* 'encoder>(&self, #(#encode_args_defs, )* compute_encoder: &'encoder mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>) {
                 #empty_dispatch_guards
+                use metal::MTLCommandEncoderExt;
+                compute_encoder.push_debug_group(#kernel_name);
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
+                compute_encoder.pop_debug_group();
             }
             fn encode_if<#(#encode_generics, )* 'encoder, 'predicate>(&self, #(#encode_args_defs, )* compute_encoder: &'encoder mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>, predicate: Option<impl crate::backends::common::kernel::BufferArg<'predicate, Retained<ProtocolObject<dyn MTLBuffer>>>>) {
                 #empty_dispatch_guards
