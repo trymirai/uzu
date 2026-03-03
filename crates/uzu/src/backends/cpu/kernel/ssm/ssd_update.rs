@@ -13,7 +13,9 @@ pub fn ssd_update<T: ArrayElement + Float>(
     #[allow(unused)] c: *const T,
     #[allow(unused)] d: *const T,
     #[allow(unused)] z: *const T,
-    #[allow(unused)] state: *const T,
+    #[allow(unused)]
+    #[optional(!state_in_place)]
+    state: Option<*const T>,
     #[allow(unused)] y: *mut T,
     #[allow(unused)] next_state: *mut T,
     #[allow(unused)] group_size: u32,
@@ -25,6 +27,9 @@ pub fn ssd_update<T: ArrayElement + Float>(
     #[allow(unused)] b_size: u32,
     #[allow(unused)] h_size: u32,
     #[allow(unused)] dh_size: u32,
+    #[allow(unused)]
+    #[specialize]
+    state_in_place: bool,
 ) {
     todo!()
 }

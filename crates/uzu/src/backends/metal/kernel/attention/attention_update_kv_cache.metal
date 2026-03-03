@@ -4,7 +4,7 @@
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(AttentionUpdateKVCache)(
-    const device T* rotated_keys,
+    const device T* rotated_keys OPTIONAL(!keys_in_place),
     const device T* qkv,
     device T* key_cache,
     device T* value_cache,
@@ -16,8 +16,13 @@ KERNEL(AttentionUpdateKVCache)(
     const constant uint& max_sequence_length,
     const uint group_index AXIS(num_groups, 1),
     const uint token_index AXIS(suffix_length, 1),
-    const uint dim_index AXIS(head_dim, 64)
+    const uint dim_index AXIS(head_dim, 64),
+    const bool keys_in_place SPECIALIZE
 ) {
+  if (keys_in_place) {
+    rotated_keys = key_cache;
+  }
+
   const uint cacheTokenIndex = prefix_segment_length + token_index;
 
   // Copy rotated key to cache

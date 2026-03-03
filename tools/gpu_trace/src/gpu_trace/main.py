@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .extractors import (
+    _toc_root,
     compute_kernel_counter_stats,
     compute_kernel_summary,
     extract_counter_definitions,
@@ -12,10 +13,25 @@ from .extractors import (
     extract_gpu_utilization,
     extract_kernel_dispatches,
     extract_metadata,
+    extract_metadata_from_toc,
     extract_performance_states,
     extract_shaders,
+    export_tables_parallel,
 )
-from .formatting import print_comparison, print_summary
+from .formatting import (
+    print_buffer_data,
+    print_buffer_stats,
+    print_capture_info,
+    print_comparison,
+    print_summary,
+)
+from .gputrace import (
+    buffer_summary,
+    extract_buffer_labels,
+    list_resources,
+    read_buffer,
+    resolve_buffer_filename,
+)
 from .models import TraceExport
 from .progress import status
 from .recorder import default_output_path, record_trace
@@ -23,9 +39,26 @@ from .serialization import from_json, to_json
 
 
 def export_trace(trace: Path, run_number: int) -> TraceExport:
+    # Phase 1: Extract metadata from cached TOC (no subprocess needed after first call)
     with status("Extracting trace metadata..."):
-        metadata = extract_metadata(trace, run_number)
+        toc = _toc_root(trace)
+        metadata = extract_metadata_from_toc(toc, run_number)
 
+    # Phase 2: Export all independent schemas in parallel
+    with status("Exporting trace schemas (parallel)..."):
+        schemas = [
+            "metal-gpu-state-intervals",
+            "metal-application-encoders-list",
+            "metal-gpu-intervals",
+            "gpu-performance-state-intervals",
+            "gpu-counter-info",
+            "metal-shader-profiler-intervals",
+            "metal-shader-profiler-shader-list",
+            "gpu-counter-value",
+        ]
+        tables = export_tables_parallel(trace, run_number, schemas)
+
+    # Phase 3: Parse the exported tables (CPU-bound, fast)
     with status("Analyzing GPU utilization..."):
         utilization = extract_gpu_utilization(trace, run_number)
 
@@ -138,6 +171,70 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capture(args: argparse.Namespace) -> int:
+    gputrace = args.gputrace
+    if not gputrace.is_dir():
+        print(f"Error: Not a directory: {gputrace}", file=sys.stderr)
+        return 1
+
+    if args.buffer:
+        labels = extract_buffer_labels(gputrace)
+        filename = resolve_buffer_filename(gputrace, args.buffer, labels)
+        if not filename:
+            print(f"Error: Buffer '{args.buffer}' not found.", file=sys.stderr)
+            print("Available buffers:", file=sys.stderr)
+            for fname, label in labels.items():
+                print(f"  {fname} -> {label}", file=sys.stderr)
+            return 1
+
+        if "-" in args.index:
+            parts = args.index.split("-")
+            start, end = int(parts[0]), int(parts[1])
+            count = end - start + 1
+        else:
+            start = int(args.index)
+            count = 1
+
+        elements = read_buffer(gputrace, filename, args.layout, start, count)
+
+        if args.json:
+            import json
+
+            rows = []
+            for el in elements:
+                row: dict[str, object] = {"index": el.index}
+                for name, value in el.fields:
+                    row[name] = value
+                rows.append(row)
+            print(json.dumps(rows, indent=2))
+        else:
+            label = labels.get(filename, filename)
+            print_buffer_data(elements, label, filename)
+
+    elif args.dump_all:
+        labels = extract_buffer_labels(gputrace)
+        import os
+        import re
+
+        stats_list = []
+        for fname in sorted(os.listdir(gputrace)):
+            if not re.match(r"MTLBuffer-\d+-\d+", fname):
+                continue
+            s = buffer_summary(gputrace, fname, labels.get(fname, ""))
+            if s:
+                stats_list.append(s)
+
+        if stats_list:
+            print_buffer_stats(stats_list)
+        else:
+            print("No buffer data found in capture.", file=sys.stderr)
+    else:
+        info = list_resources(gputrace)
+        print_capture_info(info)
+
+    return 0
+
+
 def cmd_view(args: argparse.Namespace) -> int:
     json_path = args.json_file
     if not json_path.exists():
@@ -169,6 +266,7 @@ Quick Start:
   1. Record a trace:     gpu_trace run -- ./my_metal_app
   2. Analyze results:    gpu_trace analyze /tmp/gpu_trace_*.trace
   3. Compare traces:     gpu_trace compare before.trace after.trace
+  4. Inspect capture:    gpu_trace capture capture.gputrace
 
 For detailed per-kernel hardware counters, use --gpu-counters:
   gpu_trace run --gpu-counters -- ./my_metal_app
@@ -247,6 +345,32 @@ Examples:
 
   # With custom labels
   gpu_trace compare a.trace b.trace --label1 before --label2 after
+"""
+
+CAPTURE_DESCRIPTION = """
+Inspect a .gputrace capture bundle.
+
+Lists resources (MTLBuffer/MTLTexture files with labels), shader
+functions, and library paths. Can also read buffer data with
+configurable struct layouts.
+""".strip()
+
+CAPTURE_EPILOG = """
+Examples:
+  # List all resources in a capture
+  gpu_trace capture capture.gputrace
+
+  # Read buffer by label
+  gpu_trace capture capture.gputrace --buffer "Color Output" --layout float4 --index 0-10
+
+  # Read compound struct (e.g., Particle = position + velocity + color)
+  gpu_trace capture capture.gputrace --buffer "Particle" --layout "float4,float4,float4"
+
+  # Dump summary statistics for all buffers
+  gpu_trace capture capture.gputrace --dump-all
+
+  # Output buffer data as JSON
+  gpu_trace capture capture.gputrace --buffer "Vertex" --layout float4 --json
 """
 
 VIEW_DESCRIPTION = """
@@ -415,6 +539,48 @@ def main(argv: list[str]) -> int:
         help="Label for second trace (default: comparison)",
     )
 
+    # --- capture subcommand ---
+    capture_p = sub.add_parser(
+        "capture",
+        help="Inspect a .gputrace capture bundle",
+        description=CAPTURE_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=CAPTURE_EPILOG,
+    )
+    capture_p.add_argument(
+        "gputrace",
+        type=Path,
+        help="Path to .gputrace bundle",
+    )
+    capture_p.add_argument(
+        "-b", "--buffer",
+        default="",
+        metavar="NAME",
+        help="Buffer label or filename to inspect (empty = list all resources)",
+    )
+    capture_p.add_argument(
+        "-l", "--layout",
+        default="float4",
+        metavar="LAYOUT",
+        help="Buffer element layout (e.g., 'float4', 'float4,float4,float4')",
+    )
+    capture_p.add_argument(
+        "-i", "--index",
+        default="0-10",
+        metavar="RANGE",
+        help="Element index or range (e.g., '100', '0-10')",
+    )
+    capture_p.add_argument(
+        "--dump-all",
+        action="store_true",
+        help="Dump summary statistics for all buffers",
+    )
+    capture_p.add_argument(
+        "--json",
+        action="store_true",
+        help="Output buffer data as JSON",
+    )
+
     # --- view subcommand ---
     view_p = sub.add_parser(
         "view",
@@ -442,6 +608,8 @@ def main(argv: list[str]) -> int:
         return cmd_analyze(args)
     elif args.cmd == "compare":
         return cmd_compare(args)
+    elif args.cmd == "capture":
+        return cmd_capture(args)
     elif args.cmd == "view":
         return cmd_view(args)
 

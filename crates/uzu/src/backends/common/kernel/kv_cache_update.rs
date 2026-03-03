@@ -1,4 +1,4 @@
-use std::{cell::RefCell, mem::size_of, ops::Deref, rc::Rc};
+use std::{cell::RefCell, mem::size_of, ops::DerefMut, rc::Rc};
 
 use thiserror::Error;
 
@@ -92,8 +92,8 @@ impl<B: Backend> KVCacheUpdate<B> {
             // non-inline is not supported yet (and is broken anyways due to a data race)
             for swaps_chunk in swaps.chunks(max_inline_swaps) {
                 self.kernel.encode(
-                    layer_data.key_buffer.borrow().deref(),
-                    layer_data.value_buffer.borrow().deref(),
+                    layer_data.key_buffer.borrow_mut().deref_mut(),
+                    layer_data.value_buffer.borrow_mut().deref_mut(),
                     swaps_chunk,
                     swaps_chunk.len() as u32,
                     num_heads as u32,

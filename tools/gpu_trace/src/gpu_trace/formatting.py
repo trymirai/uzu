@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .gputrace import BufferElement, BufferStats, CaptureInfo
 from .models import KernelCounterStats, TraceExport
 
 # Use terminal width or sensible default (minimum 140 for readable tables)
@@ -428,4 +429,100 @@ def print_comparison(
     )
 
     console.print(kernel_table)
+    console.print()
+
+
+# ── capture formatting ────────────────────────────────────────────────────
+
+
+def _fmt_bytes(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1e6:.1f} MB"
+    if n >= 1_000:
+        return f"{n / 1e3:.1f} KB"
+    return f"{n} B"
+
+
+def print_capture_info(info: CaptureInfo) -> None:
+    meta = info.metadata
+
+    meta_table = Table(title="[bold]GPU Trace Capture[/]", box=box.ROUNDED)
+    meta_table.add_column("Property", style="dim")
+    meta_table.add_column("Value", style="green")
+    if meta.uuid:
+        meta_table.add_row("UUID", meta.uuid)
+    meta_table.add_row("API", meta.graphics_api)
+    if meta.captured_frames:
+        meta_table.add_row("Frames", str(meta.captured_frames))
+    console.print(meta_table)
+    console.print()
+
+    if info.resources:
+        res_table = Table(title="[bold cyan]Resources[/]", box=box.ROUNDED)
+        res_table.add_column("Filename", style="white", min_width=25)
+        res_table.add_column("Size", justify="right", style="green")
+        res_table.add_column("Label", style="yellow")
+        res_table.add_column("Type", style="dim")
+
+        for r in info.resources:
+            res_table.add_row(
+                r.filename,
+                _fmt_bytes(r.size_bytes),
+                r.label or "(no label)",
+                r.kind,
+            )
+        console.print(res_table)
+        console.print()
+
+    if info.shader_libraries:
+        console.print("[bold]Shader Libraries:[/]")
+        for lib in info.shader_libraries:
+            console.print(f"  {lib.path}")
+        console.print()
+
+    if info.shader_functions:
+        console.print("[bold]Shader Functions:[/]")
+        for func in info.shader_functions:
+            console.print(f"  {func}")
+        console.print()
+
+
+def print_buffer_data(
+    elements: list[BufferElement],
+    label: str,
+    filename: str,
+) -> None:
+    console.print(f"[bold]{label}[/] ({filename}):")
+    for el in elements:
+        parts: list[str] = []
+        for _, value in el.fields:
+            if isinstance(value, list):
+                parts.append(f"({', '.join(f'{x:.4f}' for x in value)})")
+            elif isinstance(value, float):
+                parts.append(f"{value:.4f}")
+            else:
+                parts.append(str(value))
+        console.print(f"  [{el.index:>6}] {' | '.join(parts)}")
+    console.print()
+
+
+def print_buffer_stats(stats_list: list[BufferStats]) -> None:
+    table = Table(title="[bold]Buffer Summary[/]", box=box.ROUNDED)
+    table.add_column("Filename", style="white", min_width=25)
+    table.add_column("Label", style="yellow")
+    table.add_column("Size", justify="right", style="green")
+    table.add_column("Floats", justify="right", style="cyan")
+    table.add_column("Range", style="dim")
+    table.add_column("Mean", justify="right", style="dim")
+
+    for s in stats_list:
+        table.add_row(
+            s.filename,
+            s.label or "(no label)",
+            _fmt_bytes(s.size_bytes),
+            f"{s.float_count:,}",
+            f"[{s.min_val:.4f}, {s.max_val:.4f}]",
+            f"{s.mean_val:.4f}",
+        )
+    console.print(table)
     console.print()

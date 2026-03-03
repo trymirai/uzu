@@ -32,7 +32,7 @@ fn run_metal_matmul(
         .device
         .new_buffer_with_data(bytemuck::cast_slice(b_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let d_buf = ctx
+    let mut d_buf = ctx
         .device
         .new_buffer(m * n * core::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -51,7 +51,7 @@ fn run_metal_matmul(
         a: &a_buf,
         a_offset: 0,
         b: &b_buf,
-        d: &d_buf,
+        d: &mut d_buf,
         bias: None,
         batch: m as i32,
         input_dim: k as i32,

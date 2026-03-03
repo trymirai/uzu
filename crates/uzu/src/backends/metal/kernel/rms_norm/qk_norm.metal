@@ -17,7 +17,7 @@ VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
 KERNEL(QKNorm)(
-    const device InputT* qkv_input,
+    const device InputT* qkv_input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* qkv_output,
     constant uint& batch_size,
@@ -31,8 +31,13 @@ KERNEL(QKNorm)(
     constant bool& full_layer,
     const uint batch_idx GROUPS(batch_size),
     const uint head_idx GROUPS(head_count),
-    const uint lane_id THREADS(SIMD_SIZE)
+    const uint lane_id THREADS(SIMD_SIZE),
+    const bool in_place SPECIALIZE
 ) {
+  if (in_place) {
+    qkv_input = (const device InputT*)qkv_output;
+  }
+
   if (head_count == 0u || head_dim == 0u)
     return;
 

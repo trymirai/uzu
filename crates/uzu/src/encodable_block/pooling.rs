@@ -1,6 +1,6 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -22,7 +22,7 @@ impl<B: Backend> PoolingKernel<B> {
     fn encode(
         &self,
         input: &B::NativeBuffer,
-        output: &B::NativeBuffer,
+        output: &mut B::NativeBuffer,
         seq_len: u32,
         hidden_dim: u32,
         batch_size: u32,
@@ -95,7 +95,7 @@ impl<B: Backend> EncodableBlock<B> for Pooling<B> {
 
         self.pooling_kernel.encode(
             main_array.buffer().borrow().deref(),
-            pooling_array.buffer().borrow().deref(),
+            pooling_array.buffer().borrow_mut().deref_mut(),
             seq_len as u32,
             self.model_dim as u32,
             batch_size,

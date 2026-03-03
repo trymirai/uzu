@@ -311,7 +311,7 @@ fn run_single_pass_attention(
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -332,7 +332,7 @@ fn run_single_pass_attention(
         &query_buffer,
         &key_cache_buffer,
         &value_cache_buffer,
-        &output_buffer,
+        &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -384,7 +384,7 @@ fn run_single_pass_attention_with_is_causal(
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -404,7 +404,7 @@ fn run_single_pass_attention_with_is_causal(
         &query_buffer,
         &key_cache_buffer,
         &value_cache_buffer,
-        &output_buffer,
+        &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -455,7 +455,7 @@ fn run_gemm_attention(
     let mask_buffer = mask.map(|m| create_mask_2d_buffer(m, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -467,7 +467,7 @@ fn run_gemm_attention(
         queries_buffer: &query_buffer,
         keys_buffer: &key_cache_buffer,
         values_buffer: &value_cache_buffer,
-        output_buffer: &output_buffer,
+        output_buffer: &mut output_buffer,
         mask_buffer: mask_buffer.as_ref(),
         sinks_buffer: sinks_buffer.as_ref(),
         num_heads,
@@ -481,7 +481,7 @@ fn run_gemm_attention(
         scale,
     };
 
-    let encode_result = kernel.encode(context, &mut compute_encoder, &args);
+    let encode_result = kernel.encode(context, &mut compute_encoder, args);
     compute_encoder.end_encoding();
     encode_result?;
 
@@ -912,22 +912,22 @@ fn run_two_pass_attention(
     let partials_size = num_heads * seq_len * total_blocks_count * head_dim;
     let sums_maxs_size = num_heads * seq_len * total_blocks_count;
 
-    let partials_buffer = context
+    let mut partials_buffer = context
         .device
         .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let sums_buffer = context
+    let mut sums_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let maxs_buffer = context
+    let mut maxs_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(
             num_heads * seq_len * head_dim * std::mem::size_of::<f32>(),
@@ -950,9 +950,9 @@ fn run_two_pass_attention(
         &queries_buffer,
         &keys_buffer,
         &values_buffer,
-        &partials_buffer,
-        &sums_buffer,
-        &maxs_buffer,
+        &mut partials_buffer,
+        &mut sums_buffer,
+        &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -973,7 +973,7 @@ fn run_two_pass_attention(
         &partials_buffer,
         &sums_buffer,
         &maxs_buffer,
-        &output_buffer,
+        &mut output_buffer,
         num_heads as u32,
         seq_len as u32,
         &mut compute_encoder,
@@ -1152,19 +1152,19 @@ fn perf_two_pass_attention() {
     let partials_size = num_heads * suffix_length * total_blocks_count * head_dim;
     let sums_maxs_size = num_heads * suffix_length * total_blocks_count;
 
-    let partials_buffer = context
+    let mut partials_buffer = context
         .device
         .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let sums_buffer = context
+    let mut sums_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let maxs_buffer = context
+    let mut maxs_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(
             num_heads * suffix_length * head_dim * std::mem::size_of::<f32>(),
@@ -1182,9 +1182,9 @@ fn perf_two_pass_attention() {
         &queries_buffer,
         &keys_buffer,
         &values_buffer,
-        &partials_buffer,
-        &sums_buffer,
-        &maxs_buffer,
+        &mut partials_buffer,
+        &mut sums_buffer,
+        &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -1205,7 +1205,7 @@ fn perf_two_pass_attention() {
         &partials_buffer,
         &sums_buffer,
         &maxs_buffer,
-        &output_buffer,
+        &mut output_buffer,
         num_heads as u32,
         suffix_length as u32,
         &mut compute_encoder,

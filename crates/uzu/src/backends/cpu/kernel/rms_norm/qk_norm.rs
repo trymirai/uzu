@@ -15,7 +15,9 @@ pub fn qk_norm<
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
-    #[allow(unused)] qkv_input: *const InputT,
+    #[allow(unused)]
+    #[optional(!in_place)]
+    qkv_input: Option<*const InputT>,
     #[allow(unused)] scales: *const ScaleT,
     #[allow(unused)] qkv_output: *mut OutputT,
     #[allow(unused)] batch_size: u32,
@@ -27,6 +29,9 @@ pub fn qk_norm<
     #[allow(unused)] head_offset: u32,
     #[allow(unused)] head_count: u32,
     #[allow(unused)] full_layer: bool,
+    #[allow(unused)]
+    #[specialize]
+    in_place: bool,
 ) {
     todo!()
 }

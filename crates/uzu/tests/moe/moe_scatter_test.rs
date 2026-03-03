@@ -78,8 +78,8 @@ fn test_scatter_buckets_parity() {
         let input_buf = alloc_buffer_with_data(&ctx, &input);
         let weight_buf = alloc_buffer_with_data(&ctx, &weight);
         let bias_buf = alloc_buffer_with_data(&ctx, &bias);
-        let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
-        let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
+        let mut topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+        let mut topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
 
         // Use fused router+topk kernel
         let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
@@ -90,8 +90,8 @@ fn test_scatter_buckets_parity() {
             &input_buf,
             &weight_buf,
             &bias_buf,
-            &topk_ids_buf,
-            &topk_probs_buf,
+            &mut topk_ids_buf,
+            &mut topk_probs_buf,
             t as u32,
             d_model as u32,
             e as u32,
@@ -109,10 +109,10 @@ fn test_scatter_buckets_parity() {
         let topk_probs_cpu: Vec<f32> = probs_bf16.iter().map(|&h| f32::from(h)).collect();
         let topk_ids_cpu = unsafe { std::slice::from_raw_parts(topk_ids_buf.contents().as_ptr() as *const i32, t * k) };
 
-        let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-        let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
+        let mut offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+        let mut sumk_buf = alloc_buffer::<u32>(&ctx, 1);
         let num_tiles = ((e + 511) / 512).max(1);
-        let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
+        let mut partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
         let fused_kernel =
             <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
@@ -120,9 +120,9 @@ fn test_scatter_buckets_parity() {
         let mut encoder = cb.new_compute_command_encoder().expect("encoder");
         fused_kernel.encode(
             &topk_ids_buf,
-            &offsets_buf,
-            &sumk_buf,
-            &partials_buf,
+            &mut offsets_buf,
+            &mut sumk_buf,
+            &mut partials_buf,
             t as u32,
             e as u32,
             k as u32,
@@ -136,7 +136,7 @@ fn test_scatter_buckets_parity() {
         let num_blocks = 1; // Fused kernel uses single block
         let num_tiles = ((e + 511) / 512).max(1);
         let entries = num_blocks * num_tiles * 512usize;
-        let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
+        let mut block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
 
         let scatter_bases_kernel = <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx)
             .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel");
@@ -144,14 +144,14 @@ fn test_scatter_buckets_parity() {
             <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel::new(&ctx, DataType::BF16)
                 .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel");
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
+        let mut block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
 
         let mut scatter_bases_encoder =
             cb.new_compute_command_encoder().expect("Failed to create scatter_bases_encoder");
         scatter_bases_kernel.encode(
             &partials_buf,
-            &block_bases_buf,
-            &block_alloc_buf,
+            &mut block_bases_buf,
+            &mut block_alloc_buf,
             e as u32,
             num_blocks as u32,
             num_tiles as u32,
@@ -164,8 +164,8 @@ fn test_scatter_buckets_parity() {
         cb.wait_until_completed();
 
         let sumk = unsafe { std::slice::from_raw_parts(sumk_buf.contents().as_ptr() as *const u32, 1) }[0] as usize;
-        let out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
-        let out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
+        let mut out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
+        let mut out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
         let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
         let mut scatter_encoder = cb.new_compute_command_encoder().expect("Failed to create scatter_encoder");
@@ -175,8 +175,8 @@ fn test_scatter_buckets_parity() {
             &offsets_buf,
             &block_bases_buf,
             &block_alloc_buf,
-            &out_ids_buf,
-            &out_probs_buf,
+            &mut out_ids_buf,
+            &mut out_probs_buf,
             t as u32,
             e as u32,
             k as u32,

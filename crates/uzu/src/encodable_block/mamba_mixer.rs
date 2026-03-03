@@ -1,6 +1,9 @@
 //! Mamba2 SSM mixer encodable.
 
-use std::{env, ops::Deref};
+use std::{
+    env,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     Activation, DataType,
@@ -105,12 +108,13 @@ impl<B: Backend> MambaMixer<B> {
             data_type,
             Self::activation_to_int(&mamba_config.activation),
             mamba_config.conv_config.has_biases,
+            true,
         )
         .expect("Failed to create conv decode kernel");
         let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
             .expect("Failed to create conv pack kernel");
         let ssd_prefill = SSDPrefillKernels::new(context, data_type).expect("Failed to create SSD prefill kernel");
-        let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, data_type)
+        let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, data_type, true)
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
 
@@ -186,9 +190,9 @@ impl<B: Backend> MambaMixer<B> {
 
         self.split_inproj.encode(
             in_proj.buffer().borrow().deref(),
-            conv_inputs.buffer().borrow().deref(),
-            gate.buffer().borrow().deref(),
-            dt.buffer().borrow().deref(),
+            conv_inputs.buffer().borrow_mut().deref_mut(),
+            gate.buffer().borrow_mut().deref_mut(),
+            dt.buffer().borrow_mut().deref_mut(),
             bias_buf_borrow.deref(),
             suffix_length as u32,
             total_dim as u32,
@@ -234,11 +238,11 @@ impl<B: Backend> MambaMixer<B> {
                     conv_inputs.buffer().borrow().deref(),
                     weight_buf_borrow.deref(),
                     bias_buf_borrow.as_deref(),
-                    conv_state.buffer().borrow().deref(),
-                    x_arr.buffer().borrow().deref(),
-                    b_arr.buffer().borrow().deref(),
-                    c_arr.buffer().borrow().deref(),
-                    conv_state.buffer().borrow().deref(),
+                    None::<&B::NativeBuffer>,
+                    x_arr.buffer().borrow_mut().deref_mut(),
+                    b_arr.buffer().borrow_mut().deref_mut(),
+                    c_arr.buffer().borrow_mut().deref_mut(),
+                    conv_state.buffer().borrow_mut().deref_mut(),
                     self.config.kernel_size as u32,
                     conv_dim as u32,
                     state_stride as u32,
@@ -257,7 +261,7 @@ impl<B: Backend> MambaMixer<B> {
                 self.conv_pack.encode(
                     conv_state.buffer().borrow().deref(),
                     conv_inputs.buffer().borrow().deref(),
-                    buffer.borrow().deref(),
+                    buffer.borrow_mut().deref_mut(),
                     state_stride as u32,
                     conv_dim as u32,
                     suffix_length as u32,
@@ -279,10 +283,10 @@ impl<B: Backend> MambaMixer<B> {
                     conv_source,
                     weight_buf_borrow.deref(),
                     bias_buf_borrow.as_deref(),
-                    x_arr.buffer().borrow().deref(),
-                    b_arr.buffer().borrow().deref(),
-                    c_arr.buffer().borrow().deref(),
-                    conv_state.buffer().borrow().deref(),
+                    x_arr.buffer().borrow_mut().deref_mut(),
+                    b_arr.buffer().borrow_mut().deref_mut(),
+                    c_arr.buffer().borrow_mut().deref_mut(),
+                    conv_state.buffer().borrow_mut().deref_mut(),
                     suffix_length as u32,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
@@ -331,8 +335,8 @@ impl<B: Backend> MambaMixer<B> {
                 c: c.buffer().borrow().deref(),
                 d: skip_borrow.deref(),
                 z: z.buffer().borrow().deref(),
-                state: state_arr.buffer().borrow().deref(),
-                y: out.buffer().borrow().deref(),
+                state: state_arr.buffer().borrow_mut().deref_mut(),
+                y: out.buffer().borrow_mut().deref_mut(),
                 suffix_len: suffix_length,
                 group_size: (self.config.num_heads / self.config.num_groups) as i32,
                 state_size: self.config.state_dim as i32,
@@ -392,9 +396,9 @@ impl<B: Backend> MambaMixer<B> {
             c.buffer().borrow().deref(),
             skip_borrow.deref(),
             z.buffer().borrow().deref(),
-            state_arr.buffer().borrow().deref(),
-            y.buffer().borrow().deref(),
-            state_arr.buffer().borrow().deref(),
+            None::<&B::NativeBuffer>,
+            y.buffer().borrow_mut().deref_mut(),
+            state_arr.buffer().borrow_mut().deref_mut(),
             group_size as u32,
             state_size as u32,
             x_strides.as_slice(),

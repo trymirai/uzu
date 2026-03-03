@@ -1,6 +1,10 @@
 //! QK Normalization encodable.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -71,6 +75,7 @@ impl<B: Backend> QKNorm<B> {
                 scales_type,
                 output_type,
                 accumulation_data_type,
+                true,
             )
             .map_err(QKNormError::BackendError)?;
 
@@ -95,6 +100,7 @@ impl<B: Backend> QKNorm<B> {
                 scales_type,
                 output_type,
                 accumulation_data_type,
+                true,
             )
             .map_err(QKNormError::BackendError)?;
 
@@ -142,9 +148,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             query_kernel.encode(
-                qkv_array.buffer().borrow().deref(),
+                None::<&B::NativeBuffer>,
                 query_scales_buffer.borrow().deref(),
-                qkv_array.buffer().borrow().deref(),
+                qkv_array.buffer().borrow_mut().deref_mut(),
                 batch_size,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
@@ -163,9 +169,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
             key_kernel.encode(
-                qkv_array.buffer().borrow().deref(),
+                None::<&B::NativeBuffer>,
                 key_scales_buffer.borrow().deref(),
-                qkv_array.buffer().borrow().deref(),
+                qkv_array.buffer().borrow_mut().deref_mut(),
                 batch_size,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,

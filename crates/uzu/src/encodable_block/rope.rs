@@ -1,6 +1,6 @@
 //! Rope (Rotary Position Embedding) encodable.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -88,8 +88,8 @@ impl<B: Backend> EncodableBlock<B> for Rope<B> {
             rope_cosines.buffer().borrow().deref(),
             rope_sines.buffer().borrow().deref(),
             (token_positions.buffer().borrow().deref(), token_positions_offset),
-            rotated_queries.buffer().borrow().deref(),
-            rotated_keys.buffer().borrow().deref(),
+            rotated_queries.buffer().borrow_mut().deref_mut(),
+            rotated_keys.buffer().borrow_mut().deref_mut(),
             head_dim as u32,
             num_heads as u32,
             num_groups as u32,

@@ -476,7 +476,7 @@ fn execute_quantized_matmul(
         QuantizedMatmulType::Mlx => buffer_from_f32_slice(ctx, data_type, &params.biases),
     };
     let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
-    let y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
+    let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
 
     let kernel = QuantizedMatmulKernelEncodable::<Metal>::new(
         &ctx,
@@ -504,7 +504,7 @@ fn execute_quantized_matmul(
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
                 zero_points_or_biases_buffer: &b_buf,
-                output_buffer: &y_buf,
+                output_buffer: &mut y_buf,
                 batch,
                 input_dim,
                 output_dim,
@@ -527,7 +527,7 @@ fn execute_quantized_matmul(
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
             zero_points_or_biases_buffer: &b_buf,
-            output_buffer: &y_buf,
+            output_buffer: &mut y_buf,
             batch,
             input_dim,
             output_dim,
