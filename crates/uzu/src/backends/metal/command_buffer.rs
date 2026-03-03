@@ -19,6 +19,14 @@ fn command_buffer_result(command_buffer: &ProtocolObject<dyn MTLCommandBuffer>) 
 impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     type Backend = Metal;
 
+    fn push_debug_group(&mut self, label: &str) {
+        MTLCommandBufferExt::push_debug_group(&**self, label);
+    }
+
+    fn pop_debug_group(&mut self) {
+        MTLCommandBufferExt::pop_debug_group(&**self);
+    }
+
     fn with_compute_encoder<T>(
         &mut self,
         callback: impl FnOnce(&mut <Self::Backend as crate::backends::common::Backend>::ComputeEncoder) -> T,
