@@ -1,5 +1,7 @@
-use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 use half::{bf16, f16};
 use num_traits::Float;
