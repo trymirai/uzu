@@ -4,6 +4,7 @@
 use bytemuck;
 use half::{bf16, f16};
 use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{
     DataType,
     backends::{
@@ -294,7 +295,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buffer = mtl_context
+    let mut output_buffer = mtl_context
         .device
         .new_buffer(model_dim as usize * OutputT::size_of(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -306,6 +307,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
         scale_type,
         output_type,
         accumulation_type,
+        false,
     )
     .expect("Failed to create RMS norm kernel");
     // Create command buffer and encode
@@ -314,9 +316,9 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel.encode(
-        &input_buffer,
+        Some(&input_buffer),
         &scale_buffer,
-        &output_buffer,
+        &mut output_buffer,
         batch_size as u32,
         model_dim as u32,
         epsilon,
@@ -412,7 +414,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
         .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buffer = mtl_context
+    let mut output_buffer = mtl_context
         .device
         .new_buffer(4 * OutputT::size_of(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -423,6 +425,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
         scale_type,
         output_type,
         accumulation_type,
+        false,
     )
     .expect("Failed to create RMS norm kernel");
 
@@ -431,9 +434,9 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel.encode(
-        &input_buffer,
+        Some(&input_buffer),
         &scale_buffer,
-        &output_buffer,
+        &mut output_buffer,
         batch_size as u32,
         model_dim as u32,
         epsilon,
@@ -598,6 +601,7 @@ fn perf_rms_norm_with_size(
         DataType::F32,
         DataType::F32,
         DataType::F32,
+        false,
     )
     .expect("Failed to create RMS norm kernel");
 
@@ -624,7 +628,7 @@ fn perf_rms_norm_with_size(
         .new_buffer_with_data(bytemuck::cast_slice(&scale_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buffer = mtl_context
+    let mut output_buffer = mtl_context
         .device
         .new_buffer(
             (batch_size * model_dim) as usize * std::mem::size_of::<f32>(),
@@ -638,9 +642,9 @@ fn perf_rms_norm_with_size(
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
     kernel.encode(
-        &input_buffer,
+        Some(&input_buffer),
         &scale_buffer,
-        &output_buffer,
+        &mut output_buffer,
         batch_size as u32,
         model_dim as u32,
         EPSILON,
@@ -765,7 +769,7 @@ fn qk_norm_test() {
     let scale_data = vec![1.0f32; head_dim as usize];
 
     // Create buffers
-    let qkv_buffer = mtl_context
+    let mut qkv_buffer = mtl_context
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&qkv_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -787,6 +791,7 @@ fn qk_norm_test() {
         DataType::F32,
         DataType::F32,
         DataType::F32,
+        true,
     )
     .expect("Failed to create Q norm kernel");
 
@@ -796,6 +801,7 @@ fn qk_norm_test() {
         DataType::F32,
         DataType::F32,
         DataType::F32,
+        true,
     )
     .expect("Failed to create K norm kernel");
 
@@ -806,9 +812,9 @@ fn qk_norm_test() {
             command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         q_kernel.encode(
-            &qkv_buffer,
+            None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
             &q_scales_buffer,
-            &qkv_buffer,
+            &mut qkv_buffer,
             batch_size as u32,
             num_q_heads as u32,
             num_kv_heads as u32,
@@ -869,9 +875,9 @@ fn qk_norm_test() {
             command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
 
         k_kernel.encode(
-            &qkv_buffer,
+            None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
             &k_scales_buffer,
-            &qkv_buffer,
+            &mut qkv_buffer,
             batch_size as u32,
             num_q_heads as u32,
             num_kv_heads as u32,

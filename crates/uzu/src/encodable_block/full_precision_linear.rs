@@ -1,4 +1,8 @@
-use std::{cell::RefCell, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -146,7 +150,7 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.weights_buffer.borrow().deref(),
-                output: output_array.buffer().borrow().deref(),
+                output: output_array.buffer().borrow_mut().deref_mut(),
                 bias: bias_borrow.as_deref(),
                 batch: batch_size,
                 input_dim: self.input_dim,

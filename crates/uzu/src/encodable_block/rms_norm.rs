@@ -1,6 +1,10 @@
 //! RMS Normalization encodable.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -58,6 +62,7 @@ impl<B: Backend> RMSNorm<B> {
             scales_type,
             output_type,
             accumulation_data_type,
+            input_array_id == output_array_id,
         )
         .map_err(RMSNormError::BackendError)?;
 
@@ -98,7 +103,7 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
             input_array.shape().to_vec()
         };
 
-        let input_array = input_binding[0].borrow_mut();
+        let input_array = input_binding[0].borrow();
         let output_array = output_binding[0].borrow_mut();
 
         let suffix_length = input_shape[0];
@@ -121,10 +126,13 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
         let output_row_size_in_bytes = input_shape[1] * output_elem_size;
         let output_offset = batch_start * output_row_size_in_bytes;
 
+        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
+        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
+
         self.kernel.encode(
-            (input_array.buffer().borrow().deref(), input_offset),
+            input_buffer_borrow.as_deref().map(|b| (b, input_offset)),
             self.scales_buffer.borrow().deref(),
-            (output_array.buffer().borrow().deref(), output_offset),
+            (output_array.buffer().borrow_mut().deref_mut(), output_offset),
             batch_len as u32,
             input_shape[1] as u32,
             self.config.epsilon,

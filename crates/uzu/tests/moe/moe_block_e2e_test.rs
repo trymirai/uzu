@@ -319,30 +319,30 @@ fn run_moe_parity_test_internal(
 
     // Allocate intermediate buffers (max capacity)
     let max_sumk = t * k;
-    let topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
-    let topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
-    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let sumk_buf = alloc_buffer::<u32>(&ctx, 1);
+    let mut topk_ids_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let mut topk_probs_buf = alloc_buffer::<bf16>(&ctx, t * k);
+    let mut offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut sumk_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_blocks = ((t + 255) / 256).max(1);
     let num_tiles = ((e + 512 - 1) / 512).max(1);
     let entries = num_blocks * num_tiles * 512usize;
-    let partials_buf = alloc_buffer::<u32>(&ctx, entries);
-    let block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
-    let block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
-    let bucketed_ids_buf = alloc_buffer::<i32>(&ctx, max_sumk);
-    let bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, max_sumk);
-    let tok2row_buf = alloc_buffer::<i32>(&ctx, t * k);
-    let x_perm_buf = alloc_buffer::<bf16>(&ctx, max_sumk * d_model);
-    let y_partial_buf = alloc_buffer::<bf16>(&ctx, max_sumk * d_model);
-    let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
+    let mut partials_buf = alloc_buffer::<u32>(&ctx, entries);
+    let mut block_bases_buf = alloc_buffer::<u32>(&ctx, entries);
+    let mut block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
+    let mut bucketed_ids_buf = alloc_buffer::<i32>(&ctx, max_sumk);
+    let mut bucketed_probs_buf = alloc_buffer::<bf16>(&ctx, max_sumk);
+    let mut tok2row_buf = alloc_buffer::<i32>(&ctx, t * k);
+    let mut x_perm_buf = alloc_buffer::<bf16>(&ctx, max_sumk * d_model);
+    let mut y_partial_buf = alloc_buffer::<bf16>(&ctx, max_sumk * d_model);
+    let mut y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
     const BLOCK_M_DECODE: usize = 4; // matches two-pass decode kernel configuration
     let h_blocks_decode = (d_ff + BLOCK_M_DECODE - 1) / BLOCK_M_DECODE;
     let max_tiles = max_sumk * h_blocks_decode;
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
@@ -356,8 +356,8 @@ fn run_moe_parity_test_internal(
         &x_buf,
         &router_w_buf,
         &router_b_buf,
-        &topk_ids_buf,
-        &topk_probs_buf,
+        &mut topk_ids_buf,
+        &mut topk_probs_buf,
         t as u32,
         d_model as u32,
         e as u32,
@@ -372,9 +372,9 @@ fn run_moe_parity_test_internal(
     let mut encoder = cb.new_compute_command_encoder().expect("encoder");
     fused_kernel.encode(
         &topk_ids_buf,
-        &offsets_buf,
-        &sumk_buf,
-        &partials_buf,
+        &mut offsets_buf,
+        &mut sumk_buf,
+        &mut partials_buf,
         t as u32,
         e as u32,
         k as u32,
@@ -387,8 +387,8 @@ fn run_moe_parity_test_internal(
         .expect("scatter bases kernel");
     scatter_bases_kernel.encode(
         &partials_buf,
-        &block_bases_buf,
-        &block_alloc_buf,
+        &mut block_bases_buf,
+        &mut block_alloc_buf,
         e as u32,
         num_blocks as u32,
         num_tiles as u32,
@@ -407,14 +407,14 @@ fn run_moe_parity_test_internal(
         &offsets_buf,
         &block_bases_buf,
         &block_alloc_buf,
-        &bucketed_ids_buf,
-        &bucketed_probs_buf,
+        &mut bucketed_ids_buf,
+        &mut bucketed_probs_buf,
         t as u32,
         e as u32,
         k as u32,
         num_blocks as u32,
         num_tiles as u32,
-        &tok2row_buf,
+        &mut tok2row_buf,
         &mut scatter_encoder,
     );
     scatter_encoder.end_encoding();
@@ -423,10 +423,10 @@ fn run_moe_parity_test_internal(
     gather.encode(
         &mut cb,
         DataType::BF16,
-        &MoeGatherArguments {
+        MoeGatherArguments {
             x_buffer: &x_buf,
             bucketed_ids_buffer: &bucketed_ids_buf,
-            x_perm_buffer: &x_perm_buf,
+            x_perm_buffer: &mut x_perm_buf,
             sumk_buffer: &sumk_buf,
             t,
             k,
@@ -437,25 +437,25 @@ fn run_moe_parity_test_internal(
     // Additional buffers for 2-pass
     let total_rows = t * k;
     let mut hidden_buf = alloc_buffer::<f32>(&ctx, total_rows * d_ff);
-    let row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
+    let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, total_rows);
 
     let experts = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("experts");
     let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
-    let mut args = MoeExpertsTwoPassArguments {
+    let args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
-        row_expert_map: &row_expert_map_buf,
+        row_expert_map: &mut row_expert_map_buf,
         hidden_buffer: &mut hidden_buf,
-        output_buffer: &y_partial_buf,
+        output_buffer: &mut y_partial_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
         down_biases: &down_biases_buf,
-        tile_counts: &tile_counts_buf,
-        tile_offsets: &tile_offsets_buf,
-        tile_map: &tile_map_buf,
-        total_tiles: &total_tiles_buf,
-        dispatch_args: &dispatch_args_buf,
+        tile_counts: &mut tile_counts_buf,
+        tile_offsets: &mut tile_offsets_buf,
+        tile_map: &mut tile_map_buf,
+        total_tiles: &mut total_tiles_buf,
+        dispatch_args: &mut dispatch_args_buf,
         total_rows,
         d_model,
         d_ff,
@@ -469,7 +469,7 @@ fn run_moe_parity_test_internal(
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts.encode(&mut cb, &mut args);
+    experts.encode(&mut cb, args);
 
     let finalize =
         <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
@@ -478,7 +478,7 @@ fn run_moe_parity_test_internal(
         &tok2row_buf,
         &topk_probs_buf,
         &y_partial_buf,
-        &y_out_buf,
+        &mut y_out_buf,
         t as u32,
         d_model as u32,
         k as u32,

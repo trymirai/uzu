@@ -14,12 +14,12 @@ use walkdir::WalkDir;
 use crate::common::{
     codegen::write_tokens,
     compiler::Compiler,
-    kernel::{Kernel, KernelArgument, KernelArgumentType, KernelParameter, KernelParameterType},
+    kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
 };
 
 #[derive(PartialEq, Debug)]
 pub enum FunctionArgumentType {
-    Buffer,
+    Buffer(KernelBufferAccess),
     Constant(Type),
     Scalar(Type),
     Specialization(Type),
@@ -28,7 +28,7 @@ pub enum FunctionArgumentType {
 #[derive(PartialEq, Debug)]
 pub struct FunctionArgument {
     pub name: Ident,
-    pub conditional: Option<Ident>,
+    pub conditional: Option<Expr>,
     pub ty: FunctionArgumentType,
 }
 
@@ -38,7 +38,7 @@ impl FunctionArgument {
             name: self.name.to_string().into_boxed_str(),
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
-                FunctionArgumentType::Buffer => KernelArgumentType::Buffer,
+                FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
                 FunctionArgumentType::Constant(ty) => KernelArgumentType::Constant(
                     ty.to_token_stream().to_string().replace(" :: ", "::").into_boxed_str(),
                 ),
@@ -221,7 +221,7 @@ impl CpuCompiler {
                 let conditional = argument
                     .attrs
                     .iter()
-                    .find_map(|attr| attr.path().is_ident("optional").then(|| attr.parse_args::<Ident>().unwrap()));
+                    .find_map(|attr| attr.path().is_ident("optional").then(|| attr.parse_args::<Expr>().unwrap()));
 
                 let ty = if specialize {
                     FunctionArgumentType::Specialization(*argument.ty)
@@ -335,11 +335,14 @@ impl CpuCompiler {
                 let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
                 let (generic, mut ty) = match &argument.ty {
-                    KernelArgumentType::Buffer => {
+                    KernelArgumentType::Buffer(access) => {
                         let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
                         (
                             Some(quote! { #buffer_lifetime }),
-                            quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Box<[u8]>> },
+                            match access {
+                                KernelBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Box<[u8]>> },
+                                KernelBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Box<[u8]>> },
+                            },
                         )
                     },
                     KernelArgumentType::Constant(ty) => {
@@ -367,13 +370,18 @@ impl CpuCompiler {
             .flat_map(|argument| {
                 let argument_ident = &argument.name;
                 match &argument.ty {
-                    FunctionArgumentType::Buffer => {
+                    FunctionArgumentType::Buffer(access) => {
+                        let as_ptr_fn = match access {
+                            KernelBufferAccess::Read => quote! { as_ptr },
+                            KernelBufferAccess::ReadWrite => quote! { as_mut_ptr },
+                        };
+
                         if argument.conditional.is_some() {
                             Some(quote! {
                                 let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
                                     let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
 
-                                    __dsl_buffer.as_ptr().byte_add(__dsl_offset)
+                                    __dsl_buffer.#as_ptr_fn().byte_add(__dsl_offset)
                                 });
                             })
                         } else {
@@ -381,7 +389,7 @@ impl CpuCompiler {
                                 let #argument_ident = unsafe {
                                     let (__dsl_buffer, __dsl_offset) = #argument_ident.into_parts();
 
-                                    __dsl_buffer.as_ptr().byte_add(__dsl_offset)
+                                    __dsl_buffer.#as_ptr_fn().byte_add(__dsl_offset)
                                 };
                             })
                         }
@@ -408,7 +416,7 @@ impl CpuCompiler {
                 let argument_ident = &argument.name;
 
                 match &argument.ty {
-                    FunctionArgumentType::Buffer => {
+                    FunctionArgumentType::Buffer(_) => {
                         if argument.conditional.is_some() {
                             quote! { #argument_ident.map(|p| p as _) }
                         } else {
@@ -432,6 +440,9 @@ impl CpuCompiler {
 
             quote! {
                 encoder.push_command(move || {
+                    if let Some(predicate) = predicate && unsafe { *predicate } == 0u32 {
+                        return;
+                    }
                     #monomorphized_function(#function_call_args_joined)
                 });
             }
@@ -530,6 +541,11 @@ impl CpuCompiler {
 
                 fn encode_if<#(#encode_generics ,)* 'encoder, 'predicate>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::cpu::command_buffer::CpuCommandBuffer, predicate: Option<impl crate::backends::common::kernel::BufferArg<'predicate, Box<[u8]>>>) {
                     #(#argument_copies)*
+                    let predicate = predicate.map(|__dsl_buffer_impl| unsafe {
+                        let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
+
+                        __dsl_buffer.as_ptr().byte_add(__dsl_offset) as *const u32
+                    });
                     #encode_body
                 }
             }
@@ -547,7 +563,11 @@ impl CpuCompiler {
 
     fn parse_type(ty: Type) -> anyhow::Result<FunctionArgumentType> {
         Ok(match ty {
-            Type::Ptr(_) => FunctionArgumentType::Buffer,
+            Type::Ptr(ty) => FunctionArgumentType::Buffer(if ty.mutability.is_some() {
+                KernelBufferAccess::ReadWrite
+            } else {
+                KernelBufferAccess::Read
+            }),
             Type::Reference(ty) => match *ty.elem {
                 Type::Slice(ty) => FunctionArgumentType::Constant(*ty.elem),
                 ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream().to_string(), ty),

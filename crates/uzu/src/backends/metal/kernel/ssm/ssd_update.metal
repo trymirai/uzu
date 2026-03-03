@@ -14,7 +14,7 @@ KERNEL(SSDUpdate)(
     device const T* c,      // (b, g, n)
     device const T* d,      // (h)
     device const T* z,      // (b, d)
-    device const T* state,  // (b, h, dh, n)
+    device const T* state OPTIONAL(!state_in_place),  // (b, h, dh, n)
     device T* y,
     device T* next_state,
     // Parameters
@@ -29,11 +29,16 @@ KERNEL(SSDUpdate)(
     constant const uint& b_size,
     constant const uint& h_size,
     constant const uint& dh_size,
+    const bool state_in_place SPECIALIZE,
     // Grid
     const uint b_idx AXIS(b_size, 32),
     const uint h_idx AXIS(h_size, 32),
     const uint dh_idx AXIS(dh_size, 1)
 ) {
+  if (state_in_place) {
+    state = next_state;
+  }
+
   const uint cb_start_idx =
       b_idx * cb_strides[0] + (h_idx / group_size) * cb_strides[1];
   const uint x_idx =

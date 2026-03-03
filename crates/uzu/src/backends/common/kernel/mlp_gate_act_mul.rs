@@ -29,7 +29,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         &self,
         encoder: &mut B::ComputeEncoder,
         fused_up: &B::NativeBuffer,
-        hidden: &B::NativeBuffer,
+        hidden: &mut B::NativeBuffer,
         m: i32,
     ) -> Result<(), B::Error> {
         let act_type = match self.activation {

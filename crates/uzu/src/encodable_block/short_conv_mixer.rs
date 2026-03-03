@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::{
     DataType,
@@ -81,7 +81,7 @@ impl<B: Backend> ShortConvMixer<B> {
             .expect("Failed to create short conv pack kernel");
         let short_conv_prefill = <B::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, has_bias)
             .expect("Failed to create short conv prefill kernel");
-        let short_conv_decode = <B::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias)
+        let short_conv_decode = <B::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias, true)
             .expect("Failed to create short conv decode kernel");
         let short_conv_trie = <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
             .expect("Failed to create short conv trie kernel");
@@ -238,11 +238,11 @@ impl<B: Backend> ShortConvMixer<B> {
         let element_size = data_type.size_in_bytes();
         let padded_rows = state_stride + suffix_length;
         let padded_size = padded_rows * self.model_dim * element_size;
-        let padded_buf = state.context().create_buffer(padded_size).expect("Failed to create padded buffer");
+        let mut padded_buf = state.context().create_buffer(padded_size).expect("Failed to create padded buffer");
         self.short_conv_pack.encode(
             conv_state.buffer().borrow().deref(),
             in_proj.buffer().borrow().deref(),
-            &padded_buf,
+            &mut padded_buf,
             state_stride as u32,
             suffix_length as u32,
             self.model_dim as u32 * 3,
@@ -255,8 +255,8 @@ impl<B: Backend> ShortConvMixer<B> {
             in_proj.buffer().borrow().deref(),
             weight_buf_borrow.deref(),
             bias_buf_borrow.as_deref(),
-            out.buffer().borrow().deref(),
-            conv_state.buffer().borrow().deref(),
+            out.buffer().borrow_mut().deref_mut(),
+            conv_state.buffer().borrow_mut().deref_mut(),
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,
@@ -314,8 +314,8 @@ impl<B: Backend> ShortConvMixer<B> {
             trie_bias_buf_borrow.as_deref(),
             (conv_state.buffer().borrow().deref(), base_state_offset),
             (parents.buffer().borrow().deref(), parents_offset),
-            (out.buffer().borrow().deref(), out_offset),
-            (suffix_state.buffer().borrow().deref(), suffix_state_offset),
+            (out.buffer().borrow_mut().deref_mut(), out_offset),
+            (suffix_state.buffer().borrow_mut().deref_mut(), suffix_state_offset),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -352,9 +352,9 @@ impl<B: Backend> ShortConvMixer<B> {
             in_proj.buffer().borrow().deref(),
             decode_weight_buf_borrow.deref(),
             decode_bias_buf_borrow.as_deref(),
-            conv_state.buffer().borrow().deref(),
-            out.buffer().borrow().deref(),
-            conv_state.buffer().borrow().deref(),
+            None::<&B::NativeBuffer>,
+            out.buffer().borrow_mut().deref_mut(),
+            conv_state.buffer().borrow_mut().deref_mut(),
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,

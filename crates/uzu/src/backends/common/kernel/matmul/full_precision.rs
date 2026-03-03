@@ -5,7 +5,7 @@ pub struct FullPrecisionMatmulArguments<'a, B: Backend> {
     pub a: &'a B::NativeBuffer,
     pub a_offset: usize,
     pub b: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
+    pub output: &'a mut B::NativeBuffer,
     pub bias: Option<&'a B::NativeBuffer>,
     pub batch: usize,
     pub input_dim: usize,

@@ -8,24 +8,24 @@ use crate::backends::common::{
 
 #[derive(Debug)]
 pub struct MoePassATileCountsArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::NativeBuffer, // [E+1]
-    pub tile_counts: &'a B::NativeBuffer,    // [E]
+    pub expert_offsets: &'a B::NativeBuffer,  // [E+1]
+    pub tile_counts: &'a mut B::NativeBuffer, // [E]
     pub e: usize,
     pub h_blocks: u32,
 }
 
 #[derive(Debug)]
 pub struct MoePassATileScanArguments<'a, B: Backend> {
-    pub tile_counts: &'a B::NativeBuffer,  // [E]
-    pub tile_offsets: &'a B::NativeBuffer, // [E+1]
-    pub total_tiles: &'a B::NativeBuffer,  // [>=1]
+    pub tile_counts: &'a B::NativeBuffer,      // [E]
+    pub tile_offsets: &'a mut B::NativeBuffer, // [E+1]
+    pub total_tiles: &'a mut B::NativeBuffer,  // [>=1]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoePassARowMapArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::NativeBuffer, // [E+1]
-    pub row_expert_map: &'a B::NativeBuffer, // [total_rows]
+    pub expert_offsets: &'a B::NativeBuffer,     // [E+1]
+    pub row_expert_map: &'a mut B::NativeBuffer, // [total_rows]
     pub total_rows: usize,
     pub e: usize,
 }
@@ -35,15 +35,15 @@ pub struct MoePassATileBuildArguments<'a, B: Backend> {
     pub expert_offsets: &'a B::NativeBuffer, // [E+1]
     pub tile_offsets: &'a B::NativeBuffer,   // [E+1]
     pub row_expert_map: &'a B::NativeBuffer, // [total_rows]
-    pub tile_map: &'a B::NativeBuffer,       // [total_tiles * 3]
+    pub tile_map: &'a mut B::NativeBuffer,   // [total_tiles * 3]
     pub total_rows: usize,
     pub h_blocks: u32,
 }
 
 #[derive(Debug)]
 pub struct MoePassATileDispatchArguments<'a, B: Backend> {
-    pub total_tiles: &'a B::NativeBuffer,   // [>=1]
-    pub dispatch_args: &'a B::NativeBuffer, // [3]
+    pub total_tiles: &'a B::NativeBuffer,       // [>=1]
+    pub dispatch_args: &'a mut B::NativeBuffer, // [3]
     pub num_tiles_y: u32,
 }
 
@@ -69,7 +69,7 @@ impl<B: Backend> MoePassATileKernels<B> {
     pub fn encode_counts(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoePassATileCountsArguments<B>,
+        args: MoePassATileCountsArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
             self.counts.encode(args.expert_offsets, args.tile_counts, args.e as u32, args.h_blocks, encoder);
@@ -79,7 +79,7 @@ impl<B: Backend> MoePassATileKernels<B> {
     pub fn encode_scan(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoePassATileScanArguments<B>,
+        args: MoePassATileScanArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
             self.scan.encode(args.tile_counts, args.tile_offsets, args.total_tiles, args.e as u32, encoder);
@@ -89,7 +89,7 @@ impl<B: Backend> MoePassATileKernels<B> {
     pub fn encode_row_map(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoePassARowMapArguments<B>,
+        args: MoePassARowMapArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
             self.row_map.encode(
@@ -105,7 +105,7 @@ impl<B: Backend> MoePassATileKernels<B> {
     pub fn encode_build_map(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoePassATileBuildArguments<B>,
+        args: MoePassATileBuildArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
             self.build_map.encode(
@@ -123,7 +123,7 @@ impl<B: Backend> MoePassATileKernels<B> {
     pub fn encode_dispatch_args(
         &self,
         command_buffer: &mut B::CommandBuffer,
-        args: &MoePassATileDispatchArguments<B>,
+        args: MoePassATileDispatchArguments<B>,
     ) {
         command_buffer.with_compute_encoder(|encoder| {
             self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_y, encoder);

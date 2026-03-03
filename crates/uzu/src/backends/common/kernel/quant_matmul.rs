@@ -59,7 +59,7 @@ pub struct QuantizedMatmulArguments<'a, B: Backend> {
     pub b_buffer: &'a B::NativeBuffer,
     pub scales_buffer: &'a B::NativeBuffer,
     pub zero_points_or_biases_buffer: &'a B::NativeBuffer,
-    pub output_buffer: &'a B::NativeBuffer,
+    pub output_buffer: &'a mut B::NativeBuffer,
     pub batch: usize,
     pub input_dim: usize,
     pub output_dim: usize,

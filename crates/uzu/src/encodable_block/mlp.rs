@@ -1,6 +1,6 @@
 //! MLP block encodable.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::{
     backends::common::{Backend, CommandBuffer, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
@@ -50,10 +50,10 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
                 let fused_buf_rc = fused.buffer();
                 let fused_buf_borrow = fused_buf_rc.borrow();
                 let hidden_buf_rc = hidden.buffer();
-                let hidden_buf_borrow = hidden_buf_rc.borrow();
+                let mut hidden_buf_borrow = hidden_buf_rc.borrow_mut();
 
                 self.gate
-                    .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref(), m)
+                    .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref_mut(), m)
                     .expect("Failed to encode MLP activation/mul kernel");
             });
 
@@ -88,10 +88,12 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         let fused_buf_rc = fused.buffer();
         let fused_buf_borrow = fused_buf_rc.borrow();
         let hidden_buf_rc = hidden.buffer();
-        let hidden_buf_borrow = hidden_buf_rc.borrow();
+        let mut hidden_buf_borrow = hidden_buf_rc.borrow_mut();
         self.gate
-            .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref(), m)
+            .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref_mut(), m)
             .expect("Failed to encode MLP activation/mul kernel");
+        drop(hidden_buf_borrow);
+        drop(fused_buf_borrow);
         drop(fused);
         drop(hidden);
 

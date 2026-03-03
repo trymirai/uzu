@@ -1,6 +1,6 @@
 //! Sampling kernel encodable.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -80,18 +80,18 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         });
         let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
         let logits_buf_rc = logits.buffer();
-        let logits_buf_borrow = logits_buf_rc.borrow();
+        let mut logits_buf_borrow = logits_buf_rc.borrow_mut();
         let seeds_buf_rc = seeds.buffer();
         let seeds_buf_borrow = seeds_buf_rc.borrow();
         let output_buf_rc = output_buffer_ref.buffer();
-        let output_buf_borrow = output_buf_rc.borrow();
+        let mut output_buf_borrow = output_buf_rc.borrow_mut();
         if let Err(e) = self.kernel.encode_with_encoder(
-            logits_buf_borrow.deref(),
+            logits_buf_borrow.deref_mut(),
             Some(seeds_buf_borrow.deref()),
             seeds_offset,
             bitmask_borrow.as_deref(),
             bitmask_offset,
-            output_buf_borrow.deref(),
+            output_buf_borrow.deref_mut(),
             sampling_method,
             batch_size,
             vocab_size,

@@ -1,6 +1,10 @@
 //! Quantized embedding lookup encodable.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -261,7 +265,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
             self.weights_buffer.borrow().deref(),
             self.scales_buffer.borrow().deref(),
             self.biases_buffer.borrow().deref(),
-            output_array.buffer().borrow().deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
             batch_size as u32,
             self.vocab_size,
             self.model_dim,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::DerefMut};
 
 use super::{
     super::matmul_arguments::MatmulArguments,
@@ -64,7 +64,7 @@ where
     pub fn encode(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
     ) -> Result<(), B::Error> {
@@ -121,7 +121,7 @@ where
             (matrix, matrix_offset),
             (input_vector, input_vector_offset),
             output_source.map(|buffer| (buffer, 0usize)),
-            arguments.d,
+            arguments.d.deref_mut(),
             dispatch_descriptor.input_dimension,
             dispatch_descriptor.output_dimension,
             dispatch_descriptor.matrix_leading_dim,

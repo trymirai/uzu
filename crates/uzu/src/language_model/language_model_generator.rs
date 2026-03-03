@@ -2,9 +2,8 @@ use std::{
     any::Any,
     collections::HashMap,
     iter::repeat_n,
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     path::Path,
-    sync::Arc,
     time::Instant,
 };
 
@@ -516,18 +515,18 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let sampling_output_buf_borrow = sampling_output_buf_rc.borrow();
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
         let token_ids_buf_rc = token_ids_binding.buffer();
-        let token_ids_buf_borrow = token_ids_buf_rc.borrow();
+        let mut token_ids_buf_borrow = token_ids_buf_rc.borrow_mut();
 
         self.context.command_buffer.with_compute_encoder(|encoder| {
             self.context.token_copy_sampled.encode(
                 sampling_output_buf_borrow.deref(),
-                token_ids_buf_borrow.deref(),
+                token_ids_buf_borrow.deref_mut(),
                 encoder,
             );
             let results_offset = slot * std::mem::size_of::<u32>();
             self.context.token_copy_results.encode(
                 sampling_output_buf_borrow.deref(),
-                (results_buffer.borrow().deref(), results_offset),
+                (results_buffer.borrow_mut().deref_mut(), results_offset),
                 encoder,
             );
         });
@@ -549,8 +548,13 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                     if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
                         if update.unmask_col >= 0 || update.mask_col >= 0 {
                             let mask_buf_rc = mask_buffer.borrow().buffer();
-                            let mask_buf_borrow = mask_buf_rc.borrow();
-                            mask_update.encode(mask_buf_borrow.deref(), update.unmask_col, update.mask_col, encoder);
+                            let mut mask_buf_borrow = mask_buf_rc.borrow_mut();
+                            mask_update.encode(
+                                mask_buf_borrow.deref_mut(),
+                                update.unmask_col,
+                                update.mask_col,
+                                encoder,
+                            );
                         }
                     }
                 }
@@ -563,17 +567,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
-        let results_buffer_clone = results_buffer.clone();
-        let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
+        let results_buffer_ptr = results_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
 
         let handler = move || {
-            let token = {
-                let ptr = results_buffer_clone.borrow().cpu_ptr().as_ptr() as *const u32;
-                unsafe { *ptr.add(slot) as u64 }
-            };
-            if let Some(cb) = callback.lock().unwrap().take() {
-                cb(token);
-            }
+            let token = { unsafe { *results_buffer_ptr.add(slot) as u64 } };
+            on_complete(token);
         };
 
         self.context.command_buffer.add_completion_handler(handler);

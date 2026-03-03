@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     common::mangling::dynamic_mangle,
-    metal::ast::{MetalGroupsType, MetalTemplateParameterType},
+    metal::ast::{MetalBufferAccess, MetalGroupsType, MetalTemplateParameterType},
 };
 
 pub fn bindgen(
@@ -113,12 +113,15 @@ pub fn bindgen(
             let arg_name = format_ident!("{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
-                arg_type @ (MetalArgumentType::Buffer | MetalArgumentType::Constant(_)) => {
+                arg_type @ (MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) => {
                     let (mut ty, mut set, generic) = match arg_type {
-                        MetalArgumentType::Buffer => {
+                        MetalArgumentType::Buffer(access) => {
                             let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
                             (
-                                quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                match access {
+                                    MetalBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                    MetalBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                },
                                 quote! {
                                     let (__dsl_buffer, __dsl_offset) = #arg_name.into_parts();
                                     compute_encoder.set_buffer(Some(__dsl_buffer), __dsl_offset, #arg_count);

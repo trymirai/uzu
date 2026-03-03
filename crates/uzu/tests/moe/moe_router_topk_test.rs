@@ -153,9 +153,9 @@ fn run_router_topk_once(
     let input_buf = alloc_buffer_with_data(ctx, &input);
     let weight_buf = alloc_buffer_with_data(ctx, &weight);
     let bias_buf = alloc_buffer_with_data(ctx, &bias);
-    let ids_buf = alloc_buffer::<i32>(ctx, t * k);
+    let mut ids_buf = alloc_buffer::<i32>(ctx, t * k);
     // For BFloat16 kernel, probs buffer must be bf16, not f32
-    let probs_buf = alloc_buffer::<bf16>(ctx, t * k);
+    let mut probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
     let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let mut encoder = cb.new_compute_command_encoder().expect("Failed to create command encoder");
@@ -163,8 +163,8 @@ fn run_router_topk_once(
         &input_buf,
         &weight_buf,
         &bias_buf,
-        &ids_buf,
-        &probs_buf,
+        &mut ids_buf,
+        &mut probs_buf,
         t as u32,
         d_model as u32,
         e as u32,

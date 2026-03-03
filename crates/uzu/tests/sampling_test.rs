@@ -97,12 +97,12 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         0.1, 0.5, 2.5, 1.0, // batch 1
     ];
 
-    let logits_buffer = context
+    let mut logits_buffer = context
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&test_logits), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -114,12 +114,12 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
     kernel
         .encode_with_encoder(
-            &logits_buffer,
+            &mut logits_buffer,
             None,
             0,
             None,
             0,
-            &output_buffer,
+            &mut output_buffer,
             SamplingMethod::Greedy,
             batch_size,
             vocab_size,
@@ -215,7 +215,7 @@ fn test_topp_sampling_from_prob_exact_match(
         .collect();
 
     // GPU buffers
-    let output_buf = context
+    let mut output_buf = context
         .device
         .new_buffer(batch_size * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -227,7 +227,7 @@ fn test_topp_sampling_from_prob_exact_match(
     // Draw samples
     for draw in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buf = context
+        let mut logits_buf = context
             .device
             .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
@@ -243,12 +243,12 @@ fn test_topp_sampling_from_prob_exact_match(
         let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
         kernel
             .encode_with_encoder(
-                &logits_buf,
+                &mut logits_buf,
                 Some(&seeds_buf),
                 0,
                 None,
                 0,
-                &output_buf,
+                &mut output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -341,7 +341,7 @@ fn test_topp_sampling_statistical_large() {
     }
 
     // ===== 6. Allocate output & counters =====
-    let output_buf = context
+    let mut output_buf = context
         .device
         .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -350,7 +350,7 @@ fn test_topp_sampling_statistical_large() {
     // ===== 8. Draw NUM_DRAWS samples =====
     for draw in 0..NUM_DRAWS {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buf = context
+        let mut logits_buf = context
             .device
             .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
@@ -367,12 +367,12 @@ fn test_topp_sampling_statistical_large() {
 
         kernel
             .encode_with_encoder(
-                &logits_buf,
+                &mut logits_buf,
                 Some(&seeds_buf),
                 0,
                 None,
                 0,
-                &output_buf,
+                &mut output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -446,7 +446,7 @@ fn perf_topp_128k_vocab() {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let logits_buf = context
+    let mut logits_buf = context
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -457,7 +457,7 @@ fn perf_topp_128k_vocab() {
         .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buf = context
+    let mut output_buf = context
         .device
         .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -469,12 +469,12 @@ fn perf_topp_128k_vocab() {
 
     kernel
         .encode_with_encoder(
-            &logits_buf,
+            &mut logits_buf,
             Some(&seeds_buf),
             0,
             None,
             0,
-            &output_buf,
+            &mut output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
                 top_k: None,
@@ -550,7 +550,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let logits_buf = context
+    let mut logits_buf = context
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -561,7 +561,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buf = context
+    let mut output_buf = context
         .device
         .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -573,12 +573,12 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
 
     kernel
         .encode_with_encoder(
-            &logits_buf,
+            &mut logits_buf,
             Some(&seeds_buf),
             0,
             None,
             0,
-            &output_buf,
+            &mut output_buf,
             SamplingMethod::Greedy,
             BATCH,
             VOCAB,
@@ -664,7 +664,7 @@ fn test_categorical_sampling() {
         0.0, 1.0, 0.0, 0.0, // batch 1
     ];
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -675,7 +675,7 @@ fn test_categorical_sampling() {
 
     for sample_idx in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buffer = context
+        let mut logits_buffer = context
             .device
             .new_buffer_with_data(bytemuck::cast_slice(&test_logits), MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
@@ -693,12 +693,12 @@ fn test_categorical_sampling() {
 
         kernel
             .encode_with_encoder(
-                &logits_buffer,
+                &mut logits_buffer,
                 Some(&seeds_buffer),
                 0,
                 None,
                 0,
-                &output_buffer,
+                &mut output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -807,7 +807,7 @@ fn test_categorical_sampling_statistical() {
         }
     }
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(BATCH * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -817,7 +817,7 @@ fn test_categorical_sampling_statistical() {
     // Sample many times
     for sample_idx in 0..NUM_SAMPLES {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buffer = context
+        let mut logits_buffer = context
             .device
             .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
@@ -835,12 +835,12 @@ fn test_categorical_sampling_statistical() {
 
         kernel
             .encode_with_encoder(
-                &logits_buffer,
+                &mut logits_buffer,
                 Some(&seeds_buffer),
                 0,
                 None,
                 0,
-                &output_buffer,
+                &mut output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -918,7 +918,7 @@ fn perf_categorical_128k_vocab() {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let logits_buf = context
+    let mut logits_buf = context
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -929,7 +929,7 @@ fn perf_categorical_128k_vocab() {
         .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buf = context
+    let mut output_buf = context
         .device
         .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -941,12 +941,12 @@ fn perf_categorical_128k_vocab() {
 
     kernel
         .encode_with_encoder(
-            &logits_buf,
+            &mut logits_buf,
             Some(&seeds_buf),
             0,
             None,
             0,
-            &output_buf,
+            &mut output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
                 top_k: None,
@@ -1008,7 +1008,7 @@ fn test_temperature_gpu_cpu_match() {
     const RTOL: f32 = 1e-6;
     const ATOL: f32 = 1e-6;
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::TemperatureKernel::new(&context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::TemperatureKernel::new(&context, DataType::F32, false)
         .expect("Failed to create temperature kernel");
 
     let logits: Vec<f32> = (0..BATCH * VOCAB).map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01).collect();
@@ -1018,7 +1018,7 @@ fn test_temperature_gpu_cpu_match() {
         .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let processed_buffer = context
+    let mut processed_buffer = context
         .device
         .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -1027,7 +1027,14 @@ fn test_temperature_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &mut compute_encoder);
+    kernel.encode(
+        Some(&logits_buffer),
+        &mut processed_buffer,
+        BATCH as u32,
+        VOCAB as u32,
+        TEMPERATURE,
+        &mut compute_encoder,
+    );
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1070,7 +1077,7 @@ fn test_topk_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPK: u32 = 16;
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::TopKKernel::new(&context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::TopKKernel::new(&context, DataType::F32, false)
         .expect("Failed to create topk kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
@@ -1084,7 +1091,7 @@ fn test_topk_gpu_cpu_match() {
         .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let processed_buffer = context
+    let mut processed_buffer = context
         .device
         .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -1093,7 +1100,7 @@ fn test_topk_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TOPK, &mut compute_encoder);
+    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TOPK, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1135,7 +1142,7 @@ fn test_topp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const TOPP: f32 = 0.9;
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::TopPKernel::new(&context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::TopPKernel::new(&context, DataType::F32, false)
         .expect("Failed to create topp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
@@ -1149,7 +1156,7 @@ fn test_topp_gpu_cpu_match() {
         .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let processed_buffer = context
+    let mut processed_buffer = context
         .device
         .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -1158,7 +1165,7 @@ fn test_topp_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, TOPP, &mut compute_encoder);
+    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TOPP, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1205,7 +1212,7 @@ fn test_minp_gpu_cpu_match() {
     const VOCAB: usize = 1024;
     const MINP: f32 = 0.1;
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::MinPKernel::new(&context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::MinPKernel::new(&context, DataType::F32, false)
         .expect("Failed to create minp kernel");
 
     let mut rng = StdRng::seed_from_u64(42);
@@ -1219,7 +1226,7 @@ fn test_minp_gpu_cpu_match() {
         .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let processed_buffer = context
+    let mut processed_buffer = context
         .device
         .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -1228,7 +1235,7 @@ fn test_minp_gpu_cpu_match() {
     let command_buffer = command_buffer_ref.to_owned();
 
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&logits_buffer, &processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut compute_encoder);
+    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut compute_encoder);
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
@@ -1292,7 +1299,7 @@ fn test_minp_sampling_exact_match(
         high_prob_token_sets.push(high_prob_tokens);
     }
 
-    let output_buf = context
+    let mut output_buf = context
         .device
         .new_buffer(batch_size * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -1302,7 +1309,7 @@ fn test_minp_sampling_exact_match(
 
     for draw in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let logits_buf = context
+        let mut logits_buf = context
             .device
             .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
@@ -1318,12 +1325,12 @@ fn test_minp_sampling_exact_match(
         let mut compute_encoder = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
         kernel
             .encode_with_encoder(
-                &logits_buf,
+                &mut logits_buf,
                 Some(&seeds_buf),
                 0,
                 None,
                 0,
-                &output_buf,
+                &mut output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -1390,7 +1397,7 @@ fn test_gumbel_gpu_cpu_match() {
     const RTOL: f32 = 0.01;
     const ATOL: f32 = 1e-6;
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::GumbelKernel::new(&context, DataType::F32)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::GumbelKernel::new(&context, DataType::F32, false)
         .expect("Failed to create gumbel kernel");
 
     let logits = vec![0.0f32; BATCH * VOCAB];
@@ -1406,7 +1413,7 @@ fn test_gumbel_gpu_cpu_match() {
         .new_buffer_with_data(bytemuck::cast_slice(&seeds), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let gumbel_logits_buffer = context
+    let mut gumbel_logits_buffer = context
         .device
         .new_buffer(BATCH * VOCAB * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -1416,9 +1423,9 @@ fn test_gumbel_gpu_cpu_match() {
 
     let mut compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
     kernel.encode(
-        &logits_buffer,
+        Some(&logits_buffer),
         &seeds_buffer,
-        &gumbel_logits_buffer,
+        &mut gumbel_logits_buffer,
         BATCH as u32,
         VOCAB as u32,
         &mut compute_encoder,

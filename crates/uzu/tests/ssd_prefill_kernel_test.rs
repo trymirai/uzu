@@ -222,8 +222,8 @@ fn run_prefill_kernel_mode(
     let z_buf = device
         .new_buffer_with_data(bytemuck::cast_slice(&fixture.z_data), STORAGE_MODE)
         .expect("Failed to create buffer");
-    let state_buf = device.new_buffer(fixture.total_state * 4, STORAGE_MODE).expect("Failed to create buffer");
-    let y_buf = device.new_buffer(fixture.total_x * 4, STORAGE_MODE).expect("Failed to create buffer");
+    let mut state_buf = device.new_buffer(fixture.total_state * 4, STORAGE_MODE).expect("Failed to create buffer");
+    let mut y_buf = device.new_buffer(fixture.total_x * 4, STORAGE_MODE).expect("Failed to create buffer");
 
     write_buffer(&state_buf, &fixture.state_init);
     zero_buffer(&y_buf);
@@ -235,8 +235,8 @@ fn run_prefill_kernel_mode(
         c: &c_buf,
         d: &d_buf,
         z: &z_buf,
-        state: &state_buf,
-        y: &y_buf,
+        state: &mut state_buf,
+        y: &mut y_buf,
         suffix_len: fixture.suffix_len,
         group_size: fixture.group_size,
         state_size: fixture.state_dim as i32,
@@ -279,7 +279,7 @@ fn run_conv_scan_once(
     let _total_w = channels * kernel_size as usize;
     let total_state = channels * tap_count;
 
-    let y_buf = if alias_io {
+    let mut y_buf = if alias_io {
         device.new_buffer_with_data(bytemuck::cast_slice(x_data), STORAGE_MODE).expect("Failed to create buffer")
     } else {
         let buf = device.new_buffer(total_x * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer");
@@ -322,14 +322,17 @@ fn run_conv_scan_once(
 
     let command_buffer = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     let mut encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut b_out = y_buf.clone();
+    let mut c_out = y_buf.clone();
+    let mut state_out = scratch_buf.as_ref().unwrap_or(&state_buf).clone();
     kernel.encode(
         &padded_buf,
         &w_buf,
         Some(&b_buf),
-        &y_buf,
-        &y_buf,
-        &y_buf,
-        scratch_buf.as_ref().unwrap_or(&state_buf),
+        &mut y_buf,
+        &mut b_out,
+        &mut c_out,
+        &mut state_out,
         suffix_len as u32,
         kernel_size as u32,
         channels as u32,

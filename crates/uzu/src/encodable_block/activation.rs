@@ -1,6 +1,6 @@
 //! Activation encodable.
 
-use std::ops::Deref;
+use std::ops::DerefMut;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -28,7 +28,8 @@ impl<B: Backend> Activation<B> {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, B::Error> {
-        let kernel = <B::Kernels as Kernels>::ActivationKernel::new(context, data_type)?;
+        let kernel =
+            <B::Kernels as Kernels>::ActivationKernel::new(context, data_type, input_array_id == output_array_id)?;
         Ok(Self {
             kernel,
             config,
@@ -50,7 +51,7 @@ impl<B: Backend> EncodableBlock<B> for Activation<B> {
         encoder: &mut B::ComputeEncoder,
     ) {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let input_array = arrays[0].borrow_mut();
+        let input_array = arrays[0].borrow();
         let output_array = arrays[1].borrow_mut();
 
         let n = input_array.shape().iter().product::<usize>();
@@ -62,9 +63,11 @@ impl<B: Backend> EncodableBlock<B> for Activation<B> {
             ActivationConfig::Identity => panic!("Identity activation is not supported for kernel"),
         };
 
+        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
+        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
         self.kernel.encode(
-            input_array.buffer().borrow().deref(),
-            output_array.buffer().borrow().deref(),
+            input_buffer_borrow.as_deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
             act_type,
             encoder,

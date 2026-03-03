@@ -1,7 +1,9 @@
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::common::kernel::{Kernel, KernelArgument, KernelArgumentType, KernelParameter, KernelParameterType};
+use crate::common::kernel::{
+    Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType,
+};
 
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
 
@@ -91,6 +93,12 @@ fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum MetalBufferAccess {
+    Read,
+    ReadWrite,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MetalConstantType {
     Scalar,
     Array,
@@ -104,7 +112,7 @@ pub enum MetalGroupsType {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MetalArgumentType {
-    Buffer,
+    Buffer(MetalBufferAccess),
     Constant((Box<str>, MetalConstantType)),
     Shared(Option<Box<str>>),
     Specialize(Box<str>),
@@ -188,7 +196,7 @@ impl MetalArgument {
             && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
         {
             assert!(
-                matches!(self.argument_type().unwrap(), MetalArgumentType::Buffer | MetalArgumentType::Constant(_)),
+                matches!(self.argument_type().unwrap(), MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)),
                 "Only a buffer or a constant can be optional"
             );
             if annotation.len() != 2 {
@@ -246,7 +254,11 @@ impl MetalArgument {
         } else if self.c_type.as_ref() == "Simd" || self.c_type.as_ref() == "const Simd" {
             Ok(MetalArgumentType::Simd)
         } else if self.c_type.contains("device") && self.c_type.contains('*') && !self.c_type.contains('&') {
-            Ok(MetalArgumentType::Buffer)
+            Ok(MetalArgumentType::Buffer(if self.c_type.contains("const") {
+                MetalBufferAccess::Read
+            } else {
+                MetalBufferAccess::ReadWrite
+            }))
         } else if let ["const", "constant", c_type_scalar, "&"] =
             self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
         {
@@ -362,17 +374,20 @@ impl MetalKernelInfo {
                 .arguments
                 .iter()
                 .filter_map(|a| match a.argument_type() {
-                    Ok(MetalArgumentType::Buffer) => Some(KernelArgument {
+                    Ok(MetalArgumentType::Buffer(access)) => Some(KernelArgument {
                         name: a.name.clone(),
                         conditional: a.argument_condition().unwrap().is_some(),
-                        ty: KernelArgumentType::Buffer,
+                        ty: KernelArgumentType::Buffer(match access {
+                            MetalBufferAccess::Read => KernelBufferAccess::Read,
+                            MetalBufferAccess::ReadWrite => KernelBufferAccess::ReadWrite,
+                        }),
                     }),
                     Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)) if !indirect_flag => {
                         indirect_flag = true;
                         Some(KernelArgument {
                             name: "__dsl_indirect_dispatch_buffer".into(),
                             conditional: false,
-                            ty: KernelArgumentType::Buffer,
+                            ty: KernelArgumentType::Buffer(KernelBufferAccess::Read),
                         })
                     },
                     Ok(MetalArgumentType::Constant((ty, MetalConstantType::Scalar))) => Some(KernelArgument {

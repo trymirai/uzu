@@ -27,10 +27,10 @@ pub trait CommandBuffer {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl Fn() + 'static,
+        handler: impl FnOnce() + 'static,
     );
 
-    fn submit(&self);
+    fn submit(&mut self);
 
     fn wait_until_completed(&self);
 

@@ -395,24 +395,24 @@ fn test_two_pass_decode_correctness() {
     // Prepare GPU buffers
     let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
-    let row_expert_map_buf = alloc_buffer_with_data(&ctx, &row_expert_map);
+    let mut row_expert_map_buf = alloc_buffer_with_data(&ctx, &row_expert_map);
     let w13_buf = alloc_buffer_with_data(&ctx, &w13);
     let w2_buf = alloc_buffer_with_data(&ctx, &w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
 
     let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
     let h_blocks_decode = (d_ff + 3) / 4;
     let max_total_tiles = sum_k * h_blocks_decode;
 
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
+    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     // Execute 2-pass decode kernel
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
@@ -423,21 +423,21 @@ fn test_two_pass_decode_correctness() {
 
     experts_kernel.encode(
         &mut cb,
-        &MoeExpertsTwoPassArguments {
+        MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &row_expert_map_buf,
+            row_expert_map: &mut row_expert_map_buf,
             hidden_buffer: &mut hidden_buf,
-            output_buffer: &y_partial_buf,
+            output_buffer: &mut y_partial_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &tile_counts_buf,
-            tile_offsets: &tile_offsets_buf,
-            tile_map: &tile_map_buf,
-            total_tiles: &total_tiles_buf,
-            dispatch_args: &dispatch_args_buf,
+            tile_counts: &mut tile_counts_buf,
+            tile_offsets: &mut tile_offsets_buf,
+            tile_map: &mut tile_map_buf,
+            total_tiles: &mut total_tiles_buf,
+            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
@@ -543,41 +543,41 @@ fn test_two_pass_decode_multi_token() {
     // GPU buffers
     let x_perm_buf = alloc_buffer_with_data(&ctx, &scatter.x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &scatter.offsets);
-    let row_expert_map_buf = alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
+    let mut row_expert_map_buf = alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
     let w13_buf = alloc_buffer_with_data(&ctx, &data.w13);
     let w2_buf = alloc_buffer_with_data(&ctx, &data.w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &data.up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &data.down_biases);
     let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
     let max_total_tiles = sum_k * ((d_ff + 3) / 4);
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
+    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("kernel");
     let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
     experts_kernel.encode(
         &mut cb,
-        &MoeExpertsTwoPassArguments {
+        MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &row_expert_map_buf,
+            row_expert_map: &mut row_expert_map_buf,
             hidden_buffer: &mut hidden_buf,
-            output_buffer: &y_partial_buf,
+            output_buffer: &mut y_partial_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &tile_counts_buf,
-            tile_offsets: &tile_offsets_buf,
-            tile_map: &tile_map_buf,
-            total_tiles: &total_tiles_buf,
-            dispatch_args: &dispatch_args_buf,
+            tile_counts: &mut tile_counts_buf,
+            tile_offsets: &mut tile_offsets_buf,
+            tile_map: &mut tile_map_buf,
+            total_tiles: &mut total_tiles_buf,
+            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
@@ -645,39 +645,39 @@ fn test_two_pass_prefill_correctness() {
     // GPU buffers
     let x_perm_buf = alloc_buffer_with_data(&ctx, &scatter.x_perm);
     let offsets_buf = alloc_buffer_with_data(&ctx, &scatter.offsets);
-    let row_expert_map_buf = alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
+    let mut row_expert_map_buf = alloc_buffer_with_data(&ctx, &scatter.row_expert_map);
     let w13_buf = alloc_buffer_with_data(&ctx, &data.w13);
     let w2_buf = alloc_buffer_with_data(&ctx, &data.w2);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &data.up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &data.down_biases);
     let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut y_partial_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
     // Tile infrastructure
     let max_total_tiles = sum_k * ((d_ff + 3) / 4);
-    let tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
-    let tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
-    let dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
+    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 8);
+    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_total_tiles * 3);
+    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("kernel");
     let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let mut args = MoeExpertsTwoPassArguments {
+    let args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
-        row_expert_map: &row_expert_map_buf,
+        row_expert_map: &mut row_expert_map_buf,
         hidden_buffer: &mut hidden_buf,
-        output_buffer: &y_partial_buf,
+        output_buffer: &mut y_partial_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
         down_biases: &down_biases_buf,
-        tile_counts: &tile_counts_buf,
-        tile_offsets: &tile_offsets_buf,
-        tile_map: &tile_map_buf,
-        total_tiles: &total_tiles_buf,
-        dispatch_args: &dispatch_args_buf,
+        tile_counts: &mut tile_counts_buf,
+        tile_offsets: &mut tile_offsets_buf,
+        tile_map: &mut tile_map_buf,
+        total_tiles: &mut total_tiles_buf,
+        dispatch_args: &mut dispatch_args_buf,
         total_rows: sum_k,
         d_model,
         d_ff,
@@ -691,7 +691,7 @@ fn test_two_pass_prefill_correctness() {
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts_kernel.encode(&mut cb, &mut args);
+    experts_kernel.encode(&mut cb, args);
     cb.commit();
     cb.wait_until_completed();
 
@@ -786,8 +786,8 @@ fn test_fused_single_token_decode() {
     let w2_buf = alloc_buffer_with_data(&ctx, &w2_all);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
-    let hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
-    let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
+    let mut y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     // Run fused decode kernel
     let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
@@ -803,8 +803,8 @@ fn test_fused_single_token_decode() {
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            hidden: &hidden_buf,
-            y: &y_buf,
+            hidden: &mut hidden_buf,
+            y: &mut y_buf,
             d_model,
             d_ff,
             k,
@@ -911,8 +911,8 @@ fn test_fused_single_token_k4() {
     let w2_buf = alloc_buffer_with_data(&ctx, &w2_all);
     let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
-    let hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
-    let y_buf = alloc_buffer::<bf16>(&ctx, d_model);
+    let mut hidden_buf = alloc_buffer::<f32>(&ctx, k * d_ff);
+    let mut y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("fused kernel");
     let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
@@ -926,8 +926,8 @@ fn test_fused_single_token_k4() {
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            hidden: &hidden_buf,
-            y: &y_buf,
+            hidden: &mut hidden_buf,
+            y: &mut y_buf,
             d_model,
             d_ff,
             k,

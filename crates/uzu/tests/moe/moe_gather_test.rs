@@ -70,7 +70,7 @@ fn test_gather_correctness() {
         // GPU buffers
         let x_buf = alloc_buffer_with_data(&ctx, &x);
         let ids_buf = alloc_buffer_with_data(&ctx, &bucketed_ids);
-        let x_perm_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+        let mut x_perm_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
 
         // Create sumk_buffer for API (kernel reads sumk_buf[0])
         let sum_k_u32 = vec![sum_k as u32];
@@ -82,10 +82,10 @@ fn test_gather_correctness() {
         gather.encode(
             &mut cb,
             DataType::BF16,
-            &MoeGatherArguments {
+            MoeGatherArguments {
                 x_buffer: &x_buf,
                 bucketed_ids_buffer: &ids_buf,
-                x_perm_buffer: &x_perm_buf,
+                x_perm_buffer: &mut x_perm_buf,
                 sumk_buffer: &sumk_buf,
                 t: t,
                 k: sum_k / t, // Decompose sum_k into k per token

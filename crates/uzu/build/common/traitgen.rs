@@ -9,7 +9,7 @@ use syn::{Lifetime, Type};
 use super::kernel::Kernel;
 use crate::common::{
     codegen::write_tokens,
-    kernel::{KernelArgumentType, KernelParameterType},
+    kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
 };
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
@@ -36,11 +36,18 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
             let name = format_ident!("{}", a.name.as_ref());
 
             let (generic, mut ty) = match &a.ty {
-                KernelArgumentType::Buffer => {
+                KernelArgumentType::Buffer(access) => {
                     let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
                     (
                         Some(quote! { #buffer_lifetime }),
-                        quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> },
+                        match access {
+                            KernelBufferAccess::Read => {
+                                quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> }
+                            },
+                            KernelBufferAccess::ReadWrite => {
+                                quote! { impl BufferArgMut<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> }
+                            },
+                        },
                     )
                 },
                 KernelArgumentType::Constant(ty) => {
@@ -122,6 +129,22 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
         impl<'a, B: NativeBuffer> BufferArg<'a, B> for (&'a B, usize) {
             fn into_parts(self) -> (&'a B, usize) {
+                self
+            }
+        }
+
+        pub trait BufferArgMut<'a, B: NativeBuffer> {
+            fn into_parts(self) -> (&'a mut B, usize);
+        }
+
+        impl<'a, B: NativeBuffer> BufferArgMut<'a, B> for &'a mut B {
+            fn into_parts(self) -> (&'a mut B, usize) {
+                (self, 0)
+            }
+        }
+
+        impl<'a, B: NativeBuffer> BufferArgMut<'a, B> for (&'a mut B, usize) {
+            fn into_parts(self) -> (&'a mut B, usize) {
                 self
             }
         }
