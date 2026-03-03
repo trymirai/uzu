@@ -11,5 +11,9 @@ pub fn tensor_copy<T: ArrayElement + Float>(
     #[allow(unused)] dst_buffer: *mut T,
     #[allow(unused)] length: u32,
 ) {
-    todo!()
+    unsafe {
+        for i in 0usize..length as usize {
+            *dst_buffer.offset(i as isize) = *src_buffer.offset(i as isize);
+        }
+    }
 }
