@@ -8,7 +8,9 @@ pub fn token_copy_sampled(
     #[allow(unused)] src: *const u32,
     #[allow(unused)] dst: *mut u64,
 ) {
-    todo!()
+    unsafe {
+        *dst.add(0) = *src.add(0) as u64;
+    }
 }
 
 #[kernel(TokenCopyToResults)]
@@ -16,5 +18,7 @@ pub fn token_copy_to_results(
     #[allow(unused)] src: *const u32,
     #[allow(unused)] dst: *mut u32,
 ) {
-    todo!()
+    unsafe {
+        *dst.add(0) = *src.add(0);
+    }
 }
