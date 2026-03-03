@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Deref};
+use std::{fmt::Debug, ops::DerefMut};
 
 use half::{bf16, f16};
 use num_traits::Float;
@@ -49,8 +49,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
     command_buffer.with_compute_encoder(|encoder| {
         kernel.encode(
-            skip_array.buffer().borrow_mut().deref(),
-            main_array.buffer().borrow_mut().deref(),
+            skip_array.buffer().borrow_mut().deref_mut(),
+            main_array.buffer().borrow_mut().deref_mut(),
             input.length,
             encoder,
         )

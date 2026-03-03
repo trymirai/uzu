@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use uzu::{
     ArrayElement,
@@ -20,7 +20,7 @@ fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
 
     let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
     command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow().deref(), encoder)
+        kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), encoder)
     });
     command_buffer.submit();
     command_buffer.wait_until_completed();
@@ -40,7 +40,7 @@ fn test_token_copy_to_results_impl<B: Backend>(src_value: u32) {
 
     let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
     command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow().deref(), encoder)
+        kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), encoder)
     });
     command_buffer.submit();
     command_buffer.wait_until_completed();
