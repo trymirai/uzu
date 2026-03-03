@@ -1,6 +1,5 @@
 use dsl::kernel;
 use half::{bf16, f16};
-use minijinja::filters::length;
 use num_traits::Float;
 
 use crate::ArrayElement;
