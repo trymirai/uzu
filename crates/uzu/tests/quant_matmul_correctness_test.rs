@@ -377,7 +377,7 @@ fn run_quant_matmul_case(
         QuantizedMatmulType::Mlx => buffer_from_f32(ctx, &params.biases_f32),
     };
     let x_buf = buffer_from_f32(ctx, &x_f32);
-    let y_buf = ctx.create_buffer(shape.batch * shape.output_dim * DataType::F32.size_in_bytes()).expect("y_buf");
+    let mut y_buf = ctx.create_buffer(shape.batch * shape.output_dim * DataType::F32.size_in_bytes()).expect("y_buf");
 
     let kernel = QuantizedMatmulKernelEncodable::<Metal>::new(
         ctx,
@@ -403,15 +403,15 @@ fn run_quant_matmul_case(
         b_buffer: &w_buf,
         scales_buffer: &s_buf,
         zero_points_or_biases_buffer: &zp_or_bias_buf,
-        output_buffer: &y_buf,
+        output_buffer: &mut y_buf,
         batch: shape.batch,
         input_dim: shape.input_dim,
         output_dim: shape.output_dim,
         quantization_type: config.quant_type,
     };
     let cb = ctx.command_queue.command_buffer().expect("cb").to_owned();
-    let enc = cb.new_compute_command_encoder().expect("encoder");
-    kernel.encode(&enc, args).expect("encode");
+    let mut enc = cb.new_compute_command_encoder().expect("encoder");
+    kernel.encode(&mut enc, args).expect("encode");
     enc.end_encoding();
     cb.commit();
     cb.wait_until_completed();

@@ -196,7 +196,7 @@ fn run_metal_matmul(
         .expect("Failed to create A buffer");
     let b_buf = ctx
         .device
-        .new_buffer_with_data(bytemuck::cast_slice(b_data), MTLResourceOptions::STORAGE_MODE_SHARED)
+        .new_buffer_with_data(b_bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let mut d_buf = ctx
         .device
@@ -232,7 +232,7 @@ fn run_metal_matmul(
     kernel.encode_with_descriptor(ctx, arguments, &descriptor, &mut command_buffer).expect("encode");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    (output_to_f64(combo, &d_buf, shape.batch * shape.output_dim), path)
+    (output_to_f64(combo, &d_buf, shape.batch * shape.output_dim), dispatch_path_name(&descriptor).to_string())
 }
 
 fn run_correctness_case(ctx: &MetalContext, combo: &DtypeCombo, shape: &TestShape) -> TestResult {

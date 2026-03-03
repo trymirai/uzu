@@ -46,7 +46,7 @@ fn matmul_perf() {
             let b_byte_count = shape.output_dim * shape.input_dim * combo.b_dtype.size_in_bytes();
             let d_byte_count = shape.batch * shape.output_dim * combo.output_dtype.size_in_bytes();
 
-            let (a_buffer, b_buffer, d_buffer) = match (
+            let (a_buffer, b_buffer, mut d_buffer) = match (
                 context.device.new_buffer(a_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
                 context.device.new_buffer(b_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
                 context.device.new_buffer(d_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
@@ -55,7 +55,7 @@ fn matmul_perf() {
                 _ => continue,
             };
 
-            let arguments = make_arguments(&a_buffer, &b_buffer, &d_buffer, shape);
+            let arguments = make_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
             let dispatch_descriptors = try_all_descriptors(&context, combo, &arguments);
 
             for (path_name, dispatch_descriptor) in &dispatch_descriptors {
