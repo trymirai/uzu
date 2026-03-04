@@ -234,7 +234,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 self.allow_pre_encode(),
                 sampling_method,
                 self.should_fill_attention_bias(),
-            );
+            )?;
 
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
@@ -255,7 +255,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 if !positions_for_step.is_empty() {
                     let accept_indices_for_step: Vec<usize> = (0..positions_for_step.len()).collect();
                     if !accept_indices_for_step.is_empty() {
-                        self.update_cache_layers(&accept_indices_for_step, None, true);
+                        self.update_cache_layers(&accept_indices_for_step, None, true)?;
                     }
 
                     self.context.cache_layers.borrow_mut().register_accepted_tokens(&positions_for_step);
@@ -290,7 +290,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
             Some(last_suffix_start),
             false,
-        );
+        )?;
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -365,14 +365,14 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         let (mut state, run_time) =
-            self.run_model(task, false, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias());
+            self.run_model(task, false, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
 
         let sampled_tokens = self.sample(&mut state)?;
 
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
-        self.update_cache_layers(&accepted_token_indices, None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false)?;
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -494,18 +494,16 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             self.context.command_buffer.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
-        self.context.executables.encode(
-            &mut state,
-            &EncodingParameters::new(false, false, false),
-            &mut self.context.command_buffer,
-        );
+        self.context
+            .executables
+            .encode(&mut state, &EncodingParameters::new(false, false, false), &mut self.context.command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Encode sampling
-        self.context.gpu_sampler.encode(
-            &mut state,
-            &EncodingParameters::new(false, false, false),
-            &mut self.context.command_buffer,
-        );
+        self.context
+            .gpu_sampler
+            .encode(&mut state, &EncodingParameters::new(false, false, false), &mut self.context.command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
@@ -569,7 +567,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         // Add completion handler
         let results_buffer_ptr = results_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
 
-        let handler = move || {
+        let handler = move |result: Result<(), B::Error>| {
+            result.expect("async decoding forward pass completed with error");
             let token = { unsafe { *results_buffer_ptr.add(slot) as u64 } };
             on_complete(token);
         };
@@ -578,7 +577,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.command_buffer.submit();
 
         if should_capture {
-            self.context.command_buffer.wait_until_completed();
+            self.context.command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
@@ -711,8 +710,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
         };
 
         //Warmup
-        generator.warmup(prefill_step_size);
-        generator.warmup(generate_suffix_length);
+        generator.warmup(prefill_step_size)?;
+        generator.warmup(generate_suffix_length)?;
 
         Ok(generator)
     }
@@ -720,7 +719,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
     fn warmup(
         &mut self,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), Error> {
         let token_ids: Vec<u64> = vec![0; suffix_length];
         let token_positions: Vec<usize> = (0..suffix_length).collect();
         let token_seeds: Vec<u64> = vec![0; suffix_length];
@@ -737,7 +736,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
             is_prefilling: false,
         };
 
-        let (_, _) = self.run_model(task, true, false, SamplingMethod::default(), false);
+        self.run_model(task, true, false, SamplingMethod::default(), false)?;
+        Ok(())
     }
 
     fn run_model(
@@ -747,7 +747,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
-    ) -> (ForwardPassState<B>, f64) {
+    ) -> Result<(ForwardPassState<B>, f64), Error> {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
@@ -774,21 +774,25 @@ impl<B: Backend> LanguageModelGenerator<B> {
             } else {
                 self.context.reset_command_buffer();
 
-                _ = task.build_encoded_task(
+                task.build_encoded_task(
                     &mut self.context,
                     &mut state,
                     &EncodingParameters::new(warmup, true, false),
                     encoded_task_key.clone(),
-                );
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             }
 
             if !warmup {
                 if !task.is_prefilling {
-                    self.context.gpu_sampler.encode(
-                        &mut state,
-                        &EncodingParameters::new(warmup, true, false),
-                        &mut self.context.command_buffer,
-                    );
+                    self.context
+                        .gpu_sampler
+                        .encode(
+                            &mut state,
+                            &EncodingParameters::new(warmup, true, false),
+                            &mut self.context.command_buffer,
+                        )
+                        .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
                 }
             }
 
@@ -799,29 +803,31 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
                 let next_task_key: String = task.encoded_task_key(self.tokens.len() + 1);
 
-                let next_encoded_task = task.build_encoded_task(
-                    &mut self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, false, false).with_projection(1),
-                    next_task_key.clone(),
-                );
+                let next_encoded_task = task
+                    .build_encoded_task(
+                        &mut self.context,
+                        &mut state,
+                        &EncodingParameters::new(warmup, false, false).with_projection(1),
+                        next_task_key.clone(),
+                    )
+                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
                 self.encoded_tasks.insert(next_task_key.clone(), next_encoded_task);
 
-                in_flight_command_buffer.wait_until_completed();
+                in_flight_command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
             } else {
-                self.context.command_buffer.wait_until_completed();
+                self.context
+                    .command_buffer
+                    .wait_until_completed()
+                    .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
             }
 
             let run_time = run_start.elapsed().as_secs_f64();
             if should_capture {
-                self.gpu_capture
-                    .stop_capture(&self.context.context, "decode")
-                    .map_err(|_| Error::CaptureFailed)
-                    .expect("failed to stop capture");
+                self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
             }
 
-            (state, run_time)
+            Ok((state, run_time))
         })
     }
 
@@ -850,7 +856,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
         wait_until_completed: bool,
-    ) {
+    ) -> Result<(), Error> {
         let mut command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
 
         {
@@ -866,8 +872,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         command_buffer.submit();
 
         if wait_until_completed {
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
+        Ok(())
     }
 
     fn allow_pre_encode(&self) -> bool {

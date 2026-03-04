@@ -2,8 +2,8 @@ use super::gemm;
 use crate::{
     DataType,
     backends::{
-        common::kernel::matmul::{MatmulArguments, MatmulDispatchDescriptor, gemv, split_k},
-        metal::{Metal, context::MetalContext, error::MetalError},
+        common::kernel::matmul::{MatmulArguments, MatmulDispatchDescriptor, MatmulError, gemv, split_k},
+        metal::{Metal, context::MetalContext},
     },
 };
 
@@ -11,7 +11,7 @@ pub fn choose_dispatch_descriptor(
     context: &MetalContext,
     data_type: DataType,
     arguments: &MatmulArguments<Metal>,
-) -> Result<MatmulDispatchDescriptor, MetalError> {
+) -> Result<MatmulDispatchDescriptor, MatmulError<Metal>> {
     if let Some(descriptor) = gemv::DispatchDescriptor::try_new::<Metal>(data_type, arguments)? {
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }

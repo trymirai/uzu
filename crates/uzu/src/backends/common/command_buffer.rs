@@ -27,12 +27,12 @@ pub trait CommandBuffer {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl FnOnce() + 'static,
+        handler: impl FnOnce(Result<(), <Self::Backend as Backend>::Error>) + 'static,
     );
 
     fn submit(&mut self);
 
-    fn wait_until_completed(&self);
+    fn wait_until_completed(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn gpu_execution_time_ms(&self) -> Option<f64>;
 }

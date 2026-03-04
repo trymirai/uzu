@@ -4,11 +4,14 @@ use std::{
 };
 
 use super::Cpu;
-use crate::backends::common::{CommandBuffer, CopyEncoder};
+use crate::backends::{
+    common::{CommandBuffer, CopyEncoder},
+    cpu::error::CpuError,
+};
 
 pub struct CpuCommandBuffer {
     commands: Vec<Box<dyn Fn()>>,
-    completion_handlers: Vec<Box<dyn FnOnce()>>,
+    completion_handlers: Vec<Box<dyn FnOnce(Result<(), CpuError>)>>,
     gpu_execution_time_ms: OnceCell<f64>,
 }
 
@@ -66,7 +69,7 @@ impl CommandBuffer for CpuCommandBuffer {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl FnOnce() + 'static,
+        handler: impl FnOnce(Result<(), CpuError>) + 'static,
     ) {
         self.completion_handlers.push(Box::new(handler))
     }
@@ -80,11 +83,13 @@ impl CommandBuffer for CpuCommandBuffer {
             .set((Instant::now() - start).as_secs_f64() * 1000.0)
             .expect("gpu execution time already set");
         for completion_handler in self.completion_handlers.drain(..) {
-            completion_handler();
+            completion_handler(Ok(()));
         }
     }
 
-    fn wait_until_completed(&self) {}
+    fn wait_until_completed(&self) -> Result<(), CpuError> {
+        Ok(())
+    }
 
     fn gpu_execution_time_ms(&self) -> Option<f64> {
         self.gpu_execution_time_ms.get().copied()

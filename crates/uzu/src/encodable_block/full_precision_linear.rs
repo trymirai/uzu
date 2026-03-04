@@ -11,7 +11,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend,
-        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
+        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -19,8 +19,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum FullPrecisionLinearError<B: Backend> {
-    #[error("Backend error: {0}")]
-    BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    MatmulError(#[from] MatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(ParameterLoaderError),
     #[error("Unsupported data type for full precision linear kernel: {0:?}")]
@@ -111,8 +111,7 @@ impl<B: Backend> FullPrecisionLinear<B> {
             Err(_) => None,
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, precision)
-            .map_err(FullPrecisionLinearError::BackendError)?;
+        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, precision)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),

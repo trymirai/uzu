@@ -14,6 +14,10 @@ pub enum Error {
     UnableToLoadTokenizer,
     #[error("Model is too large to fit into available RAM")]
     NotEnoughMemory,
+    #[error("Command buffer failed: {0}")]
+    CommandBufferFailed(Box<dyn std::error::Error>),
+    #[error("Encode failed: {0}")]
+    EncodeFailed(Box<dyn std::error::Error>),
     #[error("Unsupported context mode for model")]
     UnsupportedContextModeForModel,
     #[error("Unsupported speculator config for model")]
