@@ -1,9 +1,9 @@
 use std::{os::raw::c_void, ptr::NonNull};
 
 use super::Cpu;
-use crate::backends::common::NativeBuffer;
+use crate::backends::common::Buffer;
 
-impl NativeBuffer for Box<[u8]> {
+impl Buffer for Box<[u8]> {
     type Backend = Cpu;
 
     fn set_label(

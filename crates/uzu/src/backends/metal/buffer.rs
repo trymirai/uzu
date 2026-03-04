@@ -4,9 +4,9 @@ use metal::{MTLBuffer, MTLResourceExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
-use crate::backends::common::NativeBuffer;
+use crate::backends::common::Buffer;
 
-impl NativeBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
+impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     type Backend = Metal;
 
     fn set_label(

@@ -1,7 +1,7 @@
 use crate::{
     array::{Array, ArrayCell, ArrayContextExt},
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
     utils::attention::fill_attention_bias,
@@ -163,7 +163,7 @@ impl<B: Backend> KVCacheLayer<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         match &mut self.state {
@@ -213,7 +213,7 @@ impl<B: Backend> KVCacheLayer<B> {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         if source_indices == destination_indices {

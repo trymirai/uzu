@@ -139,34 +139,10 @@ impl<B: Backend> MambaMixer<B> {
 }
 
 impl<B: Backend> MambaMixer<B> {
-    fn encode_pipeline_with_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        encoder: &mut B::ComputeEncoder,
-        parameters: &EncodingParameters<B>,
-    ) {
-        let active_suffix_length = state.active_suffix_length();
-        if active_suffix_length == 0 {
-            return;
-        }
-
-        self.in_projection.encode_with_shared_encoder(state, parameters, encoder);
-        self.run_split_inproj(state, encoder, active_suffix_length);
-        self.run_conv_scan(state, encoder, active_suffix_length);
-
-        if active_suffix_length == 1 {
-            self.run_decode_ssm(state, encoder, active_suffix_length);
-        } else {
-            self.run_prefill_ssm(state, encoder, active_suffix_length);
-        }
-
-        self.out_projection.encode_with_shared_encoder(state, parameters, encoder);
-    }
-
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -199,14 +175,14 @@ impl<B: Backend> MambaMixer<B> {
             conv_dim as u32,
             inner_dim as u32,
             num_heads as u32,
-            encoder,
+            command_buffer,
         )
     }
 
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -238,7 +214,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_inputs.buffer().borrow().deref(),
                     weight_buf_borrow.deref(),
                     bias_buf_borrow.as_deref(),
-                    None::<&B::NativeBuffer>,
+                    None::<&B::Buffer>,
                     x_arr.buffer().borrow_mut().deref_mut(),
                     b_arr.buffer().borrow_mut().deref_mut(),
                     c_arr.buffer().borrow_mut().deref_mut(),
@@ -250,7 +226,7 @@ impl<B: Backend> MambaMixer<B> {
                     suffix_length as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    encoder,
+                    command_buffer,
                 );
             }
         } else {
@@ -266,7 +242,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     suffix_length as u32,
                     conv_dim as u32,
-                    encoder,
+                    command_buffer,
                 );
 
                 Some(buffer)
@@ -278,7 +254,7 @@ impl<B: Backend> MambaMixer<B> {
                 let padded_borrow = padded_buf.as_ref().map(|b| b.borrow());
                 let conv_inputs_borrow = conv_inputs.buffer();
                 let conv_inputs_ref = conv_inputs_borrow.borrow();
-                let conv_source: &B::NativeBuffer = padded_borrow.as_deref().unwrap_or(conv_inputs_ref.deref());
+                let conv_source: &B::Buffer = padded_borrow.as_deref().unwrap_or(conv_inputs_ref.deref());
                 self.conv_scan.encode(
                     conv_source,
                     weight_buf_borrow.deref(),
@@ -294,7 +270,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    encoder,
+                    command_buffer,
                 )
             }
         }
@@ -303,7 +279,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -327,7 +303,7 @@ impl<B: Backend> MambaMixer<B> {
         let skip_rc = self.skip_connection_weight.buffer();
         let skip_borrow = skip_rc.borrow();
         self.ssd_prefill.encode(
-            encoder,
+            command_buffer,
             SSDPrefillArguments {
                 x: x.buffer().borrow().deref(),
                 dt: dt.buffer().borrow().deref(),
@@ -354,7 +330,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState<B>,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -396,7 +372,7 @@ impl<B: Backend> MambaMixer<B> {
             c.buffer().borrow().deref(),
             skip_borrow.deref(),
             z.buffer().borrow().deref(),
-            None::<&B::NativeBuffer>,
+            None::<&B::Buffer>,
             y.buffer().borrow_mut().deref_mut(),
             state_arr.buffer().borrow_mut().deref_mut(),
             group_size as u32,
@@ -408,7 +384,7 @@ impl<B: Backend> MambaMixer<B> {
             suffix_length as u32,
             h,
             dh,
-            encoder,
+            command_buffer,
         );
     }
 
@@ -438,56 +414,23 @@ impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &mut B::CommandBuffer,
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        if self.supports_shared_encoder() {
-            command_buffer
-                .with_compute_encoder(|encoder| self.encode_pipeline_with_encoder(state, encoder, parameters));
-
-            if parameters.wait_until_completed {
-                command_buffer.submit();
-                command_buffer.wait_until_completed()?;
-            }
-            return Ok(());
-        }
-
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
             return Ok(());
         }
 
         self.in_projection.encode(state, parameters, command_buffer)?;
-
-        command_buffer.with_compute_encoder(|encoder| {
-            self.run_split_inproj(state, encoder, active_suffix_length);
-            self.run_conv_scan(state, encoder, active_suffix_length);
-            if active_suffix_length == 1 {
-                self.run_decode_ssm(state, encoder, active_suffix_length);
-            } else {
-                self.run_prefill_ssm(state, encoder, active_suffix_length);
-            }
-        });
-
-        self.out_projection.encode(state, parameters, command_buffer)?;
-
-        if parameters.wait_until_completed {
-            command_buffer.submit();
-            command_buffer.wait_until_completed()?;
+        self.run_split_inproj(state, command_buffer, active_suffix_length);
+        self.run_conv_scan(state, command_buffer, active_suffix_length);
+        if active_suffix_length == 1 {
+            self.run_decode_ssm(state, command_buffer, active_suffix_length);
+        } else {
+            self.run_prefill_ssm(state, command_buffer, active_suffix_length);
         }
+        self.out_projection.encode(state, parameters, command_buffer)?;
         Ok(())
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        self.in_projection.supports_shared_encoder() && self.out_projection.supports_shared_encoder()
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
-        self.encode_pipeline_with_encoder(state, encoder, parameters);
     }
 }

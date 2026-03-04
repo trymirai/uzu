@@ -1,12 +1,15 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::moe::{MoeGatherArguments, MoeGatherKernels},
+        common::{
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+            kernel::moe::{MoeGatherArguments, MoeGatherKernels},
+        },
         metal::Metal,
     },
 };
@@ -78,9 +81,9 @@ fn test_gather_correctness() {
 
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("MoeGatherKernel::new");
-        let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
         gather.encode(
-            &mut cb,
+            &mut command_buffer,
             DataType::BF16,
             MoeGatherArguments {
                 x_buffer: &x_buf,
@@ -92,8 +95,7 @@ fn test_gather_correctness() {
                 d_model,
             },
         );
-        cb.commit();
-        cb.wait_until_completed();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         // Compare
         let x_gpu =

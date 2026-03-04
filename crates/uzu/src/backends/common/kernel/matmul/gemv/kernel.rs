@@ -8,7 +8,7 @@ use super::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Kernels,
+        Backend, CommandBuffer, Kernels,
         kernel::{MatmulGemvKernel, matmul::MatmulError},
     },
 };
@@ -67,7 +67,7 @@ impl<B: Backend> GemvKernel<B> {
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
         let pipeline = self.get_or_create_kernel(context, config)?;
@@ -118,7 +118,7 @@ impl<B: Backend> GemvKernel<B> {
             dispatch_descriptor.bias_stride,
             dispatch_descriptor.batch_rows,
             config.output_rows_per_threadgroup() as i32,
-            encoder,
+            command_buffer,
         );
 
         Ok(())

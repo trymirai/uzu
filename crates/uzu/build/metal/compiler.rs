@@ -288,9 +288,10 @@ impl MetalCompiler {
 
             use crate::backends::metal::{
                 context::MetalContext,
+                command_buffer::MetalCommandBufferEncoding,
                 error::MetalError,
                 metal_extensions::{
-                    ComputeEncoderConditional, ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
+                    ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
                 },
             };
 

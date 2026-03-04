@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::MlpGateActMulKernel},
+    backends::common::{Backend, CommandBuffer, Kernels, kernel::MlpGateActMulKernel},
     config::Activation,
 };
 
@@ -27,9 +27,9 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
 
     pub fn encode(
         &self,
-        encoder: &mut B::ComputeEncoder,
-        fused_up: &B::NativeBuffer,
-        hidden: &mut B::NativeBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        fused_up: &B::Buffer,
+        hidden: &mut B::Buffer,
         m: i32,
     ) -> Result<(), B::Error> {
         let act_type = match self.activation {
@@ -41,7 +41,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 panic!("Identity activation is not supported for kernel")
             },
         };
-        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, act_type, encoder);
+        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, act_type, command_buffer);
         Ok(())
     }
 }

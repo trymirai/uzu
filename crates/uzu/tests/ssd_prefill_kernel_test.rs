@@ -3,16 +3,14 @@
 use std::mem::size_of;
 
 use bytemuck;
-use metal::{
-    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt,
-    MTLResourceOptions,
-};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::runtime::ProtocolObject;
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Context, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels,
             kernel::{
                 Conv1dScanKernel,
                 ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
@@ -248,12 +246,9 @@ fn run_prefill_kernel_mode(
         head_dim: fixture.head_dim,
     };
 
-    let command_buffer = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let mut encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
-    kernel.encode(&mut encoder, args, mode);
-    encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+    kernel.encode(&mut command_buffer, args, mode);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = read_buffer(&y_buf, fixture.total_x);
     let state_vec = read_buffer(&state_buf, fixture.total_state);
@@ -290,7 +285,8 @@ fn run_conv_scan_once(
         device.new_buffer_with_data(bytemuck::cast_slice(w_data), STORAGE_MODE).expect("Failed to create buffer");
     let b_buf =
         device.new_buffer_with_data(bytemuck::cast_slice(b_data), STORAGE_MODE).expect("Failed to create buffer");
-    let state_buf = device.new_buffer(total_state * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer");
+    let mut state_buf =
+        device.new_buffer(total_state * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer");
     let scratch_buf = if use_scratch && tap_count > 0 {
         Some(device.new_buffer(total_state * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer"))
     } else {
@@ -320,8 +316,7 @@ fn run_conv_scan_once(
         write_buffer(&padded_buf, &host);
     }
 
-    let command_buffer = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let mut encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
     let mut b_out = y_buf.clone();
     let mut c_out = y_buf.clone();
     let mut state_out = scratch_buf.as_ref().unwrap_or(&state_buf).clone();
@@ -340,21 +335,17 @@ fn run_conv_scan_once(
         channels as u32,
         channels as u32,
         0u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding();
 
     if let Some(ref scratch) = scratch_buf {
         let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            let blit = command_buffer.new_blit_command_encoder().expect("Failed to create blit encoder");
-            blit.copy_buffer_to_buffer(scratch, 0, &state_buf, 0, bytes);
-            blit.end_encoding();
+            command_buffer.encode_copy(scratch, &mut state_buf, bytes);
         }
     }
 
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = read_buffer(&y_buf, total_x);
     let state_vec = read_buffer(&state_buf, total_state);

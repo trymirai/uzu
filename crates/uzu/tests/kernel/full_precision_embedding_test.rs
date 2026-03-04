@@ -8,7 +8,10 @@ use num_traits::Float;
 use uzu::{
     ArrayElement,
     array::ArrayContextExt,
-    backends::common::{Backend, CommandBuffer, Context, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        Kernels, kernel::FullPrecisionEmbeddingLookupKernel,
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -60,21 +63,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let weights_array = context.create_array_from(&[input.vocab_size, input.model_dim], &input.weights, "");
     let output_array = context.create_array_uninitialized(&[input.batch_size, input.model_dim], T::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to get command buffer");
-    command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(
-            token_ids_array.buffer().borrow().deref(),
-            weights_array.buffer().borrow().deref(),
-            output_array.buffer().borrow_mut().deref_mut(),
-            input.batch_size as u32,
-            input.vocab_size as u32,
-            input.model_dim as u32,
-            input.input_scale,
-            encoder,
-        );
-    });
-    command_buffer.submit();
-    command_buffer.wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer().expect("Failed to get command buffer").start_encoding();
+    kernel.encode(
+        token_ids_array.buffer().borrow().deref(),
+        weights_array.buffer().borrow().deref(),
+        output_array.buffer().borrow_mut().deref_mut(),
+        input.batch_size as u32,
+        input.vocab_size as u32,
+        input.model_dim as u32,
+        input.input_scale,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

@@ -4,12 +4,12 @@ use ndarray::{ArrayView, Dimension, IxDyn};
 
 use crate::{
     ArrayElement, DataType,
-    backends::common::{Backend, Context, NativeBuffer},
+    backends::common::{Backend, Buffer, Context},
 };
 
 #[derive(Debug)]
 pub struct Array<B: Backend> {
-    buffer: Rc<RefCell<B::NativeBuffer>>,
+    buffer: Rc<RefCell<B::Buffer>>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -18,7 +18,7 @@ pub struct Array<B: Backend> {
 impl<B: Backend> Array<B> {
     // Constructors
     pub unsafe fn from_parts(
-        buffer: Rc<RefCell<B::NativeBuffer>>,
+        buffer: Rc<RefCell<B::Buffer>>,
         offset: usize,
         shape: &[usize],
         data_type: DataType,
@@ -49,7 +49,7 @@ impl<B: Backend> Array<B> {
     }
 
     // Getters
-    pub fn buffer(&self) -> Rc<RefCell<B::NativeBuffer>> {
+    pub fn buffer(&self) -> Rc<RefCell<B::Buffer>> {
         self.buffer.clone()
     }
 

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Allocator, Context, DeviceClass};
+use crate::backends::common::{Context, DeviceClass};
 
 pub struct CpuContext;
 
@@ -18,10 +18,6 @@ impl Context for CpuContext {
 
     fn debug_active(&self) -> bool {
         false
-    }
-
-    fn allocator(&self) -> &Allocator<Self::Backend> {
-        unimplemented!()
     }
 
     fn create_buffer(

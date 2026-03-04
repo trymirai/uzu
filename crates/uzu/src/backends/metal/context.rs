@@ -1,14 +1,17 @@
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer, MTLCommandQueue,
-    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLLibrary, MTLResourceOptions,
+    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
+    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
+    MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{Metal, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions};
-use crate::backends::common::{Allocator, Context, DeviceClass as CommonDeviceClass};
+use crate::backends::{
+    common::{Context, DeviceClass as CommonDeviceClass},
+    metal::command_buffer::MetalCommandBufferInitial,
+};
 
 /// Apple GPU architecture generation.
 /// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
@@ -127,7 +130,6 @@ pub struct MetalContext {
     architecture: DeviceArchitecture,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    allocator: Allocator<Metal>,
 }
 
 impl MetalContext {
@@ -190,13 +192,12 @@ impl Context for MetalContext {
 
         let architecture = DeviceArchitecture::from_device(&device);
 
-        Ok(Rc::new_cyclic(|weak_self| Self {
+        Ok(Rc::new(Self {
             device,
             command_queue,
             architecture,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
-            allocator: Allocator::new(weak_self.clone()),
         }))
     }
 
@@ -221,10 +222,6 @@ impl Context for MetalContext {
         matches!(upper.as_str(), "1" | "YES" | "TRUE")
     }
 
-    fn allocator(&self) -> &Allocator<Metal> {
-        &self.allocator
-    }
-
     fn create_buffer(
         &self,
         size: usize,
@@ -232,8 +229,10 @@ impl Context for MetalContext {
         self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer)
     }
 
-    fn create_command_buffer(&self) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MetalError> {
-        self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)
+    fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
+        Ok(MetalCommandBufferInitial::new(
+            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
+        ))
     }
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {

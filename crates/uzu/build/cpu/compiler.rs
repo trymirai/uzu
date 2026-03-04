@@ -329,7 +329,7 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let (encode_generics, encode_args_defs, encode_args_passthrough): (Vec<_>, Vec<_>, Vec<_>) = kernel_arguments
+        let (encode_generics, encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
             .iter()
             .map(|argument| {
                 let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
@@ -359,7 +359,7 @@ impl CpuCompiler {
                     ty = quote! { Option<#ty> };
                 }
 
-                Ok((generic, quote! { #argument_ident: #ty }, quote! { #argument_ident }))
+                Ok((generic, quote! { #argument_ident: #ty }))
             })
             .collect::<anyhow::Result<_>>()?;
 
@@ -439,12 +439,7 @@ impl CpuCompiler {
             });
 
             quote! {
-                encoder.push_command(move || {
-                    if let Some(predicate) = predicate && unsafe { *predicate } == 0u32 {
-                        return;
-                    }
-                    #monomorphized_function(#function_call_args_joined)
-                });
+                encoder.push_command(move || #monomorphized_function(#function_call_args_joined));
             }
         };
 
@@ -536,16 +531,7 @@ impl CpuCompiler {
                 }
 
                 fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::cpu::command_buffer::CpuCommandBuffer) {
-                    self.encode_if(#(#encode_args_passthrough ,)* encoder, None::<&Box<[u8]>>)
-                }
-
-                fn encode_if<#(#encode_generics ,)* 'encoder, 'predicate>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::cpu::command_buffer::CpuCommandBuffer, predicate: Option<impl crate::backends::common::kernel::BufferArg<'predicate, Box<[u8]>>>) {
                     #(#argument_copies)*
-                    let predicate = predicate.map(|__dsl_buffer_impl| unsafe {
-                        let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
-
-                        __dsl_buffer.as_ptr().byte_add(__dsl_offset) as *const u32
-                    });
                     #encode_body
                 }
             }

@@ -1,7 +1,7 @@
-use metal::{MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLComputeCommandEncoder, MTLEvent};
+use metal::{MTLBuffer, MTLEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{context::MetalContext, error::MetalError, kernel::dsl::MetalKernels};
+use super::{command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::dsl::MetalKernels};
 use crate::backends::common::Backend;
 
 #[derive(Debug, Clone)]
@@ -9,10 +9,8 @@ pub struct Metal;
 
 impl Backend for Metal {
     type Context = MetalContext;
-    type NativeBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
-    type CommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
-    type ComputeEncoder = Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>;
-    type CopyEncoder = Retained<ProtocolObject<dyn MTLBlitCommandEncoder>>;
+    type CommandBuffer = MetalCommandBuffer;
+    type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
     type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;
     type Error = MetalError;

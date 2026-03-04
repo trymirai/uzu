@@ -10,7 +10,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -42,7 +42,7 @@ pub enum FullPrecisionEmbeddingReadoutError<B: Backend> {
 
 pub struct FullPrecisionEmbeddingReadout<B: Backend> {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -94,20 +94,16 @@ impl<B: Backend> FullPrecisionEmbeddingReadout<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
 
         let sampling_start = state.sampling_start();
@@ -117,7 +113,7 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B> {
 
         self.kernel.borrow_mut().encode(
             state.context(),
-            encoder,
+            command_buffer,
             FullPrecisionMatmulArguments {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: sampling_start * self.model_dim * element_size,
@@ -129,5 +125,6 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B> {
                 output_dim: self.vocab_size,
             },
         );
+        Ok(())
     }
 }

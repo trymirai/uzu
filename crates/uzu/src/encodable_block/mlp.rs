@@ -32,54 +32,11 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        params: &EncodingParameters<B>,
-        command_buffer: &mut B::CommandBuffer,
+        params: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        if self.supports_shared_encoder() {
-            command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, params, encoder));
-        } else {
-            // Up
-            self.up.encode(state, params, command_buffer)?;
-
-            // Gate act+mul (fused_up -> hidden)
-            command_buffer.with_compute_encoder(|encoder| {
-                let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-                let fused = arrays[0].borrow_mut();
-                let hidden = arrays[1].borrow_mut();
-                let m = fused.shape()[0] as i32;
-                let fused_buf_rc = fused.buffer();
-                let fused_buf_borrow = fused_buf_rc.borrow();
-                let hidden_buf_rc = hidden.buffer();
-                let mut hidden_buf_borrow = hidden_buf_rc.borrow_mut();
-
-                self.gate
-                    .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref_mut(), m)
-                    .expect("Failed to encode MLP activation/mul kernel");
-            });
-
-            // Down
-            self.down.encode(state, params, command_buffer)?;
-        }
-
-        if params.wait_until_completed {
-            command_buffer.submit();
-            command_buffer.wait_until_completed()?;
-        }
-        Ok(())
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        self.up.supports_shared_encoder() && self.down.supports_shared_encoder()
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        params: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
         // Up
-        self.up.encode_with_shared_encoder(state, params, encoder);
+        self.up.encode(state, params, command_buffer)?;
 
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
@@ -91,7 +48,7 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         let hidden_buf_rc = hidden.buffer();
         let mut hidden_buf_borrow = hidden_buf_rc.borrow_mut();
         self.gate
-            .encode(encoder, fused_buf_borrow.deref(), hidden_buf_borrow.deref_mut(), m)
+            .encode(command_buffer, fused_buf_borrow.deref(), hidden_buf_borrow.deref_mut(), m)
             .expect("Failed to encode MLP activation/mul kernel");
         drop(hidden_buf_borrow);
         drop(fused_buf_borrow);
@@ -99,6 +56,7 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         drop(hidden);
 
         // Down
-        self.down.encode_with_shared_encoder(state, params, encoder);
+        self.down.encode(state, params, command_buffer)?;
+        Ok(())
     }
 }

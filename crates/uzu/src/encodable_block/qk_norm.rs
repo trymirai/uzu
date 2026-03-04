@@ -12,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, QKNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -34,8 +34,8 @@ pub struct QKNorm<B: Backend> {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
-    key_scales_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
+    query_scales_buffer: Option<Rc<RefCell<B::Buffer>>>,
+    key_scales_buffer: Option<Rc<RefCell<B::Buffer>>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -124,16 +124,12 @@ impl<B: Backend> QKNorm<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
         let qkv_shape = {
             let qkv_array = qkv_binding[0].borrow();
@@ -148,7 +144,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             query_kernel.encode(
-                None::<&B::NativeBuffer>,
+                None::<&B::Buffer>,
                 query_scales_buffer.borrow().deref(),
                 qkv_array.buffer().borrow_mut().deref_mut(),
                 batch_size,
@@ -160,7 +156,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
                 0,
                 self.num_q_heads as u32,
                 query_config.upcast_mode == UpcastMode::FullLayer,
-                encoder,
+                command_buffer,
             );
         }
 
@@ -169,7 +165,7 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
             key_kernel.encode(
-                None::<&B::NativeBuffer>,
+                None::<&B::Buffer>,
                 key_scales_buffer.borrow().deref(),
                 qkv_array.buffer().borrow_mut().deref_mut(),
                 batch_size,
@@ -181,8 +177,9 @@ impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 key_config.upcast_mode == UpcastMode::FullLayer,
-                encoder,
+                command_buffer,
             );
         }
+        Ok(())
     }
 }

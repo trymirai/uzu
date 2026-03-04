@@ -10,7 +10,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
@@ -88,10 +88,10 @@ pub enum QuantizedLinearError<B: Backend> {
 pub struct QuantizedLinear<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-    biases_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
-    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
-    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
-    zero_points_or_biases_buffer: Rc<RefCell<B::NativeBuffer>>,
+    biases_buffer: Option<Rc<RefCell<B::Buffer>>>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
+    zero_points_or_biases_buffer: Rc<RefCell<B::Buffer>>,
     quantization_type: QuantizedMatmulType,
     input_dim: usize,
     output_dim: usize,
@@ -245,16 +245,12 @@ impl<B: Backend> QuantizedLinear<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
         let input_array = arrays[0].borrow_mut();
@@ -264,7 +260,7 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
 
         self.kernel
             .encode(
-                encoder,
+                command_buffer,
                 QuantizedMatmulArguments {
                     a_buffer: input_array.buffer().borrow().deref(),
                     a_offset: 0,
@@ -282,15 +278,15 @@ impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
 
         if let (Some(bias_add_kernel), Some(biases_buffer)) = (&self.bias_add_kernel, &self.biases_buffer) {
             let total_length = batch_size * self.output_dim;
-            bias_add_kernel.encode_if(
-                None::<&B::NativeBuffer>,
+            bias_add_kernel.encode(
+                None::<&B::Buffer>,
                 biases_buffer.borrow().deref(),
                 output_buf_borrow.deref_mut(),
                 self.output_dim as u32,
                 total_length as u32,
-                encoder,
-                parameters.predicate_ref(),
+                command_buffer,
             );
         }
+        Ok(())
     }
 }

@@ -8,9 +8,9 @@ use crate::{
 };
 
 pub struct KVLayerData<B: Backend> {
-    pub key_buffer: Rc<RefCell<B::NativeBuffer>>,
+    pub key_buffer: Rc<RefCell<B::Buffer>>,
     pub key_shape: [usize; 3],
-    pub value_buffer: Rc<RefCell<B::NativeBuffer>>,
+    pub value_buffer: Rc<RefCell<B::Buffer>>,
     pub value_shape: [usize; 3],
 }
 
@@ -52,25 +52,13 @@ impl<B: Backend> KVCacheUpdate<B> {
         })
     }
 
+    /// Encode the KV cache update operation using a provided command buffer
     pub fn encode(
         &self,
         in_place_data: &[KVLayerData<B>],
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &mut B::CommandBuffer,
-    ) -> Result<(), KVCacheUpdateError<B>> {
-        command_buffer.with_compute_encoder(|encoder| {
-            self.encode_with_encoder(in_place_data, source_indices, destination_indices, encoder)
-        })
-    }
-
-    /// Encode the KV cache update operation using a provided compute encoder
-    pub fn encode_with_encoder(
-        &self,
-        in_place_data: &[KVLayerData<B>],
-        source_indices: &[usize],
-        destination_indices: &[usize],
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), KVCacheUpdateError<B>> {
         if source_indices.len() != destination_indices.len() {
             return Err(KVCacheUpdateError::IndicesCountMismatch);
@@ -99,7 +87,7 @@ impl<B: Backend> KVCacheUpdate<B> {
                     num_heads as u32,
                     max_sequence_length as u32,
                     head_dim as u32,
-                    encoder,
+                    command_buffer,
                 );
             }
         }

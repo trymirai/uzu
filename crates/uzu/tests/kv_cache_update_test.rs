@@ -3,11 +3,11 @@
 use std::{cell::RefCell, rc::Rc};
 
 use bytemuck;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array, Array3, s};
 use uzu::backends::{
     common::{
-        Backend, Context,
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
         gpu_types::Swap,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData, create_swaps_direct},
     },
@@ -106,8 +106,7 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
         value_shape: [num_heads, seq_len, head_dim],
     };
 
-    let mut command_buffer =
-        context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
+    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
     match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &mut command_buffer) {
         Ok(_) => {},
         Err(e) => {
@@ -116,8 +115,7 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
         },
     }
 
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let key_result_ptr = key_buffer.borrow().contents().as_ptr() as *const f32;
     let value_result_ptr = value_buffer.borrow().contents().as_ptr() as *const f32;

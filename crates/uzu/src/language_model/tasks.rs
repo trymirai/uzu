@@ -2,18 +2,18 @@ use std::mem::size_of;
 
 use super::language_model_generator_context::LanguageModelGeneratorContext;
 use crate::{
-    backends::common::{Backend, Context, NativeBuffer},
+    backends::common::{Backend, Buffer, Context},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::ForwardPassState,
 };
 
 pub struct LanguageModelGeneratorEncodedTask<B: Backend> {
     pub key: String,
-    predicate_buffer: B::NativeBuffer,
+    predicate_buffer: B::Buffer,
 }
 
 impl<B: Backend> LanguageModelGeneratorEncodedTask<B> {
-    pub fn predicate_buffer(&self) -> &B::NativeBuffer {
+    pub fn predicate_buffer(&self) -> &B::Buffer {
         &self.predicate_buffer
     }
 
@@ -111,7 +111,7 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         &self,
         context: &mut LanguageModelGeneratorContext<B>,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
+        parameters: &EncodingParameters,
         key: String,
     ) -> Result<LanguageModelGeneratorEncodedTask<B>, B::Error> {
         context.executables.encode(state, parameters, &mut context.command_buffer)?;

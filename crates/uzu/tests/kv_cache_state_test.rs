@@ -1,12 +1,13 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
-use metal::{MTLCommandBuffer, MTLCommandQueue};
-use objc2::Message;
 use uzu::{
     DataType,
     array::ArrayContextExt,
     backends::{
-        common::{Backend, Context, kernel::kv_cache_update::KVCacheUpdate},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, kernel::kv_cache_update::KVCacheUpdate,
+        },
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
@@ -185,18 +186,15 @@ fn run_scenario(
         },
     };
 
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
-
-    let root_command_buffer = command_buffer.clone();
+    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
-        &mut root_command_buffer.retain(),
+        &mut command_buffer,
         &kv_cache_update,
     );
 
-    command_buffer.commit();
-    root_command_buffer.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     layer.register_accepted_tokens(&scenario.accepted_token_positions);
 

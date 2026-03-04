@@ -9,7 +9,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, Kernels, NativeBuffer,
+        Backend, Buffer, CommandBuffer, CommandBufferInitial, Context, Kernels,
         kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
@@ -31,13 +31,13 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Rc<RefCell<B::NativeBuffer>>,
+    pub positions: Rc<RefCell<B::Buffer>>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Rc<RefCell<B::NativeBuffer>>,
+    pub seeds: Rc<RefCell<B::Buffer>>,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Rc<RefCell<B::NativeBuffer>>,
+    pub results: Rc<RefCell<B::Buffer>>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
@@ -122,7 +122,7 @@ impl<B: Backend> AsyncBuffers<B> {
 
 pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: B::CommandBuffer,
+    pub command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -151,7 +151,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
-        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
+        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -247,10 +247,10 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         Ok(context)
     }
 
-    pub fn reset_command_buffer(&mut self) -> B::CommandBuffer {
+    pub fn replace_command_buffer(&mut self) -> <B::CommandBuffer as CommandBuffer>::Encoding {
         std::mem::replace(
             &mut self.command_buffer,
-            self.context.create_command_buffer().expect("Failed to create command buffer"),
+            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
         )
     }
 }

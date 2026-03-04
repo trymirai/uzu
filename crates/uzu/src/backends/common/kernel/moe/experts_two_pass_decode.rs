@@ -7,8 +7,8 @@ use super::{
 use crate::{
     DataType,
     backends::common::{
-        CommandBuffer,
-        kernel::{Backend, Kernels, MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
+        Backend, CommandBuffer,
+        kernel::{Kernels, MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
     },
 };
 
@@ -47,7 +47,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         mut args: MoeExpertsTwoPassArguments<B>,
     ) {
         if args.total_rows == 0 {
@@ -108,43 +108,39 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
 
         // pass a
-        command_buffer.with_compute_encoder(|encoder| {
-            let pass_a_kernel = &self.pass_a_indirect[gate_idx][dtype_idx];
-            pass_a_kernel.encode(
-                args.x_perm_buffer,
-                args.expert_offsets,
-                args.w13_all,
-                args.hidden_buffer.deref_mut(),
-                args.up_biases,
-                args.d_model as u32,
-                args.d_ff as u32,
-                args.e as u32,
-                args.gate_clip_min,
-                args.gate_clip_max,
-                args.up_clip_min,
-                args.up_clip_max,
-                args.silu_alpha,
-                args.tile_map.deref(),
-                args.dispatch_args.deref(),
-                encoder,
-            );
-        });
+        let pass_a_kernel = &self.pass_a_indirect[gate_idx][dtype_idx];
+        pass_a_kernel.encode(
+            args.x_perm_buffer,
+            args.expert_offsets,
+            args.w13_all,
+            args.hidden_buffer.deref_mut(),
+            args.up_biases,
+            args.d_model as u32,
+            args.d_ff as u32,
+            args.e as u32,
+            args.gate_clip_min,
+            args.gate_clip_max,
+            args.up_clip_min,
+            args.up_clip_max,
+            args.silu_alpha,
+            args.tile_map.deref(),
+            args.dispatch_args.deref(),
+            command_buffer,
+        );
 
         // pass b
-        command_buffer.with_compute_encoder(|encoder| {
-            let pass_b_kernel = &self.fused_down[dtype_idx];
-            pass_b_kernel.encode(
-                args.hidden_buffer.deref(),
-                args.row_expert_map.deref(),
-                args.w2_all,
-                args.down_biases,
-                args.output_buffer.deref_mut(),
-                args.total_rows as u32,
-                args.d_model as u32,
-                args.d_ff as u32,
-                args.e as u32,
-                encoder,
-            );
-        });
+        let pass_b_kernel = &self.fused_down[dtype_idx];
+        pass_b_kernel.encode(
+            args.hidden_buffer.deref(),
+            args.row_expert_map.deref(),
+            args.w2_all,
+            args.down_biases,
+            args.output_buffer.deref_mut(),
+            args.total_rows as u32,
+            args.d_model as u32,
+            args.d_ff as u32,
+            args.e as u32,
+            command_buffer,
+        );
     }
 }

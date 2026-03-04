@@ -10,7 +10,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -50,8 +50,8 @@ pub enum FullPrecisionLinearError<B: Backend> {
 
 pub struct FullPrecisionLinear<B: Backend> {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    bias_buffer: Option<Rc<RefCell<B::NativeBuffer>>>,
-    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
+    bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,
@@ -126,16 +126,12 @@ impl<B: Backend> FullPrecisionLinear<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
         let input_array = arrays[0].borrow_mut();
@@ -144,7 +140,7 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
         let bias_borrow = self.bias_buffer.as_ref().map(|b| b.borrow());
         self.kernel.borrow_mut().encode(
             state.context(),
-            encoder,
+            command_buffer,
             FullPrecisionMatmulArguments {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
@@ -156,5 +152,6 @@ impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
                 output_dim: self.output_dim,
             },
         );
+        Ok(())
     }
 }

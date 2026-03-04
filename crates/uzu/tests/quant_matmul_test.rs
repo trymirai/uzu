@@ -2,13 +2,14 @@ use std::time::Instant;
 
 use bytemuck;
 use half::{bf16, f16};
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Context,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context,
             kernel::quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
                 QuantizedMatmulType,
@@ -510,12 +511,9 @@ fn execute_quantized_matmul(
                 output_dim,
                 quantization_type,
             };
-            let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            let mut encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
-            kernel.encode(&mut encoder, args).unwrap();
-            encoder.end_encoding();
-            cb_ref.commit();
-            cb_ref.wait_until_completed();
+            let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+            kernel.encode(&mut command_buffer, args).unwrap();
+            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         }
     }
 
@@ -533,12 +531,9 @@ fn execute_quantized_matmul(
             output_dim,
             quantization_type,
         };
-        let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let mut encoder = cb_ref.new_compute_command_encoder().expect("Failed to create compute encoder");
-        kernel.encode(&mut encoder, args).unwrap();
-        encoder.end_encoding();
-        cb_ref.commit();
-        cb_ref.wait_until_completed();
+        let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+        kernel.encode(&mut command_buffer, args).unwrap();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     }
     let elapsed = start.elapsed();
 
