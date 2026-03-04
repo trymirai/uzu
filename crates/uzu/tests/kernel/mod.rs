@@ -2,5 +2,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-#[path = "full_precision_embedding.rs"]
-mod full_precision_embedding;
+mod full_precision_embedding_test;
+mod tensor_add_bias_test;
+mod tensor_add_swap_test;
+mod tensor_copy_test;
+mod token_copy_test;

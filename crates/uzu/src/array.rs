@@ -270,7 +270,7 @@ pub trait ArrayContextExt {
             data.len(),
             size_from_shape,
             "Shape size {} and data size {} are not equal",
-            shape.len(),
+            size_from_shape,
             data.len()
         );
 

@@ -18,5 +18,14 @@ pub fn tensor_add_bias<T: ArrayElement + Float>(
     #[specialize]
     in_place: bool,
 ) {
-    todo!()
+    for i in 0usize..(length as usize) {
+        let bias_position = (i % num_cols as usize);
+        unsafe {
+            if let Some(in_data) = input {
+                *output.add(i) = *in_data.add(i) + *bias.add(bias_position);
+            } else {
+                *output.add(i) = *output.add(i) + *bias.add(bias_position);
+            }
+        }
+    }
 }
