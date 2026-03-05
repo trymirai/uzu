@@ -41,14 +41,14 @@ impl<B: Backend> EncodableBlock<B> for ClassifierPredictionHead<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.supports_shared_encoder() {
             command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
         } else {
-            self.dense.encode(state, parameters, command_buffer);
-            self.activation.encode(state, parameters, command_buffer);
-            self.norm.encode(state, parameters, command_buffer);
-            self.readout.encode(state, parameters, command_buffer);
+            self.dense.encode(state, parameters, command_buffer)?;
+            self.activation.encode(state, parameters, command_buffer)?;
+            self.norm.encode(state, parameters, command_buffer)?;
+            self.readout.encode(state, parameters, command_buffer)?;
         }
 
         #[cfg(feature = "tracing")]
@@ -63,8 +63,9 @@ impl<B: Backend> EncodableBlock<B> for ClassifierPredictionHead<B> {
 
         if parameters.wait_until_completed {
             command_buffer.submit();
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed()?;
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

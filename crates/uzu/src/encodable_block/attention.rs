@@ -141,13 +141,14 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
 
         if parameters.wait_until_completed {
             command_buffer.submit();
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed()?;
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

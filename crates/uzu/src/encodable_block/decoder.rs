@@ -176,29 +176,30 @@ impl<B: Backend> EncodableBlock<B> for Decoder<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
-        self.embed.encode(state, parameters, command_buffer);
+    ) -> Result<(), B::Error> {
+        self.embed.encode(state, parameters, command_buffer)?;
 
         for layer in self.layers.iter() {
-            layer.encode(state, parameters, command_buffer);
+            layer.encode(state, parameters, command_buffer)?;
         }
 
         if state.is_prefilling() {
-            return;
+            return Ok(());
         }
 
-        self.norm.encode(state, parameters, command_buffer);
+        self.norm.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
             state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.readout.encode(state, parameters, command_buffer);
+        self.readout.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
             state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
         }
+        Ok(())
     }
 }

@@ -66,7 +66,7 @@ impl<B: Backend> EncodableBlock<B> for Pooling<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
 
         #[cfg(feature = "tracing")]
@@ -74,6 +74,7 @@ impl<B: Backend> EncodableBlock<B> for Pooling<B> {
             let output_pooling_trace = state.traces().borrow().output_pooling().clone();
             state.encode_copy_array(command_buffer, ArrayId::ClassifierPooling, output_pooling_trace);
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

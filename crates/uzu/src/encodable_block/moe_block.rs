@@ -194,7 +194,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
             ArrayId::Main,
@@ -482,8 +482,9 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
 
         if parameters.wait_until_completed {
             command_buffer.submit();
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed()?;
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

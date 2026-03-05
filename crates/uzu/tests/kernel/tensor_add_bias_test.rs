@@ -87,7 +87,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         )
     });
     command_buffer.submit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

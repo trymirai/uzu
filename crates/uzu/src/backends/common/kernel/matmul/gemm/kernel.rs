@@ -5,7 +5,10 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::MatmulGemmKernel},
+    backends::common::{
+        Backend, Kernels,
+        kernel::{MatmulGemmKernel, matmul::MatmulError},
+    },
 };
 
 pub struct GemmKernel<B: Backend> {
@@ -13,13 +16,10 @@ pub struct GemmKernel<B: Backend> {
     pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemmKernel>,
 }
 
-impl<B: Backend> GemmKernel<B>
-where
-    B::Error: From<String>,
-{
-    pub fn new(data_type: DataType) -> Result<Self, B::Error> {
+impl<B: Backend> GemmKernel<B> {
+    pub fn new(data_type: DataType) -> Result<Self, MatmulError<B>> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(B::Error::from(format!("Unsupported dtype for GEMM: {data_type:?}")));
+            return Err(MatmulError::UnsupportedDataType(data_type));
         }
         Ok(Self {
             data_type,
@@ -30,7 +30,7 @@ where
     pub fn precompile(
         &mut self,
         context: &B::Context,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         for &config in Specialization::precompile_configs(self.data_type) {
             self.get_or_create_kernel(context, config)?;
         }
@@ -41,7 +41,7 @@ where
         &mut self,
         context: &B::Context,
         config: Specialization,
-    ) -> Result<&<B::Kernels as Kernels>::MatmulGemmKernel, B::Error> {
+    ) -> Result<&<B::Kernels as Kernels>::MatmulGemmKernel, MatmulError<B>> {
         if !self.pipelines.contains_key(&config) {
             let kernel = <B::Kernels as Kernels>::MatmulGemmKernel::new(
                 context,
@@ -54,7 +54,8 @@ where
                 config.align_m,
                 config.align_n,
                 config.align_k,
-            )?;
+            )
+            .map_err(MatmulError::BackendError)?;
             self.pipelines.insert(config, kernel);
         }
         Ok(self.pipelines.get(&config).unwrap())
@@ -66,18 +67,15 @@ where
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
 
-        let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x).map_err(|_| {
-            B::Error::from(format!("GEMM group count x overflows u32: {}", dispatch_descriptor.threadgroups.x))
-        })?;
-        let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y).map_err(|_| {
-            B::Error::from(format!("GEMM group count y overflows u32: {}", dispatch_descriptor.threadgroups.y))
-        })?;
-        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z).map_err(|_| {
-            B::Error::from(format!("GEMM group count z overflows u32: {}", dispatch_descriptor.threadgroups.z))
-        })?;
+        let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.x))?;
+        let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.y))?;
+        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.z))?;
 
         let pipeline = self.get_or_create_kernel(context, config)?;
         pipeline.encode(

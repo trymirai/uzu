@@ -129,7 +129,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     // Check results
     let result_ptr = output_buffer.contents().as_ptr() as *const u32;
@@ -262,7 +262,7 @@ fn test_topp_sampling_from_prob_exact_match(
             .expect("encode");
         compute_encoder.end_encoding();
         cb_ref.commit();
-        cb_ref.wait_until_completed();
+        cb_ref.wait_until_completed().unwrap();
 
         let ptr = output_buf.contents().as_ptr() as *const u32;
         let sampled_ids = unsafe { std::slice::from_raw_parts(ptr, batch_size) };
@@ -387,7 +387,7 @@ fn test_topp_sampling_statistical_large() {
         compute_encoder.end_encoding();
 
         cb_ref.commit();
-        cb_ref.wait_until_completed();
+        cb_ref.wait_until_completed().unwrap();
 
         let ptr = output_buf.contents().as_ptr() as *const u32;
         let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
@@ -491,7 +491,7 @@ fn perf_topp_128k_vocab() {
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
     cb_ref.commit();
-    cb_ref.wait_until_completed();
+    cb_ref.wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
@@ -590,7 +590,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
     cb_ref.commit();
-    cb_ref.wait_until_completed();
+    cb_ref.wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
@@ -713,7 +713,7 @@ fn test_categorical_sampling() {
         compute_encoder.end_encoding();
 
         command_buffer_ref.commit();
-        command_buffer_ref.wait_until_completed();
+        command_buffer_ref.wait_until_completed().unwrap();
 
         let result_ptr = output_buffer.contents().as_ptr() as *const u32;
         let results = unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
@@ -855,7 +855,7 @@ fn test_categorical_sampling_statistical() {
         compute_encoder.end_encoding();
 
         command_buffer_ref.commit();
-        command_buffer_ref.wait_until_completed();
+        command_buffer_ref.wait_until_completed().unwrap();
 
         let result_ptr = output_buffer.contents().as_ptr() as *const u32;
         let results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH) };
@@ -962,7 +962,7 @@ fn perf_categorical_128k_vocab() {
 
     let host_timer = Instant::now();
     cb_ref.commit();
-    cb_ref.wait_until_completed();
+    cb_ref.wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     let gpu_elapsed_ms = cb.gpu_execution_time_ms();
@@ -1038,7 +1038,7 @@ fn test_temperature_gpu_cpu_match() {
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     let gpu_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let gpu_results = unsafe { std::slice::from_raw_parts(gpu_ptr, logits.len()) };
@@ -1104,7 +1104,7 @@ fn test_topk_gpu_cpu_match() {
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
@@ -1169,7 +1169,7 @@ fn test_topp_gpu_cpu_match() {
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
@@ -1239,7 +1239,7 @@ fn test_minp_gpu_cpu_match() {
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
@@ -1344,7 +1344,7 @@ fn test_minp_sampling_exact_match(
             .expect("encode");
         compute_encoder.end_encoding();
         cb_ref.commit();
-        cb_ref.wait_until_completed();
+        cb_ref.wait_until_completed().unwrap();
 
         let ptr = output_buf.contents().as_ptr() as *const u32;
         let sampled_ids = unsafe { std::slice::from_raw_parts(ptr, batch_size) };
@@ -1433,7 +1433,7 @@ fn test_gumbel_gpu_cpu_match() {
     compute_encoder.end_encoding();
 
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     let result_ptr = gumbel_logits_buffer.contents().as_ptr() as *const f32;
     let all_results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH * VOCAB) };

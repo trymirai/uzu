@@ -1,4 +1,4 @@
-use super::MatmulKernels;
+use super::{MatmulError, MatmulKernels};
 use crate::{DataType, backends::common::Backend};
 
 pub struct FullPrecisionMatmulArguments<'a, B: Backend> {
@@ -18,7 +18,7 @@ pub trait FullPrecisionMatmulKernel: Sized {
     fn new(
         context: &<Self::Backend as Backend>::Context,
         data_type: DataType,
-    ) -> Result<Self, <Self::Backend as Backend>::Error>;
+    ) -> Result<Self, MatmulError<Self::Backend>>;
 
     fn encode(
         &mut self,

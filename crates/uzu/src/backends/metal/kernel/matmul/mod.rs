@@ -8,9 +8,9 @@ use crate::{
     backends::{
         common::kernel::matmul::{
             FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulArguments,
-            MatmulKernel,
+            MatmulError, MatmulKernel,
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext},
     },
 };
 
@@ -20,7 +20,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
     fn new(
         context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, MatmulError<Metal>> {
         let mut kernel = MatmulKernel::new(data_type)?;
         kernel.precompile(context)?;
         Ok(kernel)

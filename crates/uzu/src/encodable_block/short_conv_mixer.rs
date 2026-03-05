@@ -108,22 +108,23 @@ impl<B: Backend> ShortConvMixer<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
-            return;
+            return Ok(());
         }
 
-        self.in_projection.encode(state, parameters, command_buffer);
+        self.in_projection.encode(state, parameters, command_buffer)?;
 
         command_buffer.with_compute_encoder(|encoder| self.run_conv(state, encoder, active_suffix_length));
 
-        self.out_projection.encode(state, parameters, command_buffer);
+        self.out_projection.encode(state, parameters, command_buffer)?;
 
         if parameters.wait_until_completed {
             command_buffer.submit();
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed()?;
         }
+        Ok(())
     }
 
     fn encode_pipeline_with_encoder(
@@ -371,18 +372,19 @@ impl<B: Backend> EncodableBlock<B> for ShortConvMixer<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.supports_shared_encoder() {
             command_buffer
                 .with_compute_encoder(|encoder| self.encode_pipeline_with_encoder(state, encoder, parameters));
 
             if parameters.wait_until_completed {
                 command_buffer.submit();
-                command_buffer.wait_until_completed();
+                command_buffer.wait_until_completed()?;
             }
         } else {
-            self.encode_pipeline(state, parameters, command_buffer);
+            self.encode_pipeline(state, parameters, command_buffer)?;
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {
