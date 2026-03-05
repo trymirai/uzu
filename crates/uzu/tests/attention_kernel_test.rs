@@ -352,7 +352,7 @@ fn run_single_pass_attention(
     compute_encoder.end_encoding();
 
     command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -424,7 +424,7 @@ fn run_single_pass_attention_with_is_causal(
     compute_encoder.end_encoding();
 
     command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -486,7 +486,7 @@ fn run_gemm_attention(
     encode_result?;
 
     command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -981,7 +981,7 @@ fn run_two_pass_attention(
     compute_encoder.end_encoding();
 
     command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -1215,7 +1215,7 @@ fn perf_two_pass_attention() {
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
     command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time

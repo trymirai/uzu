@@ -1,10 +1,20 @@
 use std::{cell::Cell, ops::Deref};
 
-use metal::{MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder, MTLEvent};
+use metal::{
+    MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLEvent,
+};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
-use crate::backends::common::CommandBuffer;
+use crate::backends::{common::CommandBuffer, metal::error::MetalError};
+
+fn command_buffer_result(command_buffer: &ProtocolObject<dyn MTLCommandBuffer>) -> Result<(), MetalError> {
+    match (command_buffer.status(), command_buffer.error()) {
+        (MTLCommandBufferStatus::Completed, None) => Ok(()),
+        (status, Some(nserror)) => Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}: {nserror:?}"))),
+        (status, None) => Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}"))),
+    }
+}
 
 impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     type Backend = Metal;
@@ -53,11 +63,11 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl FnOnce() + 'static,
+        handler: impl FnOnce(Result<(), MetalError>) + 'static,
     ) {
         let cell = Cell::new(Some(handler));
-        self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |_| {
-            cell.take().expect("completion handler called more than once")()
+        self.deref().add_completed_handler(&MTLCommandBufferHandler::new(move |command_buffer| {
+            cell.take().expect("completion handler called more than once")(command_buffer_result(command_buffer))
         }));
     }
 
@@ -65,8 +75,9 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
         self.commit();
     }
 
-    fn wait_until_completed(&self) {
+    fn wait_until_completed(&self) -> Result<(), MetalError> {
         self.deref().wait_until_completed();
+        command_buffer_result(self)
     }
 
     fn gpu_execution_time_ms(&self) -> Option<f64> {

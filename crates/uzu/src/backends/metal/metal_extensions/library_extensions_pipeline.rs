@@ -1,7 +1,7 @@
 use metal::{MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary, MTLLibraryExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::backends::metal::error::{LibraryError, MetalError};
+use crate::backends::metal::error::MetalError;
 
 /// Extensions for Library to create compute pipeline states
 pub trait LibraryPipelineExtensions {
@@ -26,12 +26,12 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
             },
             None => self.new_function_with_name(function_name),
         }
-        .ok_or(MetalError::Library(LibraryError::FunctionCreationFailed))?;
+        .ok_or(MetalError::CannotCreateFunction)?;
 
         let device = self.device();
 
         device
             .new_compute_pipeline_state_with_function(&function)
-            .map_err(|e| MetalError::Library(LibraryError::Custom(format!("Pipeline state creation failed: {}", e))))
+            .map_err(|nserror| MetalError::CannotCreatePipelineState(nserror.to_string()))
     }
 }

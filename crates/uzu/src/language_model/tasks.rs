@@ -113,15 +113,15 @@ impl<'a> LanguageModelGeneratorRunTask<'a> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         key: String,
-    ) -> LanguageModelGeneratorEncodedTask<B> {
-        context.executables.encode(state, parameters, &mut context.command_buffer);
+    ) -> Result<LanguageModelGeneratorEncodedTask<B>, B::Error> {
+        context.executables.encode(state, parameters, &mut context.command_buffer)?;
 
-        LanguageModelGeneratorEncodedTask {
+        Ok(LanguageModelGeneratorEncodedTask {
             key,
             predicate_buffer: context
                 .context
                 .create_buffer(size_of::<u32>())
                 .expect("Failed to create predicate buffer"),
-        }
+        })
     }
 }

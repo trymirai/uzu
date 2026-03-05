@@ -28,9 +28,10 @@ use crate::{
     DataType,
     backends::{
         common::kernel::matmul::{
-            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulKernels,
+            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulError,
+            MatmulKernels,
         },
-        cpu::{Cpu, command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError},
+        cpu::{Cpu, command_buffer::CpuCommandBuffer, context::CpuContext},
     },
 };
 
@@ -42,7 +43,7 @@ impl FullPrecisionMatmulKernelTrait for FullPrecisionMatmulCpuKernel {
     fn new(
         #[allow(unused)] context: &CpuContext,
         #[allow(unused)] data_type: DataType,
-    ) -> Result<Self, CpuError> {
+    ) -> Result<Self, MatmulError<Cpu>> {
         Ok(Self)
     }
 

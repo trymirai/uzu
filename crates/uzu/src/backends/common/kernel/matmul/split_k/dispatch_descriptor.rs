@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::common::{Backend, gpu_types::GEMMSpiltKParams as SplitKGEMMParams},
+    backends::common::{Backend, gpu_types::GEMMSpiltKParams as SplitKGEMMParams, kernel::matmul::MatmulError},
 };
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl DispatchDescriptor {
     pub fn try_new<B: Backend>(
         data_type: DataType,
         arguments: &MatmulArguments<B>,
-    ) -> Result<Option<Self>, B::Error> {
+    ) -> Result<Option<Self>, MatmulError<B>> {
         if !matches!(data_type, DataType::BF16) {
             return Ok(None);
         }

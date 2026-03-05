@@ -329,7 +329,7 @@ fn test_rms_norm_basic_typed<InputT, ScaleT, OutputT>(
 
     compute_encoder.end_encoding();
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     // Read results
     let output_ptr = output_buffer.contents().as_ptr() as *const OutputT;
@@ -447,7 +447,7 @@ fn test_rms_norm_edge_cases_typed<InputT, ScaleT, OutputT>(
 
     compute_encoder.end_encoding();
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const OutputT;
     let output_data = unsafe { std::slice::from_raw_parts(output_ptr, 4) };
@@ -658,7 +658,7 @@ fn perf_rms_norm_with_size(
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
     command_buffer_ref.commit();
-    command_buffer_ref.wait_until_completed();
+    command_buffer_ref.wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
@@ -829,7 +829,7 @@ fn qk_norm_test() {
 
         compute_encoder.end_encoding();
         command_buffer.commit();
-        command_buffer.wait_until_completed();
+        command_buffer.wait_until_completed().unwrap();
     }
 
     // Verify Q heads were normalized (should have different values now)
@@ -892,7 +892,7 @@ fn qk_norm_test() {
 
         compute_encoder.end_encoding();
         command_buffer.commit();
-        command_buffer.wait_until_completed();
+        command_buffer.wait_until_completed().unwrap();
     }
 
     // Verify K heads were normalized

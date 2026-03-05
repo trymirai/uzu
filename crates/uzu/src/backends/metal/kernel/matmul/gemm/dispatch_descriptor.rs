@@ -5,9 +5,9 @@ use crate::{
     backends::{
         common::{
             gpu_types::GEMMParams,
-            kernel::matmul::{GridSize, MatmulArguments, gemm::Specialization},
+            kernel::matmul::{GridSize, MatmulArguments, MatmulError, gemm::Specialization},
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext},
     },
 };
 
@@ -16,9 +16,9 @@ impl DispatchDescriptor {
         context: &MetalContext,
         data_type: DataType,
         arguments: &MatmulArguments<Metal>,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, MatmulError<Metal>> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MetalError::Generic(format!("Unsupported dtype for GEMM: {data_type:?}")));
+            return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
         let config = Specialization::select(context, data_type, arguments);

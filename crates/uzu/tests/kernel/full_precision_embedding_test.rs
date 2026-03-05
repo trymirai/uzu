@@ -74,7 +74,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         );
     });
     command_buffer.submit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

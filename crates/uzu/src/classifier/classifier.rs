@@ -115,8 +115,14 @@ impl<B: Backend> Classifier<B> {
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
-            self.context.embedding_norm.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context
+                .embed
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            self.context
+                .embedding_norm
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
@@ -128,9 +134,14 @@ impl<B: Backend> Classifier<B> {
             }
 
             for layer in self.context.layers.iter() {
-                layer.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+                layer
+                    .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             }
-            self.context.output_norm.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context
+                .output_norm
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             #[cfg(feature = "tracing")]
             {
                 let traces = state.traces().clone();
@@ -141,12 +152,18 @@ impl<B: Backend> Classifier<B> {
                 );
             }
 
-            self.context.pooling.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context
+                .pooling
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-            self.context.prediction_head.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context
+                .prediction_head
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             self.context.command_buffer.submit();
-            self.context.command_buffer.wait_until_completed();
+            self.context.command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
             let logits = self.copy_logits_from_state(&state)?;
 
@@ -178,17 +195,34 @@ impl<B: Backend> Classifier<B> {
 
             let encoding_params = EncodingParameters::new(false, true, false);
 
-            self.context.embed.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
-            self.context.embedding_norm.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context
+                .embed
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            self.context
+                .embedding_norm
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             for layer in self.context.layers.iter() {
-                layer.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+                layer
+                    .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             }
-            self.context.output_norm.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
-            self.context.pooling.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
-            self.context.prediction_head.encode(&mut state, &encoding_params, &mut self.context.command_buffer);
+            self.context
+                .output_norm
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            self.context
+                .pooling
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            self.context
+                .prediction_head
+                .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             self.context.command_buffer.submit();
-            self.context.command_buffer.wait_until_completed();
+            self.context.command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
             let logits = self.copy_logits_from_state(&state)?;
 

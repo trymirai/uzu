@@ -34,12 +34,12 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         state: &mut ForwardPassState<B>,
         params: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.supports_shared_encoder() {
             command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, params, encoder));
         } else {
             // Up
-            self.up.encode(state, params, command_buffer);
+            self.up.encode(state, params, command_buffer)?;
 
             // Gate act+mul (fused_up -> hidden)
             command_buffer.with_compute_encoder(|encoder| {
@@ -58,13 +58,14 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
             });
 
             // Down
-            self.down.encode(state, params, command_buffer);
+            self.down.encode(state, params, command_buffer)?;
         }
 
         if params.wait_until_completed {
             command_buffer.submit();
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed()?;
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

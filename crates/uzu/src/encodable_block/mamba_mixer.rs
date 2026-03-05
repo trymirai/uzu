@@ -440,24 +440,24 @@ impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.supports_shared_encoder() {
             command_buffer
                 .with_compute_encoder(|encoder| self.encode_pipeline_with_encoder(state, encoder, parameters));
 
             if parameters.wait_until_completed {
                 command_buffer.submit();
-                command_buffer.wait_until_completed();
+                command_buffer.wait_until_completed()?;
             }
-            return;
+            return Ok(());
         }
 
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
-            return;
+            return Ok(());
         }
 
-        self.in_projection.encode(state, parameters, command_buffer);
+        self.in_projection.encode(state, parameters, command_buffer)?;
 
         command_buffer.with_compute_encoder(|encoder| {
             self.run_split_inproj(state, encoder, active_suffix_length);
@@ -469,12 +469,13 @@ impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
             }
         });
 
-        self.out_projection.encode(state, parameters, command_buffer);
+        self.out_projection.encode(state, parameters, command_buffer)?;
 
         if parameters.wait_until_completed {
             command_buffer.submit();
-            command_buffer.wait_until_completed();
+            command_buffer.wait_until_completed()?;
         }
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

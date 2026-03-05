@@ -251,13 +251,13 @@ impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
-    ) {
+    ) -> Result<(), B::Error> {
         #[cfg(not(feature = "tracing"))]
         {
             if self.supports_shared_encoder() {
                 command_buffer
                     .with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
-                return;
+                return Ok(());
             }
         }
 
@@ -269,10 +269,10 @@ impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut_mixer.encode(state, parameters, command_buffer);
+        self.copy_main_to_shortcut_mixer.encode(state, parameters, command_buffer)?;
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
-            pre_attn_norm.encode(state, parameters, command_buffer);
+            pre_attn_norm.encode(state, parameters, command_buffer)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
@@ -292,20 +292,20 @@ impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
             }
         }
 
-        self.qkv_projection.encode(state, parameters, command_buffer);
+        self.qkv_projection.encode(state, parameters, command_buffer)?;
         if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode(state, parameters, command_buffer);
+            qk_norm.encode(state, parameters, command_buffer)?;
         }
-        self.rope.encode(state, parameters, command_buffer);
-        self.attention.encode(state, parameters, command_buffer);
-        self.out_projection.encode(state, parameters, command_buffer);
+        self.rope.encode(state, parameters, command_buffer)?;
+        self.attention.encode(state, parameters, command_buffer)?;
+        self.out_projection.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
-            post_attn_norm.encode(state, parameters, command_buffer);
+            post_attn_norm.encode(state, parameters, command_buffer)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(
@@ -316,41 +316,42 @@ impl<B: Backend> EncodableBlock<B> for ClassifierLayer<B> {
             }
         }
 
-        self.mixer_residual_add.encode(state, parameters, command_buffer);
+        self.mixer_residual_add.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
 
-        self.copy_main_to_shortcut_mlp.encode(state, parameters, command_buffer);
+        self.copy_main_to_shortcut_mlp.encode(state, parameters, command_buffer)?;
 
-        self.pre_mlp_norm.encode(state, parameters, command_buffer);
+        self.pre_mlp_norm.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, parameters, command_buffer);
+        self.mlp.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
-            post_mlp_norm.encode(state, parameters, command_buffer);
+            post_mlp_norm.encode(state, parameters, command_buffer)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
         }
 
-        self.mlp_residual_add.encode(state, parameters, command_buffer);
+        self.mlp_residual_add.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
         }
 
         let _ = parameters;
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {

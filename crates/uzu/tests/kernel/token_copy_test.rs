@@ -23,7 +23,7 @@ fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
         kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), encoder)
     });
     command_buffer.submit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     let output = dst_array.as_slice::<u64>().to_vec();
     assert_eq!(output[0], src_value as u64, "TokenCopySampled failed for backend {}", std::any::type_name::<B>());
@@ -43,7 +43,7 @@ fn test_token_copy_to_results_impl<B: Backend>(src_value: u32) {
         kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), encoder)
     });
     command_buffer.submit();
-    command_buffer.wait_until_completed();
+    command_buffer.wait_until_completed().unwrap();
 
     let output = dst_array.as_slice::<u32>().to_vec();
     assert_eq!(output[0], src_value, "TokenCopyToResults failed for backend {}", std::any::type_name::<B>());
