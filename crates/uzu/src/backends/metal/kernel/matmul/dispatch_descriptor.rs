@@ -5,11 +5,11 @@ use crate::{
         common::kernel::{
             MatmulGemmMppKernel,
             matmul::{
-                MatmulArguments, MatmulDispatchDescriptor, gemm_mpp::Specialization,
+                MatmulArguments, MatmulDispatchDescriptor, MatmulError, gemm_mpp::Specialization,
                 gemm_mixed_types_simple as common_mixed_types_simple, gemv, split_k,
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::dsl::MatmulGemmMppMetalKernel},
+        metal::{Metal, context::MetalContext, kernel::dsl::MatmulGemmMppMetalKernel},
     },
 };
 
@@ -46,7 +46,7 @@ pub fn choose_dispatch_descriptor(
     b_dtype: DataType,
     output_dtype: DataType,
     arguments: &MatmulArguments<Metal>,
-) -> Result<MatmulDispatchDescriptor, MetalError> {
+) -> Result<MatmulDispatchDescriptor, MatmulError<Metal>> {
     if mpp_shader_supports_combo(context, a_dtype, b_dtype, output_dtype) {
         return Ok(MatmulDispatchDescriptor::GemmMpp(gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?));
     }

@@ -4,9 +4,9 @@ use crate::{
     backends::{
         common::{
             gpu_types::GEMMParams,
-            kernel::matmul::{GridSize, MatmulArguments, gemm_mpp::Specialization},
+            kernel::matmul::{GridSize, MatmulArguments, MatmulError, gemm_mpp::Specialization},
         },
-        metal::{Metal, error::MetalError},
+        metal::Metal,
     },
 };
 
@@ -14,7 +14,7 @@ impl DispatchDescriptor {
     pub fn new(
         _data_type: DataType,
         arguments: &MatmulArguments<Metal>,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, MatmulError<Metal>> {
         let m = arguments.batch;
         let n = arguments.output_dim;
         let k = arguments.input_dim;

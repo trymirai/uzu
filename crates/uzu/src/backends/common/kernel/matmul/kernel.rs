@@ -1,7 +1,7 @@
 use std::ops::DerefMut;
 
 use super::{
-    dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
+    MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
     gemm_mixed_types_simple::GemmMixedTypesSimpleKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments, split_k::SplitKKernel,
 };
 use crate::{
@@ -40,11 +40,8 @@ pub struct MatmulKernel<B: Backend> {
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
-impl<B: Backend> MatmulKernel<B>
-where
-    B::Error: From<String>,
-{
-    pub fn new(data_type: DataType) -> Result<Self, B::Error> {
+impl<B: Backend> MatmulKernel<B> {
+    pub fn new(data_type: DataType) -> Result<Self, MatmulError<B>> {
         Self::new_mixed(data_type, data_type, data_type)
     }
 
@@ -52,11 +49,9 @@ where
         a_dtype: DataType,
         b_dtype: DataType,
         output_dtype: DataType,
-    ) -> Result<Self, B::Error> {
+    ) -> Result<Self, MatmulError<B>> {
         if !is_valid_dtype_combo(a_dtype, b_dtype, output_dtype) {
-            return Err(B::Error::from(format!(
-                "Unsupported dtype combo for MatmulKernel: {a_dtype:?} * {b_dtype:?} -> {output_dtype:?}"
-            )));
+            return Err(MatmulError::UnsupportedDataType(output_dtype));
         }
 
         Ok(Self {
@@ -75,7 +70,7 @@ where
     pub fn precompile(
         &mut self,
         context: &B::Context,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         let gemm = self.get_or_create_gemm()?;
         gemm.precompile(context)?;
 
@@ -88,35 +83,40 @@ where
         Ok(())
     }
 
-    fn get_or_create_gemm(&mut self) -> Result<&mut GemmKernel<B>, B::Error> {
+    fn get_or_create_gemm(&mut self) -> Result<&mut GemmKernel<B>, MatmulError<B>> {
         if self.gemm.is_none() {
             self.gemm = Some(GemmKernel::<B>::new(self.output_dtype)?);
         }
         Ok(self.gemm.as_mut().unwrap())
     }
 
-    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, B::Error> {
+    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, MatmulError<B>> {
         if self.gemv.is_none() {
             self.gemv = Some(GemvKernel::<B>::new(self.output_dtype)?);
         }
         Ok(self.gemv.as_mut().unwrap())
     }
 
-    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKKernel<B>, B::Error> {
+    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKKernel<B>, MatmulError<B>> {
         if self.splitk.is_none() {
             self.splitk = Some(SplitKKernel::<B>::new(self.output_dtype)?);
         }
         Ok(self.splitk.as_mut().unwrap())
     }
 
-    fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, B::Error> {
+    fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, MatmulError<B>> {
         if self.gemm_mpp.is_none() {
-            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
+            self.gemm_mpp = Some(
+                GemmMppKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)
+                    .map_err(MatmulError::BackendError)?,
+            );
         }
         Ok(self.gemm_mpp.as_mut().unwrap())
     }
 
-    fn get_or_create_gemm_mixed_types_simple(&mut self) -> Result<&mut GemmMixedTypesSimpleKernel<B>, B::Error> {
+    fn get_or_create_gemm_mixed_types_simple(
+        &mut self,
+    ) -> Result<&mut GemmMixedTypesSimpleKernel<B>, MatmulError<B>> {
         if self.gemm_mixed_types_simple.is_none() {
             self.gemm_mixed_types_simple =
                 Some(GemmMixedTypesSimpleKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
@@ -189,7 +189,10 @@ where
         }
 
         if self.bias_add.is_none() {
-            self.bias_add = Some(<B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.output_dtype, true)?);
+            self.bias_add = Some(
+                <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.output_dtype, true)
+                    .map_err(MatmulError::BackendError)?,
+            );
         }
         let bias_add = self.bias_add.as_ref().unwrap();
         bias_add.encode(None::<&B::Buffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, command_buffer);
