@@ -7,7 +7,7 @@
 //! - `Decomposed`: factors the dimension as m * 2^k (m in {12, 20, 28}), applies
 //!    a power-of-2 Hadamard for the 2^k part then a dense O(m^2) codelet for the m part
 
-use std::ops::Deref;
+use std::ops::DerefMut;
 
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
@@ -111,12 +111,12 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
         let array = arrays[0].borrow_mut();
         let batch_size = state.active_suffix_length();
         let buffer_rc = array.buffer();
-        let buffer = buffer_rc.borrow();
+        let mut buffer = buffer_rc.borrow_mut();
 
         match &self.mode {
             FwhtMode::Full => {
                 self.full_kernel.as_ref().expect("FwhtKernel missing for Full mode").encode(
-                    buffer.deref(),
+                    buffer.deref_mut(),
                     batch_size as u32,
                     self.scale,
                     encoder,
@@ -125,7 +125,7 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
             FwhtMode::SimdShuffle => {
                 let num_groups = self.row_dimension as u32 / SIMD_SHUFFLE_PRELOAD_SIZE;
                 self.simd_shuffle_kernel.as_ref().expect("FwhtSimdBlockKernel missing").encode(
-                    buffer.deref(),
+                    buffer.deref_mut(),
                     batch_size as u32 * num_groups,
                     self.scale,
                     encoder,
@@ -134,7 +134,7 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
             FwhtMode::Block { block_size } => {
                 let num_blocks = self.row_dimension as u32 / block_size;
                 self.full_kernel.as_ref().expect("FwhtKernel missing for Block mode").encode(
-                    buffer.deref(),
+                    buffer.deref_mut(),
                     batch_size as u32 * num_blocks,
                     self.scale,
                     encoder,
@@ -142,13 +142,13 @@ impl<B: Backend> EncodableBlock<B> for Fwht<B> {
             },
             FwhtMode::Decomposed { n, m } => {
                 self.full_kernel.as_ref().expect("FwhtKernel missing for Decomposed mode").encode(
-                    buffer.deref(),
+                    buffer.deref_mut(),
                     batch_size as u32 * m,
                     1.0f32,
                     encoder,
                 );
                 self.m_kernel.as_ref().expect("FwhtMKernel missing for Decomposed mode").encode(
-                    buffer.deref(),
+                    buffer.deref_mut(),
                     batch_size as u32,
                     *n,
                     self.scale,

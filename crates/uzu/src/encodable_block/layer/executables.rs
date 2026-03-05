@@ -270,7 +270,6 @@ impl<B: Backend> EncodableBlock<B> for LayerExecutables<B> {
             if self.supports_shared_encoder() {
                 command_buffer
                     .with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
-                return Ok(());
                 command_buffer.pop_debug_group();
                 return Ok(());
             }
