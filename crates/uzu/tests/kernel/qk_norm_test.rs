@@ -150,7 +150,9 @@ fn get_output<
     });
 
     command_buffer.submit();
-    command_buffer.wait_until_completed();
+    if let Err(err) = command_buffer.wait_until_completed() {
+        panic!("Failed to wait command buffer: {}", err);
+    }
 
     qkv_array.as_slice().to_vec()
 }

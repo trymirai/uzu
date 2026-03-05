@@ -7,13 +7,14 @@ use std::{
 use half::{bf16, f16};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, prelude::StdRng};
+#[cfg(feature = "metal")]
+use uzu::backends::metal::Metal;
 use uzu::{
     ArrayElement, DataType,
     array::ArrayContextExt,
     backends::{
         common::{Backend, CommandBuffer, Context, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
-        metal::Metal,
     },
 };
 
@@ -161,7 +162,9 @@ fn get_output<
 
     let instant = Instant::now();
     command_buffer.submit();
-    command_buffer.wait_until_completed();
+    if let Err(err) = command_buffer.wait_until_completed() {
+        panic!("Failed to wait command buffer: {}", err);
+    }
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = command_buffer.gpu_execution_time_ms();
 
