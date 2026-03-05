@@ -3,9 +3,6 @@ use super::Backend;
 pub trait CommandBuffer {
     type Backend: Backend;
 
-    fn push_debug_group(&mut self, _label: &str) {}
-    fn pop_debug_group(&mut self) {}
-
     fn with_compute_encoder<T>(
         &mut self,
         callback: impl FnOnce(&mut <Self::Backend as Backend>::ComputeEncoder) -> T,

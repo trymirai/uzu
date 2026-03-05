@@ -10,7 +10,6 @@ impl MetalDataTypeExt for DataType {
             DataType::F16 => "half",
             DataType::BF16 => "bfloat",
             DataType::F32 => "float",
-            DataType::I8 => "char",
             _ => panic!("Unsupported data type: {0:?}", self),
         }
     }

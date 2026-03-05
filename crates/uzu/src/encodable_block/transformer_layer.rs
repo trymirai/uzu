@@ -54,7 +54,6 @@ pub fn linear_block<const N: usize, B: Backend>(
                 output_array_id,
             )
             .map_err(LayerError::QuantizedLinearError)?;
-
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {

@@ -5,6 +5,7 @@ use std::rc::Rc;
 use objc2::rc::autoreleasepool;
 
 use super::MixerExecutables;
+#[cfg(not(feature = "tracing"))]
 use crate::backends::common::CommandBuffer;
 use crate::{
     DataType, DecoderLayerConfig,
@@ -262,7 +263,6 @@ impl<B: Backend> EncodableBlock<B> for LayerExecutables<B> {
         parameters: &EncodingParameters<B>,
         command_buffer: &mut B::CommandBuffer,
     ) -> Result<(), B::Error> {
-        command_buffer.push_debug_group(&format!("Layer {}", self.layer_index));
         // In non-tracing builds, if every sub-block supports shared encoding,
         // we can run the entire layer in a single compute encoder.
         #[cfg(not(feature = "tracing"))]
@@ -270,125 +270,119 @@ impl<B: Backend> EncodableBlock<B> for LayerExecutables<B> {
             if self.supports_shared_encoder() {
                 command_buffer
                     .with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
-                command_buffer.pop_debug_group();
                 return Ok(());
             }
         }
 
-        let encode_result = (|| {
-            #[cfg(feature = "tracing")]
-            let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
+        #[cfg(feature = "tracing")]
+        let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
 
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
-            }
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
+        }
 
-            self.copy_main_to_shortcut.encode(state, parameters, command_buffer)?;
-            // shortcut = input
+        self.copy_main_to_shortcut.encode(state, parameters, command_buffer)?;
+        // shortcut = input
 
-            self.pre_attention_norm.encode(state, parameters, command_buffer)?;
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
-            }
+        self.pre_attention_norm.encode(state, parameters, command_buffer)?;
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
+        }
 
-            match &self.mixer {
-                MixerExecutables::Attention {
-                    qkv_projection,
-                    qk_norm,
-                    rope,
-                    attention,
-                    out_projection,
-                } => {
-                    qkv_projection.encode(state, parameters, command_buffer)?;
-                    if let Some(norm) = qk_norm {
-                        norm.encode(state, parameters, command_buffer)?;
-                    }
-                    rope.encode(state, parameters, command_buffer)?;
-                    attention.encode(state, parameters, command_buffer)?;
-                    out_projection.encode(state, parameters, command_buffer)?;
-                    #[cfg(feature = "tracing")]
-                    if let Some(ref layer_traces) = layer_traces {
-                        state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
-                    }
-                },
-                MixerExecutables::StateSpace {
-                    mixer,
-                } => {
-                    mixer.encode(state, parameters, command_buffer)?;
-                    #[cfg(feature = "tracing")]
-                    if let Some(ref layer_traces) = layer_traces {
-                        state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
-                    }
-                },
-                MixerExecutables::ShortConv {
-                    mixer,
-                } => {
-                    mixer.encode(state, parameters, command_buffer)?;
-                    #[cfg(feature = "tracing")]
-                    if let Some(ref layer_traces) = layer_traces {
-                        state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
-                    }
-                },
-            }
-
-            if let Some(post_attention_norm) = &self.post_attention_norm {
-                post_attention_norm.encode(state, parameters, command_buffer)?;
+        match &self.mixer {
+            MixerExecutables::Attention {
+                qkv_projection,
+                qk_norm,
+                rope,
+                attention,
+                out_projection,
+            } => {
+                qkv_projection.encode(state, parameters, command_buffer)?;
+                if let Some(norm) = qk_norm {
+                    norm.encode(state, parameters, command_buffer)?;
+                }
+                rope.encode(state, parameters, command_buffer)?;
+                attention.encode(state, parameters, command_buffer)?;
+                out_projection.encode(state, parameters, command_buffer)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(
-                        command_buffer,
-                        ArrayId::Main,
-                        layer_traces.borrow().post_attention_norm.clone(),
-                    );
+                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
-            }
-            //main = attention_result
-
-            self.main_shortcut_add_swap.encode(state, parameters, command_buffer)?;
-            // shortcut = input + attention_result
-            // main = input + attention_result
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
-            }
-
-            self.pre_mlp_norm.encode(state, parameters, command_buffer)?;
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
-            }
-
-            self.mlp.encode(state, parameters, command_buffer)?;
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
-            }
-
-            if let Some(post_mlp_norm) = &self.post_mlp_norm {
-                post_mlp_norm.encode(state, parameters, command_buffer)?;
+            },
+            MixerExecutables::StateSpace {
+                mixer,
+            } => {
+                mixer.encode(state, parameters, command_buffer)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
-            }
-            // main = mlp_result
+            },
+            MixerExecutables::ShortConv {
+                mixer,
+            } => {
+                mixer.encode(state, parameters, command_buffer)?;
+                #[cfg(feature = "tracing")]
+                if let Some(ref layer_traces) = layer_traces {
+                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                }
+            },
+        }
 
-            self.main_shortcut_add_swap.encode(state, parameters, command_buffer)?;
-            // shortcut = input + attention_result + mlp_result
-            // main = input + attention_result + mlp_result
+        if let Some(post_attention_norm) = &self.post_attention_norm {
+            post_attention_norm.encode(state, parameters, command_buffer)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
+                state.encode_copy_array(
+                    command_buffer,
+                    ArrayId::Main,
+                    layer_traces.borrow().post_attention_norm.clone(),
+                );
             }
+        }
+        //main = attention_result
 
-            let _ = parameters;
-            Ok(())
-        })();
+        self.main_shortcut_add_swap.encode(state, parameters, command_buffer)?;
+        // shortcut = input + attention_result
+        // main = input + attention_result
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
+        }
 
-        command_buffer.pop_debug_group();
-        encode_result
+        self.pre_mlp_norm.encode(state, parameters, command_buffer)?;
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
+        }
+
+        self.mlp.encode(state, parameters, command_buffer)?;
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
+        }
+
+        if let Some(post_mlp_norm) = &self.post_mlp_norm {
+            post_mlp_norm.encode(state, parameters, command_buffer)?;
+            #[cfg(feature = "tracing")]
+            if let Some(ref layer_traces) = layer_traces {
+                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+            }
+        }
+        // main = mlp_result
+
+        self.main_shortcut_add_swap.encode(state, parameters, command_buffer)?;
+        // shortcut = input + attention_result + mlp_result
+        // main = input + attention_result + mlp_result
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
+        }
+
+        let _ = parameters;
+        Ok(())
     }
 
     fn supports_shared_encoder(&self) -> bool {
