@@ -2,7 +2,7 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
 
-use crate::{ArrayElement, DataType};
+use crate::ArrayElement;
 
 #[kernel(RMSNorm)]
 #[variants(InputT, f32, f16, bf16)]
@@ -53,14 +53,13 @@ pub fn rms_norm<
         for i in 0..element_count {
             let input_val = unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() };
             let scale_val = unsafe { AccumT::from(*scales.add(i)).unwrap() };
+            let normalized: AccumT = input_val * rms_inv;
             let result: OutputT = if full_layer {
                 // Full-layer: keep everything in accumulation precision
-                let normalized: AccumT = input_val * rms_inv;
                 let scale_with_offset: AccumT = scale_val + scale_offset;
                 OutputT::from(normalized * scale_with_offset).unwrap()
             } else {
                 // Only-normalization: cast down to output precision for the scale multiply
-                let normalized: AccumT = input_val * rms_inv;
                 let normalized_out = OutputT::from(normalized).unwrap();
                 let scale_with_offset_out = OutputT::from(scale_val + scale_offset).unwrap();
                 normalized_out * scale_with_offset_out
