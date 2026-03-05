@@ -3,12 +3,13 @@
 
 #include "fwht.h"
 
-// Each SIMD group (32 lanes) processes one 32-element sub-block independently
-// using simd_shuffle for the butterfly.
+template <typename T> struct compute_type_of { using type = float; };
+template <> struct compute_type_of<half> { using type = half; };
+template <> struct compute_type_of<char> { using type = int; };
 
 template <typename T, int N>
-VARIANTS(T, half, float, bfloat)
-VARIANTS(N, 128)
+VARIANTS(T, half, float, bfloat, char)
+VARIANTS(N, 128, 512, 1024, 2048)
 KERNEL(FwhtSimdBlock)(
     device T* data,
     constant uint& batch_size,
@@ -16,18 +17,38 @@ KERNEL(FwhtSimdBlock)(
     const uint group_index GROUPS(batch_size),
     const uint thread_index THREADS(128)
 ) {
-    if (thread_index >= N) return;
+    if (thread_index >= 128) return;
+
+    using C = typename compute_type_of<T>::type;
+
+    constexpr short elements_per_thread = N / 128;
+    constexpr short sub_block_size = 32 * elements_per_thread;
 
     device T* block_start = data + group_index * N;
-
-    float value = float(block_start[thread_index]);
     ushort lane_index = thread_index & 31;
+    ushort sub_block_offset = (thread_index / 32) * sub_block_size;
 
+    C reg[elements_per_thread];
     STEEL_PRAGMA_UNROLL
-    for (ushort butterfly_stride = 1; butterfly_stride < 32; butterfly_stride *= 2) {
-        float partner_value = simd_shuffle_xor(value, butterfly_stride);
-        value = (lane_index & butterfly_stride) ? (partner_value - value) : (value + partner_value);
+    for (short r = 0; r < elements_per_thread; r++) {
+        reg[r] = C(block_start[sub_block_offset + lane_index + 32 * r]);
     }
 
-    block_start[thread_index] = T(value * scale);
+    IF_CONSTEXPR(elements_per_thread > 1) {
+        radix_func<elements_per_thread, C>(reg);
+    }
+
+    STEEL_PRAGMA_UNROLL
+    for (short r = 0; r < elements_per_thread; r++) {
+        STEEL_PRAGMA_UNROLL
+        for (ushort s = 1; s < 32; s *= 2) {
+            C partner = simd_shuffle_xor(reg[r], s);
+            reg[r] = (lane_index & s) ? (partner - reg[r]) : (reg[r] + partner);
+        }
+    }
+
+    STEEL_PRAGMA_UNROLL
+    for (short r = 0; r < elements_per_thread; r++) {
+        block_start[sub_block_offset + lane_index + 32 * r] = T(float(reg[r]) * scale);
+    }
 }

@@ -10,10 +10,6 @@ mod decoder;
 mod full_precision_embedding_lookup;
 mod full_precision_embedding_readout;
 mod full_precision_linear;
-#[cfg(feature = "fwht")]
-mod fwht;
-#[cfg(feature = "fwht")]
-mod fwht_linear;
 mod layer;
 mod layer_norm;
 mod mamba_mixer;

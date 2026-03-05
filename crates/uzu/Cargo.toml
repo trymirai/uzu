@@ -67,7 +67,7 @@ cbindgen.workspace = true
 clang-ast = { workspace = true, optional = true }
 
 [features]
-default = ["metal", "fwht"]
+default = ["metal"]
 
 metal = [
     "dep:clang-ast",
@@ -80,7 +80,6 @@ metal-nax = []
 
 tracing = []
 audio-runtime = []
-fwht = []
 
 [[test]]
 name = "kernel"

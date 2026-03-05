@@ -4,11 +4,6 @@ use super::{
     FullPrecisionEmbeddingLookup, FullPrecisionEmbeddingReadout, FullPrecisionLinear, QuantizedEmbeddingLookup,
     QuantizedEmbeddingReadout, QuantizedLinear,
 };
-#[cfg(feature = "fwht")]
-use super::{
-    fwht::{Fwht, FwhtMode, decompose_hadamard},
-    fwht_linear::FwhtLinear,
-};
 use crate::{
     DataType,
     backends::common::{Backend, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
@@ -36,80 +31,6 @@ pub enum LayerError<B: Backend> {
     QLoRaNotSupported,
 }
 
-/// Returns the FWHT mode for a given dimension, based on `UZU_FWHT_MODE` env var.
-///
-/// Supported values:
-///   `full`                              — full-vector transform; power-of-2 or m×2^k decomposition
-///   `simd_shuffle`                      — 32-point Hadamard via simd_shuffle_xor (128-element preload)
-///   `block32` / `block64` / `block128`  — radix-16 kernel per block
-///   `off` or unset — no FWHT
-#[cfg(feature = "fwht")]
-fn fwht_mode_for_dim(dim: usize) -> Option<FwhtMode> {
-    let mode_str = std::env::var("UZU_FWHT_MODE").unwrap_or_default();
-    match mode_str.as_str() {
-        "full" => {
-            if dim.is_power_of_two() && dim >= 32 && dim <= 8192 {
-                Some(FwhtMode::Full)
-            } else if let Some((n, m)) = decompose_hadamard(dim) {
-                Some(FwhtMode::Decomposed { n, m })
-            } else {
-                None
-            }
-        },
-        "simd_shuffle" => {
-            if dim % 128 == 0 {
-                Some(FwhtMode::SimdShuffle)
-            } else {
-                None
-            }
-        },
-        "block32" | "block64" | "block128" => {
-            let block_size: usize = mode_str[5..].parse().unwrap();
-            if dim % block_size == 0 {
-                Some(FwhtMode::Block { block_size: block_size as u32 })
-            } else {
-                None
-            }
-        },
-        _ => None,
-    }
-}
-
-#[cfg(feature = "fwht")]
-fn wrap_with_fwht<B: Backend>(
-    context: &B::Context,
-    data_type: DataType,
-    linear: Box<dyn EncodableBlock<B>>,
-    input_array_id: ArrayId,
-    input_dim: usize,
-    output_array_id: ArrayId,
-    output_dim: usize,
-) -> Result<Box<dyn EncodableBlock<B>>, LayerError<B>> {
-    let pre_fwht = if let Some(mode) = fwht_mode_for_dim(input_dim) {
-        Some(
-            Box::new(Fwht::new(context, data_type, mode, input_array_id, input_dim).map_err(LayerError::BackendError)?)
-                as Box<dyn EncodableBlock<B>>,
-        )
-    } else {
-        None
-    };
-
-    let post_fwht = if let Some(mode) = fwht_mode_for_dim(output_dim) {
-        Some(Box::new(
-            Fwht::new(context, data_type, mode, output_array_id, output_dim).map_err(LayerError::BackendError)?,
-        ) as Box<dyn EncodableBlock<B>>)
-    } else {
-        None
-    };
-
-    // If both are None, skip the wrapper entirely
-    if pre_fwht.is_none() && post_fwht.is_none() {
-        return Ok(linear);
-    }
-
-    Ok(Box::new(FwhtLinear::new(pre_fwht, linear, post_fwht)))
-}
-
 pub fn linear_block<const N: usize, B: Backend>(
     config: &LinearConfig,
     _has_biases: bool,
@@ -134,21 +55,6 @@ pub fn linear_block<const N: usize, B: Backend>(
             )
             .map_err(LayerError::QuantizedLinearError)?;
 
-            #[cfg(feature = "fwht")]
-            {
-                let data_type: DataType = quantization_config.activation_precision.into();
-                return wrap_with_fwht::<B>(
-                    context,
-                    data_type,
-                    Box::new(block),
-                    input_array_id,
-                    input_dimension,
-                    output_array_id,
-                    output_dimension_sum,
-                );
-            }
-
-            #[cfg(not(feature = "fwht"))]
             Ok(Box::new(block))
         },
         LinearConfig::FullPrecision {
