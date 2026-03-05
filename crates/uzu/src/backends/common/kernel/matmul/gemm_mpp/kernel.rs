@@ -1,7 +1,9 @@
 use std::{collections::HashMap, ops::DerefMut};
 
 use super::{
-    super::matmul_arguments::MatmulArguments, dispatch_descriptor::DispatchDescriptor, specialization::Specialization,
+    super::{MatmulError, matmul_arguments::MatmulArguments},
+    dispatch_descriptor::DispatchDescriptor,
+    specialization::Specialization,
 };
 use crate::{
     DataType,
@@ -15,10 +17,7 @@ pub struct GemmMppKernel<B: Backend> {
     pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemmMppKernel>,
 }
 
-impl<B: Backend> GemmMppKernel<B>
-where
-    B::Error: From<String>,
-{
+impl<B: Backend> GemmMppKernel<B> {
     pub fn new(
         a_dtype: DataType,
         b_dtype: DataType,
@@ -35,7 +34,7 @@ where
     pub fn precompile(
         &mut self,
         context: &B::Context,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         for &config in Specialization::precompile_configs(self.output_dtype) {
             self.get_or_create_kernel(context, config)?;
         }
@@ -46,7 +45,7 @@ where
         &mut self,
         context: &B::Context,
         config: Specialization,
-    ) -> Result<&<B::Kernels as Kernels>::MatmulGemmMppKernel, B::Error> {
+    ) -> Result<&<B::Kernels as Kernels>::MatmulGemmMppKernel, MatmulError<B>> {
         if !self.pipelines.contains_key(&config) {
             let pipeline = <B::Kernels as Kernels>::MatmulGemmMppKernel::new(
                 context,
@@ -61,7 +60,8 @@ where
                 config.align_m,
                 config.align_n,
                 config.align_k,
-            )?;
+            )
+            .map_err(MatmulError::BackendError)?;
             self.pipelines.insert(config, pipeline);
         }
         Ok(self.pipelines.get(&config).unwrap())
@@ -73,18 +73,15 @@ where
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
 
-        let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x).map_err(|_| {
-            B::Error::from(format!("GemmMpp group count x overflows u32: {}", dispatch_descriptor.threadgroups.x))
-        })?;
-        let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y).map_err(|_| {
-            B::Error::from(format!("GemmMpp group count y overflows u32: {}", dispatch_descriptor.threadgroups.y))
-        })?;
-        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z).map_err(|_| {
-            B::Error::from(format!("GemmMpp group count z overflows u32: {}", dispatch_descriptor.threadgroups.z))
-        })?;
+        let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.x))?;
+        let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.y))?;
+        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.z))?;
 
         let pipeline = self.get_or_create_kernel(context, config)?;
         pipeline.encode(

@@ -6,6 +6,7 @@ use crate::{
     backends::common::{
         Backend, Kernels,
         kernel::{
+            matmul::MatmulError,
             MixedTypesSimpleGemmI8Bf16Bf16Kernel, MixedTypesSimpleGemmI8F16F16Kernel,
             MixedTypesSimpleGemmI8F32F32Kernel, MixedTypesSimpleGemmI8I8I32Kernel,
         },
@@ -50,21 +51,14 @@ pub struct GemmMixedTypesSimpleKernel<B: Backend> {
     i8_f32_f32: Option<<B::Kernels as Kernels>::MixedTypesSimpleGemmI8F32F32Kernel>,
 }
 
-impl<B: Backend> GemmMixedTypesSimpleKernel<B>
-where
-    B::Error: From<String>,
-{
+impl<B: Backend> GemmMixedTypesSimpleKernel<B> {
     pub fn new(
         a_dtype: DataType,
         b_dtype: DataType,
         output_dtype: DataType,
-    ) -> Result<Self, B::Error> {
-        let route = route_for_combo(a_dtype, b_dtype, output_dtype).ok_or_else(|| {
-            B::Error::from(format!(
-                "GemmMixedTypesSimple: unsupported combo {:?} * {:?} -> {:?}",
-                a_dtype, b_dtype, output_dtype
-            ))
-        })?;
+    ) -> Result<Self, MatmulError<B>> {
+        let route = route_for_combo(a_dtype, b_dtype, output_dtype)
+            .ok_or(MatmulError::UnsupportedDataType(output_dtype))?;
 
         Ok(Self {
             route,
@@ -81,21 +75,21 @@ where
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
         encoder: &mut B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
-        let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x).map_err(|_| {
-            B::Error::from(format!("GemmMixedTypesSimple group count x overflows u32: {}", dispatch_descriptor.threadgroups.x))
-        })?;
-        let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y).map_err(|_| {
-            B::Error::from(format!("GemmMixedTypesSimple group count y overflows u32: {}", dispatch_descriptor.threadgroups.y))
-        })?;
-        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z).map_err(|_| {
-            B::Error::from(format!("GemmMixedTypesSimple group count z overflows u32: {}", dispatch_descriptor.threadgroups.z))
-        })?;
+    ) -> Result<(), MatmulError<B>> {
+        let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.x))?;
+        let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.y))?;
+        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z)
+            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.z))?;
 
         match self.route {
             MixedTypesSimpleRoute::I8I8I32 => {
                 if self.i8_i8_i32.is_none() {
-                    self.i8_i8_i32 = Some(<B::Kernels as Kernels>::MixedTypesSimpleGemmI8I8I32Kernel::new(context)?);
+                    self.i8_i8_i32 = Some(
+                        <B::Kernels as Kernels>::MixedTypesSimpleGemmI8I8I32Kernel::new(context)
+                            .map_err(MatmulError::BackendError)?,
+                    );
                 }
                 let p = self.i8_i8_i32.as_ref().unwrap();
                 p.encode(
@@ -112,7 +106,10 @@ where
             },
             MixedTypesSimpleRoute::I8Bf16Bf16 => {
                 if self.i8_bf16_bf16.is_none() {
-                    self.i8_bf16_bf16 = Some(<B::Kernels as Kernels>::MixedTypesSimpleGemmI8Bf16Bf16Kernel::new(context)?);
+                    self.i8_bf16_bf16 = Some(
+                        <B::Kernels as Kernels>::MixedTypesSimpleGemmI8Bf16Bf16Kernel::new(context)
+                            .map_err(MatmulError::BackendError)?,
+                    );
                 }
                 let p = self.i8_bf16_bf16.as_ref().unwrap();
                 p.encode(
@@ -129,7 +126,10 @@ where
             },
             MixedTypesSimpleRoute::I8F16F16 => {
                 if self.i8_f16_f16.is_none() {
-                    self.i8_f16_f16 = Some(<B::Kernels as Kernels>::MixedTypesSimpleGemmI8F16F16Kernel::new(context)?);
+                    self.i8_f16_f16 = Some(
+                        <B::Kernels as Kernels>::MixedTypesSimpleGemmI8F16F16Kernel::new(context)
+                            .map_err(MatmulError::BackendError)?,
+                    );
                 }
                 let p = self.i8_f16_f16.as_ref().unwrap();
                 p.encode(
@@ -146,7 +146,10 @@ where
             },
             MixedTypesSimpleRoute::I8F32F32 => {
                 if self.i8_f32_f32.is_none() {
-                    self.i8_f32_f32 = Some(<B::Kernels as Kernels>::MixedTypesSimpleGemmI8F32F32Kernel::new(context)?);
+                    self.i8_f32_f32 = Some(
+                        <B::Kernels as Kernels>::MixedTypesSimpleGemmI8F32F32Kernel::new(context)
+                            .map_err(MatmulError::BackendError)?,
+                    );
                 }
                 let p = self.i8_f32_f32.as_ref().unwrap();
                 p.encode(
