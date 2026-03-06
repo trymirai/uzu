@@ -1,20 +1,8 @@
-use std::sync::OnceLock;
-
 use super::{super::matmul_arguments::MatmulArguments, specialization::Specialization};
 use crate::{
     DataType,
     backends::common::{Backend, kernel::matmul::MatmulError},
 };
-
-const DEFAULT_GEMV_MAX_BATCH: i32 = 8;
-
-static GEMV_MAX_BATCH: OnceLock<i32> = OnceLock::new();
-
-fn max_gemv_batch_threshold() -> i32 {
-    *GEMV_MAX_BATCH.get_or_init(|| {
-        std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
-    })
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputSource {
@@ -44,6 +32,7 @@ impl DispatchDescriptor {
     pub fn try_new<B: Backend>(
         data_type: DataType,
         arguments: &MatmulArguments<B>,
+        gemv_max_batch: i32,
     ) -> Result<Option<Self>, MatmulError<B>> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MatmulError::UnsupportedDataType(data_type));
@@ -56,13 +45,11 @@ impl DispatchDescriptor {
         let m = arguments.batch;
         let n = arguments.output_dim;
 
-        let max_gemv_batch = max_gemv_batch_threshold();
-
         if n == 1 {
             if m != 1 {
                 return Ok(None);
             }
-        } else if m > max_gemv_batch {
+        } else if m > gemv_max_batch {
             return Ok(None);
         }
 
