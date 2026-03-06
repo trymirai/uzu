@@ -146,11 +146,11 @@ impl<B: Backend> MatmulKernel<B> {
             },
             MatmulDispatchDescriptor::GemmMpp(d) => {
                 let gemm_mpp = self.get_or_create_gemm_mpp()?;
-                gemm_mpp.encode(context, arguments, d, encoder)
+                gemm_mpp.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::GemmMixedTypesSimple(d) => {
                 let gemm_mixed_types_simple = self.get_or_create_gemm_mixed_types_simple()?;
-                gemm_mixed_types_simple.encode(context, arguments, d, encoder)
+                gemm_mixed_types_simple.encode(context, arguments, d, command_buffer)
             },
         }
     }

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::MatmulGemmMppKernel},
+    backends::common::{Backend, CommandBuffer, Kernels, kernel::MatmulGemmMppKernel},
 };
 
 pub struct GemmMppKernel<B: Backend> {
@@ -72,7 +72,7 @@ impl<B: Backend> GemmMppKernel<B> {
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
 
@@ -92,7 +92,7 @@ impl<B: Backend> GemmMppKernel<B> {
             group_count_x,
             group_count_y,
             group_count_z,
-            encoder,
+            command_buffer,
         );
 
         Ok(())

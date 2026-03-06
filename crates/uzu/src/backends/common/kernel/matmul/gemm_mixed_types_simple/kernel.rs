@@ -4,7 +4,7 @@ use super::{super::matmul_arguments::MatmulArguments, dispatch_descriptor::Dispa
 use crate::{
     DataType,
     backends::common::{
-        Backend, Kernels,
+        Backend, CommandBuffer, Kernels,
         kernel::{
             matmul::MatmulError,
             MixedTypesSimpleGemmI8Bf16Bf16Kernel, MixedTypesSimpleGemmI8F16F16Kernel,
@@ -74,7 +74,7 @@ impl<B: Backend> GemmMixedTypesSimpleKernel<B> {
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let group_count_x = u32::try_from(dispatch_descriptor.threadgroups.x)
             .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.x))?;
@@ -100,7 +100,7 @@ impl<B: Backend> GemmMixedTypesSimpleKernel<B> {
                     group_count_x,
                     group_count_y,
                     group_count_z,
-                    encoder,
+                    command_buffer,
                 );
                 Ok(())
             },
@@ -120,7 +120,7 @@ impl<B: Backend> GemmMixedTypesSimpleKernel<B> {
                     group_count_x,
                     group_count_y,
                     group_count_z,
-                    encoder,
+                    command_buffer,
                 );
                 Ok(())
             },
@@ -140,7 +140,7 @@ impl<B: Backend> GemmMixedTypesSimpleKernel<B> {
                     group_count_x,
                     group_count_y,
                     group_count_z,
-                    encoder,
+                    command_buffer,
                 );
                 Ok(())
             },
@@ -160,7 +160,7 @@ impl<B: Backend> GemmMixedTypesSimpleKernel<B> {
                     group_count_x,
                     group_count_y,
                     group_count_z,
-                    encoder,
+                    command_buffer,
                 );
                 Ok(())
             },

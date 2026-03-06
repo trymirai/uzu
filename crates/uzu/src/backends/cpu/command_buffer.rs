@@ -148,6 +148,10 @@ impl CommandBufferPending for CpuCommandBuffer {
 impl CommandBufferCompleted for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
 
+    fn kernel_execution_time_ms(&self) -> Option<f64> {
+        None
+    }
+
     fn gpu_execution_time_ms(&self) -> Option<f64> {
         self.gpu_execution_time_ms.get().copied()
     }
