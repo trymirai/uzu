@@ -18,7 +18,10 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::common::{Backend, CommandBuffer, Context, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        kernel::kv_cache_update::KVCacheUpdate,
+    },
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{EncodableBlock, EncodingParameters, Sampling},
@@ -270,13 +273,14 @@ impl<B: Backend> TraceValidator<B> {
             None,
         );
 
-        let mut command_buffer = ctx.context.create_command_buffer().expect("Failed to create command buffer");
+        let mut command_buffer =
+            ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
         ctx.executables
-            .encode(&mut state, &EncodingParameters::new(false, false, false), &mut command_buffer)
+            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        command_buffer.submit();
-        command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let pending = command_buffer.end_encoding().submit();
+        pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let traces = state.traces().clone();
         let data_type = ctx.model_shape.activation_data_type();

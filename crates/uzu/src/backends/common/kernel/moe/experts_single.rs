@@ -14,23 +14,23 @@ static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 #[derive(Debug)]
 pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     /// Input activation [d_model]
-    pub x: &'a B::NativeBuffer,
+    pub x: &'a B::Buffer,
     /// Top-K expert indices from router [K]
-    pub topk_ids: &'a B::NativeBuffer,
+    pub topk_ids: &'a B::Buffer,
     /// Top-K probabilities from router [K]
-    pub topk_probs: &'a B::NativeBuffer,
+    pub topk_probs: &'a B::Buffer,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: &'a B::NativeBuffer,
+    pub w13_all: &'a B::Buffer,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: &'a B::NativeBuffer,
+    pub w2_all: &'a B::Buffer,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: &'a B::NativeBuffer,
+    pub up_biases: &'a B::Buffer,
     /// Down biases [E, d_model]
-    pub down_biases: &'a B::NativeBuffer,
+    pub down_biases: &'a B::Buffer,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a mut B::NativeBuffer,
+    pub hidden: &'a mut B::Buffer,
     /// Final output [d_model]
-    pub y: &'a mut B::NativeBuffer,
+    pub y: &'a mut B::Buffer,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -84,7 +84,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         mut args: MoeExpertsSingleDecodeArguments<B>,
     ) {
         if args.k == 0 {
@@ -95,41 +95,37 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
 
         // Pass A: x @ W13[expert] -> hidden
-        command_buffer.with_compute_encoder(|encoder| {
-            let kernel = &self.pass_a[gate_idx][dtype_idx];
-            kernel.encode(
-                args.x,
-                args.topk_ids,
-                args.w13_all,
-                args.up_biases,
-                args.hidden.deref_mut(),
-                args.d_model as u32,
-                args.d_ff as u32,
-                args.k as u32,
-                args.silu_alpha,
-                args.gate_clip_min,
-                args.gate_clip_max,
-                args.up_clip_min,
-                args.up_clip_max,
-                encoder,
-            );
-        });
+        let kernel = &self.pass_a[gate_idx][dtype_idx];
+        kernel.encode(
+            args.x,
+            args.topk_ids,
+            args.w13_all,
+            args.up_biases,
+            args.hidden.deref_mut(),
+            args.d_model as u32,
+            args.d_ff as u32,
+            args.k as u32,
+            args.silu_alpha,
+            args.gate_clip_min,
+            args.gate_clip_max,
+            args.up_clip_min,
+            args.up_clip_max,
+            command_buffer,
+        );
 
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
-        command_buffer.with_compute_encoder(|encoder| {
-            let kernel = &self.pass_b[dtype_idx];
-            kernel.encode(
-                args.hidden.deref(),
-                args.topk_ids,
-                args.topk_probs,
-                args.w2_all,
-                args.down_biases,
-                args.y,
-                args.d_model as u32,
-                args.d_ff as u32,
-                args.k as u32,
-                encoder,
-            );
-        });
+        let kernel = &self.pass_b[dtype_idx];
+        kernel.encode(
+            args.hidden.deref(),
+            args.topk_ids,
+            args.topk_probs,
+            args.w2_all,
+            args.down_biases,
+            args.y,
+            args.d_model as u32,
+            args.d_ff as u32,
+            args.k as u32,
+            command_buffer,
+        );
     }
 }

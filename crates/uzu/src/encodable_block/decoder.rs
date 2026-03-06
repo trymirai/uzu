@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::{
     DataType, DecoderConfig,
-    backends::common::Backend,
+    backends::common::{Backend, CommandBuffer},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
         EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
@@ -162,20 +162,11 @@ impl<B: Backend> Decoder<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Decoder<B> {
-    fn encode_with_shared_encoder(
-        &self,
-        _state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        _encoder: &mut B::ComputeEncoder,
-    ) {
-        unimplemented!("Decoder does not support shared encoder")
-    }
-
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &mut B::CommandBuffer,
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         self.embed.encode(state, parameters, command_buffer)?;
 

@@ -5,7 +5,7 @@ use thiserror::Error;
 use super::{EncodableBlock, EncodingParameters, LayerNorm, LayerNormError, RMSNorm, RMSNormError};
 use crate::{
     DataType,
-    backends::common::Backend,
+    backends::common::{Backend, CommandBuffer},
     config::NormalizationConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -59,22 +59,15 @@ impl<B: Backend> Normalization<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Normalization<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        match self {
-            Self::LayerNorm(layer_norm) => layer_norm.supports_shared_encoder(),
-            Self::RMSNorm(rms_norm) => rms_norm.supports_shared_encoder(),
-        }
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         match self {
-            Self::LayerNorm(layer_norm) => layer_norm.encode_with_shared_encoder(state, parameters, encoder),
-            Self::RMSNorm(rms_norm) => rms_norm.encode_with_shared_encoder(state, parameters, encoder),
+            Self::LayerNorm(layer_norm) => layer_norm.encode(state, parameters, command_buffer),
+            Self::RMSNorm(rms_norm) => rms_norm.encode(state, parameters, command_buffer),
         }
     }
 }

@@ -9,14 +9,17 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue};
+use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::kernel::moe::{
-            MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
-            MoeExpertsTwoPassPrefillBlock,
+        common::{
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+            kernel::moe::{
+                MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock,
+                MoeExpertsTwoPassPrefillBlock,
+            },
         },
         metal::Metal,
     },
@@ -416,13 +419,13 @@ fn test_two_pass_decode_correctness() {
 
     // Execute 2-pass decode kernel
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
-    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     const K_TILE: usize = 64;
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as u32;
 
     experts_kernel.encode(
-        &mut cb,
+        &mut command_buffer,
         MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -453,8 +456,7 @@ fn test_two_pass_decode_correctness() {
         },
     );
 
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     // Read GPU partial output and do CPU finalize (weighted sum)
     let y_partial_gpu =
@@ -560,9 +562,9 @@ fn test_two_pass_decode_multi_token() {
     let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(&ctx).expect("kernel");
-    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
     experts_kernel.encode(
-        &mut cb,
+        &mut command_buffer,
         MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -592,8 +594,7 @@ fn test_two_pass_decode_multi_token() {
             data_type: DataType::BF16,
         },
     );
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_partial_gpu =
         unsafe { std::slice::from_raw_parts(y_partial_buf.contents().as_ptr() as *const bf16, sum_k * d_model) };
@@ -662,7 +663,7 @@ fn test_two_pass_prefill_correctness() {
     let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
 
     let experts_kernel = MoeExpertsTwoPassPrefillBlock::<Metal>::new(&ctx).expect("kernel");
-    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
     let args = MoeExpertsTwoPassArguments {
         x_perm_buffer: &x_perm_buf,
         expert_offsets: &offsets_buf,
@@ -691,9 +692,8 @@ fn test_two_pass_prefill_correctness() {
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts_kernel.encode(&mut cb, args);
-    cb.commit();
-    cb.wait_until_completed();
+    experts_kernel.encode(&mut command_buffer, args);
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_partial_gpu =
         unsafe { std::slice::from_raw_parts(y_partial_buf.contents().as_ptr() as *const bf16, sum_k * d_model) };
@@ -791,10 +791,10 @@ fn test_fused_single_token_decode() {
 
     // Run fused decode kernel
     let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
-    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     fused_kernel.encode(
-        &mut cb,
+        &mut command_buffer,
         MoeExpertsSingleDecodeArguments {
             x: &x_buf,
             topk_ids: &topk_ids_buf,
@@ -818,8 +818,7 @@ fn test_fused_single_token_decode() {
         },
     );
 
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     // Read GPU output
     let y_gpu = unsafe { std::slice::from_raw_parts(y_buf.contents().as_ptr() as *const bf16, d_model) };
@@ -915,9 +914,9 @@ fn test_fused_single_token_k4() {
     let mut y_buf = alloc_buffer::<bf16>(&ctx, d_model);
 
     let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(&ctx).expect("fused kernel");
-    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
     fused_kernel.encode(
-        &mut cb,
+        &mut command_buffer,
         MoeExpertsSingleDecodeArguments {
             x: &x_buf,
             topk_ids: &topk_ids_buf,
@@ -940,8 +939,7 @@ fn test_fused_single_token_k4() {
             data_type: DataType::BF16,
         },
     );
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_gpu = unsafe { std::slice::from_raw_parts(y_buf.contents().as_ptr() as *const bf16, d_model) };
 

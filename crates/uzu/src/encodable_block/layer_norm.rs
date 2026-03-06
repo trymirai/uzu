@@ -12,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, LayerNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -33,7 +33,7 @@ pub struct LayerNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
 }
 
 impl<B: Backend> LayerNorm<B> {
@@ -71,16 +71,12 @@ impl<B: Backend> LayerNorm<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
 
@@ -111,7 +107,8 @@ impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             full_layer,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

@@ -5,14 +5,27 @@ use std::{
 
 use super::Cpu;
 use crate::backends::{
-    common::{CommandBuffer, CopyEncoder},
+    common::{
+        CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+        CommandBufferPending,
+    },
     cpu::error::CpuError,
 };
 
 pub struct CpuCommandBuffer {
     commands: Vec<Box<dyn Fn()>>,
-    completion_handlers: Vec<Box<dyn FnOnce(Result<(), CpuError>)>>,
+    completion_handlers: Vec<Box<dyn FnOnce(Result<&CpuCommandBuffer, CpuError>)>>,
     gpu_execution_time_ms: OnceCell<f64>,
+}
+
+impl CommandBuffer for CpuCommandBuffer {
+    type Backend = Cpu;
+
+    type Initial = CpuCommandBuffer;
+    type Encoding = CpuCommandBuffer;
+    type Executable = CpuCommandBuffer;
+    type Pending = CpuCommandBuffer;
+    type Completed = CpuCommandBuffer;
 }
 
 impl CpuCommandBuffer {
@@ -32,72 +45,16 @@ impl CpuCommandBuffer {
     }
 }
 
-impl CommandBuffer for CpuCommandBuffer {
-    type Backend = Cpu;
+impl CommandBufferInitial for CpuCommandBuffer {
+    type CommandBuffer = CpuCommandBuffer;
 
-    fn with_compute_encoder<T>(
-        &mut self,
-        callback: impl FnOnce(&mut CpuCommandBuffer) -> T,
-    ) -> T {
-        callback(self)
-    }
-
-    fn with_copy_encoder<T>(
-        &mut self,
-        callback: impl FnOnce(&mut CpuCommandBuffer) -> T,
-    ) -> T {
-        callback(self)
-    }
-
-    fn encode_wait_for_event(
-        &mut self,
-        event: &RefCell<u64>,
-        value: u64,
-    ) {
-        let event = event.as_ptr();
-        self.push_command(Box::new(move || unsafe { assert!(*event >= value, "deadlock") }))
-    }
-
-    fn encode_signal_event(
-        &mut self,
-        event: &RefCell<u64>,
-        value: u64,
-    ) {
-        let event = event.as_ptr();
-        self.push_command(Box::new(move || unsafe { *event = value }))
-    }
-
-    fn add_completion_handler(
-        &mut self,
-        handler: impl FnOnce(Result<(), CpuError>) + 'static,
-    ) {
-        self.completion_handlers.push(Box::new(handler))
-    }
-
-    fn submit(&mut self) {
-        let start = Instant::now();
-        for command in &self.commands {
-            command()
-        }
-        self.gpu_execution_time_ms
-            .set((Instant::now() - start).as_secs_f64() * 1000.0)
-            .expect("gpu execution time already set");
-        for completion_handler in self.completion_handlers.drain(..) {
-            completion_handler(Ok(()));
-        }
-    }
-
-    fn wait_until_completed(&self) -> Result<(), CpuError> {
-        Ok(())
-    }
-
-    fn gpu_execution_time_ms(&self) -> Option<f64> {
-        self.gpu_execution_time_ms.get().copied()
+    fn start_encoding(self) -> CpuCommandBuffer {
+        self
     }
 }
 
-impl CopyEncoder for CpuCommandBuffer {
-    type Backend = Cpu;
+impl CommandBufferEncoding for CpuCommandBuffer {
+    type CommandBuffer = CpuCommandBuffer;
 
     fn encode_copy(
         &mut self,
@@ -123,5 +80,75 @@ impl CopyEncoder for CpuCommandBuffer {
         self.push_command(Box::new(move || unsafe {
             dst.write_bytes(value, size);
         }))
+    }
+
+    fn encode_wait_for_event(
+        &mut self,
+        event: &RefCell<u64>,
+        value: u64,
+    ) {
+        let event = event.as_ptr();
+        self.push_command(Box::new(move || unsafe { assert!(*event >= value, "deadlock") }))
+    }
+
+    fn encode_signal_event(
+        &mut self,
+        event: &RefCell<u64>,
+        value: u64,
+    ) {
+        let event = event.as_ptr();
+        self.push_command(Box::new(move || unsafe { *event = value }))
+    }
+
+    fn add_completion_handler(
+        &mut self,
+        handler: impl FnOnce(Result<&CpuCommandBuffer, CpuError>) + 'static,
+    ) {
+        self.completion_handlers.push(Box::new(handler))
+    }
+
+    fn end_encoding(self) -> CpuCommandBuffer {
+        self
+    }
+}
+
+impl CommandBufferExecutable for CpuCommandBuffer {
+    type CommandBuffer = CpuCommandBuffer;
+
+    fn submit(mut self) -> CpuCommandBuffer {
+        let start = Instant::now();
+        for command in &self.commands {
+            command()
+        }
+
+        self.gpu_execution_time_ms
+            .set((Instant::now() - start).as_secs_f64() * 1000.0)
+            .expect("gpu execution time already set");
+
+        for completion_handler in self.completion_handlers.drain(..).collect::<Vec<_>>() {
+            completion_handler(Ok(&self));
+        }
+
+        CpuCommandBuffer {
+            commands: Vec::new(),
+            completion_handlers: Vec::new(),
+            gpu_execution_time_ms: self.gpu_execution_time_ms,
+        }
+    }
+}
+
+impl CommandBufferPending for CpuCommandBuffer {
+    type CommandBuffer = CpuCommandBuffer;
+
+    fn wait_until_completed(self) -> Result<CpuCommandBuffer, CpuError> {
+        Ok(self)
+    }
+}
+
+impl CommandBufferCompleted for CpuCommandBuffer {
+    type CommandBuffer = CpuCommandBuffer;
+
+    fn gpu_execution_time_ms(&self) -> Option<f64> {
+        self.gpu_execution_time_ms.get().copied()
     }
 }

@@ -12,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, RMSNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -33,7 +33,7 @@ pub struct RMSNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
     use_sampling_range: bool,
 }
 
@@ -85,16 +85,12 @@ impl<B: Backend> RMSNorm<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
 
@@ -117,7 +113,7 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
         };
         let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
         if batch_len == 0 {
-            return;
+            return Ok(());
         }
 
         let row_size_in_bytes = input_shape[1] * input_elem_size;
@@ -138,7 +134,8 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             self.config.upcast_mode == UpcastMode::FullLayer,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

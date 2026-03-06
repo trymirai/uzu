@@ -1,11 +1,12 @@
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels,
             kernel::{
                 MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
                 MoeScatterBucketsMapKernel,
@@ -346,12 +347,11 @@ fn run_moe_parity_test_internal(
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
-    let mut cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     // Router + TopK (fused kernel)
     let router_topk =
         <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16).expect("router+topk");
-    let mut router_topk_encoder = cb.new_compute_command_encoder().expect("router+topk_encoder");
     router_topk.encode(
         &x_buf,
         &router_w_buf,
@@ -363,13 +363,11 @@ fn run_moe_parity_test_internal(
         e as u32,
         k as u32,
         true,
-        &mut router_topk_encoder,
+        &mut command_buffer,
     );
-    router_topk_encoder.end_encoding();
 
     let fused_kernel =
         <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let mut encoder = cb.new_compute_command_encoder().expect("encoder");
     fused_kernel.encode(
         &topk_ids_buf,
         &mut offsets_buf,
@@ -378,11 +376,9 @@ fn run_moe_parity_test_internal(
         t as u32,
         e as u32,
         k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding();
 
-    let mut scatter_bases_encoder = cb.new_compute_command_encoder().expect("scatter_bases_encoder");
     let scatter_bases_kernel = <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx)
         .expect("scatter bases kernel");
     scatter_bases_kernel.encode(
@@ -393,11 +389,9 @@ fn run_moe_parity_test_internal(
         num_blocks as u32,
         num_tiles as u32,
         0u32,
-        &mut scatter_bases_encoder,
+        &mut command_buffer,
     );
-    scatter_bases_encoder.end_encoding();
 
-    let mut scatter_encoder = cb.new_compute_command_encoder().expect("scatter encoder");
     let scatter_map_kernel =
         <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
             .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
@@ -415,13 +409,12 @@ fn run_moe_parity_test_internal(
         num_blocks as u32,
         num_tiles as u32,
         &mut tok2row_buf,
-        &mut scatter_encoder,
+        &mut command_buffer,
     );
-    scatter_encoder.end_encoding();
 
     let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("gather");
     gather.encode(
-        &mut cb,
+        &mut command_buffer,
         DataType::BF16,
         MoeGatherArguments {
             x_buffer: &x_buf,
@@ -469,11 +462,10 @@ fn run_moe_parity_test_internal(
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts.encode(&mut cb, args);
+    experts.encode(&mut command_buffer, args);
 
     let finalize =
         <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
-    let mut encoder = cb.new_compute_command_encoder().expect("encoder");
     finalize.encode(
         &tok2row_buf,
         &topk_probs_buf,
@@ -482,13 +474,11 @@ fn run_moe_parity_test_internal(
         t as u32,
         d_model as u32,
         k as u32,
-        &mut encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding();
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     eprintln!("[E2E] GPU execution completed");
 
     // Read GPU output

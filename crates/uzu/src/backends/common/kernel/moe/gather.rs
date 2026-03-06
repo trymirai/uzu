@@ -8,10 +8,10 @@ use crate::{
 
 #[derive(Debug)]
 pub struct MoeGatherArguments<'a, B: Backend> {
-    pub x_buffer: &'a B::NativeBuffer,
-    pub bucketed_ids_buffer: &'a B::NativeBuffer,
-    pub x_perm_buffer: &'a mut B::NativeBuffer,
-    pub sumk_buffer: &'a B::NativeBuffer,
+    pub x_buffer: &'a B::Buffer,
+    pub bucketed_ids_buffer: &'a B::Buffer,
+    pub x_perm_buffer: &'a mut B::Buffer,
+    pub sumk_buffer: &'a B::Buffer,
     pub t: usize,
     pub k: usize,
     pub d_model: usize,
@@ -34,11 +34,11 @@ impl<B: Backend> MoeGatherKernels<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         dtype: DataType,
         args: MoeGatherArguments<B>,
     ) {
-        command_buffer.with_compute_encoder(|encoder| match dtype {
+        match dtype {
             DataType::F32 => self.f32.encode(
                 args.x_buffer,
                 args.bucketed_ids_buffer,
@@ -47,7 +47,7 @@ impl<B: Backend> MoeGatherKernels<B> {
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
-                encoder,
+                command_buffer,
             ),
             DataType::F16 => self.f16.encode(
                 args.x_buffer,
@@ -57,7 +57,7 @@ impl<B: Backend> MoeGatherKernels<B> {
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
-                encoder,
+                command_buffer,
             ),
             DataType::BF16 => self.bf16.encode(
                 args.x_buffer,
@@ -67,9 +67,9 @@ impl<B: Backend> MoeGatherKernels<B> {
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
-                encoder,
+                command_buffer,
             ),
             _ => panic!("Unsupported data type: {:?}", dtype),
-        });
+        };
     }
 }

@@ -6,7 +6,7 @@ use super::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Kernels,
+        Backend, CommandBuffer, Kernels,
         kernel::{MatmulGemmKernel, matmul::MatmulError},
     },
 };
@@ -66,7 +66,7 @@ impl<B: Backend> GemmKernel<B> {
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
 
@@ -86,7 +86,7 @@ impl<B: Backend> GemmKernel<B> {
             group_count_x,
             group_count_y,
             group_count_z,
-            encoder,
+            command_buffer,
         );
 
         Ok(())

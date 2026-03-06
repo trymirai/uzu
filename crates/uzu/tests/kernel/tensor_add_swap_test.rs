@@ -5,7 +5,10 @@ use num_traits::Float;
 use uzu::{
     ArrayElement,
     array::ArrayContextExt,
-    backends::common::{Backend, CommandBuffer, Context, Kernels, kernel::TensorAddSwapKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        Kernels, kernel::TensorAddSwapKernel,
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -46,17 +49,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let skip_array = context.create_array_from(&[size], &input.skip_buffer, "");
     let main_array = context.create_array_from(&[size], &input.main_buffer, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
-    command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(
-            skip_array.buffer().borrow_mut().deref_mut(),
-            main_array.buffer().borrow_mut().deref_mut(),
-            input.length,
-            encoder,
-        )
-    });
-    command_buffer.submit();
-    command_buffer.wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        skip_array.buffer().borrow_mut().deref_mut(),
+        main_array.buffer().borrow_mut().deref_mut(),
+        input.length,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     (skip_array.as_slice().to_vec(), main_array.as_slice().to_vec())
 }

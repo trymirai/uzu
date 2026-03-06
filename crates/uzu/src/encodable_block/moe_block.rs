@@ -12,7 +12,7 @@ use crate::{
     Activation, DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
     array::Array,
     backends::common::{
-        Backend, CommandBuffer, CopyEncoder, Kernels,
+        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
@@ -28,16 +28,16 @@ use crate::{
 };
 
 struct RouterBlock<B: Backend> {
-    weights_buf: Rc<RefCell<B::NativeBuffer>>,
-    biases_buf: Rc<RefCell<B::NativeBuffer>>,
+    weights_buf: Rc<RefCell<B::Buffer>>,
+    biases_buf: Rc<RefCell<B::Buffer>>,
 }
 
 #[derive(Clone)]
 struct SharedMoeWeights<B: Backend> {
-    pub w13_buf: Rc<RefCell<B::NativeBuffer>>,
-    pub w2_buf: Rc<RefCell<B::NativeBuffer>>,
-    pub up_biases_buf: Rc<RefCell<B::NativeBuffer>>,
-    pub down_biases_buf: Rc<RefCell<B::NativeBuffer>>,
+    pub w13_buf: Rc<RefCell<B::Buffer>>,
+    pub w2_buf: Rc<RefCell<B::Buffer>>,
+    pub up_biases_buf: Rc<RefCell<B::Buffer>>,
+    pub down_biases_buf: Rc<RefCell<B::Buffer>>,
 }
 
 pub struct MoeBlock<B: Backend> {
@@ -192,8 +192,8 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &mut B::CommandBuffer,
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
@@ -219,7 +219,7 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<RefCell<B::NativeBuffer>> { array.borrow().buffer() };
+        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<RefCell<B::Buffer>> { array.borrow().buffer() };
 
         let mut array_iter = arrays.iter();
         let main_buf = clone_buffer(array_iter.next().unwrap());
@@ -249,39 +249,37 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         let k_tile = 128;
 
         // Clear internal MoE buffers
-        command_buffer.with_copy_encoder(|encoder| {
-            if suffix_length > 0 && k > 0 {
-                let entries = suffix_length * k;
-                let topk_bytes = entries * std::mem::size_of::<u32>();
-                let tok2row_bytes = entries * std::mem::size_of::<i32>();
+        if suffix_length > 0 && k > 0 {
+            let entries = suffix_length * k;
+            let topk_bytes = entries * std::mem::size_of::<u32>();
+            let tok2row_bytes = entries * std::mem::size_of::<i32>();
 
-                // Clear topk_ids and tok2row buffers
-                if topk_bytes > 0 {
-                    encoder.encode_fill(topk_ids_buf.borrow_mut().deref_mut(), 0..topk_bytes, 0xFF);
-                }
-                if tok2row_bytes > 0 {
-                    encoder.encode_fill(tok2row_buf.borrow_mut().deref_mut(), 0..tok2row_bytes, 0xFF);
-                }
-
-                // Clear hidden buffer
-                let hidden_bytes = suffix_length * k * self.hidden_dim * self.data_type.size_in_bytes();
-                if hidden_bytes > 0 {
-                    encoder.encode_fill(hidden_buf.borrow_mut().deref_mut(), 0..hidden_bytes, 0);
-                }
-
-                // Clear y_partial buffer
-                let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
-                if y_partial_bytes > 0 {
-                    encoder.encode_fill(y_partial_buf.borrow_mut().deref_mut(), 0..y_partial_bytes, 0);
-                }
-
-                // Clear x_perm buffer
-                let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
-                if x_perm_bytes > 0 {
-                    encoder.encode_fill(x_perm_buf.borrow_mut().deref_mut(), 0..x_perm_bytes, 0);
-                }
+            // Clear topk_ids and tok2row buffers
+            if topk_bytes > 0 {
+                command_buffer.encode_fill(topk_ids_buf.borrow_mut().deref_mut(), 0..topk_bytes, 0xFF);
             }
-        });
+            if tok2row_bytes > 0 {
+                command_buffer.encode_fill(tok2row_buf.borrow_mut().deref_mut(), 0..tok2row_bytes, 0xFF);
+            }
+
+            // Clear hidden buffer
+            let hidden_bytes = suffix_length * k * self.hidden_dim * self.data_type.size_in_bytes();
+            if hidden_bytes > 0 {
+                command_buffer.encode_fill(hidden_buf.borrow_mut().deref_mut(), 0..hidden_bytes, 0);
+            }
+
+            // Clear y_partial buffer
+            let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
+            if y_partial_bytes > 0 {
+                command_buffer.encode_fill(y_partial_buf.borrow_mut().deref_mut(), 0..y_partial_bytes, 0);
+            }
+
+            // Clear x_perm buffer
+            let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
+            if x_perm_bytes > 0 {
+                command_buffer.encode_fill(x_perm_buf.borrow_mut().deref_mut(), 0..x_perm_bytes, 0);
+            }
+        }
 
         // Use fused Router+TopK kernel for non-quantized routers
         if self.model_dim % 4 != 0 {
@@ -295,69 +293,61 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
         }
 
         if suffix_length > 0 && e > 0 && k > 0 {
-            command_buffer.with_compute_encoder(|encoder| {
-                // Use the fused router+topk kernel
-                self.router_topk_kernel.encode(
-                    main_buf.borrow().deref(),
-                    self.router.weights_buf.borrow().deref(),
-                    self.router.biases_buf.borrow().deref(),
-                    topk_ids_buf.borrow_mut().deref_mut(),
-                    topk_probs_buf.borrow_mut().deref_mut(),
-                    suffix_length as u32,
-                    self.model_dim as u32,
-                    e as u32,
-                    k as u32,
-                    self.router_renorm,
-                    encoder,
-                );
-            });
-        }
-
-        command_buffer.with_compute_encoder(|encoder| {
-            self.counts_offsets_kernel.encode(
-                topk_ids_buf.borrow().deref(),
-                offsets_buf.borrow_mut().deref_mut(),
-                sumk_buf.borrow_mut().deref_mut(),
-                partials_buf.borrow_mut().deref_mut(),
+            // Use the fused router+topk kernel
+            self.router_topk_kernel.encode(
+                main_buf.borrow().deref(),
+                self.router.weights_buf.borrow().deref(),
+                self.router.biases_buf.borrow().deref(),
+                topk_ids_buf.borrow_mut().deref_mut(),
+                topk_probs_buf.borrow_mut().deref_mut(),
                 suffix_length as u32,
+                self.model_dim as u32,
                 e as u32,
                 k as u32,
-                encoder,
+                self.router_renorm,
+                command_buffer,
             );
-        });
+        }
+
+        self.counts_offsets_kernel.encode(
+            topk_ids_buf.borrow().deref(),
+            offsets_buf.borrow_mut().deref_mut(),
+            sumk_buf.borrow_mut().deref_mut(),
+            partials_buf.borrow_mut().deref_mut(),
+            suffix_length as u32,
+            e as u32,
+            k as u32,
+            command_buffer,
+        );
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
         let num_tiles = ((e + 512 - 1) / 512).max(1);
-        command_buffer.with_compute_encoder(|encoder| {
-            self.scatter_bases_kernel.encode(
-                partials_buf.borrow().deref(),
-                block_bases_buf.borrow_mut().deref_mut(),
-                block_alloc_buf.borrow_mut().deref_mut(),
-                e as u32,
-                num_blocks as u32,
-                num_tiles as u32,
-                0u32,
-                encoder,
-            );
-        });
-        command_buffer.with_compute_encoder(|encoder| {
-            self.scatter_map_kernel.encode(
-                topk_ids_buf.borrow().deref(),
-                topk_probs_buf.borrow().deref(),
-                offsets_buf.borrow().deref(),
-                block_bases_buf.borrow().deref(),
-                block_alloc_buf.borrow().deref(),
-                bucketed_ids_buf.borrow_mut().deref_mut(),
-                bucketed_probs_buf.borrow_mut().deref_mut(),
-                suffix_length as u32,
-                e as u32,
-                k as u32,
-                num_blocks as u32,
-                num_tiles as u32,
-                tok2row_buf.borrow_mut().deref_mut(),
-                encoder,
-            );
-        });
+        self.scatter_bases_kernel.encode(
+            partials_buf.borrow().deref(),
+            block_bases_buf.borrow_mut().deref_mut(),
+            block_alloc_buf.borrow_mut().deref_mut(),
+            e as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            0u32,
+            command_buffer,
+        );
+        self.scatter_map_kernel.encode(
+            topk_ids_buf.borrow().deref(),
+            topk_probs_buf.borrow().deref(),
+            offsets_buf.borrow().deref(),
+            block_bases_buf.borrow().deref(),
+            block_alloc_buf.borrow().deref(),
+            bucketed_ids_buf.borrow_mut().deref_mut(),
+            bucketed_probs_buf.borrow_mut().deref_mut(),
+            suffix_length as u32,
+            e as u32,
+            k as u32,
+            num_blocks as u32,
+            num_tiles as u32,
+            tok2row_buf.borrow_mut().deref_mut(),
+            command_buffer,
+        );
 
         self.gather_kernels.encode(
             command_buffer,
@@ -467,36 +457,17 @@ impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
             self.experts_two_pass_prefill_kernel.encode(command_buffer, args);
         }
 
-        command_buffer.with_compute_encoder(|encoder| {
-            self.finalize_kernel.encode(
-                tok2row_buf.borrow().deref(),
-                topk_probs_buf.borrow().deref(),
-                y_partial_buf.borrow().deref(),
-                main_buf.borrow_mut().deref_mut(),
-                suffix_length as u32,
-                self.model_dim as u32,
-                k as u32,
-                encoder,
-            );
-        });
+        self.finalize_kernel.encode(
+            tok2row_buf.borrow().deref(),
+            topk_probs_buf.borrow().deref(),
+            y_partial_buf.borrow().deref(),
+            main_buf.borrow_mut().deref_mut(),
+            suffix_length as u32,
+            self.model_dim as u32,
+            k as u32,
+            command_buffer,
+        );
 
-        if parameters.wait_until_completed {
-            command_buffer.submit();
-            command_buffer.wait_until_completed()?;
-        }
         Ok(())
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        false
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        _state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        _encoder: &mut B::ComputeEncoder,
-    ) {
-        unreachable!("MoeBlock does not support shared compute encoder");
     }
 }

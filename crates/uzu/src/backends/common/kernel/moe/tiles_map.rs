@@ -22,83 +22,75 @@ impl<B: Backend> MoeTileMapKernels<B> {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         args: MoeTileCountsArguments<B>,
     ) {
-        command_buffer.with_compute_encoder(|encoder| {
-            self.counts.encode(args.offsets_buffer, args.tile_counts_buffer, args.e as u32, encoder);
-        });
+        self.counts.encode(args.offsets_buffer, args.tile_counts_buffer, args.e as u32, command_buffer);
     }
 
     pub fn encode_scan(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         args: MoeTileScanArguments<B>,
     ) {
-        command_buffer.with_compute_encoder(|encoder| {
-            self.scan.encode(
-                args.tile_counts_buffer,
-                args.tile_offsets_buffer,
-                args.total_tiles_buffer,
-                args.e as u32,
-                encoder,
-            );
-        });
+        self.scan.encode(
+            args.tile_counts_buffer,
+            args.tile_offsets_buffer,
+            args.total_tiles_buffer,
+            args.e as u32,
+            command_buffer,
+        );
     }
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         args: MoeTileMapBuildArguments<B>,
     ) {
-        command_buffer.with_compute_encoder(|encoder| {
-            self.build.encode(
-                args.expert_offsets,
-                args.tile_offsets,
-                args.tile_counts,
-                args.tile_map,
-                args.e as u32,
-                encoder,
-            );
-        });
+        self.build.encode(
+            args.expert_offsets,
+            args.tile_offsets,
+            args.tile_counts,
+            args.tile_map,
+            args.e as u32,
+            command_buffer,
+        );
     }
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         args: MoeTileDispatchArguments<B>,
     ) {
-        command_buffer.with_compute_encoder(|encoder| {
-            self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_x, encoder);
-        });
+        self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_x, command_buffer);
     }
 }
 
 pub struct MoeTileCountsArguments<'a, B: Backend> {
-    pub offsets_buffer: &'a B::NativeBuffer,         // [E+1]
-    pub tile_counts_buffer: &'a mut B::NativeBuffer, // [E]
+    pub offsets_buffer: &'a B::Buffer,         // [E+1]
+    pub tile_counts_buffer: &'a mut B::Buffer, // [E]
     pub e: usize,
 }
 
 pub struct MoeTileScanArguments<'a, B: Backend> {
-    pub tile_counts_buffer: &'a B::NativeBuffer,      // [E]
-    pub tile_offsets_buffer: &'a mut B::NativeBuffer, // [E+1]
-    pub total_tiles_buffer: &'a mut B::NativeBuffer,  // [>=2]
+    pub tile_counts_buffer: &'a B::Buffer,      // [E]
+    pub tile_offsets_buffer: &'a mut B::Buffer, // [E+1]
+    pub total_tiles_buffer: &'a mut B::Buffer,  // [>=2]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoeTileMapBuildArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::NativeBuffer, // [E+1]
-    pub tile_offsets: &'a B::NativeBuffer,   // [E+1]
-    pub tile_counts: &'a B::NativeBuffer,    // [E]
-    pub tile_map: &'a mut B::NativeBuffer,   // [total_tiles * 3]
+    pub expert_offsets: &'a B::Buffer, // [E+1]
+    pub tile_offsets: &'a B::Buffer,   // [E+1]
+    pub tile_counts: &'a B::Buffer,    // [E]
+    pub tile_map: &'a mut B::Buffer,   // [total_tiles * 3]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoeTileDispatchArguments<'a, B: Backend> {
-    pub total_tiles: &'a B::NativeBuffer,       // [>=1]
-    pub dispatch_args: &'a mut B::NativeBuffer, // [3]
-    pub num_tiles_x: u32,                       // x dimension for indirect dispatch
+    pub total_tiles: &'a B::Buffer,       // [>=1]
+    pub dispatch_args: &'a mut B::Buffer, // [3]
+    pub num_tiles_x: u32,                 // x dimension for indirect dispatch
 }

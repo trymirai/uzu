@@ -6,7 +6,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, TensorAddSwapKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -32,16 +32,12 @@ impl<B: Backend> TensorAddSwap<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for TensorAddSwap<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorAddSwap expects exactly 2 arrays");
 
@@ -54,7 +50,8 @@ impl<B: Backend> EncodableBlock<B> for TensorAddSwap<B> {
             skip_array.buffer().borrow_mut().deref_mut(),
             main_array.buffer().borrow_mut().deref_mut(),
             length as u32,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

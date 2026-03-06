@@ -4,7 +4,7 @@ use super::{super::matmul_arguments::MatmulArguments, dispatch_descriptor::Dispa
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, Kernels,
+        Backend, CommandBuffer, Context, Kernels,
         kernel::{MatmulSplitKAccumBfloat16Kernel, MatmulSplitKPartialBfloat16Kernel, matmul::MatmulError},
     },
 };
@@ -13,7 +13,7 @@ pub struct SplitKKernel<B: Backend> {
     data_type: DataType,
     partial_bfloat16: Option<<B::Kernels as Kernels>::MatmulSplitKPartialBfloat16Kernel>,
     accum_bfloat16: Option<<B::Kernels as Kernels>::MatmulSplitKAccumBfloat16Kernel>,
-    accumulator_buffer: Option<B::NativeBuffer>,
+    accumulator_buffer: Option<B::Buffer>,
     accumulator_buffer_bytes: usize,
 }
 
@@ -68,7 +68,7 @@ impl<B: Backend> SplitKKernel<B> {
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         self.ensure_kernels(context)?;
         self.ensure_accumulator_buffer(context, dispatch_descriptor.accumulator_bytes)?;
@@ -89,7 +89,7 @@ impl<B: Backend> SplitKKernel<B> {
             partial_group_count_x,
             partial_group_count_y,
             partial_group_count_z,
-            encoder,
+            command_buffer,
         );
 
         let accum_total_threads_x = u32::try_from(dispatch_descriptor.accum_total_threads.x)
@@ -105,7 +105,7 @@ impl<B: Backend> SplitKKernel<B> {
             arguments.ldd,
             accum_total_threads_x,
             accum_total_threads_y,
-            encoder,
+            command_buffer,
         );
 
         Ok(())

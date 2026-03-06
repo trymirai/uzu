@@ -9,7 +9,10 @@ use uzu::{
     ArrayElement, DataType,
     array::ArrayContextExt,
     backends::{
-        common::{Backend, CommandBuffer, Context, Kernels, kernel::QKNormKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels, kernel::QKNormKernel,
+        },
         cpu::Cpu,
     },
 };
@@ -130,29 +133,24 @@ fn get_output<
     let qkv_array = context.create_array_from(&[qkv_len], &input.qkv, "");
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
-    command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(
-            None::<&B::NativeBuffer>,
-            scales_array.buffer().borrow().deref(),
-            qkv_array.buffer().borrow_mut().deref_mut(),
-            input.batch_size,
-            input.num_q_heads,
-            input.num_kv_heads,
-            input.head_dim,
-            input.epsilon,
-            input.scale_offset,
-            input.head_offset,
-            input.head_count,
-            input.full_layer,
-            encoder,
-        )
-    });
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        None::<&B::Buffer>,
+        scales_array.buffer().borrow().deref(),
+        qkv_array.buffer().borrow_mut().deref_mut(),
+        input.batch_size,
+        input.num_q_heads,
+        input.num_kv_heads,
+        input.head_dim,
+        input.epsilon,
+        input.scale_offset,
+        input.head_offset,
+        input.head_count,
+        input.full_layer,
+        &mut command_buffer,
+    );
 
-    command_buffer.submit();
-    if let Err(err) = command_buffer.wait_until_completed() {
-        panic!("Failed to wait command buffer: {}", err);
-    }
+    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     qkv_array.as_slice().to_vec()
 }

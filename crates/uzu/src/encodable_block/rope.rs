@@ -6,7 +6,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, RopeKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
@@ -31,16 +31,12 @@ impl<B: Backend> Rope<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Rope<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
@@ -95,7 +91,8 @@ impl<B: Backend> EncodableBlock<B> for Rope<B> {
             num_groups as u32,
             suffix_length as u32,
             rope_max_seq_len as u32,
-            encoder,
-        )
+            command_buffer,
+        );
+        Ok(())
     }
 }

@@ -2,7 +2,7 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use crate::{
     DataType,
-    backends::common::{Backend, Context, Kernels, kernel::SigmoidKernel},
+    backends::common::{Backend, CommandBuffer, CommandBufferInitial, Context, Kernels, kernel::SigmoidKernel},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::{
@@ -20,7 +20,7 @@ use crate::{
 
 pub struct ClassifierContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: B::CommandBuffer,
+    pub command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
     pub scratch_buffers: ScratchBuffers<B>,
@@ -45,7 +45,8 @@ impl<B: Backend> ClassifierContext<B> {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
 
-        let command_buffer = context.create_command_buffer().map_err(|_| Error::UnableToCreateBackendContext)?;
+        let command_buffer =
+            context.create_command_buffer().map_err(|_| Error::UnableToCreateBackendContext)?.start_encoding();
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -310,7 +311,10 @@ impl<B: Backend> ClassifierContext<B> {
         Ok(Rc::new(rotation))
     }
 
-    pub fn reset_command_buffer(&mut self) {
-        self.command_buffer = self.context.create_command_buffer().expect("Failed to create command buffer");
+    pub fn replace_command_buffer(&mut self) -> <B::CommandBuffer as CommandBuffer>::Encoding {
+        std::mem::replace(
+            &mut self.command_buffer,
+            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
+        )
     }
 }

@@ -4,7 +4,8 @@ use uzu::{
     ArrayElement,
     array::ArrayContextExt,
     backends::common::{
-        Backend, CommandBuffer, Context, Kernels,
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        Kernels,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
 };
@@ -18,12 +19,13 @@ fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
     let src_array = context.create_array_from(&[1], &[src_value], "");
     let dst_array = context.create_array_uninitialized(&[1], u64::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
-    command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), encoder)
-    });
-    command_buffer.submit();
-    command_buffer.wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        src_array.buffer().borrow().deref(),
+        dst_array.buffer().borrow_mut().deref_mut(),
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output = dst_array.as_slice::<u64>().to_vec();
     assert_eq!(output[0], src_value as u64, "TokenCopySampled failed for backend {}", std::any::type_name::<B>());
@@ -38,12 +40,13 @@ fn test_token_copy_to_results_impl<B: Backend>(src_value: u32) {
     let src_array = context.create_array_from(&[1], &[src_value], "");
     let dst_array = context.create_array_uninitialized(&[1], u32::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
-    command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), encoder)
-    });
-    command_buffer.submit();
-    command_buffer.wait_until_completed().unwrap();
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        src_array.buffer().borrow().deref(),
+        dst_array.buffer().borrow_mut().deref_mut(),
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output = dst_array.as_slice::<u32>().to_vec();
     assert_eq!(output[0], src_value, "TokenCopyToResults failed for backend {}", std::any::type_name::<B>());

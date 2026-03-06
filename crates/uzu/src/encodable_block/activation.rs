@@ -6,7 +6,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{ActivationKernel, Kernels},
     },
     config::Activation as ActivationConfig,
@@ -40,16 +40,12 @@ impl<B: Backend> Activation<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Activation<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let input_array = arrays[0].borrow();
         let output_array = arrays[1].borrow_mut();
@@ -70,7 +66,8 @@ impl<B: Backend> EncodableBlock<B> for Activation<B> {
             output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
             act_type,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

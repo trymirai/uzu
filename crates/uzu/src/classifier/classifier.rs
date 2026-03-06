@@ -9,7 +9,7 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending},
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
@@ -111,9 +111,7 @@ impl<B: Backend> Classifier<B> {
                 num_labels,
             );
 
-            self.context.reset_command_buffer();
-
-            let encoding_params = EncodingParameters::new(false, true, false);
+            let encoding_params = EncodingParameters::new();
 
             self.context
                 .embed
@@ -162,8 +160,12 @@ impl<B: Backend> Classifier<B> {
                 .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-            self.context.command_buffer.submit();
-            self.context.command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+            self.context
+                .replace_command_buffer()
+                .end_encoding()
+                .submit()
+                .wait_until_completed()
+                .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
             let logits = self.copy_logits_from_state(&state)?;
 
@@ -191,9 +193,7 @@ impl<B: Backend> Classifier<B> {
                 num_labels,
             );
 
-            self.context.reset_command_buffer();
-
-            let encoding_params = EncodingParameters::new(false, true, false);
+            let encoding_params = EncodingParameters::new();
 
             self.context
                 .embed
@@ -221,8 +221,12 @@ impl<B: Backend> Classifier<B> {
                 .encode(&mut state, &encoding_params, &mut self.context.command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-            self.context.command_buffer.submit();
-            self.context.command_buffer.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+            self.context
+                .replace_command_buffer()
+                .end_encoding()
+                .submit()
+                .wait_until_completed()
+                .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
             let logits = self.copy_logits_from_state(&state)?;
 

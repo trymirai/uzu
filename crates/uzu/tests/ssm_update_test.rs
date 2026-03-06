@@ -2,11 +2,14 @@
 
 use bytemuck;
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use uzu::{
     DataType,
     backends::{
-        common::{Backend, Context, Kernels, kernel::SSDUpdateKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels, kernel::SSDUpdateKernel,
+        },
         metal::Metal,
     },
 };
@@ -239,9 +242,7 @@ fn ssd_update_with_z_bf16() {
         .expect("Failed to create buffer");
 
     let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16, false).unwrap();
-    let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let cb = cb_ref.to_owned();
-    let mut enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
     kernel.encode(
         &x_buf,
         &dt_buf,
@@ -261,11 +262,9 @@ fn ssd_update_with_z_bf16() {
         bsz as u32,
         h as u32,
         dh as u32,
-        &mut enc,
+        &mut command_buffer,
     );
-    enc.end_encoding();
-    cb_ref.commit();
-    cb_ref.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_ptr = y_buf.contents().as_ptr() as *const bf16;
     let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h * dh) };

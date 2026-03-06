@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::TensorAddBiasKernel},
+    backends::common::{Backend, CommandBuffer, Kernels, kernel::TensorAddBiasKernel},
 };
 
 pub struct MatmulKernel<B: Backend> {
@@ -74,20 +74,20 @@ impl<B: Backend> MatmulKernel<B> {
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         match dispatch_descriptor {
             MatmulDispatchDescriptor::Gemv(d) => {
                 let gemv = self.get_or_create_gemv()?;
-                gemv.encode(context, arguments, d, encoder)
+                gemv.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::SplitK(d) => {
                 let splitk = self.get_or_create_splitk()?;
-                splitk.encode(context, arguments, d, encoder)
+                splitk.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::Gemm(d) => {
                 let gemm = self.get_or_create_gemm()?;
-                gemm.encode(context, arguments, d, encoder)
+                gemm.encode(context, arguments, d, command_buffer)
             },
         }
     }
@@ -97,13 +97,13 @@ impl<B: Backend> MatmulKernel<B> {
         context: &B::Context,
         mut arguments: MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
-        encoder: &mut B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
-        self.encode_dispatch_descriptor(context, &mut arguments, dispatch_descriptor, encoder)?;
+        self.encode_dispatch_descriptor(context, &mut arguments, dispatch_descriptor, command_buffer)?;
 
         if let Some(bias) = arguments.bias {
             if !dispatch_descriptor.bias_is_fused() {
-                self.apply_bias_add(context, &mut arguments, bias, encoder)?;
+                self.apply_bias_add(context, &mut arguments, bias, command_buffer)?;
             }
         }
 
@@ -114,8 +114,8 @@ impl<B: Backend> MatmulKernel<B> {
         &mut self,
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
-        bias: &B::NativeBuffer,
-        encoder: &mut B::ComputeEncoder,
+        bias: &B::Buffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
@@ -132,7 +132,7 @@ impl<B: Backend> MatmulKernel<B> {
             );
         }
         let bias_add = self.bias_add.as_ref().unwrap();
-        bias_add.encode(None::<&B::NativeBuffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, encoder);
+        bias_add.encode(None::<&B::Buffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, command_buffer);
         Ok(())
     }
 

@@ -12,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, NativeBuffer,
+        Backend, Buffer, CommandBuffer, Context,
         kernel::{Kernels, QuantizedEmbeddingLookupKernel},
     },
     config::QuantizationMode,
@@ -71,9 +71,9 @@ pub enum QuantizedEmbeddingLookupError<B: Backend> {
 
 pub struct QuantizedEmbeddingLookup<B: Backend> {
     kernel: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-    weights_buffer: Rc<RefCell<B::NativeBuffer>>,
-    scales_buffer: Rc<RefCell<B::NativeBuffer>>,
-    biases_buffer: Rc<RefCell<B::NativeBuffer>>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
+    biases_buffer: Rc<RefCell<B::Buffer>>,
     mode: QuantizationMode,
     input_scale: f32,
     vocab_size: u32,
@@ -239,16 +239,12 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
         let token_ids_array = arrays[0].borrow_mut();
@@ -272,7 +268,8 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
             self.group_size,
             self.input_scale,
             quant_mode,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

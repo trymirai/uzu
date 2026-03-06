@@ -13,7 +13,10 @@ use uzu::{
     ArrayElement, DataType,
     array::ArrayContextExt,
     backends::{
-        common::{Backend, CommandBuffer, Context, Kernels, kernel::RMSNormKernel},
+        common::{
+            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+            CommandBufferPending, Context, Kernels, kernel::RMSNormKernel,
+        },
         cpu::Cpu,
     },
 };
@@ -145,28 +148,24 @@ fn get_output<
         false => context.create_array_uninitialized(&[input_size], OutputT::data_type(), ""),
     };
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer");
-    command_buffer.with_compute_encoder(|encoder| {
-        kernel.encode(
-            input_buffer,
-            scales_array.buffer().borrow().deref(),
-            output_array.buffer().borrow_mut().deref_mut(),
-            input.batch_size,
-            input.element_count,
-            input.epsilon,
-            input.scale_offset,
-            input.full_layer,
-            encoder,
-        )
-    });
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        input_buffer,
+        scales_array.buffer().borrow().deref(),
+        output_array.buffer().borrow_mut().deref_mut(),
+        input.batch_size,
+        input.element_count,
+        input.epsilon,
+        input.scale_offset,
+        input.full_layer,
+        &mut command_buffer,
+    );
 
     let instant = Instant::now();
-    command_buffer.submit();
-    if let Err(err) = command_buffer.wait_until_completed() {
-        panic!("Failed to wait command buffer: {}", err);
-    }
+    let completed =
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
-    let gpu_elapsed_ms = command_buffer.gpu_execution_time_ms();
+    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
 
     (output_array.as_slice().to_vec(), host_elapsed_ms, gpu_elapsed_ms)
 }

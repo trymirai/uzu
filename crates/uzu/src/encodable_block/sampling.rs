@@ -6,7 +6,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -45,12 +45,12 @@ impl<B: Backend> Sampling<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Sampling<B> {
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &mut B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 
         let logits_binding = state.arrays(&[ArrayId::Logits]);
@@ -59,7 +59,7 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         let logits_shape = logits.shape();
         let batch_size = state.sampling_length();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
         let sampling_start = state.sampling_start();
         let vocab_size = logits_shape[1];
@@ -85,7 +85,7 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         let seeds_buf_borrow = seeds_buf_rc.borrow();
         let output_buf_rc = output_buffer_ref.buffer();
         let mut output_buf_borrow = output_buf_rc.borrow_mut();
-        if let Err(e) = self.kernel.encode_with_encoder(
+        if let Err(e) = self.kernel.encode(
             logits_buf_borrow.deref_mut(),
             Some(seeds_buf_borrow.deref()),
             seeds_offset,
@@ -95,9 +95,10 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
             sampling_method,
             batch_size,
             vocab_size,
-            encoder,
+            command_buffer,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
         }
+        Ok(())
     }
 }

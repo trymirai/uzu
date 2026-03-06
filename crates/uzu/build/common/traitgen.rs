@@ -19,7 +19,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let params = kernel.parameters.iter().map(|p| {
         let name = format_ident!("{}", p.name.as_ref());
         let ty = match &p.ty {
-            KernelParameterType::Type => quote! { DataType },
+            KernelParameterType::Type => quote! { crate::DataType },
             KernelParameterType::Value(ty) => {
                 let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                 quote! { #ty }
@@ -42,10 +42,10 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                         Some(quote! { #buffer_lifetime }),
                         match access {
                             KernelBufferAccess::Read => {
-                                quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> }
+                                quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::Buffer> }
                             },
                             KernelBufferAccess::ReadWrite => {
-                                quote! { impl BufferArgMut<#buffer_lifetime, <Self::Backend as Backend>::NativeBuffer> }
+                                quote! { impl BufferArgMut<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::Buffer> }
                             },
                         },
                     )
@@ -72,12 +72,11 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
     let kernel_trait = quote! {
         pub trait #trait_name: Sized {
-            type Backend: Backend<Kernels: Kernels<#trait_name = Self>>;
+            type Backend: crate::backends::common::Backend<Kernels: Kernels<#trait_name = Self>>;
 
-            fn new(context: &<Self::Backend as Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as Backend>::Error>;
+            fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
-            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#args ,)* encoder: &'encoder mut <Self::Backend as Backend>::ComputeEncoder);
-            fn encode_if<#(#encode_generics, )* 'encoder, 'predicate>(&self, #(#args ,)* encoder: &'encoder mut <Self::Backend as Backend>::ComputeEncoder, predicate: Option<impl BufferArg<'predicate, <Self::Backend as Backend>::NativeBuffer>>);
+            fn encode<#(#encode_generics, )* 'command_buffer>(&self, #(#args ,)* command_buffer: &'command_buffer mut <<Self::Backend as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding);
         }
     };
 
@@ -114,36 +113,33 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
     }
 
     let kernel_traits = quote! {
-        use crate::backends::common::{Backend, NativeBuffer};
-        use crate::DataType;
-
-        pub trait BufferArg<'a, B: NativeBuffer> {
+        pub trait BufferArg<'a, B: crate::backends::common::Buffer> {
             fn into_parts(self) -> (&'a B, usize);
         }
 
-        impl<'a, B: NativeBuffer> BufferArg<'a, B> for &'a B {
+        impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for &'a B {
             fn into_parts(self) -> (&'a B, usize) {
                 (self, 0)
             }
         }
 
-        impl<'a, B: NativeBuffer> BufferArg<'a, B> for (&'a B, usize) {
+        impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for (&'a B, usize) {
             fn into_parts(self) -> (&'a B, usize) {
                 self
             }
         }
 
-        pub trait BufferArgMut<'a, B: NativeBuffer> {
+        pub trait BufferArgMut<'a, B: crate::backends::common::Buffer> {
             fn into_parts(self) -> (&'a mut B, usize);
         }
 
-        impl<'a, B: NativeBuffer> BufferArgMut<'a, B> for &'a mut B {
+        impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for &'a mut B {
             fn into_parts(self) -> (&'a mut B, usize) {
                 (self, 0)
             }
         }
 
-        impl<'a, B: NativeBuffer> BufferArgMut<'a, B> for (&'a mut B, usize) {
+        impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for (&'a mut B, usize) {
             fn into_parts(self) -> (&'a mut B, usize) {
                 self
             }
@@ -152,7 +148,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
         #(#kernel_traits)*
 
         pub trait Kernels: Sized {
-            type Backend: Backend<Kernels = Self>;
+            type Backend: crate::backends::common::Backend<Kernels = Self>;
 
             #(#kernel_types)*
         }

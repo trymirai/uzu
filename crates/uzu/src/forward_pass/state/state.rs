@@ -10,7 +10,7 @@ use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType, DecoderConfig,
     array::{Array, ArrayCell, ArrayCellExt},
-    backends::common::{Backend, CommandBuffer, Context, CopyEncoder},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -157,8 +157,8 @@ impl<B: Backend> ForwardPassState<B> {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         should_fill_attention_bias: bool,
-        async_positions: Option<(Rc<RefCell<B::NativeBuffer>>, usize)>,
-        async_seeds: Option<(Rc<RefCell<B::NativeBuffer>>, usize)>,
+        async_positions: Option<(Rc<RefCell<B::Buffer>>, usize)>,
+        async_seeds: Option<(Rc<RefCell<B::Buffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
@@ -777,7 +777,7 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &mut B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         source_array_id: ArrayId,
         destination_array: RefCell<Array<B>>,
     ) {
@@ -791,8 +791,6 @@ impl<B: Backend> ForwardPassState<B> {
         let copy_size_bytes = dst_borrow.size();
         debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
-        command_buffer.with_copy_encoder(|encoder| {
-            encoder.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
-        });
+        command_buffer.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
     }
 }

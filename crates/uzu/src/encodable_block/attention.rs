@@ -139,28 +139,9 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &mut B::CommandBuffer,
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
-
-        if parameters.wait_until_completed {
-            command_buffer.submit();
-            command_buffer.wait_until_completed()?;
-        }
-        Ok(())
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        compute_encoder: &mut B::ComputeEncoder,
-    ) {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
@@ -258,7 +239,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         // For classifiers (no KV cache): extract values from QKV into a dedicated extracted_values buffer.
         if !has_kv_cache {
             self.update_kv_cache_inplace_kernel.encode(
-                None::<&B::NativeBuffer>,
+                None::<&B::Buffer>,
                 qkv_buf_borrow.deref(),
                 // keys already in desired layout; harmless overwrite
                 rotated_keys_buf_borrow.deref_mut(),
@@ -269,7 +250,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 suffix_length as u32,
                 0u32,
                 max_sequence_length as u32,
-                compute_encoder,
+                command_buffer,
             );
         }
 
@@ -293,7 +274,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         };
         let attention_bias_buf_rc = attention_bias_array_borrow.as_ref().map(|a| a.buffer());
         let attention_bias_buf_borrow = attention_bias_buf_rc.as_ref().map(|rc| rc.borrow());
-        let attention_bias_buffer: Option<&B::NativeBuffer> = attention_bias_buf_borrow.as_ref().map(|b| b.deref());
+        let attention_bias_buffer: Option<&B::Buffer> = attention_bias_buf_borrow.as_ref().map(|b| b.deref());
 
         let partials_binding = state.arrays(&[ArrayId::AttentionPartials]);
         let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
@@ -314,7 +295,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         let sinks_borrow = sinks_binding.as_ref().map(|binding| binding[0].borrow());
         let sinks_buf_rc = sinks_borrow.as_ref().map(|b| b.buffer());
         let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
-        let sinks_buffer: Option<&B::NativeBuffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
+        let sinks_buffer: Option<&B::Buffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
@@ -329,16 +310,16 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                 suffix_length as u32,
                 segment_prefix_length as u32,
                 max_sequence_length as u32,
-                compute_encoder,
+                command_buffer,
             );
         }
 
-        let key_cache_buffer: &B::NativeBuffer = if has_kv_cache {
+        let key_cache_buffer: &B::Buffer = if has_kv_cache {
             key_cache_buf_borrow.as_ref().unwrap().deref()
         } else {
             rotated_keys_buf_borrow.deref()
         };
-        let value_cache_buffer: &B::NativeBuffer = if has_kv_cache {
+        let value_cache_buffer: &B::Buffer = if has_kv_cache {
             value_cache_buf_borrow.as_ref().unwrap().deref()
         } else {
             extracted_values_buf_borrow.as_ref().unwrap().deref()
@@ -383,7 +364,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     scale,
                 };
                 self.gemm_block
-                    .encode(state.context(), compute_encoder, args)
+                    .encode(state.context(), command_buffer, args)
                     .expect("Failed to encode AttentionGemmBlock");
             },
             KernelVariant::SinglePass => {
@@ -410,7 +391,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
-                    compute_encoder,
+                    command_buffer,
                 )
             },
             KernelVariant::TwoPass => {
@@ -443,7 +424,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
                     sinks_buffer,
-                    compute_encoder,
+                    command_buffer,
                 );
                 kernel_pass2.encode(
                     partials_buf_borrow.deref(),
@@ -452,10 +433,12 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     attention_output_buf_borrow.deref_mut(),
                     num_heads as u32,
                     suffix_length as u32,
-                    compute_encoder,
+                    command_buffer,
                 );
             },
         }
+
+        Ok(())
     }
 }
 
