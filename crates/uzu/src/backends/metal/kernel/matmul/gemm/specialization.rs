@@ -31,7 +31,7 @@ impl Specialization {
                 (128, 128, 512, 4, 4, swizzle_log2)
             } else {
                 match context.device_class() {
-                    DeviceClass::Integrated | DeviceClass::Phone | DeviceClass::Unknown(_) => {
+                    DeviceClass::Base | DeviceClass::Phone | DeviceClass::Unknown(_) => {
                         if prefer_half_or_tf32 {
                             if 2 * std::cmp::max(arguments.batch, arguments.output_dim) > arguments.input_dim {
                                 (64, 64, 16, 2, 2, 0)
@@ -46,7 +46,7 @@ impl Specialization {
                             (64, 32, 32, 2, 2, 0)
                         }
                     },
-                    DeviceClass::Desktop => {
+                    DeviceClass::Max | DeviceClass::Ultra => {
                         if prefer_half_or_tf32 {
                             if arguments.transpose_b {
                                 (64, 32, 32, 2, 2, 0)

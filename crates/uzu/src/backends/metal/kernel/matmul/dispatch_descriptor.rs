@@ -1,70 +1,90 @@
-use super::{gemm, gemm_mixed_types_simple, gemm_mpp};
+use super::gemm_mpp;
 use crate::{
     DataType,
     backends::{
-        common::kernel::{
-            MatmulGemmMppKernel,
-            matmul::{
-                MatmulArguments, MatmulDispatchDescriptor, MatmulError, gemm_mpp::Specialization,
-                gemm_mixed_types_simple as common_mixed_types_simple, gemv, split_k,
-            },
+        common::kernel::matmul::{MatmulArguments, MatmulDispatchDescriptor, MatmulError, gemv},
+        metal::{
+            Metal,
+            context::{DeviceClass, DeviceGeneration, MetalContext},
         },
-        metal::{Metal, context::MetalContext, kernel::dsl::MatmulGemmMppMetalKernel},
     },
 };
 
-fn mpp_shader_supports_combo(
-    context: &MetalContext,
-    a_dtype: DataType,
-    b_dtype: DataType,
-    output_dtype: DataType,
-) -> bool {
-    let Some(config) = Specialization::precompile_configs(output_dtype).first() else {
-        return false;
-    };
+fn default_gemv_max_batch(
+    device_generation: DeviceGeneration,
+    device_class: DeviceClass,
+) -> i32 {
+    match (device_generation, device_class) {
+        (DeviceGeneration::Gen18, DeviceClass::Max | DeviceClass::Ultra) => 4,
+        (DeviceGeneration::Gen18, _) => 4,
+        (_, DeviceClass::Phone) => 4,
+        (DeviceGeneration::Gen17, DeviceClass::Max | DeviceClass::Ultra) => 8,
+        (DeviceGeneration::Gen17, _) => 16,
+        (DeviceGeneration::Gen15 | DeviceGeneration::Gen16, DeviceClass::Max | DeviceClass::Ultra) => 16,
+        (DeviceGeneration::Gen15 | DeviceGeneration::Gen16, _) => 32,
+        (DeviceGeneration::Gen14, DeviceClass::Max | DeviceClass::Ultra) => 32,
+        (DeviceGeneration::Gen14, _) => 64,
+        (DeviceGeneration::Gen13, DeviceClass::Max | DeviceClass::Ultra) => 16,
+        (DeviceGeneration::Gen13, _) => 32,
+        _ => 16,
+    }
+}
 
-    <MatmulGemmMppMetalKernel as MatmulGemmMppKernel>::new(
-        context,
-        a_dtype,
-        b_dtype,
-        output_dtype,
-        config.block_rows as u32,
-        config.block_cols as u32,
-        config.block_depth as u32,
-        config.warps_per_row as u32,
-        config.warps_per_col as u32,
-        config.align_m,
-        config.align_n,
-        config.align_k,
-    )
-    .is_ok()
+fn gemv_max_batch(context: &MetalContext) -> i32 {
+    if let Ok(val) = std::env::var("UZU_GEMV_MAX_BATCH") {
+        if let Ok(n) = val.parse() {
+            return n;
+        }
+    }
+
+    default_gemv_max_batch(context.device_generation(), context.device_class())
 }
 
 pub fn choose_dispatch_descriptor(
     context: &MetalContext,
-    a_dtype: DataType,
-    b_dtype: DataType,
+    _a_dtype: DataType,
+    _b_dtype: DataType,
     output_dtype: DataType,
     arguments: &MatmulArguments<Metal>,
 ) -> Result<MatmulDispatchDescriptor, MatmulError<Metal>> {
-    if mpp_shader_supports_combo(context, a_dtype, b_dtype, output_dtype) {
-        return Ok(MatmulDispatchDescriptor::GemmMpp(gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?));
-    }
+    let gemv_max_batch = gemv_max_batch(context);
 
-    if common_mixed_types_simple::supports_combo(a_dtype, b_dtype, output_dtype) {
-        return Ok(MatmulDispatchDescriptor::GemmMixedTypesSimple(gemm_mixed_types_simple::DispatchDescriptor::new(
-            output_dtype,
-            arguments,
-        )?));
-    }
-
-    if let Some(descriptor) = gemv::DispatchDescriptor::try_new::<Metal>(output_dtype, arguments)? {
+    if let Some(descriptor) = gemv::DispatchDescriptor::try_new::<Metal>(output_dtype, arguments, gemv_max_batch)? {
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
 
-    if let Some(descriptor) = split_k::DispatchDescriptor::try_new::<Metal>(output_dtype, arguments)? {
-        return Ok(MatmulDispatchDescriptor::SplitK(descriptor));
-    }
+    Ok(MatmulDispatchDescriptor::GemmMpp(
+        gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?,
+    ))
+}
 
-    Ok(MatmulDispatchDescriptor::Gemm(gemm::DispatchDescriptor::new(context, output_dtype, arguments)?))
+#[cfg(test)]
+mod tests {
+    use super::default_gemv_max_batch;
+    use crate::backends::metal::context::{DeviceClass, DeviceGeneration};
+
+    #[test]
+    fn returns_measured_and_predicted_gemv_cutoffs() {
+        let cases = [
+            ((DeviceGeneration::Gen18, DeviceClass::Ultra), 4),
+            ((DeviceGeneration::Gen18, DeviceClass::Base), 4),
+            ((DeviceGeneration::Unknown(0), DeviceClass::Phone), 4),
+            ((DeviceGeneration::Gen17, DeviceClass::Max), 8),
+            ((DeviceGeneration::Gen17, DeviceClass::Base), 16),
+            ((DeviceGeneration::Gen16, DeviceClass::Max), 16),
+            ((DeviceGeneration::Gen15, DeviceClass::Base), 32),
+            ((DeviceGeneration::Gen14, DeviceClass::Max), 32),
+            ((DeviceGeneration::Gen14, DeviceClass::Base), 64),
+            ((DeviceGeneration::Gen13, DeviceClass::Max), 16),
+            ((DeviceGeneration::Gen13, DeviceClass::Base), 32),
+            ((DeviceGeneration::Unknown(7), DeviceClass::Unknown('x')), 16),
+        ];
+
+        for ((device_generation, device_class), expected_gemv_max_batch) in cases {
+            assert_eq!(
+                default_gemv_max_batch(device_generation, device_class),
+                expected_gemv_max_batch,
+            );
+        }
+    }
 }
