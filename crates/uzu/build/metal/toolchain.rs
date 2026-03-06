@@ -69,45 +69,25 @@ impl MetalSdk {
 }
 
 #[derive(Debug)]
-pub enum MetalStd {
-    Metal3_1,
-    Metal4_0,
-}
+pub struct MetalStd;
 
 impl MetalStd {
     pub fn to_str(&self) -> &'static str {
-        match self {
-            MetalStd::Metal3_1 => "metal3.1",
-            MetalStd::Metal4_0 => "metal4.0",
-        }
+        "metal4.0"
     }
 
     pub fn min_os(&self) -> &'static str {
-        match self {
-            MetalStd::Metal3_1 => "14.0",
-            MetalStd::Metal4_0 => "26.0",
-        }
+        "26.0"
     }
-}
 
-impl MetalStd {
-    pub fn for_source(path: &Path) -> Self {
-        let is_mpp = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.contains("_mpp"))
-            .unwrap_or(false);
-        if is_mpp {
-            Self::Metal4_0
-        } else {
-            Self::Metal3_1
-        }
+    pub fn for_source(_path: &Path) -> Self {
+        Self
     }
 }
 
 impl Default for MetalStd {
     fn default() -> Self {
-        Self::Metal3_1
+        Self
     }
 }
 
