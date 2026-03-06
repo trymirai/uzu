@@ -1,6 +1,5 @@
 use std::{
     any::Any,
-    collections::HashMap,
     iter::repeat_n,
     ops::{Deref, DerefMut, Range},
     path::Path,
@@ -15,7 +14,6 @@ use super::{
     language_model_generator_context::LanguageModelGeneratorContext,
     result::{GenerateResult, PrefillResult},
     rng::PRng,
-    tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
     backends::common::{
@@ -38,12 +36,38 @@ use crate::{
     trie::{TrieCreationConfig, TrieNode},
 };
 
+#[derive(Debug, Clone)]
+struct Task<'a> {
+    token_ids: &'a [u64],
+    token_positions: &'a [usize],
+    token_bitmask: Option<&'a [u32]>,
+    token_seeds: &'a [u64],
+    expected_number_of_new_tokens: usize,
+    active_suffix_length: usize,
+    sampling_start: usize,
+    sampling_length: usize,
+    is_prefilling: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TaskEncodingKey {
+    context_len: usize,
+    batch_size: usize,
+    expected_number_of_new_tokens: usize,
+    active_suffix_len: usize,
+    sampling_method: SamplingMethod,
+    sampling_start: usize,
+    sampling_len: usize,
+    has_bitmask: bool,
+    is_prefilling: bool,
+}
+
 pub struct LanguageModelGenerator<B: Backend> {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
     pub context: LanguageModelGeneratorContext<B>,
-    encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask<B>>,
+    pre_encoded_task: Option<(TaskEncodingKey, <B::CommandBuffer as CommandBuffer>::Executable)>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager<B>,
 }
@@ -217,7 +241,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 let _ = last_state.take();
             });
 
-            let task = LanguageModelGeneratorRunTask {
+            let task = Task {
                 token_ids: &step_token_ids,
                 token_positions: &step_token_positions,
                 token_bitmask: step_token_bitmask.as_deref(),
@@ -279,7 +303,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 forwardpass_durations: run_times,
             });
         }
-        let sampled_tokens = self.sample(&mut final_state)?;
+        let sampled_tokens = self.read_sampling_output(&mut final_state)?;
 
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
@@ -353,7 +377,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_seeds =
             flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_suffix_length)).collect::<Box<[u64]>>();
 
-        let task = LanguageModelGeneratorRunTask {
+        let task = Task {
             token_ids: &token_ids,
             token_positions: &token_positions,
             token_bitmask: token_bitmask.as_deref(),
@@ -368,7 +392,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let (mut state, run_time) =
             self.run_model(task, false, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
 
-        let sampled_tokens = self.sample(&mut state)?;
+        let sampled_tokens = self.read_sampling_output(&mut state)?;
 
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
@@ -439,7 +463,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             *ptr.add(pass_idx) as usize
         };
 
-        let task = LanguageModelGeneratorRunTask {
+        let task = Task {
             token_ids: &[last_token],
             token_positions: &[token_position],
             token_bitmask: None,
@@ -488,20 +512,27 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             *sm = Some(sampling_method);
         }
 
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
+
         // Wait on previous pass if this is a continuation
         if is_continuation {
-            self.context.command_buffer.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
+            command_buffer.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
         self.context
             .executables
-            .encode(&mut state, &EncodingParameters::new(), &mut self.context.command_buffer)
+            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Encode sampling
         self.context
             .gpu_sampler
-            .encode(&mut state, &EncodingParameters::new(), &mut self.context.command_buffer)
+            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -517,20 +548,20 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.token_copy_sampled.encode(
             sampling_output_buf_borrow.deref(),
             token_ids_buf_borrow.deref_mut(),
-            &mut self.context.command_buffer,
+            &mut command_buffer,
         );
         let results_offset = slot * std::mem::size_of::<u32>();
         self.context.token_copy_results.encode(
             sampling_output_buf_borrow.deref(),
             (results_buffer.borrow_mut().deref_mut(), results_offset),
-            &mut self.context.command_buffer,
+            &mut command_buffer,
         );
 
         // Scatter + register for all transformer layers
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
-            &mut self.context.command_buffer,
+            &mut command_buffer,
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
@@ -547,7 +578,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                             mask_buf_borrow.deref_mut(),
                             update.unmask_col,
                             update.mask_col,
-                            &mut self.context.command_buffer,
+                            &mut command_buffer,
                         );
                     }
                 }
@@ -556,7 +587,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        self.context.command_buffer.encode_signal_event(&self.context.async_buffers.event, next_counter);
+        command_buffer.encode_signal_event(&self.context.async_buffers.event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
@@ -568,9 +599,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             on_complete(token);
         };
 
-        self.context.command_buffer.add_completion_handler(handler);
+        command_buffer.add_completion_handler(handler);
         drop(token_ids_binding);
-        let pending = self.context.replace_command_buffer().end_encoding().submit();
+
+        let pending = command_buffer.end_encoding().submit();
 
         if should_capture {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
@@ -582,7 +614,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
     fn clear_cache(&mut self) {
         objc2::rc::autoreleasepool(|_pool| {
-            self.encoded_tasks.clear();
+            self.pre_encoded_task = None;
         });
     }
 
@@ -590,7 +622,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().clear();
         self.tokens.clear();
         self.registered_prefix_len = 0;
-        self.encoded_tasks.clear();
+        self.pre_encoded_task = None;
         self.gpu_capture.reset();
 
         let seed = self.decoding_config.sampling_seed.resolve();
@@ -700,7 +732,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             decoding_config,
             tokens: Vec::new(),
             context,
-            encoded_tasks: HashMap::new(),
+            pre_encoded_task: None,
             registered_prefix_len: 0,
             gpu_capture,
         };
@@ -720,7 +752,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let token_positions: Vec<usize> = (0..suffix_length).collect();
         let token_seeds: Vec<u64> = vec![0; suffix_length];
 
-        let task = LanguageModelGeneratorRunTask {
+        let task = Task {
             token_ids: &token_ids,
             token_positions: &token_positions,
             token_bitmask: None,
@@ -738,7 +770,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
     fn run_model(
         &mut self,
-        task: LanguageModelGeneratorRunTask,
+        task: Task,
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
@@ -747,71 +779,79 @@ impl<B: Backend> LanguageModelGenerator<B> {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
-            let mut state = task.create_state(&mut self.context, None, should_fill_attention_bias);
+            let mut state = ForwardPassState::new_llm(
+                self.context.context.clone(),
+                &self.context.decoder_config,
+                &self.context.model_shape,
+                &self.context.scratch_buffers,
+                self.context.cache_layers.clone(),
+                self.context.shared_buffers.clone(),
+                task.token_ids,
+                task.token_positions,
+                task.token_bitmask,
+                task.token_seeds,
+                task.active_suffix_length,
+                task.sampling_start,
+                task.sampling_length,
+                task.is_prefilling,
+                None,
+                false,
+                should_fill_attention_bias,
+                None,
+                None,
+            );
+
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);
             }
+
+            let encoding_key = TaskEncodingKey {
+                context_len: self.tokens.len(),
+                batch_size: task.token_ids.len(),
+                expected_number_of_new_tokens: task.expected_number_of_new_tokens,
+                active_suffix_len: task.active_suffix_length,
+                sampling_method,
+                sampling_start: task.sampling_start,
+                sampling_len: task.sampling_length,
+                has_bitmask: task.token_bitmask.is_some(),
+                is_prefilling: task.is_prefilling,
+            };
 
             let is_first_decode = !warmup && task.token_ids.len() == 1;
             let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
+                self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+                self.pre_encoded_task = None;
             }
 
-            let encoded_task_key = task.encoded_task_key(self.tokens.len());
+            let sample = !warmup && !task.is_prefilling;
 
-            if should_capture {
-                self.encoded_tasks.remove(&encoded_task_key);
-            }
-
-            if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                // Nothing
+            let executable = if let Some((pre_encoded_key, pre_encoded_executable)) = self.pre_encoded_task.take()
+                && pre_encoded_key == encoding_key
+            {
+                pre_encoded_executable
             } else {
-                self.context.replace_command_buffer();
+                self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample)?
+            };
 
-                task.build_encoded_task(
-                    &mut self.context,
-                    &mut state,
-                    &EncodingParameters::new(),
-                    encoded_task_key.clone(),
-                )
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            }
-
-            if !warmup {
-                if !task.is_prefilling {
-                    self.context
-                        .gpu_sampler
-                        .encode(&mut state, &EncodingParameters::new(), &mut self.context.command_buffer)
-                        .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-                }
-            }
-
-            let command_buffer = std::mem::replace(
-                &mut self.context.command_buffer,
-                self.context.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
-            );
-            let pending = command_buffer.end_encoding().submit();
+            let pending = executable.submit();
 
             if allow_pre_encode {
-                let next_task_key: String = task.encoded_task_key(self.tokens.len() + 1);
+                let mut next_encoding_key = encoding_key;
 
-                let next_encoded_task = task
-                    .build_encoded_task(
-                        &mut self.context,
-                        &mut state,
-                        &EncodingParameters::new().with_projection(1),
-                        next_task_key.clone(),
-                    )
-                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+                next_encoding_key.context_len += 1;
 
-                self.encoded_tasks.insert(next_task_key.clone(), next_encoded_task);
+                let next_executable =
+                    self.encode_forward_pass(&mut state, &EncodingParameters::new().with_projection(1), sample)?;
+
+                self.pre_encoded_task = Some((next_encoding_key, next_executable));
             }
 
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
             let run_time = run_start.elapsed().as_secs_f64();
+
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
             }
@@ -820,7 +860,37 @@ impl<B: Backend> LanguageModelGenerator<B> {
         })
     }
 
-    fn sample(
+    fn encode_forward_pass(
+        &self,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters,
+        sample: bool,
+    ) -> Result<<B::CommandBuffer as CommandBuffer>::Executable, Error> {
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
+
+        self.context
+            .executables
+            .encode(state, parameters, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+
+        if sample {
+            self.context
+                .gpu_sampler
+                .encode(state, parameters, &mut command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        }
+
+        let executable = command_buffer.end_encoding();
+
+        Ok(executable)
+    }
+
+    fn read_sampling_output(
         &mut self,
         state: &mut ForwardPassState<B>,
     ) -> Result<Vec<u64>, Error> {
