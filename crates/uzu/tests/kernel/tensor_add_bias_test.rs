@@ -33,7 +33,7 @@ fn get_test_data<T: ArrayElement + Float>(in_place: bool) -> (Input<T>, Vec<T>) 
         if i < num_cols {
             bias[i] = T::from((i as f32).cos() * 30f32).unwrap();
         }
-        output[i] = T::from((i as f32).sin() * 30f32).unwrap();
+        output[i] = input[i];
 
         if in_place {
             expected[i] = output[i] + bias[i % num_cols];

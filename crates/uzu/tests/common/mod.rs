@@ -4,6 +4,8 @@ use std::{collections::HashMap, path::PathBuf};
 
 use uzu::{VERSION, speculators::speculator::Speculator};
 
+pub mod assert;
+
 pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
