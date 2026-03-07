@@ -6,7 +6,7 @@ use std::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
-    prelude::SamplingSeed,
+    prelude::{SamplingSeed, SpeculatorConfig},
     session::{
         Session,
         config::{DecodingConfig, RunConfig},
@@ -59,6 +59,7 @@ pub fn load_session(
     model_path: String,
     prefill_step_size: Option<usize>,
     seed: Option<u64>,
+    speculator: Option<String>,
 ) -> Session {
     let style_bold = Style::new().bold();
 
@@ -77,10 +78,27 @@ pub fn load_session(
         prefill_step_size_config = PrefillStepSize::Default;
     }
 
-    let decoding_config =
-        DecodingConfig::default().with_prefill_step_size(prefill_step_size_config).with_sampling_seed(match seed {
+    let decoding_config = DecodingConfig::default()
+        .with_prefill_step_size(prefill_step_size_config)
+        .with_sampling_seed(match seed {
             Some(seed) => SamplingSeed::Custom(seed),
             None => SamplingSeed::Default,
+        })
+        .with_speculator_config(match speculator {
+            Some(speculator) => {
+                let (speculator, number_of_speculated_tokens) =
+                    speculator.split_once(':').unwrap_or((&speculator, "1"));
+
+                let number_of_speculated_tokens = number_of_speculated_tokens.parse().unwrap();
+
+                let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load(speculator));
+
+                SpeculatorConfig {
+                    number_of_speculated_tokens,
+                    speculator,
+                }
+            },
+            None => SpeculatorConfig::default(),
         });
     let session = Session::new(model_path_buf, decoding_config).expect("Failed to create session");
 

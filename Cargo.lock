@@ -2236,6 +2236,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memmap2"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "metal"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4355,6 +4364,7 @@ dependencies = [
  "is_close",
  "itertools 0.14.0",
  "libc",
+ "memmap2",
  "minijinja",
  "minijinja-contrib",
  "mpsgraph",
@@ -4380,6 +4390,8 @@ dependencies = [
  "tokio",
  "walkdir",
  "xgrammar-rs",
+ "xxhash-rust",
+ "zerocopy",
 ]
 
 [[package]]
@@ -5088,6 +5100,12 @@ dependencies = [
  "tokenizers",
  "walkdir",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"
