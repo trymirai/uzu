@@ -34,9 +34,10 @@ pub fn handle_run(
     tokens_limit: usize,
     prefill_step_size: Option<usize>,
     seed: Option<u64>,
+    speculator: Option<String>,
     mut message: Option<String>,
 ) {
-    let mut session = load_session(model_path, prefill_step_size, seed);
+    let mut session = load_session(model_path, prefill_step_size, seed, speculator);
 
     let is_model_running = Arc::new(AtomicBool::new(false));
     let is_model_running_for_ctrlc = is_model_running.clone();

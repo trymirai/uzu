@@ -15,6 +15,9 @@ thiserror.workspace = true
 tokenizers.workspace = true
 mpsgraph.workspace = true
 bytemuck.workspace = true
+zerocopy = { workspace = true, features = ["derive"] }
+xxhash-rust = { workspace = true, features = ["xxh3"] }
+memmap2.workspace = true
 num-traits.workspace = true
 regex.workspace = true
 libc.workspace = true
