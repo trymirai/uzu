@@ -30,4 +30,16 @@ impl TtsModelConfig {
     ) -> crate::audio::AudioResult<crate::audio::NanoCodecFsqRuntime> {
         crate::audio::NanoCodecFsqRuntime::from_tts_config_value_and_model_path(&self.tts_config, model_path)
     }
+
+    pub fn create_audio_codec_runtime_with_model_path_and_options(
+        &self,
+        model_path: &Path,
+        options: crate::audio::NanoCodecFsqRuntimeOptions,
+    ) -> crate::audio::AudioResult<crate::audio::NanoCodecFsqRuntime> {
+        crate::audio::NanoCodecFsqRuntime::from_tts_config_value_and_model_path_with_options(
+            &self.tts_config,
+            model_path,
+            options,
+        )
+    }
 }

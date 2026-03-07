@@ -13,13 +13,14 @@ use super::{
 };
 use crate::{
     DataType,
-    array::{Array, ArrayContextExt},
+    array::{Array, ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     backends::{
         common::{
             Backend, CommandBuffer, Context, CopyEncoder, Kernels,
             kernel::{
-                ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dKernel,
+                ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
+                AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
                 AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
                 AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
                 AudioTransposeNscToNcsKernel,
@@ -110,34 +111,23 @@ fn scale_lengths_i32_in_place(
     Ok(())
 }
 
-fn parse_env_bool(name: &str) -> Option<bool> {
-    std::env::var(name).ok().and_then(|value| {
-        let value = value.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "1" | "true" | "yes" | "on" => Some(true),
-            "0" | "false" | "no" | "off" => Some(false),
-            _ => None,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NanoCodecFsqRuntimeOptions {
+    pub profile_enabled: bool,
+    pub profile_ops_enabled: bool,
+    pub chunked_command_buffers: bool,
+    pub micro_flush_min_elements: usize,
+}
+
+impl Default for NanoCodecFsqRuntimeOptions {
+    fn default() -> Self {
+        Self {
+            profile_enabled: false,
+            profile_ops_enabled: false,
+            chunked_command_buffers: true,
+            micro_flush_min_elements: 8_000_000,
         }
-    })
-}
-
-fn fishaudio_profile_enabled() -> bool {
-    parse_env_bool("UZU_FISHAUDIO_PROFILE").unwrap_or(false)
-}
-
-fn fishaudio_profile_ops_enabled() -> bool {
-    parse_env_bool("UZU_FISHAUDIO_PROFILE_OPS").unwrap_or(false)
-}
-
-fn fishaudio_chunked_command_buffers_enabled() -> bool {
-    parse_env_bool("UZU_FISHAUDIO_CHUNKED_CMD_BUFS").unwrap_or(true)
-}
-
-fn fishaudio_decode_micro_flush_elements_threshold() -> usize {
-    std::env::var("UZU_FISHAUDIO_MICRO_FLUSH_MIN_ELEMENTS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(8_000_000)
+    }
 }
 
 fn fishaudio_dtype_key(data_type: DataType) -> u8 {
@@ -191,6 +181,24 @@ fn read_array_to_f32_vec(array: &Array<Metal>) -> AudioResult<Vec<f32>> {
     })
 }
 
+fn array_batch_view(
+    array: &Array<Metal>,
+    batch_index: usize,
+    frames: usize,
+    channels: usize,
+    active_frames: usize,
+) -> AudioResult<Array<Metal>> {
+    let batch_stride_bytes = size_for_shape(&[frames, channels], array.data_type());
+    let batch_offset = batch_index
+        .checked_mul(batch_stride_bytes)
+        .and_then(|value| value.checked_add(array.offset()))
+        .ok_or(AudioError::Runtime("array batch view offset overflow".to_string()))?;
+    if active_frames > frames {
+        return Err(AudioError::Runtime("array batch view active_frames exceeds frames".to_string()));
+    }
+    Ok(unsafe { Array::from_parts(array.buffer_rc(), batch_offset, &[active_frames, channels], array.data_type()) })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SequenceLayout {
     Ncs,
@@ -212,6 +220,14 @@ pub enum AudioDecodeStreamingMode {
     PrefixFallback,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AudioDecodeStepStats {
+    pub input_frames: usize,
+    pub total_semantic_frames: usize,
+    pub decoded_window_start_frame: usize,
+    pub decoded_window_frames: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct AudioDecodeStreamState {
     batch_size: usize,
@@ -226,6 +242,7 @@ pub struct AudioDecodeStreamState {
     semantic_lengths: Vec<usize>,
     emitted_semantic_lengths: Vec<usize>,
     emitted_audio_lengths: Vec<usize>,
+    last_step_stats: AudioDecodeStepStats,
 }
 
 impl AudioDecodeStreamState {
@@ -270,11 +287,16 @@ impl AudioDecodeStreamState {
             semantic_lengths: vec![0; batch_size],
             emitted_semantic_lengths: vec![0; batch_size],
             emitted_audio_lengths: vec![0; batch_size],
+            last_step_stats: AudioDecodeStepStats::default(),
         })
     }
 
     fn total_frames(&self) -> usize {
         self.total_frames_generated
+    }
+
+    pub fn last_step_stats(&self) -> AudioDecodeStepStats {
+        self.last_step_stats
     }
 
     fn stored_frames(&self) -> usize {
@@ -574,6 +596,20 @@ impl AudioDecodeStreamState {
             frames: max_delta_frames,
             lengths: delta_lengths,
         })
+    }
+
+    fn record_last_step_stats(
+        &mut self,
+        input_frames: usize,
+        decoded_window_start_frame: usize,
+        decoded_window_frames: usize,
+    ) {
+        self.last_step_stats = AudioDecodeStepStats {
+            input_frames,
+            total_semantic_frames: self.total_frames_generated,
+            decoded_window_start_frame,
+            decoded_window_frames,
+        };
     }
 }
 
@@ -1070,6 +1106,7 @@ struct FishAudioKernelCache {
     half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel,
     causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel,
     causal_conv1d_grouped: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel,
+    causal_conv1d_grouped_residual: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel,
     causal_conv_transpose1d_causal_pad:
         <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel,
     conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel,
@@ -2121,6 +2158,14 @@ fn fishaudio_kernels(
                 data_type,
             )
             .map_err(|err| AudioError::Runtime(format!("failed to initialize grouped causal conv1d kernel: {err}")))?,
+            causal_conv1d_grouped_residual:
+                <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel::new(
+                    context.as_ref(),
+                    data_type,
+                )
+                .map_err(|err| {
+                    AudioError::Runtime(format!("failed to initialize grouped residual conv1d kernel: {err}"))
+                })?,
             causal_conv_transpose1d_causal_pad:
                 <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(
                     context.as_ref(),
@@ -2325,6 +2370,92 @@ fn causal_conv1d_grouped_enqueue(
             );
         });
     }
+
+    Ok(output)
+}
+
+fn causal_conv1d_grouped_residual_enqueue(
+    context: &Rc<<Metal as Backend>::Context>,
+    command_buffer: &<Metal as Backend>::CommandBuffer,
+    input: &Array<Metal>,
+    residual: &Array<Metal>,
+    layer: &FishAudioConv1dGpuLayer,
+    lengths: &[i32],
+    lengths_array: &Array<Metal>,
+    batch_size: usize,
+    seq_len: usize,
+) -> AudioResult<Array<Metal>> {
+    if lengths.len() != batch_size {
+        return Err(AudioError::InvalidTokenLengths {
+            expected_lengths: batch_size,
+            actual_lengths: lengths.len(),
+        });
+    }
+    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
+        return Err(AudioError::InvalidTokenCardinality);
+    }
+    let expected_weight_shape = [layer.cout, layer.cin / layer.groups, layer.kernel_size];
+    if layer.weight.shape() != expected_weight_shape {
+        return Err(AudioError::Runtime(format!(
+            "causal conv1d weight shape mismatch: expected {:?}, got {:?}",
+            expected_weight_shape,
+            layer.weight.shape()
+        )));
+    }
+    if layer.bias.shape() != [layer.cout] {
+        return Err(AudioError::Runtime(format!(
+            "causal conv1d bias shape mismatch: expected [{}], got {:?}",
+            layer.cout,
+            layer.bias.shape()
+        )));
+    }
+    let expected_input = checked_product(&[batch_size, layer.cin, seq_len])?;
+    if input.num_elements() != expected_input {
+        return Err(AudioError::InvalidTokenShape {
+            expected_tokens: expected_input,
+            actual_tokens: input.num_elements(),
+        });
+    }
+    let expected_residual = checked_product(&[batch_size, layer.cout, seq_len])?;
+    if residual.num_elements() != expected_residual {
+        return Err(AudioError::InvalidTokenShape {
+            expected_tokens: expected_residual,
+            actual_tokens: residual.num_elements(),
+        });
+    }
+    let cin_i32 = usize_to_i32(layer.cin, "cin")?;
+    let cout_i32 = usize_to_i32(layer.cout, "cout")?;
+    let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
+    let kernel_size_i32 = usize_to_i32(layer.kernel_size, "kernel_size")?;
+    let dilation_i32 = usize_to_i32(layer.dilation, "dilation")?;
+    let groups_i32 = usize_to_i32(layer.groups, "groups")?;
+    let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
+    let data_type = input.data_type();
+    if residual.data_type() != data_type || layer.weight.data_type() != data_type || layer.bias.data_type() != data_type
+    {
+        return Err(AudioError::Runtime("causal conv1d residual dtype mismatch".to_string()));
+    }
+    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_causal_conv1d_output");
+    let kernels = fishaudio_kernels(context, data_type)?;
+
+    command_buffer.with_compute_encoder(|compute_encoder| {
+        kernels.causal_conv1d_grouped_residual.encode(
+            input.buffer(),
+            residual.buffer(),
+            layer.weight.buffer(),
+            layer.bias.buffer(),
+            output.buffer(),
+            lengths_array.buffer(),
+            cin_i32,
+            cout_i32,
+            seq_len_i32,
+            kernel_size_i32,
+            dilation_i32,
+            groups_i32,
+            batch_i32,
+            compute_encoder,
+        );
+    });
 
     Ok(output)
 }
@@ -3258,14 +3389,6 @@ impl FishAudioCodecGraph {
         })
     }
 
-    fn post_module_runtime(
-        &self,
-        required_sequence_length: usize,
-    ) -> AudioResult<Rc<FishAudioPostModuleRuntime>> {
-        let context = self.decode_context()?;
-        self.post_module_runtime_on_context(&context, required_sequence_length)
-    }
-
     fn decode_context(&self) -> AudioResult<Rc<<Metal as Backend>::Context>> {
         FISHAUDIO_DECODE_CONTEXT_CACHE.with(|cache| {
             if let Some(existing) = cache.borrow().get(&self.weights_path).cloned() {
@@ -3530,120 +3653,16 @@ impl FishAudioCodecGraph {
         })
     }
 
-    fn apply_post_module_gpu(
-        &self,
-        latent_nsc: &mut [f32],
-        lengths: &[usize],
-        batch_size: usize,
-        frames: usize,
-    ) -> AudioResult<()> {
-        if self.post_module_model_dim != self.input_dim {
-            return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
+    fn encode_post_module_layers(
+        runtime: &FishAudioPostModuleRuntime,
+        state: &mut ForwardPassState<Metal>,
+        command_buffer: &<Metal as Backend>::CommandBuffer,
+    ) {
+        let encoding_parameters = EncodingParameters::new(false, false, false);
+        for layer in runtime.layers.iter() {
+            layer.encode(state, &encoding_parameters, command_buffer);
         }
-        if lengths.len() != batch_size {
-            return Err(AudioError::InvalidTokenLengths {
-                expected_lengths: batch_size,
-                actual_lengths: lengths.len(),
-            });
-        }
-        if latent_nsc.len() != checked_product(&[batch_size, frames, self.input_dim])? {
-            return Err(AudioError::InvalidTokenShape {
-                expected_tokens: checked_product(&[batch_size, frames, self.input_dim])?,
-                actual_tokens: latent_nsc.len(),
-            });
-        }
-
-        let runtime = self.post_module_runtime(frames.max(1))?;
-        for batch in 0..batch_size {
-            let active_len = lengths[batch];
-            if active_len == 0 {
-                continue;
-            }
-            if active_len > frames {
-                return Err(AudioError::InvalidTokenLengthValue {
-                    length: active_len,
-                    frames,
-                });
-            }
-
-            let token_ids = vec![0_u64; active_len];
-            let token_positions = (0..active_len).collect::<Vec<_>>();
-            let mut state = ForwardPassState::new_classifier(
-                runtime.context.clone(),
-                &runtime.model_shape,
-                &runtime.scratch_buffers,
-                runtime.shared_buffers.clone(),
-                &token_ids,
-                &token_positions,
-                false,
-                1,
-            );
-
-            let batch_base = batch * frames * self.input_dim;
-            let sequence = &mut latent_nsc[batch_base..batch_base + active_len * self.input_dim];
-            let main = state.arrays(&[ArrayId::Main])[0].clone();
-            {
-                let mut main = main.borrow_mut();
-                if main.shape() != [active_len, self.input_dim] {
-                    return Err(AudioError::Runtime(format!(
-                        "post_module main shape mismatch: expected [{active_len}, {}], got {:?}",
-                        self.input_dim,
-                        main.shape()
-                    )));
-                }
-                match main.data_type() {
-                    DataType::F32 => main.as_slice_mut::<f32>().copy_from_slice(sequence),
-                    DataType::F16 => {
-                        for (dst, &src) in main.as_slice_mut::<f16>().iter_mut().zip(sequence.iter()) {
-                            *dst = f16::from_f32(src);
-                        }
-                    },
-                    DataType::BF16 => {
-                        for (dst, &src) in main.as_slice_mut::<bf16>().iter_mut().zip(sequence.iter()) {
-                            *dst = bf16::from_f32(src);
-                        }
-                    },
-                    other => {
-                        return Err(AudioError::Runtime(format!("unsupported post_module main dtype: {other:?}")));
-                    },
-                }
-            }
-
-            let command_buffer = runtime
-                .context
-                .create_command_buffer()
-                .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
-            let encoding_parameters = EncodingParameters::new(false, false, false);
-            for layer in runtime.layers.iter() {
-                layer.encode(&mut state, &encoding_parameters, &command_buffer);
-            }
-            runtime.output_norm.encode(&mut state, &encoding_parameters, &command_buffer);
-            command_buffer.submit();
-            command_buffer.wait_until_completed();
-
-            let main = state.arrays(&[ArrayId::Main])[0].clone();
-            {
-                let main = main.borrow();
-                match main.data_type() {
-                    DataType::F32 => sequence.copy_from_slice(main.as_slice::<f32>()),
-                    DataType::F16 => {
-                        for (dst, &src) in sequence.iter_mut().zip(main.as_slice::<f16>().iter()) {
-                            *dst = f32::from(src);
-                        }
-                    },
-                    DataType::BF16 => {
-                        for (dst, &src) in sequence.iter_mut().zip(main.as_slice::<bf16>().iter()) {
-                            *dst = f32::from(src);
-                        }
-                    },
-                    other => {
-                        return Err(AudioError::Runtime(format!("unsupported post_module output dtype: {other:?}")));
-                    },
-                }
-            }
-        }
-
-        Ok(())
+        runtime.output_norm.encode(state, &encoding_parameters, command_buffer);
     }
 
     fn apply_post_module_gpu_on_array_single_batch(
@@ -3712,26 +3731,109 @@ impl FishAudioCodecGraph {
         command_buffer.with_copy_encoder(|copy_encoder| {
             copy_encoder.encode_copy(latent_nsc.buffer(), main_output.buffer(), copy_bytes);
         });
-
-        let encoding_parameters = EncodingParameters::new(false, false, false);
-        for layer in runtime.layers.iter() {
-            layer.encode(&mut state, &encoding_parameters, &command_buffer);
-        }
-        runtime.output_norm.encode(&mut state, &encoding_parameters, &command_buffer);
+        Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
         command_buffer.submit();
         command_buffer.wait_until_completed();
 
         Ok(main_output)
     }
 
-    fn apply_post_module(
+    fn apply_post_module_gpu_on_array(
         &self,
-        latent_nsc: &mut [f32],
+        context: &Rc<<Metal as Backend>::Context>,
+        latent_nsc: &Array<Metal>,
         lengths: &[usize],
         batch_size: usize,
         frames: usize,
-    ) -> AudioResult<()> {
-        self.apply_post_module_gpu(latent_nsc, lengths, batch_size, frames)
+    ) -> AudioResult<Array<Metal>> {
+        if self.post_module_model_dim != self.input_dim {
+            return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
+        }
+        if lengths.len() != batch_size {
+            return Err(AudioError::InvalidTokenLengths {
+                expected_lengths: batch_size,
+                actual_lengths: lengths.len(),
+            });
+        }
+        let expected_elements = checked_product(&[batch_size, frames, self.input_dim])?;
+        if latent_nsc.num_elements() != expected_elements {
+            return Err(AudioError::InvalidTokenShape {
+                expected_tokens: expected_elements,
+                actual_tokens: latent_nsc.num_elements(),
+            });
+        }
+        if batch_size == 1 && lengths.first().copied() == Some(frames) {
+            return self.apply_post_module_gpu_on_array_single_batch(context, latent_nsc, frames);
+        }
+
+        let mut output = context.create_array(
+            &[batch_size, frames, self.input_dim],
+            latent_nsc.data_type(),
+            "fishaudio_post_module_output_nsc",
+        );
+        output.copy_from_array(latent_nsc);
+
+        for (batch_index, &active_len) in lengths.iter().enumerate() {
+            if active_len == 0 {
+                continue;
+            }
+            if active_len > frames {
+                return Err(AudioError::InvalidTokenLengthValue {
+                    length: active_len,
+                    frames,
+                });
+            }
+
+            let runtime = self.post_module_runtime_on_context(context, active_len.max(1))?;
+            let token_ids = vec![0_u64; active_len];
+            let token_positions = (0..active_len).collect::<Vec<_>>();
+            let mut state = ForwardPassState::new_classifier(
+                runtime.context.clone(),
+                &runtime.model_shape,
+                &runtime.scratch_buffers,
+                runtime.shared_buffers.clone(),
+                &token_ids,
+                &token_positions,
+                false,
+                1,
+            );
+
+            let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
+            let main = state.arrays(&[ArrayId::Main])[0].clone();
+            {
+                let mut main = main.borrow_mut();
+                if main.shape() != [active_len, self.input_dim] {
+                    return Err(AudioError::Runtime(format!(
+                        "post_module main shape mismatch: expected [{active_len}, {}], got {:?}",
+                        self.input_dim,
+                        main.shape()
+                    )));
+                }
+                if main.data_type() != latent_nsc.data_type() {
+                    return Err(AudioError::Runtime(format!(
+                        "post_module dtype mismatch: main={:?}, latent={:?}",
+                        main.data_type(),
+                        latent_nsc.data_type()
+                    )));
+                }
+                main.copy_from_array(&source);
+            }
+
+            let command_buffer = runtime
+                .context
+                .create_command_buffer()
+                .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
+            Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
+            command_buffer.submit();
+            command_buffer.wait_until_completed();
+
+            let main = state.arrays(&[ArrayId::Main])[0].clone();
+            let main = main.borrow();
+            let mut destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
+            destination.copy_from_array(&main);
+        }
+
+        Ok(output)
     }
 
     fn run_residual_unit_enqueued(
@@ -3759,29 +3861,30 @@ impl FishAudioCodecGraph {
             seq_len,
         )?;
         let x = snake1d_enqueue(context, command_buffer, &x, &unit.snake2_alpha, batch_size, channels, seq_len)?;
-        let x = causal_conv1d_grouped_enqueue(
+        causal_conv1d_grouped_residual_enqueue(
             context,
             command_buffer,
             &x,
+            &residual,
             &unit.conv2,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
-        )?;
-        add_enqueue(context, command_buffer, &x, &residual)
+        )
     }
 
     fn decode_padded(
         &self,
+        runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
-        let profile_enabled = fishaudio_profile_enabled();
-        let decode_start = if profile_enabled {
+        let profile_enabled = runtime_options.profile_enabled;
+        let decode_start: Option<Instant> = if profile_enabled {
             Some(Instant::now())
         } else {
             None
@@ -3811,7 +3914,7 @@ impl FishAudioCodecGraph {
             .collect::<AudioResult<Vec<_>>>()?;
         let context = self.decode_context()?;
 
-        let quantizer_start = if profile_enabled {
+        let quantizer_start: Option<Instant> = if profile_enabled {
             Some(Instant::now())
         } else {
             None
@@ -3821,42 +3924,23 @@ impl FishAudioCodecGraph {
         let post_module_s;
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
-        if can_use_gpu_latent_path {
-            let quantized_nsc = self
-                .decode_quantizer_to_nsc_array_on_context(&context, tokens, lengths, batch_size, codebooks, frames)?;
-            quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+        let quantized_nsc =
+            self.decode_quantizer_to_nsc_array_on_context(&context, tokens, lengths, batch_size, codebooks, frames)?;
+        quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
 
-            let post_module_start = if profile_enabled {
-                Some(Instant::now())
-            } else {
-                None
-            };
-            x = self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames)?;
-            post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+        let post_module_start: Option<Instant> = if profile_enabled {
+            Some(Instant::now())
         } else {
-            let mut latent_nsc =
-                self.decode_quantizer_to_nsc_on_context(&context, tokens, lengths, batch_size, codebooks, frames)?;
-            quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
+            None
+        };
+        x = if can_use_gpu_latent_path {
+            self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames)?
+        } else {
+            self.apply_post_module_gpu_on_array(&context, &quantized_nsc, lengths, batch_size, frames)?
+        };
+        post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
 
-            let post_module_start = if profile_enabled {
-                Some(Instant::now())
-            } else {
-                None
-            };
-            self.apply_post_module(&mut latent_nsc, lengths, batch_size, frames)?;
-            post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
-
-            let vocoder_data_type = self.vocoder_data_type;
-            x = context.create_array(
-                &[batch_size, frames, self.input_dim],
-                vocoder_data_type,
-                "fishaudio_decoder_input_nsc",
-            );
-            write_f32_slice_to_array(&mut x, &latent_nsc)?;
-            x_layout = SequenceLayout::Nsc;
-        }
-
-        let vocoder_start = if profile_enabled {
+        let vocoder_start: Option<Instant> = if profile_enabled {
             Some(Instant::now())
         } else {
             None
@@ -3865,11 +3949,11 @@ impl FishAudioCodecGraph {
         let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
-        let profile_ops_enabled = fishaudio_profile_ops_enabled();
-        let chunked_command_buffers = fishaudio_chunked_command_buffers_enabled();
-        let micro_flush_min_elements = fishaudio_decode_micro_flush_elements_threshold();
+        let profile_ops_enabled = runtime_options.profile_ops_enabled;
+        let chunked_command_buffers = runtime_options.chunked_command_buffers;
+        let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
         let mut profile_stages = Vec::<(String, f64)>::new();
-        let mut profile_stage_start = profile_ops_enabled.then(Instant::now);
+        let mut profile_stage_start: Option<Instant> = profile_ops_enabled.then(Instant::now);
         let mut flush_stage =
             |label: String, command_buffer: &mut <Metal as Backend>::CommandBuffer| -> AudioResult<()> {
                 if !(profile_ops_enabled || chunked_command_buffers) {
@@ -4347,12 +4431,21 @@ impl NanoCodecFsqRuntimeConfig {
 #[derive(Debug, Clone)]
 pub struct NanoCodecFsqRuntime {
     config: NanoCodecFsqRuntimeConfig,
+    options: NanoCodecFsqRuntimeOptions,
 }
 
 impl NanoCodecFsqRuntime {
     pub fn new(config: NanoCodecFsqRuntimeConfig) -> Self {
+        Self::new_with_options(config, NanoCodecFsqRuntimeOptions::default())
+    }
+
+    pub fn new_with_options(
+        config: NanoCodecFsqRuntimeConfig,
+        options: NanoCodecFsqRuntimeOptions,
+    ) -> Self {
         Self {
             config,
+            options,
         }
     }
 
@@ -4367,8 +4460,23 @@ impl NanoCodecFsqRuntime {
         Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(tts_config, model_path)?))
     }
 
+    pub fn from_tts_config_value_and_model_path_with_options(
+        tts_config: &serde_json::Value,
+        model_path: &Path,
+        options: NanoCodecFsqRuntimeOptions,
+    ) -> AudioResult<Self> {
+        Ok(Self::new_with_options(
+            NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(tts_config, model_path)?,
+            options,
+        ))
+    }
+
     pub fn config(&self) -> &NanoCodecFsqRuntimeConfig {
         &self.config
+    }
+
+    pub fn options(&self) -> NanoCodecFsqRuntimeOptions {
+        self.options
     }
 
     fn validate_fishaudio_token_delta(
@@ -4409,8 +4517,10 @@ impl NanoCodecFsqRuntime {
         &self,
         state: &mut AudioDecodeStreamState,
         fishaudio: &FishAudioCodecGraph,
+        input_frames: usize,
     ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
         if state.total_frames() == 0 {
+            state.record_last_step_stats(input_frames, 0, 0);
             return Ok(super::decoder::DecodedPaddedAudio {
                 samples: Vec::new(),
                 channels: 1,
@@ -4422,6 +4532,7 @@ impl NanoCodecFsqRuntime {
         let Some(context_frames) = fishaudio.streaming_decode_context_frames()? else {
             let full_grid = state.to_full_grid()?;
             let full_pcm = self.decode(&full_grid)?;
+            state.record_last_step_stats(input_frames, 0, state.total_frames());
             return state.extract_delta_padded(&full_pcm);
         };
         let mut window_start = state.total_frames();
@@ -4432,11 +4543,18 @@ impl NanoCodecFsqRuntime {
         let batch_size = state.batch_size;
         let codebooks = state.codebooks;
         let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
-        let decoded_window =
-            fishaudio.decode_padded(window_tokens, window_lengths, batch_size, codebooks, window_frames)?;
+        let decoded_window = fishaudio.decode_padded(
+            self.options,
+            window_tokens,
+            window_lengths,
+            batch_size,
+            codebooks,
+            window_frames,
+        )?;
         let audio_offset_frames = window_start
             .checked_mul(fishaudio.upsample_factor)
             .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;
+        state.record_last_step_stats(input_frames, window_start, window_frames);
         state.extract_delta_from_padded_with_offset(&decoded_window, audio_offset_frames, fishaudio.upsample_factor)
     }
 
@@ -4486,6 +4604,7 @@ impl NanoCodecFsqRuntime {
             )));
         }
         if new_tokens.frames() == 0 {
+            state.record_last_step_stats(0, state.total_frames(), 0);
             return Ok(super::decoder::DecodedPaddedAudio {
                 samples: Vec::new(),
                 channels: if let Some(decoder) = self.config.decoder() {
@@ -4504,10 +4623,13 @@ impl NanoCodecFsqRuntime {
         if let Some(fishaudio) = self.config.fishaudio_decoder() {
             self.validate_fishaudio_token_delta(new_tokens, fishaudio)?;
             return match state.mode {
-                AudioDecodeStreamingMode::IncrementalStateful => self.decode_fishaudio_stream_delta(state, fishaudio),
+                AudioDecodeStreamingMode::IncrementalStateful => {
+                    self.decode_fishaudio_stream_delta(state, fishaudio, new_tokens.frames())
+                },
                 AudioDecodeStreamingMode::PrefixFallback => {
                     let full_grid = state.to_full_grid()?;
                     let full_pcm = self.decode(&full_grid)?;
+                    state.record_last_step_stats(new_tokens.frames(), 0, state.total_frames());
                     state.extract_delta_padded(&full_pcm)
                 },
             };
@@ -4515,6 +4637,7 @@ impl NanoCodecFsqRuntime {
 
         let full_grid = state.to_full_grid()?;
         let full_pcm = self.decode(&full_grid)?;
+        state.record_last_step_stats(new_tokens.frames(), 0, state.total_frames());
         state.extract_delta_padded(&full_pcm)
     }
 
@@ -4743,6 +4866,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
                 }
             }
             let decoded = fishaudio.decode_padded(
+                self.options,
                 codebook_major.tokens(),
                 &lengths_usize,
                 batch_size,

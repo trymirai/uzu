@@ -1,11 +1,38 @@
 #![cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use uzu::session::{TtsSession, types::Input};
+use serde::Deserialize;
+use uzu::session::{
+    TtsSession,
+    config::{TextSamplingConfig, TtsRunConfig, TtsSessionOptions},
+    types::Input,
+};
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+const FISHAUDIO_F32_GREEDY_FIXTURE_PATH: &str = "tests/fixtures/fishaudio_s1mini_hello_lucky_greedy_tokens.json";
+
+#[derive(Debug, Deserialize)]
+struct FishAudioGreedyFixture {
+    text: String,
+    seed: u64,
+    codebooks: usize,
+    frames: usize,
+    lengths: Vec<usize>,
+    tokens_codebook_major: Vec<u32>,
+}
+
+fn greedy_fishaudio_session_options() -> TtsSessionOptions {
+    let mut options = TtsSessionOptions::default();
+    options.text_decoder.sampling = TextSamplingConfig {
+        temperature: 0.0,
+        top_p: 0.0,
+    };
+    options
+}
 
 fn load_optional_model_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("LALAMO_UZU_MODEL_PATH") {
@@ -25,6 +52,60 @@ fn load_optional_model_path() -> Option<PathBuf> {
     }
 }
 
+fn existing_model_path(path: PathBuf) -> Option<PathBuf> {
+    if path.join("config.json").exists() && path.join("model.safetensors").exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn load_optional_fishaudio_model_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH") {
+        return existing_model_path(PathBuf::from(path));
+    }
+
+    let preferred = [
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_f32a",
+        "/private/tmp/lalamo_fishaudio_s1mini_f32",
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_f32",
+        "/private/tmp/lalamo_fishaudio_s1mini_convert",
+    ];
+    preferred.iter().find_map(|path| existing_model_path(PathBuf::from(path)))
+}
+
+fn load_optional_fishaudio_model_path_f16() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16") {
+        return existing_model_path(PathBuf::from(path));
+    }
+
+    let preferred = [
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_f16a",
+        "/private/tmp/lalamo_fishaudio_s1mini_f16",
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_f16",
+    ];
+    preferred.iter().find_map(|path| existing_model_path(PathBuf::from(path)))
+}
+
+fn load_optional_fishaudio_model_path_bf16() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16") {
+        return existing_model_path(PathBuf::from(path));
+    }
+
+    let preferred = [
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16a",
+        "/private/tmp/lalamo_fishaudio_s1mini_bf16",
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16",
+    ];
+    preferred.iter().find_map(|path| existing_model_path(PathBuf::from(path)))
+}
+
+fn load_fishaudio_greedy_fixture() -> Option<FishAudioGreedyFixture> {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FISHAUDIO_F32_GREEDY_FIXTURE_PATH);
+    let payload = fs::read_to_string(&fixture_path).ok()?;
+    serde_json::from_str::<FishAudioGreedyFixture>(&payload).ok()
+}
+
 #[test]
 fn tts_session_synthesizes_audio_from_text_on_normal_export() {
     let _guard = TEST_MUTEX.lock().expect("lock");
@@ -41,4 +122,308 @@ fn tts_session_synthesizes_audio_from_text_on_normal_export() {
     assert_eq!(pcm.channels(), 1);
     assert!(pcm.lengths()[0] > 0, "expected non-empty waveform for non-empty text");
     assert_eq!(pcm.samples().len(), pcm.lengths()[0] * pcm.channels());
+}
+
+#[test]
+fn tts_session_streaming_matches_non_streaming_audio_on_normal_export() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_model_path() else {
+        println!(
+            "Skipping streaming TTS session test: set LALAMO_UZU_MODEL_PATH (or create /tmp/lalamo_nanocodec_convert)"
+        );
+        return;
+    };
+
+    let session = TtsSession::new(model_path).expect("tts session");
+    let seed = 123_u64;
+    let baseline = session.synthesize_with_seed(Input::Text("hello".to_string()), seed).expect("baseline");
+
+    let mut streamed_samples = Vec::<f32>::new();
+    let streamed = session
+        .synthesize_streaming_with_seed(Input::Text("hello".to_string()), seed, 4, |chunk| {
+            streamed_samples.extend_from_slice(chunk.samples());
+        })
+        .expect("streamed");
+
+    assert_eq!(streamed.sample_rate(), baseline.sample_rate());
+    assert_eq!(streamed.channels(), baseline.channels());
+    assert_eq!(streamed.lengths(), baseline.lengths());
+    assert_eq!(streamed.samples(), baseline.samples());
+    assert_eq!(streamed_samples, baseline.samples());
+}
+
+#[test]
+fn tts_session_fishaudio_f32_greedy_tokens_match_fixture() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path() else {
+        println!(
+            "Skipping FishAudio f32 parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f32a)"
+        );
+        return;
+    };
+    let Some(fixture) = load_fishaudio_greedy_fixture() else {
+        println!(
+            "Skipping FishAudio f32 parity test: missing fixture at {}",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FISHAUDIO_F32_GREEDY_FIXTURE_PATH).display()
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+    let tokens = session
+        .generate_semantic_tokens_with_seed(Input::Text(fixture.text.clone()), fixture.seed)
+        .expect("generate semantic tokens");
+
+    assert_eq!(tokens.batch_size(), 1);
+    assert_eq!(tokens.codebooks(), fixture.codebooks);
+    assert_eq!(tokens.frames(), fixture.frames);
+    assert_eq!(tokens.lengths(), fixture.lengths.as_slice());
+    assert_eq!(tokens.tokens(), fixture.tokens_codebook_major.as_slice());
+}
+
+#[test]
+fn tts_session_fishaudio_f32_semantic_generation_respects_frame_cap() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path() else {
+        println!(
+            "Skipping FishAudio f32 semantic-cap test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f32a)"
+        );
+        return;
+    };
+    let Some(fixture) = load_fishaudio_greedy_fixture() else {
+        println!(
+            "Skipping FishAudio f32 semantic-cap test: missing fixture at {}",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FISHAUDIO_F32_GREEDY_FIXTURE_PATH).display()
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+
+    let frame_cap = 8usize;
+    let config = TtsRunConfig {
+        max_semantic_frames: frame_cap,
+        ..TtsRunConfig::default()
+    };
+    let tokens = session
+        .generate_semantic_tokens_with_seed_and_config(Input::Text(fixture.text.clone()), fixture.seed, &config)
+        .expect("generate capped semantic tokens");
+
+    assert_eq!(tokens.batch_size(), 1);
+    assert_eq!(tokens.codebooks(), fixture.codebooks);
+    assert_eq!(tokens.frames(), frame_cap);
+    assert_eq!(tokens.lengths(), [frame_cap]);
+
+    let mut expected_prefix = Vec::with_capacity(fixture.codebooks * frame_cap);
+    for codebook in 0..fixture.codebooks {
+        let base = codebook * fixture.frames;
+        expected_prefix.extend_from_slice(&fixture.tokens_codebook_major[base..base + frame_cap]);
+    }
+    assert_eq!(tokens.tokens(), expected_prefix.as_slice());
+}
+
+#[test]
+fn tts_session_fishaudio_f32_streaming_matches_non_streaming_audio_with_windowed_context() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path() else {
+        println!(
+            "Skipping FishAudio f32 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f32a)"
+        );
+        return;
+    };
+    let Some(fixture) = load_fishaudio_greedy_fixture() else {
+        println!(
+            "Skipping FishAudio f32 streaming parity test: missing fixture at {}",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FISHAUDIO_F32_GREEDY_FIXTURE_PATH).display()
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+
+    // This cap forces decode to cross the FishAudio post-module sliding window (128),
+    // exercising bounded-context streaming decode logic.
+    let frame_cap = 192usize;
+    let non_streaming_config = TtsRunConfig {
+        streaming_enabled: false,
+        max_semantic_frames: frame_cap,
+        ..TtsRunConfig::default()
+    };
+    let streaming_config = TtsRunConfig {
+        streaming_enabled: true,
+        initial_chunk_frames: 1,
+        min_chunk_frames: 16,
+        max_chunk_frames: 16,
+        max_semantic_frames: frame_cap,
+        ..TtsRunConfig::default()
+    };
+
+    let baseline = session
+        .synthesize_with_seed_and_config(Input::Text(fixture.text.clone()), fixture.seed, &non_streaming_config)
+        .expect("baseline");
+    let mut streamed_samples = Vec::<f32>::new();
+    let streamed = session
+        .synthesize_streaming_with_seed_and_config(
+            Input::Text(fixture.text.clone()),
+            fixture.seed,
+            &streaming_config,
+            |chunk| {
+                streamed_samples.extend_from_slice(chunk.samples());
+            },
+        )
+        .expect("streamed");
+
+    assert_eq!(streamed.sample_rate(), baseline.sample_rate());
+    assert_eq!(streamed.channels(), baseline.channels());
+    assert_eq!(streamed.lengths(), baseline.lengths());
+    assert_eq!(streamed_samples.len(), streamed.samples().len());
+    assert_eq!(streamed_samples, streamed.samples());
+
+    let max_abs_diff = streamed
+        .samples()
+        .iter()
+        .zip(baseline.samples().iter())
+        .map(|(lhs, rhs)| (lhs - rhs).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(max_abs_diff <= 1e-4, "FishAudio f32 streaming/non-streaming mismatch: max_abs_diff={max_abs_diff}");
+}
+
+#[test]
+fn tts_session_fishaudio_f16_greedy_emits_bounded_semantic_frames() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path_f16() else {
+        println!(
+            "Skipping FishAudio f16 semantic-frame test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f16)"
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+    let tokens = session
+        .generate_semantic_tokens_with_seed(Input::Text("I will tell you about London, get ready!".to_string()), 123)
+        .expect("generate semantic tokens");
+
+    assert!(tokens.frames() >= 8, "expected at least 8 semantic frames, got {}", tokens.frames());
+    assert!(tokens.frames() <= 128, "unexpectedly large greedy semantic frame count: {}", tokens.frames());
+}
+
+#[test]
+fn tts_session_fishaudio_f16_streaming_matches_non_streaming_audio() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path_f16() else {
+        println!(
+            "Skipping FishAudio f16 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f16)"
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+    let text = Input::Text("I will tell you about London, get ready!".to_string());
+    let seed = 123_u64;
+
+    let non_streaming_config = TtsRunConfig {
+        streaming_enabled: false,
+        max_semantic_frames: 64,
+        ..TtsRunConfig::default()
+    };
+    let streaming_config = TtsRunConfig {
+        streaming_enabled: true,
+        initial_chunk_frames: 1,
+        min_chunk_frames: 16,
+        max_chunk_frames: 16,
+        max_semantic_frames: 64,
+        ..TtsRunConfig::default()
+    };
+
+    let baseline =
+        session.synthesize_with_seed_and_config(text.clone(), seed, &non_streaming_config).expect("baseline");
+    let mut streamed_samples = Vec::<f32>::new();
+    let streamed = session
+        .synthesize_streaming_with_seed_and_config(text, seed, &streaming_config, |chunk| {
+            streamed_samples.extend_from_slice(chunk.samples());
+        })
+        .expect("streamed");
+
+    assert_eq!(streamed.sample_rate(), baseline.sample_rate());
+    assert_eq!(streamed.channels(), baseline.channels());
+    assert_eq!(streamed.lengths(), baseline.lengths());
+    assert_eq!(streamed_samples, streamed.samples());
+
+    let max_abs_diff = streamed
+        .samples()
+        .iter()
+        .zip(baseline.samples().iter())
+        .map(|(lhs, rhs)| (lhs - rhs).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(max_abs_diff <= 2e-4, "FishAudio f16 streaming/non-streaming mismatch: max_abs_diff={max_abs_diff}");
+}
+
+#[test]
+fn tts_session_fishaudio_bf16_greedy_emits_bounded_semantic_frames() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path_bf16() else {
+        println!(
+            "Skipping FishAudio bf16 semantic-frame test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_bf16)"
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+    let tokens = session
+        .generate_semantic_tokens_with_seed(Input::Text("I will tell you about London, get ready!".to_string()), 123)
+        .expect("generate semantic tokens");
+
+    assert!(tokens.frames() >= 8, "expected at least 8 semantic frames, got {}", tokens.frames());
+    assert!(tokens.frames() <= 128, "unexpectedly large greedy semantic frame count: {}", tokens.frames());
+}
+
+#[test]
+fn tts_session_fishaudio_bf16_streaming_matches_non_streaming_audio() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path_bf16() else {
+        println!(
+            "Skipping FishAudio bf16 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_bf16)"
+        );
+        return;
+    };
+
+    let session = TtsSession::new_with_options(model_path, greedy_fishaudio_session_options()).expect("tts session");
+    let text = Input::Text("I will tell you about London, get ready!".to_string());
+    let seed = 123_u64;
+
+    let non_streaming_config = TtsRunConfig {
+        streaming_enabled: false,
+        max_semantic_frames: 64,
+        ..TtsRunConfig::default()
+    };
+    let streaming_config = TtsRunConfig {
+        streaming_enabled: true,
+        initial_chunk_frames: 1,
+        min_chunk_frames: 16,
+        max_chunk_frames: 16,
+        max_semantic_frames: 64,
+        ..TtsRunConfig::default()
+    };
+
+    let baseline =
+        session.synthesize_with_seed_and_config(text.clone(), seed, &non_streaming_config).expect("baseline");
+    let mut streamed_samples = Vec::<f32>::new();
+    let streamed = session
+        .synthesize_streaming_with_seed_and_config(text, seed, &streaming_config, |chunk| {
+            streamed_samples.extend_from_slice(chunk.samples());
+        })
+        .expect("streamed");
+
+    assert_eq!(streamed.sample_rate(), baseline.sample_rate());
+    assert_eq!(streamed.channels(), baseline.channels());
+    assert_eq!(streamed.lengths(), baseline.lengths());
+    assert_eq!(streamed_samples, streamed.samples());
+
+    let max_abs_diff = streamed
+        .samples()
+        .iter()
+        .zip(baseline.samples().iter())
+        .map(|(lhs, rhs)| (lhs - rhs).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(max_abs_diff <= 2e-3, "FishAudio bf16 streaming/non-streaming mismatch: max_abs_diff={max_abs_diff}");
 }

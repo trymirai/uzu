@@ -20,7 +20,10 @@ use tokenizers::Tokenizer;
 use crate::{
     DataType,
     array::{ArrayCell, ArrayContextExt},
-    audio::{AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, nanocodec::AudioDecodeStreamingMode},
+    audio::{
+        AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
+        nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode},
+    },
     backends::{
         common::{
             Backend, CommandBuffer, Context as BackendContext, Kernels, NativeBuffer,
@@ -33,7 +36,7 @@ use crate::{
         },
         metal::Metal,
     },
-    config::{ConfigDataType, InnerModelConfig, LinearConfig, ModelMetadata, ModelType, TtsModelConfig},
+    config::{InnerModelConfig, LinearConfig, ModelMetadata, ModelType, TtsModelConfig},
     encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
@@ -43,7 +46,10 @@ use crate::{
     },
     parameters::{ParameterLoader, read_safetensors_metadata},
     session::{
-        config::{TtsChunkPolicy, TtsRunConfig, TtsVocoderStreamingMode},
+        config::{
+            TextDecoderDiagnosticsConfig, TextDecoderFollowupStrategy, TextDecoderRuntimeConfig,
+            TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions, TtsVocoderStreamingMode,
+        },
         parameter::SamplingMethod,
         types::{Error, Input},
     },
@@ -52,13 +58,7 @@ use crate::{
 const DEFAULT_STUB_SPEAKER_ID: &str = "speaker:0";
 const DEFAULT_STUB_STYLE: &str = "interleave";
 const DEFAULT_STUB_SEED: u64 = 123;
-const DEFAULT_FISHAUDIO_RANDOM_SEED: u64 = 123;
-const DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE: usize = 1024;
-const DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE: usize = 16;
-const DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE: f32 = 0.8008;
-const DEFAULT_FISHAUDIO_SAMPLING_TOP_P: f32 = 0.8008;
-const DEFAULT_FISHAUDIO_MIN_FRAMES_BEFORE_IM_END: usize = 8;
-const DEFAULT_FISHAUDIO_PREFILL_STEP_SIZE: usize = 128;
+const DEFAULT_TTS_RANDOM_SEED: u64 = 123;
 const DEFAULT_CHUNK_EMA_ALPHA: f64 = 0.2;
 const DEFAULT_CHUNK_HYSTERESIS_FRACTION: f64 = 0.25;
 
@@ -73,6 +73,10 @@ pub struct TtsExecutionStats {
     pub semantic_frames: usize,
     pub first_chunk_frames: usize,
     pub emitted_chunks: usize,
+    pub audio_decode_calls: usize,
+    pub audio_input_frames: usize,
+    pub audio_decoded_window_frames: usize,
+    pub audio_max_decoded_window_frames: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -93,16 +97,68 @@ pub struct TtsSession {
     #[allow(dead_code)]
     model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    runtime: crate::audio::NanoCodecFsqRuntime,
+    runtime: Rc<crate::audio::NanoCodecFsqRuntime>,
+    audio_decoder: Box<dyn AudioDecoderBackend>,
     prompt_template: String,
     drop_initial_newline: bool,
-    text_decoder: RefCell<TextDecoderRuntime>,
+    text_decoder: RefCell<Box<dyn SemanticDecoderBackend>>,
     last_execution_stats: RefCell<Option<TtsExecutionStats>>,
 }
 
-enum TextDecoderRuntime {
-    Stub(StubTextDecoderRuntime),
-    FishAudio(FishAudioTextDecoderRuntime),
+trait SemanticDecoderBackend {
+    fn default_seed(&self) -> u64;
+
+    fn generate_semantic_tokens(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+    ) -> Result<AudioTokenGrid, Error>;
+
+    fn generate_semantic_tokens_with_callback(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
+    ) -> Result<AudioTokenGrid, Error>;
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation;
+}
+
+trait AudioDecoderBackend {
+    fn codec_cardinality(&self) -> usize;
+
+    fn num_codebooks(&self) -> usize;
+
+    fn sample_rate(&self) -> u32;
+
+    fn decode(
+        &self,
+        tokens: &AudioTokenGrid,
+    ) -> Result<AudioPcmBatch, Error>;
+
+    fn begin_stream(
+        &self,
+        batch_size: usize,
+        codebooks: usize,
+        mode: AudioDecodeStreamingMode,
+        max_workspace_frames: usize,
+    ) -> Result<Box<dyn AudioDecoderStreamBackend>, Error>;
+}
+
+trait AudioDecoderStreamBackend {
+    fn decode_step(
+        &mut self,
+        new_tokens: &AudioTokenGrid,
+        is_final: bool,
+    ) -> Result<AudioPcmBatch, Error>;
+
+    fn last_step_stats(&self) -> Option<AudioDecodeStepStats>;
+
+    fn finish(self: Box<Self>) -> Result<(), Error>;
 }
 
 #[derive(Clone, Copy)]
@@ -116,6 +172,7 @@ struct FishAudioTextDecoderRuntime {
     slow_runner: TokenDecoderRunner,
     fast_runner: Option<TokenDecoderRunner>,
     gpu_path: FishAudioGpuPath,
+    runtime_config: TextDecoderRuntimeConfig,
     semantic_token_begin_id: i64,
     semantic_token_end_id: i64,
     semantic_cardinality: usize,
@@ -130,9 +187,85 @@ struct FishAudioTextDecoderRuntime {
     apply_semantic_sampling_mask: bool,
     semantic_sampling_mask_row: Box<[u32]>,
     semantic_sampling_mask_without_im_end_row: Box<[u32]>,
-    min_frames_before_im_end: usize,
     current_codes_scratch: Vec<u32>,
     instrumentation: RunnerInstrumentation,
+}
+
+#[derive(Debug, Clone)]
+struct TokenDecoderDiagnostics {
+    config: TextDecoderDiagnosticsConfig,
+    cpu_readout_sampling_enabled: bool,
+    cpu_readout_weights: Option<MatrixF32>,
+    pending_trace_step: Option<(usize, usize)>,
+}
+
+struct NanoCodecAudioDecoderBackend {
+    runtime: Rc<crate::audio::NanoCodecFsqRuntime>,
+    codec_cardinality: usize,
+}
+
+struct NanoCodecAudioDecoderStream {
+    runtime: Rc<crate::audio::NanoCodecFsqRuntime>,
+    state: Option<AudioDecodeStreamState>,
+}
+
+impl AudioDecoderBackend for NanoCodecAudioDecoderBackend {
+    fn codec_cardinality(&self) -> usize {
+        self.codec_cardinality
+    }
+
+    fn num_codebooks(&self) -> usize {
+        self.runtime.config().num_groups()
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.runtime.config().sample_rate()
+    }
+
+    fn decode(
+        &self,
+        tokens: &AudioTokenGrid,
+    ) -> Result<AudioPcmBatch, Error> {
+        self.runtime.decode(tokens).map_err(Error::from)
+    }
+
+    fn begin_stream(
+        &self,
+        batch_size: usize,
+        codebooks: usize,
+        mode: AudioDecodeStreamingMode,
+        max_workspace_frames: usize,
+    ) -> Result<Box<dyn AudioDecoderStreamBackend>, Error> {
+        let state = self
+            .runtime
+            .begin_decode_stream_with_options(batch_size, codebooks, mode, max_workspace_frames)
+            .map_err(Error::from)?;
+        Ok(Box::new(NanoCodecAudioDecoderStream {
+            runtime: Rc::clone(&self.runtime),
+            state: Some(state),
+        }))
+    }
+}
+
+impl AudioDecoderStreamBackend for NanoCodecAudioDecoderStream {
+    fn decode_step(
+        &mut self,
+        new_tokens: &AudioTokenGrid,
+        is_final: bool,
+    ) -> Result<AudioPcmBatch, Error> {
+        let state = self.state.as_mut().ok_or(Error::GenerateFailed)?;
+        let decoded = self.runtime.decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?;
+        self.runtime.decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)
+    }
+
+    fn last_step_stats(&self) -> Option<AudioDecodeStepStats> {
+        self.state.as_ref().map(AudioDecodeStreamState::last_step_stats)
+    }
+
+    fn finish(mut self: Box<Self>) -> Result<(), Error> {
+        let state = self.state.take().ok_or(Error::GenerateFailed)?;
+        self.runtime.end_decode_stream(state).map_err(Error::from)
+    }
 }
 
 type MetalContext = <Metal as Backend>::Context;
@@ -163,12 +296,14 @@ struct TokenDecoderRunner {
     two_token_vocab_masks: HashMap<usize, Box<[u32]>>,
     should_fill_attention_bias: bool,
     next_position: usize,
+    diagnostics: TokenDecoderDiagnostics,
     instrumentation: RunnerInstrumentation,
 }
 
 type PreInjectionEncodeCallback<'a> =
     dyn FnMut(&TokenDecoderRunner, &ForwardPassState<Metal>, &MetalCommandBuffer) -> Result<(), Error> + 'a;
 
+#[derive(Debug, Clone)]
 struct MatrixF32 {
     rows: usize,
     cols: usize,
@@ -198,8 +333,11 @@ struct FishAudioSamplingState {
 }
 
 impl FishAudioSamplingState {
-    fn new(seed: u64) -> Self {
-        Self::with_params(seed, fishaudio_sampling_temperature(), fishaudio_sampling_top_p())
+    fn from_config(
+        seed: u64,
+        config: &TextSamplingConfig,
+    ) -> Self {
+        Self::with_params(seed, config.temperature, config.top_p)
     }
 
     fn with_params(
@@ -258,9 +396,7 @@ struct FishAudioTextDecoderConfigJson {
     num_codebooks: usize,
     max_seq_len: usize,
     scale_codebook_embeddings: bool,
-    #[serde(default = "default_short_logits_size")]
     short_logits_size: usize,
-    #[serde(default = "default_repeat_window_size")]
     repeat_window_size: usize,
 }
 
@@ -314,87 +450,20 @@ impl FishAudioEmbeddingConfigJson {
     }
 }
 
-fn default_short_logits_size() -> usize {
-    DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE
+fn should_enable_bf16_cpu_readout_sampling(
+    diagnostics_config: &TextDecoderDiagnosticsConfig,
+    activation_data_type: DataType,
+    vocab_size: usize,
+) -> bool {
+    let max_vocab = diagnostics_config.bf16_cpu_readout_max_vocab;
+    max_vocab > 0 && activation_data_type == DataType::BF16 && vocab_size <= max_vocab
 }
 
-fn default_repeat_window_size() -> usize {
-    DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE
-}
-
-fn fishaudio_sampling_temperature() -> f32 {
-    std::env::var("UZU_FISHAUDIO_SAMPLING_TEMPERATURE")
-        .ok()
-        .and_then(|value| value.parse::<f32>().ok())
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .unwrap_or(DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE)
-}
-
-fn fishaudio_sampling_top_p() -> f32 {
-    std::env::var("UZU_FISHAUDIO_SAMPLING_TOP_P")
-        .ok()
-        .and_then(|value| value.parse::<f32>().ok())
-        .filter(|value| value.is_finite() && *value >= 0.0 && *value <= 1.0)
-        .unwrap_or(DEFAULT_FISHAUDIO_SAMPLING_TOP_P)
-}
-
-fn fishaudio_min_frames_before_im_end() -> usize {
-    std::env::var("UZU_FISHAUDIO_MIN_FRAMES_BEFORE_IM_END")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_FISHAUDIO_MIN_FRAMES_BEFORE_IM_END)
-}
-
-fn fishaudio_max_new_tokens_override() -> Option<usize> {
-    std::env::var("UZU_FISHAUDIO_MAX_NEW_TOKENS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-}
-
-fn fishaudio_force_semantic_sampling_mask() -> Option<bool> {
-    std::env::var("UZU_FISHAUDIO_FORCE_SEMANTIC_MASK").ok().and_then(|value| {
-        let value = value.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "1" | "true" | "yes" | "on" => Some(true),
-            "0" | "false" | "no" | "off" => Some(false),
-            _ => None,
-        }
-    })
-}
-
-fn fishaudio_prefill_step_size(context_length: usize) -> usize {
-    std::env::var("UZU_FISHAUDIO_PREFILL_STEP_SIZE")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_FISHAUDIO_PREFILL_STEP_SIZE)
-        .min(context_length.max(1))
-        .max(1)
-}
-
-fn promote_transformer_norm_accumulation_to_f32(transformer: &mut crate::config::TransformerConfig) {
-    for layer in transformer.layer_configs.iter_mut() {
-        if let Some(norm) = layer.pre_attention_norm_config.as_mut() {
-            norm.accumulation_precision = ConfigDataType::Float32;
-        }
-        layer.pre_mlp_norm_config.accumulation_precision = ConfigDataType::Float32;
-        if let Some(norm) = layer.post_attention_norm_config.as_mut() {
-            norm.accumulation_precision = ConfigDataType::Float32;
-        }
-        if let Some(norm) = layer.post_mlp_norm_config.as_mut() {
-            norm.accumulation_precision = ConfigDataType::Float32;
-        }
-        if let crate::config::MixerConfig::Attention(attention) = &mut layer.mixer_config {
-            if let Some(norm) = attention.query_norm_config.as_mut() {
-                norm.accumulation_precision = ConfigDataType::Float32;
-            }
-            if let Some(norm) = attention.key_norm_config.as_mut() {
-                norm.accumulation_precision = ConfigDataType::Float32;
-            }
-        }
-    }
-    transformer.output_norm_config.accumulation_precision = ConfigDataType::Float32;
+fn fishaudio_prefill_step_size(
+    config: &TextDecoderRuntimeConfig,
+    context_length: usize,
+) -> usize {
+    config.prefill_step_size.min(context_length.max(1)).max(1)
 }
 
 impl FishAudioGpuPath {
@@ -707,8 +776,73 @@ fn slice_codebook_major_grid_range(
     .map_err(Error::from)
 }
 
+fn accumulate_audio_decode_step_stats(
+    decode_calls: &mut usize,
+    input_frames: &mut usize,
+    decoded_window_frames: &mut usize,
+    max_decoded_window_frames: &mut usize,
+    step: Option<AudioDecodeStepStats>,
+) {
+    let Some(step) = step else {
+        return;
+    };
+    if step.input_frames == 0 && step.decoded_window_frames == 0 {
+        return;
+    }
+    *decode_calls = decode_calls.saturating_add(1);
+    *input_frames = input_frames.saturating_add(step.input_frames);
+    *decoded_window_frames = decoded_window_frames.saturating_add(step.decoded_window_frames);
+    *max_decoded_window_frames = (*max_decoded_window_frames).max(step.decoded_window_frames);
+}
+
+impl SemanticDecoderBackend for StubTextDecoderRuntime {
+    fn default_seed(&self) -> u64 {
+        self.default_seed
+    }
+
+    fn generate_semantic_tokens(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+    ) -> Result<AudioTokenGrid, Error> {
+        generate_stub_semantic_grid(self, text_tokens, codec_cardinality, seed, max_semantic_frames)
+    }
+
+    fn generate_semantic_tokens_with_callback(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
+    ) -> Result<AudioTokenGrid, Error> {
+        let grid = generate_stub_semantic_grid(self, text_tokens, codec_cardinality, seed, max_semantic_frames)?;
+        for frame in 0..grid.frames() {
+            let mut frame_codes = Vec::with_capacity(self.num_codebooks);
+            for codebook in 0..self.num_codebooks {
+                frame_codes.push(grid.get(0, codebook, frame));
+            }
+            on_frame(&frame_codes)?;
+        }
+        Ok(grid)
+    }
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
+        RunnerInstrumentation::default()
+    }
+}
+
 impl TtsSession {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
+        Self::new_with_options(model_path, TtsSessionOptions::default())
+    }
+
+    pub fn new_with_options(
+        model_path: PathBuf,
+        options: TtsSessionOptions,
+    ) -> Result<Self, Error> {
         if !model_path.exists() {
             return Err(Error::ModelFolderNotFound);
         }
@@ -721,11 +855,11 @@ impl TtsSession {
         let model_metadata: ModelMetadata =
             serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
-        Self::from_model_metadata(model_path, model_metadata)
+        Self::from_model_metadata_with_options(model_path, model_metadata, options)
     }
 
     pub fn runtime(&self) -> &crate::audio::NanoCodecFsqRuntime {
-        &self.runtime
+        self.runtime.as_ref()
     }
 
     pub fn last_execution_stats(&self) -> Option<TtsExecutionStats> {
@@ -736,10 +870,7 @@ impl TtsSession {
         &self,
         input: Input,
     ) -> Result<AudioPcmBatch, Error> {
-        let seed = match *self.text_decoder.borrow().deref() {
-            TextDecoderRuntime::Stub(stub) => stub.default_seed,
-            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
-        };
+        let seed = self.text_decoder.borrow().default_seed();
         self.synthesize_with_seed(input, seed)
     }
 
@@ -756,10 +887,7 @@ impl TtsSession {
         input: Input,
         config: &TtsRunConfig,
     ) -> Result<AudioPcmBatch, Error> {
-        let seed = match *self.text_decoder.borrow().deref() {
-            TextDecoderRuntime::Stub(stub) => stub.default_seed,
-            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
-        };
+        let seed = self.text_decoder.borrow().default_seed();
         self.synthesize_with_seed_and_config(input, seed, config)
     }
 
@@ -787,43 +915,54 @@ impl TtsSession {
         let instrumentation = self.take_text_decoder_instrumentation();
 
         let audio_start = Instant::now();
+        let mut audio_decode_calls = 0usize;
+        let mut audio_input_frames = 0usize;
+        let mut audio_decoded_window_frames = 0usize;
+        let mut audio_max_decoded_window_frames = 0usize;
         let pcm = match config.non_streaming_mode {
             crate::session::config::TtsNonStreamingMode::FullDecode => {
-                self.runtime.decode(&semantic_tokens).map_err(Error::from)?
+                audio_decode_calls = usize::from(semantic_tokens.frames() > 0);
+                audio_input_frames = semantic_tokens.frames();
+                audio_decoded_window_frames = semantic_tokens.frames();
+                audio_max_decoded_window_frames = semantic_tokens.frames();
+                self.audio_decoder.decode(&semantic_tokens)?
             },
             crate::session::config::TtsNonStreamingMode::ChunkedIfNeeded => {
                 let total_frames = semantic_tokens.frames();
                 let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
                 if total_frames < chunked_threshold {
-                    self.runtime.decode(&semantic_tokens).map_err(Error::from)?
+                    audio_decode_calls = usize::from(total_frames > 0);
+                    audio_input_frames = total_frames;
+                    audio_decoded_window_frames = total_frames;
+                    audio_max_decoded_window_frames = total_frames;
+                    self.audio_decoder.decode(&semantic_tokens)?
                 } else {
                     let chunk_frames = config.max_chunk_frames.max(config.min_chunk_frames.max(1));
                     let workspace_frames = config.max_stream_workspace_frames.max(chunk_frames);
-                    let mut stream_state = self
-                        .runtime
-                        .begin_decode_stream_with_options(
-                            semantic_tokens.batch_size(),
-                            semantic_tokens.codebooks(),
-                            AudioDecodeStreamingMode::IncrementalStateful,
-                            workspace_frames,
-                        )
-                        .map_err(Error::from)?;
+                    let mut stream = self.audio_decoder.begin_stream(
+                        semantic_tokens.batch_size(),
+                        semantic_tokens.codebooks(),
+                        AudioDecodeStreamingMode::IncrementalStateful,
+                        workspace_frames,
+                    )?;
 
                     let mut all_samples = Vec::<f32>::new();
                     let mut accumulated_lengths = vec![0usize; semantic_tokens.batch_size()];
-                    let mut sample_rate = self.runtime.config().sample_rate();
+                    let mut sample_rate = self.audio_decoder.sample_rate();
                     let mut channels = 1usize;
 
                     let mut frame_start = 0usize;
                     while frame_start < total_frames {
                         let frame_end = (frame_start + chunk_frames).min(total_frames);
                         let delta_grid = slice_codebook_major_grid_range(&semantic_tokens, frame_start, frame_end)?;
-                        let decoded_delta = self
-                            .runtime
-                            .decode_stream_step(&mut stream_state, &delta_grid, frame_end == total_frames)
-                            .map_err(Error::from)?;
-                        let partial_pcm =
-                            self.runtime.decoded_padded_to_pcm_batch(&decoded_delta).map_err(Error::from)?;
+                        let partial_pcm = stream.decode_step(&delta_grid, frame_end == total_frames)?;
+                        accumulate_audio_decode_step_stats(
+                            &mut audio_decode_calls,
+                            &mut audio_input_frames,
+                            &mut audio_decoded_window_frames,
+                            &mut audio_max_decoded_window_frames,
+                            stream.last_step_stats(),
+                        );
                         if partial_pcm.lengths().len() != accumulated_lengths.len() {
                             return Err(Error::GenerateFailed);
                         }
@@ -837,7 +976,7 @@ impl TtsSession {
                         channels = partial_pcm.channels();
                         frame_start = frame_end;
                     }
-                    self.runtime.end_decode_stream(stream_state).map_err(Error::from)?;
+                    stream.finish()?;
                     AudioPcmBatch::new(
                         all_samples.into_boxed_slice(),
                         sample_rate,
@@ -860,6 +999,10 @@ impl TtsSession {
             semantic_frames: semantic_tokens.frames(),
             first_chunk_frames: 0,
             emitted_chunks: usize::from(config.streaming_enabled),
+            audio_decode_calls,
+            audio_input_frames,
+            audio_decoded_window_frames,
+            audio_max_decoded_window_frames,
         });
 
         Ok(pcm)
@@ -902,10 +1045,7 @@ impl TtsSession {
     where
         F: FnMut(&AudioPcmBatch),
     {
-        let seed = match *self.text_decoder.borrow().deref() {
-            TextDecoderRuntime::Stub(stub) => stub.default_seed,
-            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
-        };
+        let seed = self.text_decoder.borrow().default_seed();
         self.synthesize_streaming_with_seed(input, seed, chunk_frames, on_chunk)
     }
 
@@ -932,10 +1072,7 @@ impl TtsSession {
     where
         F: FnMut(&AudioPcmBatch),
     {
-        let seed = match *self.text_decoder.borrow().deref() {
-            TextDecoderRuntime::Stub(stub) => stub.default_seed,
-            TextDecoderRuntime::FishAudio(_) => DEFAULT_FISHAUDIO_RANDOM_SEED,
-        };
+        let seed = self.text_decoder.borrow().default_seed();
         self.synthesize_streaming_with_seed_and_config(input, seed, config, on_chunk)
     }
 
@@ -966,22 +1103,20 @@ impl TtsSession {
             .map(|&token| token as u64)
             .collect();
 
-        let mut streamed_tokens = StreamingTokenAccumulator::new(self.runtime.config().num_groups())?;
+        let mut streamed_tokens = StreamingTokenAccumulator::new(self.audio_decoder.num_codebooks())?;
         let streaming_mode = match config.vocoder_streaming_mode {
             TtsVocoderStreamingMode::IncrementalStateful => AudioDecodeStreamingMode::IncrementalStateful,
             TtsVocoderStreamingMode::PrefixFallback => AudioDecodeStreamingMode::PrefixFallback,
         };
-        let mut audio_stream_state = self
-            .runtime
-            .begin_decode_stream_with_options(
-                1,
-                self.runtime.config().num_groups(),
-                streaming_mode,
-                config.max_stream_workspace_frames,
-            )
-            .map_err(Error::from)?;
+        let mut audio_stream = self.audio_decoder.begin_stream(
+            1,
+            self.audio_decoder.num_codebooks(),
+            streaming_mode,
+            config.max_stream_workspace_frames,
+        )?;
         let mut emitted_chunks = 0usize;
         let mut callback_seconds = 0.0_f64;
+        let mut audio_decode_seconds_in_loop = 0.0_f64;
         let mut audio_decode_seconds = 0.0_f64;
         let mut last_decoded_frames = 0usize;
         let mut first_chunk_seconds = None::<f64>;
@@ -989,9 +1124,13 @@ impl TtsSession {
         let mut first_emit_pending = true;
         let mut output_samples = Vec::<f32>::new();
         let mut output_frames = 0usize;
-        let mut output_sample_rate = self.runtime.config().sample_rate();
+        let mut output_sample_rate = self.audio_decoder.sample_rate();
         let mut output_channels = 1usize;
         let mut chunk_controller = AdaptiveChunkController::new(config);
+        let mut audio_decode_calls = 0usize;
+        let mut audio_input_frames = 0usize;
+        let mut audio_decoded_window_frames = 0usize;
+        let mut audio_max_decoded_window_frames = 0usize;
         let stream_start = Instant::now();
         let startup_cap_frames = config.max_chunk_frames.max(config.min_chunk_frames.max(1));
         let initial_chunk_frames = config.initial_chunk_frames.max(1).min(startup_cap_frames);
@@ -1014,12 +1153,16 @@ impl TtsSession {
                 if ready_frames >= target_frames {
                     let decode_start = Instant::now();
                     let partial_grid = streamed_tokens.to_grid_range(last_decoded_frames, streamed_tokens.frames())?;
-                    let decoded_delta = self
-                        .runtime
-                        .decode_stream_step(&mut audio_stream_state, &partial_grid, false)
-                        .map_err(Error::from)?;
-                    let partial_pcm = self.runtime.decoded_padded_to_pcm_batch(&decoded_delta).map_err(Error::from)?;
+                    let partial_pcm = audio_stream.decode_step(&partial_grid, false)?;
+                    accumulate_audio_decode_step_stats(
+                        &mut audio_decode_calls,
+                        &mut audio_input_frames,
+                        &mut audio_decoded_window_frames,
+                        &mut audio_max_decoded_window_frames,
+                        audio_stream.last_step_stats(),
+                    );
                     let decode_elapsed = decode_start.elapsed();
+                    audio_decode_seconds_in_loop += decode_elapsed.as_secs_f64();
                     audio_decode_seconds += decode_elapsed.as_secs_f64();
                     let partial_sample_rate = partial_pcm.sample_rate();
 
@@ -1071,11 +1214,14 @@ impl TtsSession {
         if last_decoded_frames < semantic_tokens.frames() {
             let final_decode_start = Instant::now();
             let final_delta_grid = streamed_tokens.to_grid_range(last_decoded_frames, semantic_tokens.frames())?;
-            let decoded_delta = self
-                .runtime
-                .decode_stream_step(&mut audio_stream_state, &final_delta_grid, true)
-                .map_err(Error::from)?;
-            let final_pcm = self.runtime.decoded_padded_to_pcm_batch(&decoded_delta).map_err(Error::from)?;
+            let final_pcm = audio_stream.decode_step(&final_delta_grid, true)?;
+            accumulate_audio_decode_step_stats(
+                &mut audio_decode_calls,
+                &mut audio_input_frames,
+                &mut audio_decoded_window_frames,
+                &mut audio_max_decoded_window_frames,
+                audio_stream.last_step_stats(),
+            );
             audio_decode_seconds += final_decode_start.elapsed().as_secs_f64();
             let callback_start = Instant::now();
             let emitted_frames = if final_pcm.lengths().len() == 1 {
@@ -1099,8 +1245,9 @@ impl TtsSession {
                 }
             }
         }
-        let semantic_decode_seconds = (semantic_loop_seconds - audio_decode_seconds - callback_seconds).max(0.0);
-        self.runtime.end_decode_stream(audio_stream_state).map_err(Error::from)?;
+        let semantic_decode_seconds =
+            (semantic_loop_seconds - audio_decode_seconds_in_loop - callback_seconds).max(0.0);
+        audio_stream.finish()?;
 
         let full_pcm = AudioPcmBatch::new(
             output_samples.into_boxed_slice(),
@@ -1121,14 +1268,19 @@ impl TtsSession {
             semantic_frames: semantic_tokens.frames(),
             first_chunk_frames,
             emitted_chunks,
+            audio_decode_calls,
+            audio_input_frames,
+            audio_decoded_window_frames,
+            audio_max_decoded_window_frames,
         });
 
         Ok(full_pcm)
     }
 
-    fn from_model_metadata(
+    fn from_model_metadata_with_options(
         model_path: PathBuf,
         model_metadata: ModelMetadata,
+        options: TtsSessionOptions,
     ) -> Result<Self, Error> {
         if model_metadata.model_type != ModelType::TtsModel {
             return Err(Error::UnableToLoadConfig);
@@ -1141,14 +1293,19 @@ impl TtsSession {
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
 
         let tts_model_config = model_metadata.model_config.as_tts().ok_or(Error::UnableToLoadConfig)?.clone();
-        let runtime = tts_model_config.create_audio_codec_runtime_with_model_path(&model_path)?;
-        let text_decoder = parse_text_decoder_runtime(&tts_model_config, &runtime, &model_path)?;
+        let runtime = Rc::new(
+            tts_model_config
+                .create_audio_codec_runtime_with_model_path_and_options(&model_path, options.audio_runtime)?,
+        );
+        let text_decoder = parse_text_decoder_runtime(&tts_model_config, runtime.as_ref(), &model_path, &options)?;
+        let audio_decoder = build_audio_decoder_backend(Rc::clone(&runtime))?;
 
         Ok(Self {
             model_path,
             model_metadata,
             tokenizer,
             runtime,
+            audio_decoder,
             prompt_template: tts_model_config.message_processor_config.prompt_template.clone(),
             drop_initial_newline: tts_model_config.message_processor_config.drop_initial_newline,
             text_decoder: RefCell::new(text_decoder),
@@ -1198,38 +1355,9 @@ impl TtsSession {
         seed: u64,
         max_semantic_frames: usize,
     ) -> Result<AudioTokenGrid, Error> {
-        let max_semantic_frames = max_semantic_frames.max(1);
         let mut decoder = self.text_decoder.borrow_mut();
-        let codec_cardinality =
-            usize::try_from(self.runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
-        match &mut *decoder {
-            TextDecoderRuntime::Stub(stub) => {
-                let frames = text_tokens.len().min(max_semantic_frames);
-                if stub.num_codebooks != self.runtime.config().num_groups() {
-                    return Err(Error::UnableToLoadConfig);
-                }
-
-                let token_upper_bound = stub.codebook_size.min(codec_cardinality);
-                if token_upper_bound == 0 {
-                    return Err(Error::UnableToLoadConfig);
-                }
-
-                let tokens = generate_stub_tokens(stub.num_codebooks, frames, token_upper_bound, seed);
-
-                AudioTokenGrid::new(
-                    tokens.into_boxed_slice(),
-                    1,
-                    stub.num_codebooks,
-                    frames,
-                    vec![frames].into_boxed_slice(),
-                    AudioTokenPacking::CodebookMajor,
-                )
-                .map_err(Error::from)
-            },
-            TextDecoderRuntime::FishAudio(runtime) => {
-                runtime.generate_semantic_tokens(text_tokens, codec_cardinality, seed, max_semantic_frames)
-            },
-        }
+        let codec_cardinality = self.audio_decoder.codec_cardinality();
+        decoder.generate_semantic_tokens(text_tokens, codec_cardinality, seed, max_semantic_frames)
     }
 
     fn generate_semantic_tokens_with_callback<F>(
@@ -1242,58 +1370,19 @@ impl TtsSession {
     where
         F: FnMut(&[u32]) -> Result<(), Error>,
     {
-        let max_semantic_frames = max_semantic_frames.max(1);
         let mut decoder = self.text_decoder.borrow_mut();
-        let codec_cardinality =
-            usize::try_from(self.runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
-        match &mut *decoder {
-            TextDecoderRuntime::Stub(stub) => {
-                let frames = text_tokens.len().min(max_semantic_frames);
-                if stub.num_codebooks != self.runtime.config().num_groups() {
-                    return Err(Error::UnableToLoadConfig);
-                }
-
-                let token_upper_bound = stub.codebook_size.min(codec_cardinality);
-                if token_upper_bound == 0 {
-                    return Err(Error::UnableToLoadConfig);
-                }
-
-                let tokens = generate_stub_tokens(stub.num_codebooks, frames, token_upper_bound, seed);
-                let grid = AudioTokenGrid::new(
-                    tokens.into_boxed_slice(),
-                    1,
-                    stub.num_codebooks,
-                    frames,
-                    vec![frames].into_boxed_slice(),
-                    AudioTokenPacking::CodebookMajor,
-                )
-                .map_err(Error::from)?;
-
-                for frame in 0..grid.frames() {
-                    let mut frame_codes = Vec::with_capacity(stub.num_codebooks);
-                    for codebook in 0..stub.num_codebooks {
-                        frame_codes.push(grid.get(0, codebook, frame));
-                    }
-                    on_frame(&frame_codes)?;
-                }
-                Ok(grid)
-            },
-            TextDecoderRuntime::FishAudio(runtime) => runtime.generate_semantic_tokens_with_callback(
-                text_tokens,
-                codec_cardinality,
-                seed,
-                max_semantic_frames,
-                on_frame,
-            ),
-        }
+        let codec_cardinality = self.audio_decoder.codec_cardinality();
+        decoder.generate_semantic_tokens_with_callback(
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+            on_frame,
+        )
     }
 
     fn take_text_decoder_instrumentation(&self) -> RunnerInstrumentation {
-        let mut decoder = self.text_decoder.borrow_mut();
-        match &mut *decoder {
-            TextDecoderRuntime::Stub(_) => RunnerInstrumentation::default(),
-            TextDecoderRuntime::FishAudio(runtime) => runtime.take_instrumentation(),
-        }
+        self.text_decoder.borrow_mut().take_instrumentation()
     }
 
     fn record_last_execution_stats(
@@ -1304,11 +1393,23 @@ impl TtsSession {
     }
 }
 
+fn build_audio_decoder_backend(
+    runtime: Rc<crate::audio::NanoCodecFsqRuntime>
+) -> Result<Box<dyn AudioDecoderBackend>, Error> {
+    let codec_cardinality =
+        usize::try_from(runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
+    Ok(Box::new(NanoCodecAudioDecoderBackend {
+        runtime,
+        codec_cardinality,
+    }))
+}
+
 fn parse_text_decoder_runtime(
     tts_model_config: &TtsModelConfig,
     runtime: &crate::audio::NanoCodecFsqRuntime,
     model_path: &Path,
-) -> Result<TextDecoderRuntime, Error> {
+    options: &TtsSessionOptions,
+) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
     let parsed: TtsConfigJson =
         serde_json::from_value(tts_model_config.tts_config.clone()).map_err(|_| Error::UnableToLoadConfig)?;
 
@@ -1324,7 +1425,7 @@ fn parse_text_decoder_runtime(
                 return Err(Error::UnableToLoadConfig);
             }
             let default_seed = load_stub_seed(model_path.join("model.safetensors")).unwrap_or(DEFAULT_STUB_SEED);
-            Ok(TextDecoderRuntime::Stub(StubTextDecoderRuntime {
+            Ok(Box::new(StubTextDecoderRuntime {
                 num_codebooks,
                 codebook_size,
                 default_seed,
@@ -1333,6 +1434,7 @@ fn parse_text_decoder_runtime(
         TextDecoderConfigJson::FishAudioTextDecoderConfig {
             config,
         } => {
+            let text_decoder_runtime_config = &options.text_decoder;
             if config.num_codebooks == 0 || config.codebook_size == 0 || config.max_seq_len == 0 {
                 return Err(Error::UnableToLoadConfig);
             }
@@ -1371,13 +1473,9 @@ fn parse_text_decoder_runtime(
             )?;
             let mut semantic_sampling_mask_without_im_end_row = semantic_sampling_mask_row.to_vec();
             clear_token_in_sampling_mask(&mut semantic_sampling_mask_without_im_end_row, config.im_end_token_id)?;
-            let min_frames_before_im_end = fishaudio_min_frames_before_im_end();
 
-            let mut slow_transformer_config = config.slow_model_config.clone();
-            let mut fast_transformer_config = config.fast_model_config.clone();
-            // Keep f16 activation/storage, but enforce stable normalization accumulation.
-            promote_transformer_norm_accumulation_to_f32(&mut slow_transformer_config);
-            promote_transformer_norm_accumulation_to_f32(&mut fast_transformer_config);
+            let slow_transformer_config = config.slow_model_config.clone();
+            let fast_transformer_config = config.fast_model_config.clone();
 
             let slow_inner_config = InnerModelConfig {
                 embedding_config: config.slow_embeddings_config.to_embedding_config(),
@@ -1403,6 +1501,7 @@ fn parse_text_decoder_runtime(
                 "text_decoder.transformer_slow",
                 "text_decoder.embeddings_slow",
                 "text_decoder.readout_slow",
+                text_decoder_runtime_config,
             )?;
 
             let fast_runner = if config.num_codebooks > 1 {
@@ -1413,6 +1512,7 @@ fn parse_text_decoder_runtime(
                     "text_decoder.transformer_fast",
                     "text_decoder.embeddings_fast",
                     "text_decoder.readout_fast",
+                    text_decoder_runtime_config,
                 )?)
             } else {
                 None
@@ -1444,8 +1544,9 @@ fn parse_text_decoder_runtime(
                     return Err(Error::UnableToLoadConfig);
                 }
             }
-            let apply_semantic_sampling_mask =
-                fishaudio_force_semantic_sampling_mask().unwrap_or(!matches!(activation_data_type, DataType::F32));
+            let apply_semantic_sampling_mask = text_decoder_runtime_config
+                .force_semantic_sampling_mask
+                .unwrap_or(!matches!(activation_data_type, DataType::F32));
 
             let gpu_path = FishAudioGpuPath::new(
                 text_decoder_context.as_ref(),
@@ -1458,10 +1559,11 @@ fn parse_text_decoder_runtime(
                 config.fast_model_dim,
             )?;
 
-            Ok(TextDecoderRuntime::FishAudio(FishAudioTextDecoderRuntime {
+            Ok(Box::new(FishAudioTextDecoderRuntime {
                 slow_runner,
                 fast_runner,
                 gpu_path,
+                runtime_config: text_decoder_runtime_config.clone(),
                 semantic_token_begin_id: config.semantic_token_begin_id,
                 semantic_token_end_id: config.semantic_token_end_id,
                 semantic_cardinality,
@@ -1476,7 +1578,6 @@ fn parse_text_decoder_runtime(
                 apply_semantic_sampling_mask,
                 semantic_sampling_mask_row,
                 semantic_sampling_mask_without_im_end_row: semantic_sampling_mask_without_im_end_row.into_boxed_slice(),
-                min_frames_before_im_end,
                 current_codes_scratch: vec![0_u32; config.num_codebooks],
                 instrumentation: RunnerInstrumentation::default(),
             }))
@@ -1495,17 +1596,14 @@ impl FishAudioTextDecoderRuntime {
         self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, max_semantic_frames, None)
     }
 
-    fn generate_semantic_tokens_with_callback<F>(
+    fn generate_semantic_tokens_with_callback(
         &mut self,
         text_tokens: &[u64],
         codec_cardinality: usize,
         seed: u64,
         max_semantic_frames: usize,
-        on_frame: &mut F,
-    ) -> Result<AudioTokenGrid, Error>
-    where
-        F: FnMut(&[u32]) -> Result<(), Error>,
-    {
+        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
+    ) -> Result<AudioTokenGrid, Error> {
         self.generate_semantic_tokens_internal(
             text_tokens,
             codec_cardinality,
@@ -1550,7 +1648,7 @@ impl FishAudioTextDecoderRuntime {
         if let Some(fast_runner) = self.fast_runner.as_mut() {
             fast_runner.clear_instrumentation();
         }
-        let mut sampling = FishAudioSamplingState::new(seed);
+        let mut sampling = FishAudioSamplingState::from_config(seed, &self.runtime_config.sampling);
         let semantic_sampling_mask_row = if self.apply_semantic_sampling_mask {
             Some(self.semantic_sampling_mask_row.clone())
         } else {
@@ -1562,7 +1660,7 @@ impl FishAudioTextDecoderRuntime {
             None
         };
         let initial_sampling_row = if let Some(mask_row) = semantic_sampling_mask_row.as_ref() {
-            if self.min_frames_before_im_end > 0 {
+            if self.runtime_config.min_frames_before_im_end > 0 {
                 semantic_sampling_mask_without_im_end_row.as_deref().ok_or(Error::GenerateFailed)?
             } else {
                 mask_row.as_ref()
@@ -1570,7 +1668,7 @@ impl FishAudioTextDecoderRuntime {
         } else {
             &[]
         };
-        let prefill_step_size = fishaudio_prefill_step_size(self.max_seq_len);
+        let prefill_step_size = fishaudio_prefill_step_size(&self.runtime_config, self.max_seq_len);
         if text_tokens.len() > prefill_step_size {
             for chunk in text_tokens[..text_tokens.len() - prefill_step_size].chunks(prefill_step_size) {
                 self.slow_runner.prefill_without_sampling(chunk)?;
@@ -1597,9 +1695,10 @@ impl FishAudioTextDecoderRuntime {
 
         let mut max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len());
         max_new_tokens = max_new_tokens.min(max_semantic_frames.max(1));
-        if let Some(limit) = fishaudio_max_new_tokens_override() {
+        if let Some(limit) = self.runtime_config.max_new_tokens_override {
             max_new_tokens = max_new_tokens.min(limit);
         }
+        let trace_semantic_steps = self.runtime_config.diagnostics.trace_semantic_steps;
         let mut by_codebook =
             (0..self.num_codebooks).map(|_| Vec::<u32>::with_capacity(max_new_tokens)).collect::<Vec<_>>();
         if self.current_codes_scratch.len() != self.num_codebooks {
@@ -1617,7 +1716,7 @@ impl FishAudioTextDecoderRuntime {
             }
         }
 
-        for _step in 0..max_new_tokens {
+        for step in 0..max_new_tokens {
             if current_semantic_token as i64 == self.im_end_token_id {
                 break;
             }
@@ -1657,13 +1756,21 @@ impl FishAudioTextDecoderRuntime {
                             command_buffer,
                         )
                     };
-                let mut fast_token = fast_runner
-                    .decode_next_token_with_override_prefix_from_internal_and_pre_injection(
-                        u64::from(first_code),
-                        Some(fast_vocab_limit),
-                        &mut sampling,
-                        Some(&mut pre_projection),
-                    )?;
+                // Match Lalamo's fast decoder ordering exactly: projected slow hidden state is
+                // processed at position 0, then the semantic-derived first code is processed at
+                // position 1 where the first residual token is sampled.
+                fast_runner.prefill_without_sampling_with_pre_injection(
+                    &[0],
+                    EmbeddingInjection::OverrideFirstRowInternal,
+                    Some(&mut pre_projection),
+                )?;
+                fast_runner.set_pending_trace_step(step, 1);
+                let mut fast_token = fast_runner.decode_next_token(
+                    &[u64::from(first_code)],
+                    EmbeddingInjection::None,
+                    Some(fast_vocab_limit),
+                    &mut sampling,
+                )?;
                 if self.num_codebooks > 1 {
                     let clamped =
                         u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
@@ -1675,26 +1782,55 @@ impl FishAudioTextDecoderRuntime {
 
                 let followup_count = self.num_codebooks.saturating_sub(2);
                 if followup_count > 0 {
-                    fast_runner.decode_followup_tokens_batched(
-                        fast_token,
-                        followup_count,
-                        Some(fast_vocab_limit),
-                        &mut sampling,
-                        |relative_index, sampled| {
-                            let codebook_index = relative_index + 2;
-                            let clamped =
-                                u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                                    .map_err(|_| Error::GenerateFailed)?;
-                            by_codebook[codebook_index].push(clamped);
-                            self.current_codes_scratch[codebook_index] = clamped;
-                            Ok(())
-                        },
-                    )?;
+                    let mut record_followup = |relative_index: usize, sampled: u64| -> Result<(), Error> {
+                        let codebook_index = relative_index + 2;
+                        let clamped =
+                            u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                                .map_err(|_| Error::GenerateFailed)?;
+                        by_codebook[codebook_index].push(clamped);
+                        self.current_codes_scratch[codebook_index] = clamped;
+                        Ok(())
+                    };
+                    let force_sequential_followups = fast_runner.use_cpu_readout_sampling(&sampling)
+                        && matches!(sampling.method(), SamplingMethod::Greedy);
+                    match self.runtime_config.followup_strategy {
+                        _ if force_sequential_followups => fast_runner.decode_followup_tokens_sequential(
+                            step,
+                            2,
+                            fast_token,
+                            followup_count,
+                            Some(fast_vocab_limit),
+                            &mut sampling,
+                            &mut record_followup,
+                        )?,
+                        TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
+                            step,
+                            2,
+                            fast_token,
+                            followup_count,
+                            Some(fast_vocab_limit),
+                            &mut sampling,
+                            &mut record_followup,
+                        )?,
+                        TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
+                            fast_token,
+                            followup_count,
+                            Some(fast_vocab_limit),
+                            &mut sampling,
+                            &mut record_followup,
+                        )?,
+                    }
                 }
             }
 
             if let Some(callback) = on_frame.as_mut() {
                 callback(&self.current_codes_scratch)?;
+            }
+            if trace_semantic_steps {
+                eprintln!(
+                    "fishaudio_semantic_step step={} semantic_token={} codes={:?}",
+                    step, current_semantic_token, self.current_codes_scratch
+                );
             }
 
             let (slow_runner, gpu_path) = (&mut self.slow_runner, &mut self.gpu_path);
@@ -1716,7 +1852,7 @@ impl FishAudioTextDecoderRuntime {
                 };
             let sampled_frames = by_codebook[0].len();
             let slow_sampling_mask = if self.apply_semantic_sampling_mask {
-                if sampled_frames < self.min_frames_before_im_end {
+                if sampled_frames < self.runtime_config.min_frames_before_im_end {
                     semantic_sampling_mask_without_im_end_row.as_deref()
                 } else {
                     semantic_sampling_mask_row.as_deref()
@@ -1724,6 +1860,7 @@ impl FishAudioTextDecoderRuntime {
             } else {
                 None
             };
+            slow_runner.set_pending_trace_step(step, 0);
             current_semantic_token = slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
                 &[current_semantic_token],
                 EmbeddingInjection::AddPreloaded {
@@ -1733,6 +1870,9 @@ impl FishAudioTextDecoderRuntime {
                 slow_sampling_mask,
                 Some(&mut pre_codebook_sum),
             )?;
+            if trace_semantic_steps {
+                eprintln!("fishaudio_semantic_next step={} semantic_token={}", step, current_semantic_token);
+            }
         }
 
         self.instrumentation = self.slow_runner.take_instrumentation();
@@ -1893,6 +2033,50 @@ impl FishAudioTextDecoderRuntime {
     }
 }
 
+impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
+    fn default_seed(&self) -> u64 {
+        DEFAULT_TTS_RANDOM_SEED
+    }
+
+    fn generate_semantic_tokens(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+    ) -> Result<AudioTokenGrid, Error> {
+        FishAudioTextDecoderRuntime::generate_semantic_tokens(
+            self,
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+        )
+    }
+
+    fn generate_semantic_tokens_with_callback(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
+    ) -> Result<AudioTokenGrid, Error> {
+        FishAudioTextDecoderRuntime::generate_semantic_tokens_with_callback(
+            self,
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+            on_frame,
+        )
+    }
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
+        FishAudioTextDecoderRuntime::take_instrumentation(self)
+    }
+}
+
 fn semantic_token_to_code(
     semantic_token: u64,
     semantic_begin: i64,
@@ -1987,15 +2171,23 @@ impl TokenDecoderRunner {
         transformer_subtree: &str,
         embedding_subtree: &str,
         readout_subtree: &str,
+        runtime_config: &TextDecoderRuntimeConfig,
     ) -> Result<Self, Error> {
         let command_buffer =
             Rc::new(RefCell::new(context.create_command_buffer().expect("Failed to create command buffer")));
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
         let max_prefix_length = decoder_config.context_length;
-        let max_suffix_length = fishaudio_prefill_step_size(decoder_config.context_length).max(32);
+        let max_suffix_length = fishaudio_prefill_step_size(runtime_config, decoder_config.context_length).max(32);
         let should_fill_attention_bias =
             model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
+        let activation_data_type = model_shape.activation_data_type();
+        let diagnostics_config = &runtime_config.diagnostics;
+        let cpu_readout_sampling_enabled = should_enable_bf16_cpu_readout_sampling(
+            diagnostics_config,
+            activation_data_type,
+            decoder_config.vocab_size,
+        );
 
         let weights_path = model_path.join("model.safetensors");
         let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
@@ -2019,7 +2211,6 @@ impl TokenDecoderRunner {
         let sampler =
             GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
                 .map_err(|_| Error::UnableToCreateBackendContext)?;
-        let activation_data_type = model_shape.activation_data_type();
         let tensor_copy =
             <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
                 .map_err(|_| Error::UnableToCreateBackendContext)?;
@@ -2058,6 +2249,16 @@ impl TokenDecoderRunner {
             activation_data_type,
             "tts_single_override_embedding",
         ));
+        let cpu_readout_weights = if diagnostics_config.trace_fast_target.is_some() || cpu_readout_sampling_enabled {
+            Some(load_readout_weights_f32(
+                &weights_path,
+                readout_subtree,
+                decoder_config.vocab_size,
+                decoder_config.model_dim,
+            )?)
+        } else {
+            None
+        };
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -2095,6 +2296,12 @@ impl TokenDecoderRunner {
             two_token_vocab_masks: HashMap::new(),
             should_fill_attention_bias,
             next_position: 0,
+            diagnostics: TokenDecoderDiagnostics {
+                config: diagnostics_config.clone(),
+                cpu_readout_sampling_enabled,
+                cpu_readout_weights,
+                pending_trace_step: None,
+            },
             instrumentation: RunnerInstrumentation::default(),
         })
     }
@@ -2102,6 +2309,20 @@ impl TokenDecoderRunner {
     fn reset(&mut self) {
         self.cache_layers.borrow_mut().clear();
         self.next_position = 0;
+        self.diagnostics.pending_trace_step = None;
+    }
+
+    fn set_pending_trace_step(
+        &mut self,
+        frame_index: usize,
+        codebook_index: usize,
+    ) {
+        self.diagnostics.pending_trace_step = self
+            .diagnostics
+            .config
+            .trace_fast_target
+            .filter(|target| target.frame_index == frame_index && target.codebook_index == codebook_index)
+            .map(|target| (target.frame_index, target.codebook_index));
     }
 
     fn prefill_without_sampling(
@@ -2145,22 +2366,28 @@ impl TokenDecoderRunner {
         )
     }
 
-    fn decode_next_token_with_override_prefix_from_internal_and_pre_injection(
+    fn prefill_without_sampling_with_pre_injection(
         &mut self,
-        first_token: u64,
+        token_ids: &[u64],
+        embedding_injection: EmbeddingInjection,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
+    ) -> Result<(), Error> {
+        if token_ids.is_empty() {
+            return Ok(());
+        }
+        let mut sampling = FishAudioSamplingState::with_params(0, 0.0, 1.0);
+        self.decode_next_step(token_ids, embedding_injection, None, &mut sampling, None, false, pre_injection_encode)?;
+        Ok(())
+    }
+
+    fn decode_next_token(
+        &mut self,
+        token_ids: &[u64],
+        embedding_injection: EmbeddingInjection,
         vocab_limit: Option<usize>,
         sampling: &mut FishAudioSamplingState,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
     ) -> Result<u64, Error> {
-        self.decode_next_step(
-            &[0, first_token],
-            EmbeddingInjection::OverrideFirstRowInternal,
-            vocab_limit,
-            sampling,
-            None,
-            false,
-            pre_injection_encode,
-        )
+        self.decode_next_step(token_ids, embedding_injection, vocab_limit, sampling, None, false, None)
     }
 
     fn decode_followup_tokens_batched(
@@ -2295,6 +2522,25 @@ impl TokenDecoderRunner {
         for pass in 0..followup_count {
             let sampled = unsafe { *results_ptr.add(pass) };
             on_token(pass, u64::from(sampled))?;
+        }
+        Ok(())
+    }
+
+    fn decode_followup_tokens_sequential(
+        &mut self,
+        frame_index: usize,
+        first_codebook_index: usize,
+        mut previous_token: u64,
+        followup_count: usize,
+        vocab_limit: Option<usize>,
+        sampling: &mut FishAudioSamplingState,
+        mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        for pass in 0..followup_count {
+            self.set_pending_trace_step(frame_index, first_codebook_index + pass);
+            let sampled = self.decode_next_token(&[previous_token], EmbeddingInjection::None, vocab_limit, sampling)?;
+            on_token(pass, sampled)?;
+            previous_token = sampled;
         }
         Ok(())
     }
@@ -2511,6 +2757,8 @@ impl TokenDecoderRunner {
             if matches!(embedding_injection, EmbeddingInjection::OverrideFirstRowInternal) && capture_hidden {
                 return Err(Error::GenerateFailed);
             }
+            let cpu_readout_sampling = self.use_cpu_readout_sampling(sampling);
+            let encode_gpu_logits = !cpu_readout_sampling || self.diagnostics.config.trace_fast_target.is_some();
             self.command_buffer =
                 Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
             self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
@@ -2535,8 +2783,10 @@ impl TokenDecoderRunner {
                 self.encode_capture_last_hidden_into_single_buffer(&state, token_count)?;
             }
             self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-            self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-            self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            if encode_gpu_logits {
+                self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+                self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            }
             self.cache_layers.borrow_mut().update_after_acceptance(
                 accepted_suffix_indices,
                 None,
@@ -2544,11 +2794,106 @@ impl TokenDecoderRunner {
                 &self.kv_cache_update,
             );
             self.submit_and_wait_current_command_buffer();
-            let token = read_sampled_token_from_sampling_output(&state)?;
+            let token = if cpu_readout_sampling {
+                self.sample_token_from_cpu_readout(vocab_limit)?
+            } else {
+                read_sampled_token_from_sampling_output(&state)?
+            };
+            self.emit_pending_trace_step(token, token_ids, positions, vocab_limit)?;
+            self.diagnostics.pending_trace_step = None;
             self.cache_layers.borrow_mut().register_accepted_tokens(positions);
             self.next_position = self.next_position.saturating_add(token_count);
             Ok(token)
         })
+    }
+
+    fn emit_pending_trace_step(
+        &self,
+        sampled_token: u64,
+        token_ids: &[u64],
+        positions: &[usize],
+        vocab_limit: Option<usize>,
+    ) -> Result<(), Error> {
+        let Some(target) = self.diagnostics.config.trace_fast_target else {
+            return Ok(());
+        };
+        let Some((frame_index, codebook_index)) = self.diagnostics.pending_trace_step else {
+            return Ok(());
+        };
+        if target.frame_index != frame_index || target.codebook_index != codebook_index {
+            return Ok(());
+        }
+
+        let logits = self.scratch_buffers.logits.borrow();
+        let vocab_size = self.decoder_config.vocab_size;
+        let available = vocab_limit.unwrap_or(vocab_size).min(vocab_size);
+        if available == 0 {
+            return Err(Error::GenerateFailed);
+        }
+        let logits_row = read_array_prefix_to_f32(&logits, vocab_size)?;
+        let topk = rank_topk_pairs(&logits_row[..available], target.topk);
+        let cpu_topk = self
+            .diagnostics
+            .cpu_readout_weights
+            .as_ref()
+            .map(|weights| {
+                let main = self.scratch_buffers.main.borrow();
+                let hidden = read_array_prefix_to_f32(&main, self.decoder_config.model_dim)?;
+                let mut refined = vec![0.0_f32; available];
+                weights.matmul_prefix_into(&hidden, &mut refined).ok_or(Error::GenerateFailed)?;
+                if let Some(path) = self.diagnostics.config.trace_dump_path.as_ref() {
+                    let payload = serde_json::json!({
+                        "frame_index": frame_index,
+                        "codebook_index": codebook_index,
+                        "position": positions.first().copied().unwrap_or(0),
+                        "input_token": token_ids.first().copied().unwrap_or(0),
+                        "sampled_token": sampled_token,
+                        "hidden": hidden,
+                        "gpu_logits": logits_row[..available].to_vec(),
+                        "cpu_logits": refined,
+                    });
+                    std::fs::write(path, serde_json::to_vec_pretty(&payload).map_err(|_| Error::GenerateFailed)?)
+                        .map_err(|_| Error::GenerateFailed)?;
+                }
+                Ok::<Vec<(usize, f32)>, Error>(rank_topk_pairs(&refined, target.topk))
+            })
+            .transpose()?;
+
+        eprintln!(
+            "fishaudio_fast_trace frame={} codebook={} position={} input_token={} sampled={} topk={:?} cpu_topk={:?}",
+            frame_index,
+            codebook_index,
+            positions.first().copied().unwrap_or(0),
+            token_ids.first().copied().unwrap_or(0),
+            sampled_token,
+            topk,
+            cpu_topk
+        );
+        Ok(())
+    }
+
+    fn use_cpu_readout_sampling(
+        &self,
+        sampling: &FishAudioSamplingState,
+    ) -> bool {
+        self.diagnostics.cpu_readout_sampling_enabled && matches!(sampling.method(), SamplingMethod::Greedy)
+    }
+
+    fn sample_token_from_cpu_readout(
+        &self,
+        vocab_limit: Option<usize>,
+    ) -> Result<u64, Error> {
+        let weights = self.diagnostics.cpu_readout_weights.as_ref().ok_or(Error::GenerateFailed)?;
+        let available = vocab_limit.unwrap_or(self.decoder_config.vocab_size).min(self.decoder_config.vocab_size);
+        if available == 0 {
+            return Err(Error::GenerateFailed);
+        }
+
+        let main = self.scratch_buffers.main.borrow();
+        let hidden = read_array_prefix_to_f32(&main, self.decoder_config.model_dim)?;
+        let mut logits = vec![0.0_f32; available];
+        weights.matmul_prefix_into(&hidden, &mut logits).ok_or(Error::GenerateFailed)?;
+        Ok(argmax_index(&logits) as u64)
     }
 
     fn encode_capture_last_hidden_into_single_buffer(
@@ -2664,6 +3009,21 @@ fn read_sampled_token_from_sampling_output(state: &ForwardPassState<Metal>) -> R
     Ok(u64::from(token))
 }
 
+fn read_array_prefix_to_f32(
+    array: &crate::array::Array<Metal>,
+    len: usize,
+) -> Result<Vec<f32>, Error> {
+    if array.num_elements() < len {
+        return Err(Error::GenerateFailed);
+    }
+    match array.data_type() {
+        DataType::F32 => Ok(array.as_slice::<f32>()[..len].to_vec()),
+        DataType::F16 => Ok(array.as_slice::<f16>()[..len].iter().map(|&value| f32::from(value)).collect()),
+        DataType::BF16 => Ok(array.as_slice::<bf16>()[..len].iter().map(|&value| f32::from(value)).collect()),
+        _ => Err(Error::GenerateFailed),
+    }
+}
+
 fn write_f32_slice_into_array(
     array: &mut crate::array::Array<Metal>,
     values: &[f32],
@@ -2724,6 +3084,59 @@ impl MatrixF32 {
         }
         Some(())
     }
+
+    fn matmul_prefix_into(
+        &self,
+        input: &[f32],
+        output: &mut [f32],
+    ) -> Option<()> {
+        if input.len() != self.cols || output.len() > self.rows {
+            return None;
+        }
+        for (row_index, row) in self.values.chunks_exact(self.cols).take(output.len()).enumerate() {
+            let mut acc = 0.0_f32;
+            for (&w, &x) in row.iter().zip(input.iter()) {
+                acc += w * x;
+            }
+            output[row_index] = acc;
+        }
+        Some(())
+    }
+}
+
+fn rank_topk_pairs(
+    values: &[f32],
+    topk: usize,
+) -> Vec<(usize, f32)> {
+    let mut ranked = values.iter().copied().enumerate().collect::<Vec<_>>();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked.truncate(topk.min(values.len()).max(1));
+    ranked
+}
+
+fn argmax_index(values: &[f32]) -> usize {
+    let mut best_index = 0usize;
+    let mut best_value = f32::NEG_INFINITY;
+    for (index, &value) in values.iter().enumerate() {
+        if value > best_value || (value == best_value && index < best_index) {
+            best_value = value;
+            best_index = index;
+        }
+    }
+    best_index
+}
+
+fn load_readout_weights_f32(
+    weights_path: &Path,
+    readout_subtree: &str,
+    expected_rows: usize,
+    expected_cols: usize,
+) -> Result<MatrixF32, Error> {
+    let primary = format!("{readout_subtree}.weights");
+    load_matrix_f32(weights_path, &primary, expected_rows, expected_cols).or_else(|_| {
+        let fallback = format!("{readout_subtree}.output_weights");
+        load_matrix_f32(weights_path, &fallback, expected_rows, expected_cols)
+    })
 }
 
 fn load_matrix_f32(
@@ -2837,19 +3250,41 @@ fn generate_stub_tokens(
     tokens
 }
 
+fn generate_stub_semantic_grid(
+    stub: &StubTextDecoderRuntime,
+    text_tokens: &[u64],
+    codec_cardinality: usize,
+    seed: u64,
+    max_semantic_frames: usize,
+) -> Result<AudioTokenGrid, Error> {
+    let frames = text_tokens.len().min(max_semantic_frames.max(1));
+    let token_upper_bound = stub.codebook_size.min(codec_cardinality);
+    if token_upper_bound == 0 {
+        return Err(Error::UnableToLoadConfig);
+    }
+
+    let tokens = generate_stub_tokens(stub.num_codebooks, frames, token_upper_bound, seed);
+    AudioTokenGrid::new(
+        tokens.into_boxed_slice(),
+        1,
+        stub.num_codebooks,
+        frames,
+        vec![frames].into_boxed_slice(),
+        AudioTokenPacking::CodebookMajor,
+    )
+    .map_err(Error::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AdaptiveChunkController, DEFAULT_CHUNK_EMA_ALPHA, DEFAULT_CHUNK_HYSTERESIS_FRACTION,
-        DEFAULT_FISHAUDIO_MIN_FRAMES_BEFORE_IM_END, DEFAULT_FISHAUDIO_RANDOM_SEED,
-        DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE, DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE, DEFAULT_FISHAUDIO_SAMPLING_TOP_P,
-        DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE, DEFAULT_STUB_SEED, FishAudioSamplingState, MatrixF32,
-        StreamingTokenAccumulator, build_semantic_sampling_mask_row, clear_token_in_sampling_mask,
-        default_repeat_window_size, default_short_logits_size, expand_token_mask_for_sampling_row,
-        fishaudio_min_frames_before_im_end, generate_stub_tokens, load_stub_seed, semantic_token_to_code,
+        DEFAULT_STUB_SEED, DEFAULT_TTS_RANDOM_SEED, FishAudioSamplingState, MatrixF32, StreamingTokenAccumulator,
+        build_semantic_sampling_mask_row, clear_token_in_sampling_mask, expand_token_mask_for_sampling_row,
+        generate_stub_tokens, load_stub_seed, semantic_token_to_code,
     };
     use crate::audio::AudioTokenPacking;
-    use crate::session::config::{TtsChunkPolicy, TtsRunConfig};
+    use crate::session::config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig};
     use crate::session::parameter::SamplingMethod;
 
     #[test]
@@ -2905,13 +3340,13 @@ mod tests {
     }
 
     #[test]
-    fn fishaudio_decoder_defaults_match_lalamo_consts() {
-        assert_eq!(default_short_logits_size(), DEFAULT_FISHAUDIO_SHORT_LOGITS_SIZE);
-        assert_eq!(default_repeat_window_size(), DEFAULT_FISHAUDIO_REPEAT_WINDOW_SIZE);
-        assert_eq!(fishaudio_min_frames_before_im_end(), DEFAULT_FISHAUDIO_MIN_FRAMES_BEFORE_IM_END);
-        assert_eq!(DEFAULT_FISHAUDIO_RANDOM_SEED, 123);
-        assert_eq!(DEFAULT_FISHAUDIO_SAMPLING_TEMPERATURE, 0.8008);
-        assert_eq!(DEFAULT_FISHAUDIO_SAMPLING_TOP_P, 0.8008);
+    fn text_decoder_defaults_are_stable() {
+        let config = TextDecoderRuntimeConfig::default();
+        assert_eq!(DEFAULT_TTS_RANDOM_SEED, 123);
+        assert_eq!(config.min_frames_before_im_end, 8);
+        assert_eq!(config.prefill_step_size, 128);
+        assert_eq!(config.sampling.temperature, 0.8008);
+        assert_eq!(config.sampling.top_p, 0.8008);
     }
 
     #[test]
@@ -2925,8 +3360,9 @@ mod tests {
 
     #[test]
     fn fishaudio_sampling_seed_stream_is_deterministic() {
-        let mut a = FishAudioSamplingState::new(123);
-        let mut b = FishAudioSamplingState::new(123);
+        let config = TextSamplingConfig::default();
+        let mut a = FishAudioSamplingState::from_config(123, &config);
+        let mut b = FishAudioSamplingState::from_config(123, &config);
         let seeds_a = (0..8).map(|_| a.next_seed()).collect::<Vec<_>>();
         let seeds_b = (0..8).map(|_| b.next_seed()).collect::<Vec<_>>();
         assert_eq!(seeds_a, seeds_b);

@@ -3,6 +3,7 @@ mod grammar_config;
 mod run_config;
 mod speculator_config;
 mod tts_run_config;
+mod tts_session_options;
 
 pub use decoding_config::DecodingConfig;
 pub use grammar_config::GrammarConfig;
@@ -10,4 +11,10 @@ pub use run_config::RunConfig;
 pub use speculator_config::SpeculatorConfig;
 pub use tts_run_config::{
     TtsChunkPolicy, TtsNonStreamingMode, TtsPerformanceConfig, TtsRunConfig, TtsVocoderStreamingMode,
+};
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+pub use tts_session_options::TtsSessionOptions;
+pub use tts_session_options::{
+    TextDecoderDiagnosticsConfig, TextDecoderFollowupStrategy, TextDecoderRuntimeConfig, TextDecoderTraceTarget,
+    TextSamplingConfig,
 };
