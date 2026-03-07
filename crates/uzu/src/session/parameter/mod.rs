@@ -10,5 +10,5 @@ pub use context_length::ContextLength;
 pub use context_mode::ContextMode;
 pub use prefill_step_size::PrefillStepSize;
 pub use resolvable_value::{ConfigResolvableValue, ResolvableValue};
-pub use sampling_policy::{SamplingMethod, SamplingPolicy};
+pub use sampling_policy::{SamplingMethod, SamplingPolicy, SamplingProcessingOrder};
 pub use sampling_seed::SamplingSeed;

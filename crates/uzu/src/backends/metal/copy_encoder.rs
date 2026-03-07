@@ -9,15 +9,17 @@ use crate::backends::common::{Backend, CopyEncoder};
 impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
     type Backend = Metal;
 
-    fn encode_copy(
+    fn encode_copy_ranges(
         &self,
-        src: &<Self::Backend as Backend>::NativeBuffer,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        src: (&<Self::Backend as Backend>::NativeBuffer, usize),
+        dst: (&<Self::Backend as Backend>::NativeBuffer, usize),
         size: usize,
     ) {
-        assert!(src.length() >= size && dst.length() >= size);
+        let (src_buffer, src_offset) = src;
+        let (dst_buffer, dst_offset) = dst;
+        assert!(src_buffer.length() >= src_offset + size && dst_buffer.length() >= dst_offset + size);
 
-        self.copy_buffer_to_buffer(src, 0, dst, 0, size);
+        self.copy_buffer_to_buffer(src_buffer, src_offset, dst_buffer, dst_offset, size);
     }
 
     fn encode_fill(

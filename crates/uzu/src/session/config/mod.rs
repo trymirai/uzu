@@ -14,7 +14,4 @@ pub use tts_run_config::{
 };
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 pub use tts_session_options::TtsSessionOptions;
-pub use tts_session_options::{
-    TextDecoderDiagnosticsConfig, TextDecoderFollowupStrategy, TextDecoderRuntimeConfig, TextDecoderTraceTarget,
-    TextSamplingConfig,
-};
+pub use tts_session_options::{TextDecoderFollowupStrategy, TextDecoderRuntimeConfig, TextSamplingConfig};

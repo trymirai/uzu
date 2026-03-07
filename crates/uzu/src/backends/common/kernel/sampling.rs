@@ -12,7 +12,7 @@ use crate::{
             TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
-    session::parameter::SamplingMethod,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -184,50 +184,67 @@ impl<B: Backend> SamplingKernel<B> {
             top_k,
             top_p,
             min_p,
+            repetition_penalty: _,
+            processing_order,
         } = sampling_method
         {
-            if let Some(temperature) = temperature {
-                self.temperature.encode(
-                    logits_buffer,
-                    logits_buffer,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    temperature,
-                    compute_encoder,
-                );
-            }
+            let encode_filters = || {
+                if let Some(top_k) = top_k {
+                    self.topk.encode(
+                        logits_buffer,
+                        logits_buffer,
+                        batch_size as u32,
+                        vocab_size as u32,
+                        top_k,
+                        compute_encoder,
+                    );
+                }
 
-            if let Some(top_k) = top_k {
-                self.topk.encode(
-                    logits_buffer,
-                    logits_buffer,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    top_k,
-                    compute_encoder,
-                );
-            }
+                if let Some(top_p) = top_p {
+                    self.topp.encode(
+                        logits_buffer,
+                        logits_buffer,
+                        batch_size as u32,
+                        vocab_size as u32,
+                        top_p,
+                        compute_encoder,
+                    );
+                }
 
-            if let Some(top_p) = top_p {
-                self.topp.encode(
-                    logits_buffer,
-                    logits_buffer,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    top_p,
-                    compute_encoder,
-                );
-            }
+                if let Some(min_p) = min_p {
+                    self.minp.encode(
+                        logits_buffer,
+                        logits_buffer,
+                        batch_size as u32,
+                        vocab_size as u32,
+                        min_p,
+                        compute_encoder,
+                    );
+                }
+            };
 
-            if let Some(min_p) = min_p {
-                self.minp.encode(
-                    logits_buffer,
-                    logits_buffer,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    min_p,
-                    compute_encoder,
-                );
+            let encode_temperature = || {
+                if let Some(temperature) = temperature {
+                    self.temperature.encode(
+                        logits_buffer,
+                        logits_buffer,
+                        batch_size as u32,
+                        vocab_size as u32,
+                        temperature,
+                        compute_encoder,
+                    );
+                }
+            };
+
+            match processing_order {
+                SamplingProcessingOrder::TemperatureThenFilters => {
+                    encode_temperature();
+                    encode_filters();
+                },
+                SamplingProcessingOrder::FiltersThenTemperature => {
+                    encode_filters();
+                    encode_temperature();
+                },
             }
 
             self.gumbel.encode(

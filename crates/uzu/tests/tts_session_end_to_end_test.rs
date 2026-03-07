@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use uzu::session::{
     TtsSession,
-    config::{TextSamplingConfig, TtsRunConfig, TtsSessionOptions},
+    config::{TextDecoderFollowupStrategy, TextSamplingConfig, TtsRunConfig, TtsSessionOptions},
     types::Input,
 };
 
@@ -30,6 +30,7 @@ fn greedy_fishaudio_session_options() -> TtsSessionOptions {
     options.text_decoder.sampling = TextSamplingConfig {
         temperature: 0.0,
         top_p: 0.0,
+        repetition_penalty: 1.0,
     };
     options
 }
@@ -356,6 +357,44 @@ fn tts_session_fishaudio_f16_streaming_matches_non_streaming_audio() {
         .map(|(lhs, rhs)| (lhs - rhs).abs())
         .fold(0.0_f32, f32::max);
     assert!(max_abs_diff <= 2e-4, "FishAudio f16 streaming/non-streaming mismatch: max_abs_diff={max_abs_diff}");
+}
+
+#[test]
+fn tts_session_fishaudio_f16_async_followups_match_sequential_with_repetition_penalty() {
+    let _guard = TEST_MUTEX.lock().expect("lock");
+    let Some(model_path) = load_optional_fishaudio_model_path_f16() else {
+        println!(
+            "Skipping FishAudio f16 followup parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f16)"
+        );
+        return;
+    };
+
+    let text = Input::Text("Fish Audio works and it matches the reference implementation.".to_string());
+    let seed = 123_u64;
+    let config = TtsRunConfig {
+        max_semantic_frames: 64,
+        ..TtsRunConfig::default()
+    };
+
+    let mut sequential_options = TtsSessionOptions::default();
+    sequential_options.text_decoder.followup_strategy = TextDecoderFollowupStrategy::SequentialExact;
+    let sequential_session =
+        TtsSession::new_with_options(model_path.clone(), sequential_options).expect("sequential session");
+    let sequential_tokens = sequential_session
+        .generate_semantic_tokens_with_seed_and_config(text.clone(), seed, &config)
+        .expect("sequential tokens");
+
+    let mut async_options = TtsSessionOptions::default();
+    async_options.text_decoder.followup_strategy = TextDecoderFollowupStrategy::AsyncChain;
+    let async_session = TtsSession::new_with_options(model_path, async_options).expect("async session");
+    let async_tokens =
+        async_session.generate_semantic_tokens_with_seed_and_config(text, seed, &config).expect("async tokens");
+
+    assert_eq!(async_tokens.batch_size(), sequential_tokens.batch_size());
+    assert_eq!(async_tokens.codebooks(), sequential_tokens.codebooks());
+    assert_eq!(async_tokens.frames(), sequential_tokens.frames());
+    assert_eq!(async_tokens.lengths(), sequential_tokens.lengths());
+    assert_eq!(async_tokens.tokens(), sequential_tokens.tokens());
 }
 
 #[test]

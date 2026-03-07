@@ -1,6 +1,8 @@
 use std::ops::Deref;
 
-use metal::{MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandEncoder, MTLEvent};
+use metal::{
+    MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLEvent,
+};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
@@ -64,6 +66,10 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
 
     fn wait_until_completed(&self) {
         self.deref().wait_until_completed();
+    }
+
+    fn is_completed(&self) -> bool {
+        matches!(self.status(), MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error)
     }
 
     fn gpu_execution_time_ms(&self) -> Option<f64> {

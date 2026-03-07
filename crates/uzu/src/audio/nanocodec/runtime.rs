@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
@@ -124,8 +124,6 @@ fn scale_lengths_i32_in_place(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NanoCodecFsqRuntimeOptions {
-    pub profile_enabled: bool,
-    pub profile_ops_enabled: bool,
     pub collect_command_buffer_profile: bool,
     pub profile_decoder_micro_stages: bool,
     pub capture_single_decode: bool,
@@ -136,14 +134,18 @@ pub struct NanoCodecFsqRuntimeOptions {
 impl Default for NanoCodecFsqRuntimeOptions {
     fn default() -> Self {
         Self {
-            profile_enabled: false,
-            profile_ops_enabled: false,
             collect_command_buffer_profile: false,
             profile_decoder_micro_stages: false,
             capture_single_decode: false,
             chunked_command_buffers: true,
             micro_flush_min_elements: 8_000_000,
         }
+    }
+}
+
+impl NanoCodecFsqRuntimeOptions {
+    fn async_stream_delivery_enabled(self) -> bool {
+        !(self.collect_command_buffer_profile || self.capture_single_decode)
     }
 }
 
@@ -173,6 +175,110 @@ struct PendingAudioCommandBufferProfile {
     cpu_wait_ms: f64,
     command_buffer: MetalCommandBuffer,
     estimated_macs: Option<usize>,
+}
+
+struct SubmittedDecodedPaddedAudio {
+    output: Array<Metal>,
+    channels: usize,
+    frames: usize,
+    lengths: Vec<usize>,
+    final_command_buffer: Option<MetalCommandBuffer>,
+    final_command_label: Option<String>,
+    final_cpu_encode_ms: f64,
+    submitted_command_buffers: Vec<PendingAudioCommandBufferProfile>,
+    decode_profile: Option<AudioDecodeProfile>,
+    capture: Option<AudioCaptureGuard>,
+}
+
+impl SubmittedDecodedPaddedAudio {
+    fn is_ready(&self) -> bool {
+        self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
+    }
+
+    fn resolve(mut self) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+        if let Some(command_buffer) = self.final_command_buffer.as_ref() {
+            let wait_start = self.decode_profile.is_some().then(Instant::now);
+            if !command_buffer.is_completed() {
+                command_buffer.wait_until_completed();
+            }
+            let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+            if let Some(profile) = self.decode_profile.as_mut() {
+                profile.command_buffers.push(AudioCommandBufferProfile {
+                    label: self.final_command_label.clone().unwrap_or_else(|| "decoder_final".to_string()),
+                    cpu_encode_ms: self.final_cpu_encode_ms,
+                    cpu_wait_ms,
+                    gpu_execution_ms: command_buffer.gpu_execution_time_ms(),
+                    estimated_macs: None,
+                });
+            }
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let trace_path = capture.stop()?;
+            if let Some(profile) = self.decode_profile.as_mut() {
+                profile.trace_path = Some(trace_path);
+            }
+        }
+        if let Some(profile) = self.decode_profile.as_mut() {
+            for pending in self.submitted_command_buffers.drain(..) {
+                profile.command_buffers.push(AudioCommandBufferProfile {
+                    label: pending.label,
+                    cpu_encode_ms: pending.cpu_encode_ms,
+                    cpu_wait_ms: pending.cpu_wait_ms,
+                    gpu_execution_ms: pending.command_buffer.gpu_execution_time_ms(),
+                    estimated_macs: pending.estimated_macs,
+                });
+            }
+        }
+        let readback_start = self.decode_profile.is_some().then(Instant::now);
+        let samples = read_array_to_f32_vec(&self.output)?;
+        if let Some(profile) = self.decode_profile.as_mut() {
+            profile.readback_cpu_ms = readback_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        }
+        Ok((
+            super::decoder::DecodedPaddedAudio {
+                samples,
+                channels: self.channels,
+                frames: self.frames,
+                lengths: self.lengths,
+            },
+            self.decode_profile,
+        ))
+    }
+}
+
+pub(crate) struct PendingStreamPcmChunk {
+    runtime: NanoCodecFsqRuntime,
+    submitted: SubmittedDecodedPaddedAudio,
+    previous_audio_lengths: Box<[usize]>,
+    semantic_lengths: Box<[usize]>,
+    audio_offset_frames: usize,
+    upsample_factor: usize,
+    step_stats: AudioDecodeStepStats,
+}
+
+impl PendingStreamPcmChunk {
+    pub(crate) fn is_ready(&self) -> bool {
+        self.submitted.is_ready()
+    }
+
+    pub(crate) fn step_stats(&self) -> AudioDecodeStepStats {
+        self.step_stats
+    }
+
+    pub(crate) fn resolve(self) -> AudioResult<AudioPcmBatch> {
+        let (decoded_window, decode_profile) = self.submitted.resolve()?;
+        if let Ok(mut last_decode_profile) = self.runtime.last_decode_profile.write() {
+            *last_decode_profile = decode_profile;
+        }
+        let delta = extract_delta_from_padded_with_offset_snapshot(
+            &decoded_window,
+            &self.previous_audio_lengths,
+            &self.semantic_lengths,
+            self.audio_offset_frames,
+            self.upsample_factor,
+        )?;
+        self.runtime.decoded_padded_to_pcm_batch(&delta)
+    }
 }
 
 struct AudioCaptureGuard {
@@ -244,12 +350,19 @@ fn push_audio_command_buffer_profile(
     }
 }
 
-fn checked_add_usize(a: usize, b: usize, label: &str) -> AudioResult<usize> {
-    a.checked_add(b)
-        .ok_or_else(|| AudioError::Runtime(format!("{label} overflow")))
+fn checked_add_usize(
+    a: usize,
+    b: usize,
+    label: &str,
+) -> AudioResult<usize> {
+    a.checked_add(b).ok_or_else(|| AudioError::Runtime(format!("{label} overflow")))
 }
 
-fn conv1d_estimated_macs(batch_size: usize, seq_len: usize, layer: &FishAudioConv1dGpuLayer) -> AudioResult<usize> {
+fn conv1d_estimated_macs(
+    batch_size: usize,
+    seq_len: usize,
+    layer: &FishAudioConv1dGpuLayer,
+) -> AudioResult<usize> {
     let cin_per_group = layer
         .cin
         .checked_div(layer.groups)
@@ -680,71 +793,45 @@ impl AudioDecodeStreamState {
         audio_offset_frames: usize,
         upsample_factor: usize,
     ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
-        if full_padded.lengths.len() != self.batch_size {
-            return Err(AudioError::Runtime(format!(
-                "stream decoded batch mismatch: expected {}, got {}",
-                self.batch_size,
-                full_padded.lengths.len()
-            )));
-        }
-        if upsample_factor == 0 {
-            return Err(AudioError::Runtime("stream upsample_factor must be > 0".to_string()));
-        }
-
-        let channels = full_padded.channels;
-        let decoded_frames = full_padded.frames;
-        let mut delta_lengths = vec![0usize; self.batch_size];
-        let mut max_delta_frames = 0usize;
-        let mut local_delta_ranges = vec![(0usize, 0usize); self.batch_size];
-
-        for batch in 0..self.batch_size {
-            let semantic_length = self.semantic_lengths[batch];
+        let previous_audio_lengths = self.emitted_audio_lengths.clone();
+        let semantic_lengths = self.semantic_lengths.clone();
+        let delta = extract_delta_from_padded_with_offset_snapshot(
+            full_padded,
+            &previous_audio_lengths,
+            &semantic_lengths,
+            audio_offset_frames,
+            upsample_factor,
+        )?;
+        for (index, &semantic_length) in semantic_lengths.iter().enumerate() {
             let full_audio_length = semantic_length
                 .checked_mul(upsample_factor)
                 .ok_or(AudioError::Runtime("stream audio length overflow".to_string()))?;
-            let previous_audio_length = self.emitted_audio_lengths[batch].min(full_audio_length);
-            let decoded_batch_length = full_padded.lengths[batch];
-            let target_end_local = full_audio_length.saturating_sub(audio_offset_frames).min(decoded_batch_length);
-            let target_start_local = previous_audio_length.saturating_sub(audio_offset_frames).min(target_end_local);
-            let delta = target_end_local.saturating_sub(target_start_local);
-            local_delta_ranges[batch] = (target_start_local, target_end_local);
-            delta_lengths[batch] = delta;
-            max_delta_frames = max_delta_frames.max(delta);
-            self.emitted_audio_lengths[batch] = full_audio_length;
-            self.emitted_semantic_lengths[batch] = semantic_length;
+            self.emitted_audio_lengths[index] = full_audio_length;
+            self.emitted_semantic_lengths[index] = semantic_length;
         }
+        Ok(delta)
+    }
 
-        let padded_len = checked_product(&[self.batch_size, channels, max_delta_frames])?;
-        let mut delta_padded = vec![0.0_f32; padded_len];
-        for (batch, &(start_local, end_local)) in local_delta_ranges.iter().enumerate() {
-            let delta_len = end_local.saturating_sub(start_local);
-            if delta_len == 0 {
-                continue;
-            }
-            for channel in 0..channels {
-                let src_start = (batch * channels + channel)
-                    .checked_mul(decoded_frames)
-                    .and_then(|value| value.checked_add(start_local))
-                    .ok_or(AudioError::Runtime("stream padded source offset overflow".to_string()))?;
-                let src_end = src_start
-                    .checked_add(delta_len)
-                    .ok_or(AudioError::Runtime("stream padded source offset overflow".to_string()))?;
-                let dst_start = (batch * channels + channel)
-                    .checked_mul(max_delta_frames)
-                    .ok_or(AudioError::Runtime("stream padded destination offset overflow".to_string()))?;
-                let dst_end = dst_start
-                    .checked_add(delta_len)
-                    .ok_or(AudioError::Runtime("stream padded destination offset overflow".to_string()))?;
-                delta_padded[dst_start..dst_end].copy_from_slice(&full_padded.samples[src_start..src_end]);
-            }
+    fn mark_submitted_audio_window(
+        &mut self,
+        semantic_lengths: &[usize],
+        upsample_factor: usize,
+    ) -> AudioResult<()> {
+        if semantic_lengths.len() != self.batch_size {
+            return Err(AudioError::Runtime(format!(
+                "stream semantic lengths mismatch: expected {}, got {}",
+                self.batch_size,
+                semantic_lengths.len()
+            )));
         }
-
-        Ok(super::decoder::DecodedPaddedAudio {
-            samples: delta_padded,
-            channels,
-            frames: max_delta_frames,
-            lengths: delta_lengths,
-        })
+        for (index, &semantic_length) in semantic_lengths.iter().enumerate() {
+            let full_audio_length = semantic_length
+                .checked_mul(upsample_factor)
+                .ok_or(AudioError::Runtime("stream audio length overflow".to_string()))?;
+            self.emitted_audio_lengths[index] = full_audio_length;
+            self.emitted_semantic_lengths[index] = semantic_length;
+        }
+        Ok(())
     }
 
     fn record_last_step_stats(
@@ -760,6 +847,79 @@ impl AudioDecodeStreamState {
             decoded_window_frames,
         };
     }
+}
+
+fn extract_delta_from_padded_with_offset_snapshot(
+    full_padded: &super::decoder::DecodedPaddedAudio,
+    previous_audio_lengths: &[usize],
+    semantic_lengths: &[usize],
+    audio_offset_frames: usize,
+    upsample_factor: usize,
+) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+    if full_padded.lengths.len() != semantic_lengths.len() || previous_audio_lengths.len() != semantic_lengths.len() {
+        return Err(AudioError::Runtime(format!(
+            "stream decoded batch mismatch: full_lengths={}, previous_lengths={}, semantic_lengths={}",
+            full_padded.lengths.len(),
+            previous_audio_lengths.len(),
+            semantic_lengths.len()
+        )));
+    }
+    if upsample_factor == 0 {
+        return Err(AudioError::Runtime("stream upsample_factor must be > 0".to_string()));
+    }
+
+    let batch_size = semantic_lengths.len();
+    let channels = full_padded.channels;
+    let decoded_frames = full_padded.frames;
+    let mut delta_lengths = vec![0usize; batch_size];
+    let mut max_delta_frames = 0usize;
+    let mut local_delta_ranges = vec![(0usize, 0usize); batch_size];
+
+    for batch in 0..batch_size {
+        let full_audio_length = semantic_lengths[batch]
+            .checked_mul(upsample_factor)
+            .ok_or(AudioError::Runtime("stream audio length overflow".to_string()))?;
+        let previous_audio_length = previous_audio_lengths[batch].min(full_audio_length);
+        let decoded_batch_length = full_padded.lengths[batch];
+        let target_end_local = full_audio_length.saturating_sub(audio_offset_frames).min(decoded_batch_length);
+        let target_start_local = previous_audio_length.saturating_sub(audio_offset_frames).min(target_end_local);
+        let delta = target_end_local.saturating_sub(target_start_local);
+        local_delta_ranges[batch] = (target_start_local, target_end_local);
+        delta_lengths[batch] = delta;
+        max_delta_frames = max_delta_frames.max(delta);
+    }
+
+    let padded_len = checked_product(&[batch_size, channels, max_delta_frames])?;
+    let mut delta_padded = vec![0.0_f32; padded_len];
+    for (batch, &(start_local, end_local)) in local_delta_ranges.iter().enumerate() {
+        let delta_len = end_local.saturating_sub(start_local);
+        if delta_len == 0 {
+            continue;
+        }
+        for channel in 0..channels {
+            let src_start = (batch * channels + channel)
+                .checked_mul(decoded_frames)
+                .and_then(|value| value.checked_add(start_local))
+                .ok_or(AudioError::Runtime("stream padded source offset overflow".to_string()))?;
+            let src_end = src_start
+                .checked_add(delta_len)
+                .ok_or(AudioError::Runtime("stream padded source offset overflow".to_string()))?;
+            let dst_start = (batch * channels + channel)
+                .checked_mul(max_delta_frames)
+                .ok_or(AudioError::Runtime("stream padded destination offset overflow".to_string()))?;
+            let dst_end = dst_start
+                .checked_add(delta_len)
+                .ok_or(AudioError::Runtime("stream padded destination offset overflow".to_string()))?;
+            delta_padded[dst_start..dst_end].copy_from_slice(&full_padded.samples[src_start..src_end]);
+        }
+    }
+
+    Ok(super::decoder::DecodedPaddedAudio {
+        samples: delta_padded,
+        channels,
+        frames: max_delta_frames,
+        lengths: delta_lengths,
+    })
 }
 
 fn pack_unpacked_to_padded(
@@ -3936,13 +4096,12 @@ impl FishAudioCodecGraph {
             return self.apply_post_module_gpu_on_array_single_batch(context, latent_nsc, frames, profile);
         }
 
-        let mut output = context.create_array(
+        let output = context.create_array(
             &[batch_size, frames, self.input_dim],
             latent_nsc.data_type(),
             "fishaudio_post_module_output_nsc",
         );
-        output.copy_from_array(latent_nsc);
-
+        let mut batch_indices_by_length = BTreeMap::<usize, Vec<usize>>::new();
         for (batch_index, &active_len) in lengths.iter().enumerate() {
             if active_len == 0 {
                 continue;
@@ -3953,7 +4112,18 @@ impl FishAudioCodecGraph {
                     frames,
                 });
             }
+            batch_indices_by_length.entry(active_len).or_default().push(batch_index);
+        }
 
+        if batch_indices_by_length.is_empty() {
+            let mut output = output;
+            output.copy_from_array(latent_nsc);
+            return Ok(output);
+        }
+
+        let full_copy_bytes = latent_nsc.size();
+        let mut copied_output_prefix = false;
+        for (active_len, batch_indices) in batch_indices_by_length {
             let runtime = self.post_module_runtime_on_context(context, active_len.max(1))?;
             let token_ids = vec![0_u64; active_len];
             let token_positions = (0..active_len).collect::<Vec<_>>();
@@ -3968,51 +4138,70 @@ impl FishAudioCodecGraph {
                 1,
             );
 
-            let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
             let main = state.arrays(&[ArrayId::Main])[0].clone();
-            {
-                let mut main = main.borrow_mut();
-                if main.shape() != [active_len, self.input_dim] {
+            let main_output = {
+                let main_ref = main.borrow();
+                if main_ref.shape() != [active_len, self.input_dim] {
                     return Err(AudioError::Runtime(format!(
                         "post_module main shape mismatch: expected [{active_len}, {}], got {:?}",
                         self.input_dim,
-                        main.shape()
+                        main_ref.shape()
                     )));
                 }
-                if main.data_type() != latent_nsc.data_type() {
+                if main_ref.data_type() != latent_nsc.data_type() {
                     return Err(AudioError::Runtime(format!(
                         "post_module dtype mismatch: main={:?}, latent={:?}",
-                        main.data_type(),
+                        main_ref.data_type(),
                         latent_nsc.data_type()
                     )));
                 }
-                main.copy_from_array(&source);
+                main_ref.clone()
+            };
+
+            for &batch_index in &batch_indices {
+                let encode_start = profile.is_some().then(Instant::now);
+                let command_buffer = runtime.context.create_command_buffer().map_err(|err| {
+                    AudioError::Runtime(format!("failed to create post_module command buffer: {err}"))
+                })?;
+                if !copied_output_prefix {
+                    command_buffer.with_copy_encoder(|copy_encoder| {
+                        copy_encoder.encode_copy_ranges(
+                            (latent_nsc.buffer(), latent_nsc.offset()),
+                            (output.buffer(), output.offset()),
+                            full_copy_bytes,
+                        );
+                    });
+                    copied_output_prefix = true;
+                }
+                let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
+                command_buffer.with_copy_encoder(|copy_encoder| {
+                    copy_encoder.encode_copy_ranges(
+                        (source.buffer(), source.offset()),
+                        (main_output.buffer(), main_output.offset()),
+                        source.size(),
+                    );
+                });
+                Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
+                let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
+                command_buffer.with_copy_encoder(|copy_encoder| {
+                    copy_encoder.encode_copy_ranges(
+                        (main_output.buffer(), main_output.offset()),
+                        (destination.buffer(), destination.offset()),
+                        destination.size(),
+                    );
+                });
+                let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+                command_buffer.submit();
+                let wait_start = profile.is_some().then(Instant::now);
+                command_buffer.wait_until_completed();
+                let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+                let label = if batch_size == 1 && active_len == frames {
+                    "post_module".to_string()
+                } else {
+                    format!("post_module_len_{active_len}_batch_{batch_index}")
+                };
+                push_audio_command_buffer_profile(profile, label, &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
             }
-
-            let encode_start = profile.is_some().then(Instant::now);
-            let command_buffer = runtime
-                .context
-                .create_command_buffer()
-                .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
-            Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
-            let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-            command_buffer.submit();
-            let wait_start = profile.is_some().then(Instant::now);
-            command_buffer.wait_until_completed();
-            let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-            push_audio_command_buffer_profile(
-                profile,
-                format!("post_module_batch_{batch_index}"),
-                &command_buffer,
-                cpu_encode_ms,
-                cpu_wait_ms,
-                None,
-            );
-
-            let main = state.arrays(&[ArrayId::Main])[0].clone();
-            let main = main.borrow();
-            let mut destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
-            destination.copy_from_array(&main);
         }
 
         Ok(output)
@@ -4056,7 +4245,7 @@ impl FishAudioCodecGraph {
         )
     }
 
-    fn decode_padded(
+    fn submit_decode_padded(
         &self,
         runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
@@ -4064,15 +4253,9 @@ impl FishAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
-        let profile_enabled = runtime_options.profile_enabled;
+    ) -> AudioResult<SubmittedDecodedPaddedAudio> {
         let collect_command_buffer_profile =
             runtime_options.collect_command_buffer_profile || runtime_options.capture_single_decode;
-        let decode_start: Option<Instant> = if profile_enabled {
-            Some(Instant::now())
-        } else {
-            None
-        };
         if batch_size == 0 || frames == 0 {
             let out_lengths = lengths
                 .iter()
@@ -4082,15 +4265,20 @@ impl FishAudioCodecGraph {
                         .ok_or(AudioError::Runtime("FishAudio length scaling overflow".to_string()))
                 })
                 .collect::<AudioResult<Vec<_>>>()?;
-            return Ok((
-                super::decoder::DecodedPaddedAudio {
-                    samples: Vec::new(),
-                    channels: 1,
-                    frames: out_lengths.iter().copied().max().unwrap_or(0),
-                    lengths: out_lengths,
-                },
-                None,
-            ));
+            let context = <Metal as Backend>::Context::new()
+                .map_err(|err| AudioError::Runtime(format!("failed to create metal audio context: {err}")))?;
+            return Ok(SubmittedDecodedPaddedAudio {
+                output: context.create_array(&[0], DataType::F32, "fishaudio_empty_decode_output"),
+                channels: 1,
+                frames: out_lengths.iter().copied().max().unwrap_or(0),
+                lengths: out_lengths,
+                final_command_buffer: None,
+                final_command_label: None,
+                final_cpu_encode_ms: 0.0,
+                submitted_command_buffers: Vec::new(),
+                decode_profile: None,
+                capture: None,
+            });
         }
 
         let mut lengths_i32 = lengths
@@ -4105,7 +4293,7 @@ impl FishAudioCodecGraph {
             codebooks,
             ..AudioDecodeProfile::default()
         });
-        let mut capture = if runtime_options.capture_single_decode {
+        let capture = if runtime_options.capture_single_decode {
             Some(AudioCaptureGuard::start()?)
         } else {
             None
@@ -4116,14 +4304,7 @@ impl FishAudioCodecGraph {
             self.decode_context()?
         };
 
-        let quantizer_start: Option<Instant> = if profile_enabled {
-            Some(Instant::now())
-        } else {
-            None
-        };
         let can_use_gpu_latent_path = batch_size == 1 && lengths.first().copied() == Some(frames);
-        let quantizer_s;
-        let post_module_s;
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
         let quantized_nsc = self.decode_quantizer_to_nsc_array_on_context(
@@ -4135,69 +4316,53 @@ impl FishAudioCodecGraph {
             frames,
             &mut decode_profile,
         )?;
-        quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
-
-        let post_module_start: Option<Instant> = if profile_enabled {
-            Some(Instant::now())
-        } else {
-            None
-        };
         x = if can_use_gpu_latent_path {
             self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames, &mut decode_profile)?
         } else {
-            self.apply_post_module_gpu_on_array(&context, &quantized_nsc, lengths, batch_size, frames, &mut decode_profile)?
+            self.apply_post_module_gpu_on_array(
+                &context,
+                &quantized_nsc,
+                lengths,
+                batch_size,
+                frames,
+                &mut decode_profile,
+            )?
         };
-        post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
 
-        let vocoder_start: Option<Instant> = if profile_enabled {
-            Some(Instant::now())
-        } else {
-            None
-        };
         let vocoder_graph = self.vocoder_gpu_graph(&context)?;
         let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
-        let profile_ops_enabled = runtime_options.profile_ops_enabled;
         let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
         let chunked_command_buffers = runtime_options.chunked_command_buffers;
         let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
         let mut submitted_command_buffers = Vec::<PendingAudioCommandBufferProfile>::new();
         let mut command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
-        let mut profile_stages = Vec::<(String, f64)>::new();
-        let mut profile_stage_start: Option<Instant> = profile_ops_enabled.then(Instant::now);
-        let mut flush_stage =
-            |label: String, estimated_macs: Option<usize>, command_buffer: &mut MetalCommandBuffer| -> AudioResult<()> {
-                if !(profile_ops_enabled || chunked_command_buffers || profile_decoder_micro_stages) {
-                    return Ok(());
-                }
-                let cpu_encode_ms =
-                    command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-                command_buffer.submit();
-                let mut cpu_wait_ms = 0.0;
-                if profile_ops_enabled {
-                    let wait_start = Instant::now();
-                    command_buffer.wait_until_completed();
-                    cpu_wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
-                    if let Some(start) = profile_stage_start.replace(Instant::now()) {
-                        profile_stages.push((label.clone(), start.elapsed().as_secs_f64()));
-                    }
-                }
-                if decode_profile.is_some() {
-                    submitted_command_buffers.push(PendingAudioCommandBufferProfile {
-                        label,
-                        cpu_encode_ms,
-                        cpu_wait_ms,
-                        command_buffer: command_buffer.clone(),
-                        estimated_macs,
-                    });
-                }
-                *command_buffer = context.create_command_buffer().map_err(|err| {
-                    AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}"))
-                })?;
-                command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
-                Ok(())
-            };
+        let mut flush_stage = |label: String,
+                               estimated_macs: Option<usize>,
+                               command_buffer: &mut MetalCommandBuffer|
+         -> AudioResult<()> {
+            if !(chunked_command_buffers || profile_decoder_micro_stages) {
+                return Ok(());
+            }
+            let cpu_encode_ms =
+                command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+            command_buffer.submit();
+            if decode_profile.is_some() {
+                submitted_command_buffers.push(PendingAudioCommandBufferProfile {
+                    label,
+                    cpu_encode_ms,
+                    cpu_wait_ms: 0.0,
+                    command_buffer: command_buffer.clone(),
+                    estimated_macs,
+                });
+            }
+            *command_buffer = context.create_command_buffer().map_err(|err| {
+                AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}"))
+            })?;
+            command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
+            Ok(())
+        };
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
@@ -4336,7 +4501,8 @@ impl FishAudioCodecGraph {
                 SequenceLayout::Ncs,
                 &next_lengths_array,
             )?;
-            let trans_conv_estimated_macs = convtranspose_estimated_macs(batch_size, current_frames, &block.trans_conv)?;
+            let trans_conv_estimated_macs =
+                convtranspose_estimated_macs(batch_size, current_frames, &block.trans_conv)?;
 
             current_frames = next_frames;
             current_channels = block.trans_conv.cout;
@@ -4406,7 +4572,8 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
-            if profile_decoder_micro_stages || (chunked_command_buffers && active_elements >= micro_flush_min_elements) {
+            if profile_decoder_micro_stages || (chunked_command_buffers && active_elements >= micro_flush_min_elements)
+            {
                 flush_stage(
                     format!("decoder_block_{block_index}_res2"),
                     Some(res2_estimated_macs),
@@ -4460,49 +4627,11 @@ impl FishAudioCodecGraph {
         )?;
         x = tanh_enqueue(&context, &command_buffer, &x)?;
 
-        if profile_ops_enabled {
-            flush_stage("decoder_final".to_string(), None, &mut command_buffer)?;
-        } else {
-            let cpu_encode_ms =
-                command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-            command_buffer.submit();
-            let wait_start = decode_profile.is_some().then(Instant::now);
-            command_buffer.wait_until_completed();
-            let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-            if decode_profile.is_some() {
-                submitted_command_buffers.push(PendingAudioCommandBufferProfile {
-                    label: "decoder_final".to_string(),
-                    cpu_encode_ms,
-                    cpu_wait_ms,
-                    command_buffer: command_buffer.clone(),
-                    estimated_macs: None,
-                });
-            }
-        }
-        if let Some(capture) = capture.as_mut() {
-            let trace_path = capture.stop()?;
-            if let Some(profile) = decode_profile.as_mut() {
-                profile.trace_path = Some(trace_path);
-            }
-        }
-        if let Some(profile) = decode_profile.as_mut() {
-            for pending in submitted_command_buffers.drain(..) {
-                profile.command_buffers.push(AudioCommandBufferProfile {
-                    label: pending.label,
-                    cpu_encode_ms: pending.cpu_encode_ms,
-                    cpu_wait_ms: pending.cpu_wait_ms,
-                    gpu_execution_ms: pending.command_buffer.gpu_execution_time_ms(),
-                    estimated_macs: pending.estimated_macs,
-                });
-            }
-        }
-        let readback_start = decode_profile.is_some().then(Instant::now);
-        let x = read_array_to_f32_vec(&x)?;
-        if let Some(profile) = decode_profile.as_mut() {
-            profile.readback_cpu_ms =
-                readback_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        }
-
+        let final_cpu_encode_ms =
+            command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        let final_command_label = Some("decoder_final".to_string());
+        command_buffer.submit();
+        let final_command_buffer = Some(command_buffer.clone());
         let out_lengths = lengths_i32
             .into_iter()
             .map(|length| {
@@ -4510,31 +4639,30 @@ impl FishAudioCodecGraph {
                     .map_err(|_| AudioError::Runtime("FishAudio decoder produced invalid negative length".to_string()))
             })
             .collect::<AudioResult<Vec<_>>>()?;
-
-        let result = Ok((
-            super::decoder::DecodedPaddedAudio {
-                samples: x,
-                channels: vocoder_graph.final_conv.cout,
-                frames: current_frames,
-                lengths: out_lengths,
-            },
+        Ok(SubmittedDecodedPaddedAudio {
+            output: x,
+            channels: vocoder_graph.final_conv.cout,
+            frames: current_frames,
+            lengths: out_lengths,
+            final_command_buffer,
+            final_command_label,
+            final_cpu_encode_ms,
+            submitted_command_buffers,
             decode_profile,
-        ));
+            capture,
+        })
+    }
 
-        if profile_enabled {
-            let vocoder_s = vocoder_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
-            let total_s = decode_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
-            eprintln!(
-                "fishaudio_profile batch={} frames={} codebooks={} chunked_cmd_bufs={} quantizer_s={:.3} post_module_s={:.3} vocoder_s={:.3} total_s={:.3}",
-                batch_size, frames, codebooks, chunked_command_buffers, quantizer_s, post_module_s, vocoder_s, total_s
-            );
-        }
-        if profile_ops_enabled {
-            for (stage, seconds) in profile_stages {
-                eprintln!("fishaudio_profile_stage stage={} s={:.3}", stage, seconds);
-            }
-        }
-        result
+    fn decode_padded(
+        &self,
+        runtime_options: NanoCodecFsqRuntimeOptions,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+        self.submit_decode_padded(runtime_options, tokens, lengths, batch_size, codebooks, frames)?.resolve()
     }
 }
 
@@ -4972,6 +5100,81 @@ impl NanoCodecFsqRuntime {
         state.extract_delta_padded(&full_pcm)
     }
 
+    pub(crate) fn submit_decode_stream_step(
+        &self,
+        state: &mut AudioDecodeStreamState,
+        new_tokens: &AudioTokenGrid,
+        is_final: bool,
+    ) -> AudioResult<Option<PendingStreamPcmChunk>> {
+        if is_final || !self.options.async_stream_delivery_enabled() {
+            return Ok(None);
+        }
+        if new_tokens.codebooks() != state.codebooks {
+            return Err(AudioError::Runtime(format!(
+                "stream delta codebook mismatch: expected {}, got {}",
+                state.codebooks,
+                new_tokens.codebooks()
+            )));
+        }
+        if new_tokens.batch_size() != state.batch_size {
+            return Err(AudioError::Runtime(format!(
+                "stream delta batch mismatch: expected {}, got {}",
+                state.batch_size,
+                new_tokens.batch_size()
+            )));
+        }
+        if new_tokens.frames() == 0 {
+            return Ok(None);
+        }
+
+        let Some(fishaudio) = self.config.fishaudio_decoder() else {
+            return Ok(None);
+        };
+        if state.mode != AudioDecodeStreamingMode::IncrementalStateful {
+            return Ok(None);
+        }
+        let Some(context_frames) = fishaudio.streaming_decode_context_frames()? else {
+            return Ok(None);
+        };
+
+        self.validate_fishaudio_token_delta(new_tokens, fishaudio)?;
+        state.append_delta(new_tokens)?;
+
+        let mut window_start = state.total_frames();
+        for &emitted in &state.emitted_semantic_lengths {
+            window_start = window_start.min(emitted.saturating_sub(context_frames));
+        }
+        let window_end = state.total_frames();
+        let batch_size = state.batch_size;
+        let codebooks = state.codebooks;
+        let previous_audio_lengths = state.emitted_audio_lengths.clone().into_boxed_slice();
+        let semantic_lengths = state.semantic_lengths.clone().into_boxed_slice();
+        let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
+        let submitted = fishaudio.submit_decode_padded(
+            self.options,
+            window_tokens,
+            window_lengths,
+            batch_size,
+            codebooks,
+            window_frames,
+        )?;
+        let audio_offset_frames = window_start
+            .checked_mul(fishaudio.upsample_factor)
+            .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;
+        state.record_last_step_stats(new_tokens.frames(), window_start, window_frames);
+        state.mark_submitted_audio_window(&semantic_lengths, fishaudio.upsample_factor)?;
+
+        Ok(Some(PendingStreamPcmChunk {
+            runtime: self.clone(),
+            submitted,
+            previous_audio_lengths,
+            semantic_lengths,
+            audio_offset_frames,
+            upsample_factor: fishaudio.upsample_factor,
+            step_stats: state.last_step_stats(),
+        }))
+    }
+
     pub fn decoded_padded_to_pcm_batch(
         &self,
         decoded: &super::decoder::DecodedPaddedAudio,
@@ -5311,13 +5514,14 @@ mod tests {
     use super::{
         AudioDecodeStreamState, AudioDecodeStreamingMode, FishAudioCodecGraph, FishAudioConv1dLayer,
         FishAudioConvNeXtLayer, FishAudioConvTranspose1dLayer, FishAudioDecoderBlockLayer, FishAudioDecoderGraph,
-        FishAudioNormLayer, FishAudioResidualUnitLayer, FishAudioVectorQuantizer, MatrixF32, NanoCodecFsqRuntimeConfig,
-        RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded,
-        parse_fishaudio_tts_config_json, parse_lalamo_tts_config_json, parse_runtime_config_json,
-        resolve_fishaudio_vocoder_data_type, unpack_padded_to_pcm,
+        FishAudioNormLayer, FishAudioResidualUnitLayer, FishAudioVectorQuantizer, MatrixF32, NanoCodecFsqRuntime,
+        NanoCodecFsqRuntimeConfig, RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog,
+        pack_pcm_to_padded, parse_fishaudio_tts_config_json, parse_lalamo_tts_config_json, parse_runtime_config_json,
+        read_array_to_f32_vec, resolve_fishaudio_vocoder_data_type, unpack_padded_to_pcm, write_f32_slice_to_array,
     };
     use crate::{
         DataType,
+        array::ArrayContextExt,
         audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     };
 
@@ -6257,10 +6461,22 @@ mod tests {
         assert!(quantizer_max_abs_diff <= 1e-4, "quantizer decode parity mismatch: {quantizer_max_abs_diff}");
 
         let mut cpu = latent.clone();
-        let mut gpu = latent.clone();
         apply_post_module_cpu_reference_for_test(fishaudio, &cpu_post_module, &mut cpu, &lengths, batch_size, frames)
             .expect("cpu post-module");
-        fishaudio.apply_post_module_gpu(&mut gpu, &lengths, batch_size, frames).expect("gpu post-module");
+        let context = NanoCodecFsqRuntime::create_context().expect("create metal context");
+        let mut latent_array = context.create_array(
+            &[batch_size, frames, fishaudio.input_dim],
+            fishaudio.vocoder_data_type,
+            "fishaudio_test_post_module_single_input_nsc",
+        );
+        write_f32_slice_to_array(&mut latent_array, &latent).expect("write latent to array");
+        let mut profile = None;
+        let gpu = read_array_to_f32_vec(
+            &fishaudio
+                .apply_post_module_gpu_on_array(&context, &latent_array, &lengths, batch_size, frames, &mut profile)
+                .expect("gpu post-module"),
+        )
+        .expect("read gpu post-module");
 
         let mut max_abs_diff = 0.0_f32;
         let mut sum_sq_diff = 0.0_f64;
@@ -6274,6 +6490,82 @@ mod tests {
 
         assert!(max_abs_diff <= 1e-4, "post-module max_abs_diff too high: {max_abs_diff}, rmse={rmse}");
         assert!(rmse <= 1e-5, "post-module rmse too high: {rmse}, max_abs_diff={max_abs_diff}");
+    }
+
+    #[test]
+    fn fishaudio_post_module_gpu_general_path_batches_lengths_in_one_command_buffer() {
+        let Some(model_path) = load_optional_fishaudio_model_path() else {
+            println!("Skipping FishAudio multi-batch post-module test: set LALAMO_UZU_MODEL_PATH");
+            return;
+        };
+
+        let config_bytes = std::fs::read(model_path.join("config.json")).expect("read model config");
+        let config_json: serde_json::Value = serde_json::from_slice(&config_bytes).expect("parse model config");
+        let tts_config = config_json
+            .get("model_config")
+            .and_then(|value| value.get("tts_config"))
+            .expect("model_config.tts_config")
+            .clone();
+        let runtime_config = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, &model_path)
+            .expect("runtime config");
+        let fishaudio = runtime_config.fishaudio_decoder().expect("fishaudio decoder");
+        let cpu_post_module = build_cpu_post_module_for_test(fishaudio).expect("cpu post-module");
+
+        let batch_size = 3usize;
+        let frames = 6usize;
+        let lengths = vec![6usize, 4usize, 4usize];
+        let mut tokens = vec![0_u32; batch_size * fishaudio.total_codebooks * frames];
+        for batch in 0..batch_size {
+            for frame in 0..frames {
+                let semantic = ((batch + 1) * 17 + frame * 13) % fishaudio.semantic_codebook_size;
+                let semantic_index = ((batch * fishaudio.total_codebooks) * frames) + frame;
+                tokens[semantic_index] = semantic as u32;
+                for residual in 0..(fishaudio.total_codebooks - 1) {
+                    let index = ((batch * fishaudio.total_codebooks) + residual + 1) * frames + frame;
+                    let value = ((batch + 3) * (frame + 5) * (residual + 7)) % fishaudio.codebook_size;
+                    tokens[index] = value as u32;
+                }
+            }
+        }
+
+        let latent_cpu = fishaudio
+            .decode_quantizer_to_nsc_reference(&tokens, &lengths, batch_size, fishaudio.total_codebooks, frames)
+            .expect("decode quantizer cpu reference");
+        let mut cpu = latent_cpu.clone();
+        apply_post_module_cpu_reference_for_test(fishaudio, &cpu_post_module, &mut cpu, &lengths, batch_size, frames)
+            .expect("cpu post-module");
+
+        let context = NanoCodecFsqRuntime::create_context().expect("create metal context");
+        let mut latent = context.create_array(
+            &[batch_size, frames, fishaudio.input_dim],
+            fishaudio.vocoder_data_type,
+            "fishaudio_test_post_module_input_nsc",
+        );
+        write_f32_slice_to_array(&mut latent, &latent_cpu).expect("write latent to array");
+        let mut profile = Some(super::AudioDecodeProfile::default());
+        let output = fishaudio
+            .apply_post_module_gpu_on_array(&context, &latent, &lengths, batch_size, frames, &mut profile)
+            .expect("gpu post-module");
+        let gpu = read_array_to_f32_vec(&output).expect("read gpu post-module");
+
+        let mut max_abs_diff = 0.0_f32;
+        let mut sum_sq_diff = 0.0_f64;
+        for (&cpu_value, &gpu_value) in cpu.iter().zip(gpu.iter()) {
+            let diff = (cpu_value - gpu_value).abs();
+            max_abs_diff = max_abs_diff.max(diff);
+            sum_sq_diff += f64::from(diff * diff);
+        }
+        let rmse = (sum_sq_diff / cpu.len() as f64).sqrt() as f32;
+        println!("multi-batch post-module latent parity: max_abs_diff={max_abs_diff}, rmse={rmse}");
+
+        assert!(max_abs_diff <= 2e-4, "post-module max_abs_diff too high: {max_abs_diff}, rmse={rmse}");
+        assert!(rmse <= 2e-5, "post-module rmse too high: {rmse}, max_abs_diff={max_abs_diff}");
+
+        let profile = profile.expect("profile");
+        assert_eq!(profile.command_buffers.len(), batch_size, "expected one post-module command buffer per batch item");
+        assert_eq!(profile.command_buffers[0].label, "post_module_len_4_batch_1");
+        assert_eq!(profile.command_buffers[1].label, "post_module_len_4_batch_2");
+        assert_eq!(profile.command_buffers[2].label, "post_module_len_6_batch_0");
     }
 
     #[test]

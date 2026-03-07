@@ -28,8 +28,8 @@ use crate::{
         common::{
             Backend, CommandBuffer, Context as BackendContext, Kernels, NativeBuffer,
             kernel::{
-                EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
-                TokenCopyToResultsKernel,
+                BufferArg, EmbeddingRowsSumKernel, RepetitionPenaltyKernel, TensorAddScaleKernel, TensorCopyKernel,
+                TokenCopySampledKernel, TokenCopyToResultsKernel,
                 kv_cache_update::KVCacheUpdate,
                 matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
             },
@@ -47,10 +47,10 @@ use crate::{
     parameters::{ParameterLoader, read_safetensors_metadata},
     session::{
         config::{
-            TextDecoderDiagnosticsConfig, TextDecoderFollowupStrategy, TextDecoderRuntimeConfig,
-            TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions, TtsVocoderStreamingMode,
+            TextDecoderFollowupStrategy, TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig,
+            TtsSessionOptions, TtsVocoderStreamingMode,
         },
-        parameter::SamplingMethod,
+        parameter::{SamplingMethod, SamplingProcessingOrder},
         types::{Error, Input},
     },
 };
@@ -156,9 +156,74 @@ trait AudioDecoderStreamBackend {
         is_final: bool,
     ) -> Result<AudioPcmBatch, Error>;
 
+    fn decode_step_pending(
+        &mut self,
+        new_tokens: &AudioTokenGrid,
+        is_final: bool,
+    ) -> Result<Box<dyn PendingAudioChunkBackend>, Error> {
+        let pcm = self.decode_step(new_tokens, is_final)?;
+        Ok(Box::new(ImmediatePendingAudioChunk {
+            pcm: Some(pcm),
+            step_stats: self.last_step_stats(),
+        }))
+    }
+
     fn last_step_stats(&self) -> Option<AudioDecodeStepStats>;
 
     fn finish(self: Box<Self>) -> Result<(), Error>;
+}
+
+trait PendingAudioChunkBackend {
+    fn is_ready(&self) -> bool;
+
+    fn step_stats(&self) -> Option<AudioDecodeStepStats>;
+
+    fn resolve(self: Box<Self>) -> Result<AudioPcmBatch, Error>;
+}
+
+struct ImmediatePendingAudioChunk {
+    pcm: Option<AudioPcmBatch>,
+    step_stats: Option<AudioDecodeStepStats>,
+}
+
+impl PendingAudioChunkBackend for ImmediatePendingAudioChunk {
+    fn is_ready(&self) -> bool {
+        true
+    }
+
+    fn step_stats(&self) -> Option<AudioDecodeStepStats> {
+        self.step_stats
+    }
+
+    fn resolve(mut self: Box<Self>) -> Result<AudioPcmBatch, Error> {
+        self.pcm.take().ok_or(Error::GenerateFailed)
+    }
+}
+
+struct NanoCodecPendingAudioChunk {
+    inner: Option<crate::audio::nanocodec::runtime::PendingStreamPcmChunk>,
+}
+
+impl PendingAudioChunkBackend for NanoCodecPendingAudioChunk {
+    fn is_ready(&self) -> bool {
+        self.inner.as_ref().is_none_or(|pending| pending.is_ready())
+    }
+
+    fn step_stats(&self) -> Option<AudioDecodeStepStats> {
+        self.inner.as_ref().map(|pending| pending.step_stats())
+    }
+
+    fn resolve(mut self: Box<Self>) -> Result<AudioPcmBatch, Error> {
+        let pending = self.inner.take().ok_or(Error::GenerateFailed)?;
+        pending.resolve().map_err(Error::from)
+    }
+}
+
+struct PendingStreamingChunk {
+    submitted_at: Instant,
+    ready_frames: usize,
+    next_chunk_frames: usize,
+    chunk: Box<dyn PendingAudioChunkBackend>,
 }
 
 #[derive(Clone, Copy)]
@@ -184,19 +249,12 @@ struct FishAudioTextDecoderRuntime {
     max_seq_len: usize,
     scale_codebook_embeddings: bool,
     fast_vocab_limit: usize,
+    repeat_window_size: usize,
     apply_semantic_sampling_mask: bool,
     semantic_sampling_mask_row: Box<[u32]>,
     semantic_sampling_mask_without_im_end_row: Box<[u32]>,
     current_codes_scratch: Vec<u32>,
     instrumentation: RunnerInstrumentation,
-}
-
-#[derive(Debug, Clone)]
-struct TokenDecoderDiagnostics {
-    config: TextDecoderDiagnosticsConfig,
-    cpu_readout_sampling_enabled: bool,
-    cpu_readout_weights: Option<MatrixF32>,
-    pending_trace_step: Option<(usize, usize)>,
 }
 
 struct NanoCodecAudioDecoderBackend {
@@ -258,6 +316,28 @@ impl AudioDecoderStreamBackend for NanoCodecAudioDecoderStream {
         self.runtime.decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)
     }
 
+    fn decode_step_pending(
+        &mut self,
+        new_tokens: &AudioTokenGrid,
+        is_final: bool,
+    ) -> Result<Box<dyn PendingAudioChunkBackend>, Error> {
+        let state = self.state.as_mut().ok_or(Error::GenerateFailed)?;
+        if let Some(pending) =
+            self.runtime.submit_decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?
+        {
+            return Ok(Box::new(NanoCodecPendingAudioChunk {
+                inner: Some(pending),
+            }));
+        }
+
+        let decoded = self.runtime.decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?;
+        let pcm = self.runtime.decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)?;
+        Ok(Box::new(ImmediatePendingAudioChunk {
+            pcm: Some(pcm),
+            step_stats: Some(state.last_step_stats()),
+        }))
+    }
+
     fn last_step_stats(&self) -> Option<AudioDecodeStepStats> {
         self.state.as_ref().map(AudioDecodeStreamState::last_step_stats)
     }
@@ -281,6 +361,7 @@ struct TokenDecoderRunner {
     decoder_config: Rc<crate::config::DecoderConfig>,
     executables: Decoder<Metal>,
     sampler: GpuSampling<Metal>,
+    repetition_penalty: <<Metal as Backend>::Kernels as Kernels>::RepetitionPenaltyKernel,
     kv_cache_update: KVCacheUpdate<Metal>,
     tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
     tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
@@ -289,14 +370,19 @@ struct TokenDecoderRunner {
     async_chain_positions: Rc<<Metal as Backend>::NativeBuffer>,
     async_chain_seeds: Rc<<Metal as Backend>::NativeBuffer>,
     async_chain_results: Rc<<Metal as Backend>::NativeBuffer>,
+    async_chain_repetition_tokens: Rc<<Metal as Backend>::NativeBuffer>,
+    async_chain_repetition_counts: Rc<<Metal as Backend>::NativeBuffer>,
     async_chain_capacity: usize,
+    repetition_capacity: usize,
+    repetition_tokens: ArrayCell<Metal>,
+    repetition_counts: ArrayCell<Metal>,
+    repetition_window_raw: Vec<u32>,
     single_hidden_capture: ArrayCell<Metal>,
     single_override_embedding: ArrayCell<Metal>,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
     two_token_vocab_masks: HashMap<usize, Box<[u32]>>,
     should_fill_attention_bias: bool,
     next_position: usize,
-    diagnostics: TokenDecoderDiagnostics,
     instrumentation: RunnerInstrumentation,
 }
 
@@ -330,6 +416,7 @@ enum EmbeddingInjection {
 struct FishAudioSamplingState {
     rng: StdRng,
     method: SamplingMethod,
+    repetition_penalty: f32,
 }
 
 impl FishAudioSamplingState {
@@ -337,13 +424,14 @@ impl FishAudioSamplingState {
         seed: u64,
         config: &TextSamplingConfig,
     ) -> Self {
-        Self::with_params(seed, config.temperature, config.top_p)
+        Self::with_params(seed, config.temperature, config.top_p, config.repetition_penalty)
     }
 
     fn with_params(
         seed: u64,
         temperature: f32,
         top_p: f32,
+        repetition_penalty: f32,
     ) -> Self {
         let method = if temperature <= 0.0 || top_p <= 0.0 {
             SamplingMethod::Greedy
@@ -353,11 +441,14 @@ impl FishAudioSamplingState {
                 top_k: None,
                 top_p: Some(top_p),
                 min_p: None,
+                repetition_penalty: Some(repetition_penalty),
+                processing_order: SamplingProcessingOrder::FiltersThenTemperature,
             }
         };
         Self {
             rng: StdRng::seed_from_u64(seed),
             method,
+            repetition_penalty,
         }
     }
 
@@ -367,6 +458,14 @@ impl FishAudioSamplingState {
 
     fn next_seed(&mut self) -> u64 {
         self.rng.random::<u64>()
+    }
+
+    fn repetition_penalty(&self) -> f32 {
+        self.repetition_penalty
+    }
+
+    fn uses_repetition_penalty(&self) -> bool {
+        matches!(self.method, SamplingMethod::Stochastic { .. }) && (self.repetition_penalty - 1.0).abs() > 1e-6
     }
 }
 
@@ -450,20 +549,77 @@ impl FishAudioEmbeddingConfigJson {
     }
 }
 
-fn should_enable_bf16_cpu_readout_sampling(
-    diagnostics_config: &TextDecoderDiagnosticsConfig,
-    activation_data_type: DataType,
-    vocab_size: usize,
-) -> bool {
-    let max_vocab = diagnostics_config.bf16_cpu_readout_max_vocab;
-    max_vocab > 0 && activation_data_type == DataType::BF16 && vocab_size <= max_vocab
-}
-
 fn fishaudio_prefill_step_size(
     config: &TextDecoderRuntimeConfig,
     context_length: usize,
 ) -> usize {
     config.prefill_step_size.min(context_length.max(1)).max(1)
+}
+
+fn normalize_rendered_prompt(
+    mut rendered: String,
+    template: &str,
+    drop_initial_newline: bool,
+) -> String {
+    if drop_initial_newline && rendered.starts_with('\n') {
+        rendered.remove(0);
+    }
+    if template.ends_with('\n') && rendered.ends_with('\n') {
+        rendered.pop();
+    }
+    rendered
+}
+
+fn push_recent_token(
+    history: &mut Vec<u32>,
+    token: u32,
+    max_window: usize,
+) {
+    if max_window == 0 {
+        return;
+    }
+    if history.len() == max_window {
+        history.remove(0);
+    }
+    history.push(token);
+}
+
+fn write_repetition_window(
+    destination: &mut [u32],
+    source: &[u32],
+) -> usize {
+    let mut count = 0usize;
+    for &token in source.iter().rev() {
+        if destination[..count].contains(&token) {
+            continue;
+        }
+        if count >= destination.len() {
+            break;
+        }
+        destination[count] = token;
+        count += 1;
+    }
+    count
+}
+
+fn write_repetition_window_tail(
+    destination: &mut [u32],
+    source: &[u32],
+) -> usize {
+    destination.fill(0);
+    let tail = tail_repetition_window(source, destination.len());
+    write_repetition_window(destination, tail)
+}
+
+fn tail_repetition_window(
+    source: &[u32],
+    max_window: usize,
+) -> &[u32] {
+    if source.len() <= max_window {
+        source
+    } else {
+        &source[source.len() - max_window..]
+    }
 }
 
 impl FishAudioGpuPath {
@@ -793,6 +949,94 @@ fn accumulate_audio_decode_step_stats(
     *input_frames = input_frames.saturating_add(step.input_frames);
     *decoded_window_frames = decoded_window_frames.saturating_add(step.decoded_window_frames);
     *max_decoded_window_frames = (*max_decoded_window_frames).max(step.decoded_window_frames);
+}
+
+fn maybe_flush_pending_stream_chunk<F>(
+    pending_chunk: &mut Option<PendingStreamingChunk>,
+    force: bool,
+    count_in_loop: bool,
+    on_chunk: &mut F,
+    callback_seconds: &mut f64,
+    audio_decode_seconds_in_loop: &mut f64,
+    audio_decode_seconds: &mut f64,
+    output_samples: &mut Vec<f32>,
+    output_frames: &mut usize,
+    output_sample_rate: &mut u32,
+    output_channels: &mut usize,
+    emitted_chunks: &mut usize,
+    first_emit_pending: &mut bool,
+    first_chunk_seconds: &mut Option<f64>,
+    first_chunk_frames: &mut usize,
+    stream_start: Instant,
+    startup_target_frames: &mut usize,
+    startup_cap_frames: usize,
+    chunk_controller: &mut AdaptiveChunkController,
+    config: &TtsRunConfig,
+    audio_decode_calls: &mut usize,
+    audio_input_frames: &mut usize,
+    audio_decoded_window_frames: &mut usize,
+    audio_max_decoded_window_frames: &mut usize,
+) -> Result<(), Error>
+where
+    F: FnMut(&AudioPcmBatch),
+{
+    let should_flush = pending_chunk.as_ref().map(|pending| force || pending.chunk.is_ready()).unwrap_or(false);
+    if !should_flush {
+        return Ok(());
+    }
+
+    let pending = pending_chunk.take().ok_or(Error::GenerateFailed)?;
+    accumulate_audio_decode_step_stats(
+        audio_decode_calls,
+        audio_input_frames,
+        audio_decoded_window_frames,
+        audio_max_decoded_window_frames,
+        pending.chunk.step_stats(),
+    );
+    let partial_pcm = pending.chunk.resolve()?;
+    let decode_elapsed = pending.submitted_at.elapsed();
+    if count_in_loop {
+        *audio_decode_seconds_in_loop += decode_elapsed.as_secs_f64();
+    }
+    *audio_decode_seconds += decode_elapsed.as_secs_f64();
+
+    let partial_sample_rate = partial_pcm.sample_rate();
+    let callback_start = Instant::now();
+    let emitted_frames = if partial_pcm.lengths().len() == 1 {
+        partial_pcm.lengths()[0]
+    } else {
+        return Err(Error::GenerateFailed);
+    };
+    if emitted_frames > 0 {
+        on_chunk(&partial_pcm);
+    }
+    *callback_seconds += callback_start.elapsed().as_secs_f64();
+    chunk_controller.observe(pending.ready_frames, decode_elapsed, pending.next_chunk_frames);
+
+    if emitted_frames > 0 {
+        chunk_controller.adapt_up_for_realtime(
+            config,
+            pending.ready_frames,
+            partial_sample_rate,
+            decode_elapsed,
+            emitted_frames,
+        );
+        output_samples.extend_from_slice(partial_pcm.samples());
+        *output_frames = (*output_frames).saturating_add(emitted_frames);
+        *output_sample_rate = partial_pcm.sample_rate();
+        *output_channels = partial_pcm.channels();
+        *emitted_chunks = (*emitted_chunks).saturating_add(1);
+        if *first_emit_pending {
+            *first_emit_pending = false;
+            *first_chunk_seconds = Some(stream_start.elapsed().as_secs_f64());
+            *first_chunk_frames = emitted_frames;
+            chunk_controller.promote_to_max_chunk(config);
+        }
+    } else if *first_emit_pending {
+        *startup_target_frames = next_startup_target_frames(*startup_target_frames, startup_cap_frames);
+    }
+
+    Ok(())
 }
 
 impl SemanticDecoderBackend for StubTextDecoderRuntime {
@@ -1127,6 +1371,7 @@ impl TtsSession {
         let mut output_sample_rate = self.audio_decoder.sample_rate();
         let mut output_channels = 1usize;
         let mut chunk_controller = AdaptiveChunkController::new(config);
+        let mut pending_chunk = None::<PendingStreamingChunk>;
         let mut audio_decode_calls = 0usize;
         let mut audio_input_frames = 0usize;
         let mut audio_decoded_window_frames = 0usize;
@@ -1142,6 +1387,32 @@ impl TtsSession {
             seed,
             config.max_semantic_frames,
             &mut |codes| {
+                maybe_flush_pending_stream_chunk(
+                    &mut pending_chunk,
+                    false,
+                    true,
+                    &mut on_chunk,
+                    &mut callback_seconds,
+                    &mut audio_decode_seconds_in_loop,
+                    &mut audio_decode_seconds,
+                    &mut output_samples,
+                    &mut output_frames,
+                    &mut output_sample_rate,
+                    &mut output_channels,
+                    &mut emitted_chunks,
+                    &mut first_emit_pending,
+                    &mut first_chunk_seconds,
+                    &mut first_chunk_frames,
+                    stream_start,
+                    &mut startup_target_frames,
+                    startup_cap_frames,
+                    &mut chunk_controller,
+                    config,
+                    &mut audio_decode_calls,
+                    &mut audio_input_frames,
+                    &mut audio_decoded_window_frames,
+                    &mut audio_max_decoded_window_frames,
+                )?;
                 streamed_tokens.push_frame(codes)?;
                 let ready_frames = streamed_tokens.frames().saturating_sub(last_decoded_frames);
                 let adaptive_target_frames = chunk_controller.target_frames(config);
@@ -1150,66 +1421,79 @@ impl TtsSession {
                 } else {
                     adaptive_target_frames
                 };
-                if ready_frames >= target_frames {
+                if ready_frames >= target_frames && pending_chunk.is_none() {
                     let decode_start = Instant::now();
                     let partial_grid = streamed_tokens.to_grid_range(last_decoded_frames, streamed_tokens.frames())?;
-                    let partial_pcm = audio_stream.decode_step(&partial_grid, false)?;
-                    accumulate_audio_decode_step_stats(
-                        &mut audio_decode_calls,
-                        &mut audio_input_frames,
-                        &mut audio_decoded_window_frames,
-                        &mut audio_max_decoded_window_frames,
-                        audio_stream.last_step_stats(),
-                    );
-                    let decode_elapsed = decode_start.elapsed();
-                    audio_decode_seconds_in_loop += decode_elapsed.as_secs_f64();
-                    audio_decode_seconds += decode_elapsed.as_secs_f64();
-                    let partial_sample_rate = partial_pcm.sample_rate();
-
-                    let callback_start = Instant::now();
-                    let emitted_frames = if partial_pcm.lengths().len() == 1 {
-                        partial_pcm.lengths()[0]
-                    } else {
-                        return Err(Error::GenerateFailed);
-                    };
-                    if emitted_frames > 0 {
-                        on_chunk(&partial_pcm);
-                    }
-                    callback_seconds += callback_start.elapsed().as_secs_f64();
                     last_decoded_frames = streamed_tokens.frames();
-                    let next_chunk_frames = if first_emit_pending {
+                    let pending_next_chunk_frames = if first_emit_pending {
                         adaptive_target_frames
                     } else {
                         target_frames
                     };
-                    chunk_controller.observe(ready_frames, decode_elapsed, next_chunk_frames);
-                    if emitted_frames > 0 {
-                        chunk_controller.adapt_up_for_realtime(
-                            config,
-                            ready_frames,
-                            partial_sample_rate,
-                            decode_elapsed,
-                            emitted_frames,
-                        );
-                        output_samples.extend_from_slice(partial_pcm.samples());
-                        output_frames = output_frames.saturating_add(emitted_frames);
-                        output_sample_rate = partial_pcm.sample_rate();
-                        output_channels = partial_pcm.channels();
-                        emitted_chunks += 1;
-                        if first_emit_pending {
-                            first_emit_pending = false;
-                            first_chunk_seconds = Some(stream_start.elapsed().as_secs_f64());
-                            first_chunk_frames = emitted_frames;
-                            chunk_controller.promote_to_max_chunk(config);
-                        }
-                    } else if first_emit_pending {
-                        startup_target_frames = next_startup_target_frames(startup_target_frames, startup_cap_frames);
-                    }
+                    pending_chunk = Some(PendingStreamingChunk {
+                        submitted_at: decode_start,
+                        ready_frames,
+                        next_chunk_frames: pending_next_chunk_frames,
+                        chunk: audio_stream.decode_step_pending(&partial_grid, false)?,
+                    });
+                    maybe_flush_pending_stream_chunk(
+                        &mut pending_chunk,
+                        false,
+                        true,
+                        &mut on_chunk,
+                        &mut callback_seconds,
+                        &mut audio_decode_seconds_in_loop,
+                        &mut audio_decode_seconds,
+                        &mut output_samples,
+                        &mut output_frames,
+                        &mut output_sample_rate,
+                        &mut output_channels,
+                        &mut emitted_chunks,
+                        &mut first_emit_pending,
+                        &mut first_chunk_seconds,
+                        &mut first_chunk_frames,
+                        stream_start,
+                        &mut startup_target_frames,
+                        startup_cap_frames,
+                        &mut chunk_controller,
+                        config,
+                        &mut audio_decode_calls,
+                        &mut audio_input_frames,
+                        &mut audio_decoded_window_frames,
+                        &mut audio_max_decoded_window_frames,
+                    )?;
                 }
                 Ok(())
             },
         )?;
         let semantic_loop_seconds = semantic_start.elapsed().as_secs_f64();
+
+        maybe_flush_pending_stream_chunk(
+            &mut pending_chunk,
+            true,
+            false,
+            &mut on_chunk,
+            &mut callback_seconds,
+            &mut audio_decode_seconds_in_loop,
+            &mut audio_decode_seconds,
+            &mut output_samples,
+            &mut output_frames,
+            &mut output_sample_rate,
+            &mut output_channels,
+            &mut emitted_chunks,
+            &mut first_emit_pending,
+            &mut first_chunk_seconds,
+            &mut first_chunk_frames,
+            stream_start,
+            &mut startup_target_frames,
+            startup_cap_frames,
+            &mut chunk_controller,
+            config,
+            &mut audio_decode_calls,
+            &mut audio_input_frames,
+            &mut audio_decoded_window_frames,
+            &mut audio_max_decoded_window_frames,
+        )?;
 
         if last_decoded_frames < semantic_tokens.frames() {
             let final_decode_start = Instant::now();
@@ -1336,17 +1620,13 @@ impl TtsSession {
             .map_err(|_| Error::UnableToLoadPromptTemplate)?;
         let template = environment.get_template(template_name).map_err(|_| Error::UnableToLoadPromptTemplate)?;
 
-        let mut result = template
+        let result = template
             .render(context!(
                 messages => messages
             ))
             .map_err(|_| Error::UnableToRenderPromptTemplate)?;
 
-        if self.drop_initial_newline && result.starts_with('\n') {
-            result.remove(0);
-        }
-
-        Ok(result)
+        Ok(normalize_rendered_prompt(result, self.prompt_template.as_str(), self.drop_initial_newline))
     }
 
     fn generate_semantic_tokens(
@@ -1502,6 +1782,7 @@ fn parse_text_decoder_runtime(
                 "text_decoder.embeddings_slow",
                 "text_decoder.readout_slow",
                 text_decoder_runtime_config,
+                config.repeat_window_size,
             )?;
 
             let fast_runner = if config.num_codebooks > 1 {
@@ -1513,6 +1794,7 @@ fn parse_text_decoder_runtime(
                     "text_decoder.embeddings_fast",
                     "text_decoder.readout_fast",
                     text_decoder_runtime_config,
+                    config.repeat_window_size,
                 )?)
             } else {
                 None
@@ -1575,6 +1857,7 @@ fn parse_text_decoder_runtime(
                 max_seq_len: config.max_seq_len,
                 scale_codebook_embeddings: config.scale_codebook_embeddings,
                 fast_vocab_limit: config.short_logits_size.min(config.codebook_size),
+                repeat_window_size: config.repeat_window_size,
                 apply_semantic_sampling_mask,
                 semantic_sampling_mask_row,
                 semantic_sampling_mask_without_im_end_row: semantic_sampling_mask_without_im_end_row.into_boxed_slice(),
@@ -1698,9 +1981,11 @@ impl FishAudioTextDecoderRuntime {
         if let Some(limit) = self.runtime_config.max_new_tokens_override {
             max_new_tokens = max_new_tokens.min(limit);
         }
-        let trace_semantic_steps = self.runtime_config.diagnostics.trace_semantic_steps;
         let mut by_codebook =
             (0..self.num_codebooks).map(|_| Vec::<u32>::with_capacity(max_new_tokens)).collect::<Vec<_>>();
+        let mut repetition_windows = (0..(self.num_codebooks + 1))
+            .map(|_| Vec::<u32>::with_capacity(self.repeat_window_size))
+            .collect::<Vec<_>>();
         if self.current_codes_scratch.len() != self.num_codebooks {
             self.current_codes_scratch = vec![0_u32; self.num_codebooks];
         }
@@ -1716,10 +2001,11 @@ impl FishAudioTextDecoderRuntime {
             }
         }
 
-        for step in 0..max_new_tokens {
+        for _step in 0..max_new_tokens {
             if current_semantic_token as i64 == self.im_end_token_id {
                 break;
             }
+            let frame_semantic_token = current_semantic_token;
 
             let first_code = semantic_token_to_code(
                 current_semantic_token,
@@ -1759,17 +2045,15 @@ impl FishAudioTextDecoderRuntime {
                 // Match Lalamo's fast decoder ordering exactly: projected slow hidden state is
                 // processed at position 0, then the semantic-derived first code is processed at
                 // position 1 where the first residual token is sampled.
-                fast_runner.prefill_without_sampling_with_pre_injection(
-                    &[0],
+                fast_runner.set_repetition_window(repetition_windows.get(1).map_or(&[], Vec::as_slice))?;
+                let mut fast_token = fast_runner.decode_next_step(
+                    &[0, u64::from(first_code)],
                     EmbeddingInjection::OverrideFirstRowInternal,
-                    Some(&mut pre_projection),
-                )?;
-                fast_runner.set_pending_trace_step(step, 1);
-                let mut fast_token = fast_runner.decode_next_token(
-                    &[u64::from(first_code)],
-                    EmbeddingInjection::None,
                     Some(fast_vocab_limit),
                     &mut sampling,
+                    None,
+                    false,
+                    Some(&mut pre_projection),
                 )?;
                 if self.num_codebooks > 1 {
                     let clamped =
@@ -1791,25 +2075,14 @@ impl FishAudioTextDecoderRuntime {
                         self.current_codes_scratch[codebook_index] = clamped;
                         Ok(())
                     };
-                    let force_sequential_followups = fast_runner.use_cpu_readout_sampling(&sampling)
-                        && matches!(sampling.method(), SamplingMethod::Greedy);
                     match self.runtime_config.followup_strategy {
-                        _ if force_sequential_followups => fast_runner.decode_followup_tokens_sequential(
-                            step,
-                            2,
-                            fast_token,
-                            followup_count,
-                            Some(fast_vocab_limit),
-                            &mut sampling,
-                            &mut record_followup,
-                        )?,
                         TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
-                            step,
                             2,
                             fast_token,
                             followup_count,
                             Some(fast_vocab_limit),
                             &mut sampling,
+                            Some(&repetition_windows),
                             &mut record_followup,
                         )?,
                         TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
@@ -1817,6 +2090,8 @@ impl FishAudioTextDecoderRuntime {
                             followup_count,
                             Some(fast_vocab_limit),
                             &mut sampling,
+                            2,
+                            Some(&repetition_windows),
                             &mut record_followup,
                         )?,
                     }
@@ -1826,13 +2101,6 @@ impl FishAudioTextDecoderRuntime {
             if let Some(callback) = on_frame.as_mut() {
                 callback(&self.current_codes_scratch)?;
             }
-            if trace_semantic_steps {
-                eprintln!(
-                    "fishaudio_semantic_step step={} semantic_token={} codes={:?}",
-                    step, current_semantic_token, self.current_codes_scratch
-                );
-            }
-
             let (slow_runner, gpu_path) = (&mut self.slow_runner, &mut self.gpu_path);
             let current_codes = self.current_codes_scratch.as_slice();
             let num_codebooks = self.num_codebooks;
@@ -1860,7 +2128,7 @@ impl FishAudioTextDecoderRuntime {
             } else {
                 None
             };
-            slow_runner.set_pending_trace_step(step, 0);
+            slow_runner.set_repetition_window(&repetition_windows[0])?;
             current_semantic_token = slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
                 &[current_semantic_token],
                 EmbeddingInjection::AddPreloaded {
@@ -1870,8 +2138,17 @@ impl FishAudioTextDecoderRuntime {
                 slow_sampling_mask,
                 Some(&mut pre_codebook_sum),
             )?;
-            if trace_semantic_steps {
-                eprintln!("fishaudio_semantic_next step={} semantic_token={}", step, current_semantic_token);
+            push_recent_token(
+                &mut repetition_windows[0],
+                u32::try_from(frame_semantic_token).map_err(|_| Error::GenerateFailed)?,
+                self.repeat_window_size,
+            );
+            for codebook_index in 1..=self.num_codebooks {
+                push_recent_token(
+                    &mut repetition_windows[codebook_index],
+                    self.current_codes_scratch[codebook_index - 1],
+                    self.repeat_window_size,
+                );
             }
         }
 
@@ -2172,6 +2449,7 @@ impl TokenDecoderRunner {
         embedding_subtree: &str,
         readout_subtree: &str,
         runtime_config: &TextDecoderRuntimeConfig,
+        repetition_window_size: usize,
     ) -> Result<Self, Error> {
         let command_buffer =
             Rc::new(RefCell::new(context.create_command_buffer().expect("Failed to create command buffer")));
@@ -2182,12 +2460,6 @@ impl TokenDecoderRunner {
         let should_fill_attention_bias =
             model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
         let activation_data_type = model_shape.activation_data_type();
-        let diagnostics_config = &runtime_config.diagnostics;
-        let cpu_readout_sampling_enabled = should_enable_bf16_cpu_readout_sampling(
-            diagnostics_config,
-            activation_data_type,
-            decoder_config.vocab_size,
-        );
 
         let weights_path = model_path.join("model.safetensors");
         let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
@@ -2210,6 +2482,9 @@ impl TokenDecoderRunner {
         let logits_data_type = scratch_buffers.logits.borrow().data_type();
         let sampler =
             GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
+                .map_err(|_| Error::UnableToCreateBackendContext)?;
+        let repetition_penalty =
+            <<Metal as Backend>::Kernels as Kernels>::RepetitionPenaltyKernel::new(context.as_ref(), logits_data_type)
                 .map_err(|_| Error::UnableToCreateBackendContext)?;
         let tensor_copy =
             <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
@@ -2239,6 +2514,25 @@ impl TokenDecoderRunner {
                 .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
                 .map_err(|_| Error::UnableToCreateBackendContext)?,
         );
+        let repetition_capacity = repetition_window_size.max(1);
+        let async_chain_repetition_tokens = Rc::new(
+            context
+                .create_buffer(
+                    async_chain_capacity
+                        .checked_mul(repetition_capacity)
+                        .and_then(|value| value.checked_mul(std::mem::size_of::<u32>()))
+                        .ok_or(Error::UnableToCreateBackendContext)?,
+                )
+                .map_err(|_| Error::UnableToCreateBackendContext)?,
+        );
+        let async_chain_repetition_counts = Rc::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
+                .map_err(|_| Error::UnableToCreateBackendContext)?,
+        );
+        let repetition_tokens =
+            RefCell::new(context.create_array(&[repetition_capacity], DataType::U32, "tts_repetition_tokens"));
+        let repetition_counts = RefCell::new(context.create_array(&[1], DataType::U32, "tts_repetition_counts"));
         let single_hidden_capture = RefCell::new(context.create_array(
             &[1, decoder_config.model_dim],
             activation_data_type,
@@ -2249,16 +2543,6 @@ impl TokenDecoderRunner {
             activation_data_type,
             "tts_single_override_embedding",
         ));
-        let cpu_readout_weights = if diagnostics_config.trace_fast_target.is_some() || cpu_readout_sampling_enabled {
-            Some(load_readout_weights_f32(
-                &weights_path,
-                readout_subtree,
-                decoder_config.vocab_size,
-                decoder_config.model_dim,
-            )?)
-        } else {
-            None
-        };
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -2281,6 +2565,7 @@ impl TokenDecoderRunner {
             decoder_config,
             executables,
             sampler,
+            repetition_penalty,
             kv_cache_update,
             tensor_copy,
             tensor_add_scale,
@@ -2289,19 +2574,19 @@ impl TokenDecoderRunner {
             async_chain_positions,
             async_chain_seeds,
             async_chain_results,
+            async_chain_repetition_tokens,
+            async_chain_repetition_counts,
             async_chain_capacity,
+            repetition_capacity,
+            repetition_tokens,
+            repetition_counts,
+            repetition_window_raw: Vec::with_capacity(repetition_capacity),
             single_hidden_capture,
             single_override_embedding,
             single_token_vocab_masks: HashMap::new(),
             two_token_vocab_masks: HashMap::new(),
             should_fill_attention_bias,
             next_position: 0,
-            diagnostics: TokenDecoderDiagnostics {
-                config: diagnostics_config.clone(),
-                cpu_readout_sampling_enabled,
-                cpu_readout_weights,
-                pending_trace_step: None,
-            },
             instrumentation: RunnerInstrumentation::default(),
         })
     }
@@ -2309,20 +2594,96 @@ impl TokenDecoderRunner {
     fn reset(&mut self) {
         self.cache_layers.borrow_mut().clear();
         self.next_position = 0;
-        self.diagnostics.pending_trace_step = None;
+        self.clear_repetition_window();
     }
 
-    fn set_pending_trace_step(
+    fn clear_repetition_window(&mut self) {
+        self.repetition_window_raw.clear();
+        self.repetition_counts.borrow_mut().as_slice_mut::<u32>()[0] = 0;
+    }
+
+    fn set_repetition_window(
         &mut self,
-        frame_index: usize,
-        codebook_index: usize,
-    ) {
-        self.diagnostics.pending_trace_step = self
-            .diagnostics
-            .config
-            .trace_fast_target
-            .filter(|target| target.frame_index == frame_index && target.codebook_index == codebook_index)
-            .map(|target| (target.frame_index, target.codebook_index));
+        previous_tokens: &[u32],
+    ) -> Result<(), Error> {
+        let mut tokens = self.repetition_tokens.borrow_mut();
+        let raw_window = tail_repetition_window(previous_tokens, tokens.shape()[0]);
+        self.repetition_window_raw.clear();
+        self.repetition_window_raw.extend_from_slice(raw_window);
+        let count = write_repetition_window_tail(tokens.as_slice_mut::<u32>(), previous_tokens);
+        self.repetition_counts.borrow_mut().as_slice_mut::<u32>()[0] =
+            u32::try_from(count).map_err(|_| Error::GenerateFailed)?;
+        Ok(())
+    }
+
+    fn encode_repetition_penalty_if_needed_with_buffers<'tokens, 'counts>(
+        &self,
+        sampling: &FishAudioSamplingState,
+        count: u32,
+        previous_tokens: impl BufferArg<'tokens, <Metal as Backend>::NativeBuffer>,
+        previous_counts: impl BufferArg<'counts, <Metal as Backend>::NativeBuffer>,
+        batch_size: u32,
+        max_previous_tokens: u32,
+    ) -> Result<(), Error> {
+        if !sampling.uses_repetition_penalty() {
+            return Ok(());
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        let logits = self.scratch_buffers.logits.borrow();
+        self.command_buffer.borrow().with_compute_encoder(|encoder| {
+            self.repetition_penalty.encode(
+                logits.buffer(),
+                previous_tokens,
+                previous_counts,
+                batch_size,
+                self.decoder_config.vocab_size as u32,
+                max_previous_tokens,
+                sampling.repetition_penalty(),
+                encoder,
+            );
+        });
+        Ok(())
+    }
+
+    fn encode_repetition_penalty_if_needed(
+        &self,
+        sampling: &FishAudioSamplingState,
+    ) -> Result<(), Error> {
+        let repetition_tokens = self.repetition_tokens.borrow();
+        let repetition_counts = self.repetition_counts.borrow();
+        let count = repetition_counts.as_slice::<u32>()[0];
+        self.encode_repetition_penalty_if_needed_with_buffers(
+            sampling,
+            count,
+            repetition_tokens.buffer(),
+            repetition_counts.buffer(),
+            1_u32,
+            repetition_tokens.shape()[0] as u32,
+        )
+    }
+
+    fn populate_async_chain_repetition_windows(
+        &mut self,
+        repetition_windows: Option<&[Vec<u32>]>,
+        first_codebook_index: usize,
+        followup_count: usize,
+    ) -> Result<(), Error> {
+        let tokens_ptr = self.async_chain_repetition_tokens.cpu_ptr().as_ptr() as *mut u32;
+        let counts_ptr = self.async_chain_repetition_counts.cpu_ptr().as_ptr() as *mut u32;
+        for pass in 0..followup_count {
+            let row = first_codebook_index + pass;
+            let previous_tokens =
+                repetition_windows.and_then(|windows| windows.get(row).map(Vec::as_slice)).unwrap_or(&[]);
+            let slot_offset = pass.checked_mul(self.repetition_capacity).ok_or(Error::GenerateFailed)?;
+            let slot = unsafe { std::slice::from_raw_parts_mut(tokens_ptr.add(slot_offset), self.repetition_capacity) };
+            let count = write_repetition_window_tail(slot, previous_tokens);
+            unsafe {
+                *counts_ptr.add(pass) = u32::try_from(count).map_err(|_| Error::GenerateFailed)?;
+            }
+        }
+        Ok(())
     }
 
     fn prefill_without_sampling(
@@ -2332,7 +2693,7 @@ impl TokenDecoderRunner {
         if token_ids.is_empty() {
             return Ok(());
         }
-        let mut sampling = FishAudioSamplingState::with_params(0, 0.0, 1.0);
+        let mut sampling = FishAudioSamplingState::with_params(0, 0.0, 1.0, 1.0);
         let _ = self.decode_next_step(token_ids, EmbeddingInjection::None, None, &mut sampling, None, false, None)?;
         Ok(())
     }
@@ -2366,20 +2727,6 @@ impl TokenDecoderRunner {
         )
     }
 
-    fn prefill_without_sampling_with_pre_injection(
-        &mut self,
-        token_ids: &[u64],
-        embedding_injection: EmbeddingInjection,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
-    ) -> Result<(), Error> {
-        if token_ids.is_empty() {
-            return Ok(());
-        }
-        let mut sampling = FishAudioSamplingState::with_params(0, 0.0, 1.0);
-        self.decode_next_step(token_ids, embedding_injection, None, &mut sampling, None, false, pre_injection_encode)?;
-        Ok(())
-    }
-
     fn decode_next_token(
         &mut self,
         token_ids: &[u64],
@@ -2396,6 +2743,8 @@ impl TokenDecoderRunner {
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut FishAudioSamplingState,
+        first_codebook_index: usize,
+        repetition_windows: Option<&[Vec<u32>]>,
         mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
     ) -> Result<(), Error> {
         if followup_count == 0 {
@@ -2418,6 +2767,8 @@ impl TokenDecoderRunner {
         } else {
             None
         };
+
+        self.populate_async_chain_repetition_windows(repetition_windows, first_codebook_index, followup_count)?;
 
         {
             let positions_ptr = self.async_chain_positions.cpu_ptr().as_ptr() as *mut i32;
@@ -2486,6 +2837,17 @@ impl TokenDecoderRunner {
             }
             self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
             self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            let count = unsafe { *(self.async_chain_repetition_counts.cpu_ptr().as_ptr() as *const u32).add(pass) };
+            let tokens_offset = pass * self.repetition_capacity * std::mem::size_of::<u32>();
+            let counts_offset = pass * std::mem::size_of::<u32>();
+            self.encode_repetition_penalty_if_needed_with_buffers(
+                sampling,
+                count,
+                (self.async_chain_repetition_tokens.as_ref(), tokens_offset),
+                (self.async_chain_repetition_counts.as_ref(), counts_offset),
+                1_u32,
+                self.repetition_capacity as u32,
+            )?;
             self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
 
             let sampling_output = state.sampling_output().ok_or(Error::GenerateFailed)?;
@@ -2528,16 +2890,21 @@ impl TokenDecoderRunner {
 
     fn decode_followup_tokens_sequential(
         &mut self,
-        frame_index: usize,
         first_codebook_index: usize,
         mut previous_token: u64,
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut FishAudioSamplingState,
+        repetition_windows: Option<&[Vec<u32>]>,
         mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
     ) -> Result<(), Error> {
         for pass in 0..followup_count {
-            self.set_pending_trace_step(frame_index, first_codebook_index + pass);
+            if let Some(windows) = repetition_windows {
+                let row = first_codebook_index + pass;
+                self.set_repetition_window(windows.get(row).map_or(&[], Vec::as_slice))?;
+            } else {
+                self.clear_repetition_window();
+            }
             let sampled = self.decode_next_token(&[previous_token], EmbeddingInjection::None, vocab_limit, sampling)?;
             on_token(pass, sampled)?;
             previous_token = sampled;
@@ -2757,8 +3124,6 @@ impl TokenDecoderRunner {
             if matches!(embedding_injection, EmbeddingInjection::OverrideFirstRowInternal) && capture_hidden {
                 return Err(Error::GenerateFailed);
             }
-            let cpu_readout_sampling = self.use_cpu_readout_sampling(sampling);
-            let encode_gpu_logits = !cpu_readout_sampling || self.diagnostics.config.trace_fast_target.is_some();
             self.command_buffer =
                 Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
             self.executables.embed.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
@@ -2783,10 +3148,9 @@ impl TokenDecoderRunner {
                 self.encode_capture_last_hidden_into_single_buffer(&state, token_count)?;
             }
             self.executables.norm.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-            if encode_gpu_logits {
-                self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-                self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
-            }
+            self.executables.readout.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
+            self.encode_repetition_penalty_if_needed(sampling)?;
+            self.sampler.encode(&mut state, &encoding_parameters, self.command_buffer.borrow().deref());
             self.cache_layers.borrow_mut().update_after_acceptance(
                 accepted_suffix_indices,
                 None,
@@ -2794,106 +3158,11 @@ impl TokenDecoderRunner {
                 &self.kv_cache_update,
             );
             self.submit_and_wait_current_command_buffer();
-            let token = if cpu_readout_sampling {
-                self.sample_token_from_cpu_readout(vocab_limit)?
-            } else {
-                read_sampled_token_from_sampling_output(&state)?
-            };
-            self.emit_pending_trace_step(token, token_ids, positions, vocab_limit)?;
-            self.diagnostics.pending_trace_step = None;
+            let token = read_sampled_token_from_sampling_output(&state)?;
             self.cache_layers.borrow_mut().register_accepted_tokens(positions);
             self.next_position = self.next_position.saturating_add(token_count);
             Ok(token)
         })
-    }
-
-    fn emit_pending_trace_step(
-        &self,
-        sampled_token: u64,
-        token_ids: &[u64],
-        positions: &[usize],
-        vocab_limit: Option<usize>,
-    ) -> Result<(), Error> {
-        let Some(target) = self.diagnostics.config.trace_fast_target else {
-            return Ok(());
-        };
-        let Some((frame_index, codebook_index)) = self.diagnostics.pending_trace_step else {
-            return Ok(());
-        };
-        if target.frame_index != frame_index || target.codebook_index != codebook_index {
-            return Ok(());
-        }
-
-        let logits = self.scratch_buffers.logits.borrow();
-        let vocab_size = self.decoder_config.vocab_size;
-        let available = vocab_limit.unwrap_or(vocab_size).min(vocab_size);
-        if available == 0 {
-            return Err(Error::GenerateFailed);
-        }
-        let logits_row = read_array_prefix_to_f32(&logits, vocab_size)?;
-        let topk = rank_topk_pairs(&logits_row[..available], target.topk);
-        let cpu_topk = self
-            .diagnostics
-            .cpu_readout_weights
-            .as_ref()
-            .map(|weights| {
-                let main = self.scratch_buffers.main.borrow();
-                let hidden = read_array_prefix_to_f32(&main, self.decoder_config.model_dim)?;
-                let mut refined = vec![0.0_f32; available];
-                weights.matmul_prefix_into(&hidden, &mut refined).ok_or(Error::GenerateFailed)?;
-                if let Some(path) = self.diagnostics.config.trace_dump_path.as_ref() {
-                    let payload = serde_json::json!({
-                        "frame_index": frame_index,
-                        "codebook_index": codebook_index,
-                        "position": positions.first().copied().unwrap_or(0),
-                        "input_token": token_ids.first().copied().unwrap_or(0),
-                        "sampled_token": sampled_token,
-                        "hidden": hidden,
-                        "gpu_logits": logits_row[..available].to_vec(),
-                        "cpu_logits": refined,
-                    });
-                    std::fs::write(path, serde_json::to_vec_pretty(&payload).map_err(|_| Error::GenerateFailed)?)
-                        .map_err(|_| Error::GenerateFailed)?;
-                }
-                Ok::<Vec<(usize, f32)>, Error>(rank_topk_pairs(&refined, target.topk))
-            })
-            .transpose()?;
-
-        eprintln!(
-            "fishaudio_fast_trace frame={} codebook={} position={} input_token={} sampled={} topk={:?} cpu_topk={:?}",
-            frame_index,
-            codebook_index,
-            positions.first().copied().unwrap_or(0),
-            token_ids.first().copied().unwrap_or(0),
-            sampled_token,
-            topk,
-            cpu_topk
-        );
-        Ok(())
-    }
-
-    fn use_cpu_readout_sampling(
-        &self,
-        sampling: &FishAudioSamplingState,
-    ) -> bool {
-        self.diagnostics.cpu_readout_sampling_enabled && matches!(sampling.method(), SamplingMethod::Greedy)
-    }
-
-    fn sample_token_from_cpu_readout(
-        &self,
-        vocab_limit: Option<usize>,
-    ) -> Result<u64, Error> {
-        let weights = self.diagnostics.cpu_readout_weights.as_ref().ok_or(Error::GenerateFailed)?;
-        let available = vocab_limit.unwrap_or(self.decoder_config.vocab_size).min(self.decoder_config.vocab_size);
-        if available == 0 {
-            return Err(Error::GenerateFailed);
-        }
-
-        let main = self.scratch_buffers.main.borrow();
-        let hidden = read_array_prefix_to_f32(&main, self.decoder_config.model_dim)?;
-        let mut logits = vec![0.0_f32; available];
-        weights.matmul_prefix_into(&hidden, &mut logits).ok_or(Error::GenerateFailed)?;
-        Ok(argmax_index(&logits) as u64)
     }
 
     fn encode_capture_last_hidden_into_single_buffer(
@@ -3009,21 +3278,6 @@ fn read_sampled_token_from_sampling_output(state: &ForwardPassState<Metal>) -> R
     Ok(u64::from(token))
 }
 
-fn read_array_prefix_to_f32(
-    array: &crate::array::Array<Metal>,
-    len: usize,
-) -> Result<Vec<f32>, Error> {
-    if array.num_elements() < len {
-        return Err(Error::GenerateFailed);
-    }
-    match array.data_type() {
-        DataType::F32 => Ok(array.as_slice::<f32>()[..len].to_vec()),
-        DataType::F16 => Ok(array.as_slice::<f16>()[..len].iter().map(|&value| f32::from(value)).collect()),
-        DataType::BF16 => Ok(array.as_slice::<bf16>()[..len].iter().map(|&value| f32::from(value)).collect()),
-        _ => Err(Error::GenerateFailed),
-    }
-}
-
 fn write_f32_slice_into_array(
     array: &mut crate::array::Array<Metal>,
     values: &[f32],
@@ -3084,59 +3338,6 @@ impl MatrixF32 {
         }
         Some(())
     }
-
-    fn matmul_prefix_into(
-        &self,
-        input: &[f32],
-        output: &mut [f32],
-    ) -> Option<()> {
-        if input.len() != self.cols || output.len() > self.rows {
-            return None;
-        }
-        for (row_index, row) in self.values.chunks_exact(self.cols).take(output.len()).enumerate() {
-            let mut acc = 0.0_f32;
-            for (&w, &x) in row.iter().zip(input.iter()) {
-                acc += w * x;
-            }
-            output[row_index] = acc;
-        }
-        Some(())
-    }
-}
-
-fn rank_topk_pairs(
-    values: &[f32],
-    topk: usize,
-) -> Vec<(usize, f32)> {
-    let mut ranked = values.iter().copied().enumerate().collect::<Vec<_>>();
-    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    ranked.truncate(topk.min(values.len()).max(1));
-    ranked
-}
-
-fn argmax_index(values: &[f32]) -> usize {
-    let mut best_index = 0usize;
-    let mut best_value = f32::NEG_INFINITY;
-    for (index, &value) in values.iter().enumerate() {
-        if value > best_value || (value == best_value && index < best_index) {
-            best_value = value;
-            best_index = index;
-        }
-    }
-    best_index
-}
-
-fn load_readout_weights_f32(
-    weights_path: &Path,
-    readout_subtree: &str,
-    expected_rows: usize,
-    expected_cols: usize,
-) -> Result<MatrixF32, Error> {
-    let primary = format!("{readout_subtree}.weights");
-    load_matrix_f32(weights_path, &primary, expected_rows, expected_cols).or_else(|_| {
-        let fallback = format!("{readout_subtree}.output_weights");
-        load_matrix_f32(weights_path, &fallback, expected_rows, expected_cols)
-    })
 }
 
 fn load_matrix_f32(
@@ -3278,10 +3479,11 @@ fn generate_stub_semantic_grid(
 #[cfg(test)]
 mod tests {
     use super::{
-        AdaptiveChunkController, DEFAULT_CHUNK_EMA_ALPHA, DEFAULT_CHUNK_HYSTERESIS_FRACTION,
-        DEFAULT_STUB_SEED, DEFAULT_TTS_RANDOM_SEED, FishAudioSamplingState, MatrixF32, StreamingTokenAccumulator,
-        build_semantic_sampling_mask_row, clear_token_in_sampling_mask, expand_token_mask_for_sampling_row,
-        generate_stub_tokens, load_stub_seed, semantic_token_to_code,
+        AdaptiveChunkController, DEFAULT_CHUNK_EMA_ALPHA, DEFAULT_CHUNK_HYSTERESIS_FRACTION, DEFAULT_STUB_SEED,
+        DEFAULT_TTS_RANDOM_SEED, FishAudioSamplingState, MatrixF32, StreamingTokenAccumulator,
+        TextDecoderFollowupStrategy, build_semantic_sampling_mask_row, clear_token_in_sampling_mask,
+        expand_token_mask_for_sampling_row, generate_stub_tokens, load_stub_seed, normalize_rendered_prompt,
+        semantic_token_to_code,
     };
     use crate::audio::AudioTokenPacking;
     use crate::session::config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig};
@@ -3330,6 +3532,14 @@ mod tests {
     }
 
     #[test]
+    fn rendered_prompt_drops_template_newlines() {
+        let template = "\n{% for message in messages %}<|{{message.style}}|><|{{message.speaker_id}}|>{{message.content}}{% endfor %}\n";
+        let rendered = "\n<|interleave|><|speaker:0|>hello\n".to_string();
+        let normalized = normalize_rendered_prompt(rendered, template, true);
+        assert_eq!(normalized, "<|interleave|><|speaker:0|>hello");
+    }
+
+    #[test]
     fn expanded_sampling_mask_targets_only_sampling_row() {
         let row_mask = vec![0xFFFF_0000u32, 0x0000_FFFFu32];
         let expanded = expand_token_mask_for_sampling_row(&row_mask, 3).expect("expanded");
@@ -3345,8 +3555,10 @@ mod tests {
         assert_eq!(DEFAULT_TTS_RANDOM_SEED, 123);
         assert_eq!(config.min_frames_before_im_end, 8);
         assert_eq!(config.prefill_step_size, 128);
+        assert_eq!(config.followup_strategy, TextDecoderFollowupStrategy::AsyncChain);
         assert_eq!(config.sampling.temperature, 0.8008);
         assert_eq!(config.sampling.top_p, 0.8008);
+        assert_eq!(config.sampling.repetition_penalty, 1.1);
     }
 
     #[test]
@@ -3370,13 +3582,13 @@ mod tests {
 
     #[test]
     fn fishaudio_sampling_top_p_zero_switches_to_greedy() {
-        let sampler = FishAudioSamplingState::with_params(999, 0.8, 0.0);
+        let sampler = FishAudioSamplingState::with_params(999, 0.8, 0.0, 1.1);
         assert_eq!(sampler.method(), SamplingMethod::Greedy);
     }
 
     #[test]
     fn fishaudio_sampling_positive_top_p_uses_stochastic_mode() {
-        let sampler = FishAudioSamplingState::with_params(999, 0.8, 0.8);
+        let sampler = FishAudioSamplingState::with_params(999, 0.8, 0.8, 1.1);
         assert!(matches!(sampler.method(), SamplingMethod::Stochastic { .. }));
     }
 
