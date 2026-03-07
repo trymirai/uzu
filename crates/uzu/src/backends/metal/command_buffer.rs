@@ -67,7 +67,7 @@ impl CommandBuffer for Retained<ProtocolObject<dyn MTLCommandBuffer>> {
     }
 
     fn gpu_execution_time_ms(&self) -> Option<f64> {
-        match (self.kernel_start_time(), self.kernel_end_time()) {
+        match (self.gpu_start_time(), self.gpu_end_time()) {
             (Some(start), Some(end)) => Some((end - start) * 1000.0),
             _ => None,
         }

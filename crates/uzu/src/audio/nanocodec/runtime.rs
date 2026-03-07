@@ -1,4 +1,13 @@
-use std::{cell::RefCell, collections::HashMap, fs::File, os::unix::fs::FileExt, path::Path, rc::Rc, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fs::File,
+    os::unix::fs::FileExt,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::{Arc, RwLock},
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use half::{bf16, f16};
 use serde::Deserialize;
@@ -37,6 +46,8 @@ use crate::{
     },
     parameters::{ParameterLoader, read_safetensors_metadata},
 };
+
+type MetalCommandBuffer = <Metal as Backend>::CommandBuffer;
 
 fn checked_product(values: &[usize]) -> AudioResult<usize> {
     values
@@ -115,6 +126,9 @@ fn scale_lengths_i32_in_place(
 pub struct NanoCodecFsqRuntimeOptions {
     pub profile_enabled: bool,
     pub profile_ops_enabled: bool,
+    pub collect_command_buffer_profile: bool,
+    pub profile_decoder_micro_stages: bool,
+    pub capture_single_decode: bool,
     pub chunked_command_buffers: bool,
     pub micro_flush_min_elements: usize,
 }
@@ -124,10 +138,145 @@ impl Default for NanoCodecFsqRuntimeOptions {
         Self {
             profile_enabled: false,
             profile_ops_enabled: false,
+            collect_command_buffer_profile: false,
+            profile_decoder_micro_stages: false,
+            capture_single_decode: false,
             chunked_command_buffers: true,
             micro_flush_min_elements: 8_000_000,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioCommandBufferProfile {
+    pub label: String,
+    pub cpu_encode_ms: f64,
+    pub cpu_wait_ms: f64,
+    pub gpu_execution_ms: Option<f64>,
+    pub estimated_macs: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AudioDecodeProfile {
+    pub batch_size: usize,
+    pub frames: usize,
+    pub codebooks: usize,
+    pub command_buffers: Vec<AudioCommandBufferProfile>,
+    pub readback_cpu_ms: f64,
+    pub trace_path: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct PendingAudioCommandBufferProfile {
+    label: String,
+    cpu_encode_ms: f64,
+    cpu_wait_ms: f64,
+    command_buffer: MetalCommandBuffer,
+    estimated_macs: Option<usize>,
+}
+
+struct AudioCaptureGuard {
+    context: Rc<<Metal as Backend>::Context>,
+    trace_path: PathBuf,
+    active: bool,
+}
+
+impl AudioCaptureGuard {
+    fn start() -> AudioResult<Self> {
+        <Metal as Backend>::Context::enable_capture();
+        let context = <Metal as Backend>::Context::new()
+            .map_err(|err| AudioError::Runtime(format!("failed to create capture context: {err}")))?;
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).map_err(|err| AudioError::Runtime(err.to_string()))?;
+        let trace_path = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(format!("uzu_audio_decode-{}.gputrace", timestamp.as_secs()));
+        context
+            .start_capture(&trace_path)
+            .map_err(|err| AudioError::Runtime(format!("failed to start audio GPU capture: {err}")))?;
+        Ok(Self {
+            context,
+            trace_path,
+            active: true,
+        })
+    }
+
+    fn context(&self) -> Rc<<Metal as Backend>::Context> {
+        Rc::clone(&self.context)
+    }
+
+    fn stop(&mut self) -> AudioResult<PathBuf> {
+        if self.active {
+            self.context
+                .stop_capture()
+                .map_err(|err| AudioError::Runtime(format!("failed to stop audio GPU capture: {err}")))?;
+            self.active = false;
+        }
+        Ok(self.trace_path.clone())
+    }
+}
+
+impl Drop for AudioCaptureGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = self.context.stop_capture();
+            self.active = false;
+        }
+    }
+}
+
+fn push_audio_command_buffer_profile(
+    profile: &mut Option<AudioDecodeProfile>,
+    label: impl Into<String>,
+    command_buffer: &MetalCommandBuffer,
+    cpu_encode_ms: f64,
+    cpu_wait_ms: f64,
+    estimated_macs: Option<usize>,
+) {
+    if let Some(profile) = profile.as_mut() {
+        profile.command_buffers.push(AudioCommandBufferProfile {
+            label: label.into(),
+            cpu_encode_ms,
+            cpu_wait_ms,
+            gpu_execution_ms: command_buffer.gpu_execution_time_ms(),
+            estimated_macs,
+        });
+    }
+}
+
+fn checked_add_usize(a: usize, b: usize, label: &str) -> AudioResult<usize> {
+    a.checked_add(b)
+        .ok_or_else(|| AudioError::Runtime(format!("{label} overflow")))
+}
+
+fn conv1d_estimated_macs(batch_size: usize, seq_len: usize, layer: &FishAudioConv1dGpuLayer) -> AudioResult<usize> {
+    let cin_per_group = layer
+        .cin
+        .checked_div(layer.groups)
+        .ok_or_else(|| AudioError::Runtime("invalid grouped conv channel count".to_string()))?;
+    checked_product(&[batch_size, seq_len, layer.cout, cin_per_group, layer.kernel_size])
+}
+
+fn convtranspose_estimated_macs(
+    batch_size: usize,
+    seq_len_in: usize,
+    layer: &FishAudioConvTranspose1dGpuLayer,
+) -> AudioResult<usize> {
+    let cout_per_group = layer
+        .cout
+        .checked_div(layer.groups)
+        .ok_or_else(|| AudioError::Runtime("invalid grouped transpose-conv channel count".to_string()))?;
+    checked_product(&[batch_size, seq_len_in, layer.cin, cout_per_group, layer.kernel_size])
+}
+
+fn residual_unit_estimated_macs(
+    batch_size: usize,
+    seq_len: usize,
+    unit: &FishAudioResidualUnitGpuLayer,
+) -> AudioResult<usize> {
+    let conv1 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv1)?;
+    let conv2 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv2)?;
+    checked_add_usize(conv1, conv2, "residual-unit estimated MACs")
 }
 
 fn fishaudio_dtype_key(data_type: DataType) -> u8 {
@@ -2950,6 +3099,7 @@ impl FishAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
+        profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<Metal>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
@@ -3016,6 +3166,7 @@ impl FishAudioCodecGraph {
         let semantic_cardinality_i32 = usize_to_i32(quantizer_resources.semantic_cardinality, "semantic_cardinality")?;
         let residual_cardinality_i32 = usize_to_i32(quantizer_resources.residual_cardinality, "residual_cardinality")?;
 
+        let encode_start = profile.is_some().then(Instant::now);
         let command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create quantizer command buffer: {err}")))?;
@@ -3041,8 +3192,12 @@ impl FishAudioCodecGraph {
                 compute_encoder,
             );
         });
+        let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         command_buffer.submit();
+        let wait_start = profile.is_some().then(Instant::now);
         command_buffer.wait_until_completed();
+        let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        push_audio_command_buffer_profile(profile, "quantizer", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
         Ok(output)
     }
@@ -3056,8 +3211,16 @@ impl FishAudioCodecGraph {
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<Vec<f32>> {
-        let output =
-            self.decode_quantizer_to_nsc_array_on_context(context, tokens, lengths, batch_size, codebooks, frames)?;
+        let mut profile = None;
+        let output = self.decode_quantizer_to_nsc_array_on_context(
+            context,
+            tokens,
+            lengths,
+            batch_size,
+            codebooks,
+            frames,
+            &mut profile,
+        )?;
         read_array_to_f32_vec(&output)
     }
 
@@ -3670,6 +3833,7 @@ impl FishAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         latent_nsc: &Array<Metal>,
         frames: usize,
+        profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<Metal>> {
         if self.post_module_model_dim != self.input_dim {
             return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
@@ -3724,6 +3888,7 @@ impl FishAudioCodecGraph {
             .num_elements()
             .checked_mul(latent_nsc.data_type().size_in_bytes())
             .ok_or(AudioError::Runtime("post_module copy size overflow".to_string()))?;
+        let encode_start = profile.is_some().then(Instant::now);
         let command_buffer = runtime
             .context
             .create_command_buffer()
@@ -3732,8 +3897,12 @@ impl FishAudioCodecGraph {
             copy_encoder.encode_copy(latent_nsc.buffer(), main_output.buffer(), copy_bytes);
         });
         Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
+        let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         command_buffer.submit();
+        let wait_start = profile.is_some().then(Instant::now);
         command_buffer.wait_until_completed();
+        let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        push_audio_command_buffer_profile(profile, "post_module", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
         Ok(main_output)
     }
@@ -3745,6 +3914,7 @@ impl FishAudioCodecGraph {
         lengths: &[usize],
         batch_size: usize,
         frames: usize,
+        profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<Metal>> {
         if self.post_module_model_dim != self.input_dim {
             return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
@@ -3763,7 +3933,7 @@ impl FishAudioCodecGraph {
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_gpu_on_array_single_batch(context, latent_nsc, frames);
+            return self.apply_post_module_gpu_on_array_single_batch(context, latent_nsc, frames, profile);
         }
 
         let mut output = context.create_array(
@@ -3819,13 +3989,25 @@ impl FishAudioCodecGraph {
                 main.copy_from_array(&source);
             }
 
+            let encode_start = profile.is_some().then(Instant::now);
             let command_buffer = runtime
                 .context
                 .create_command_buffer()
                 .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
             Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
+            let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             command_buffer.submit();
+            let wait_start = profile.is_some().then(Instant::now);
             command_buffer.wait_until_completed();
+            let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+            push_audio_command_buffer_profile(
+                profile,
+                format!("post_module_batch_{batch_index}"),
+                &command_buffer,
+                cpu_encode_ms,
+                cpu_wait_ms,
+                None,
+            );
 
             let main = state.arrays(&[ArrayId::Main])[0].clone();
             let main = main.borrow();
@@ -3882,8 +4064,10 @@ impl FishAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+    ) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
         let profile_enabled = runtime_options.profile_enabled;
+        let collect_command_buffer_profile =
+            runtime_options.collect_command_buffer_profile || runtime_options.capture_single_decode;
         let decode_start: Option<Instant> = if profile_enabled {
             Some(Instant::now())
         } else {
@@ -3898,12 +4082,15 @@ impl FishAudioCodecGraph {
                         .ok_or(AudioError::Runtime("FishAudio length scaling overflow".to_string()))
                 })
                 .collect::<AudioResult<Vec<_>>>()?;
-            return Ok(super::decoder::DecodedPaddedAudio {
-                samples: Vec::new(),
-                channels: 1,
-                frames: out_lengths.iter().copied().max().unwrap_or(0),
-                lengths: out_lengths,
-            });
+            return Ok((
+                super::decoder::DecodedPaddedAudio {
+                    samples: Vec::new(),
+                    channels: 1,
+                    frames: out_lengths.iter().copied().max().unwrap_or(0),
+                    lengths: out_lengths,
+                },
+                None,
+            ));
         }
 
         let mut lengths_i32 = lengths
@@ -3912,7 +4099,22 @@ impl FishAudioCodecGraph {
                 i32::try_from(length).map_err(|_| AudioError::Runtime("FishAudio length exceeds i32 range".to_string()))
             })
             .collect::<AudioResult<Vec<_>>>()?;
-        let context = self.decode_context()?;
+        let mut decode_profile = collect_command_buffer_profile.then(|| AudioDecodeProfile {
+            batch_size,
+            frames,
+            codebooks,
+            ..AudioDecodeProfile::default()
+        });
+        let mut capture = if runtime_options.capture_single_decode {
+            Some(AudioCaptureGuard::start()?)
+        } else {
+            None
+        };
+        let context = if let Some(capture) = capture.as_ref() {
+            capture.context()
+        } else {
+            self.decode_context()?
+        };
 
         let quantizer_start: Option<Instant> = if profile_enabled {
             Some(Instant::now())
@@ -3924,8 +4126,15 @@ impl FishAudioCodecGraph {
         let post_module_s;
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
-        let quantized_nsc =
-            self.decode_quantizer_to_nsc_array_on_context(&context, tokens, lengths, batch_size, codebooks, frames)?;
+        let quantized_nsc = self.decode_quantizer_to_nsc_array_on_context(
+            &context,
+            tokens,
+            lengths,
+            batch_size,
+            codebooks,
+            frames,
+            &mut decode_profile,
+        )?;
         quantizer_s = quantizer_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
 
         let post_module_start: Option<Instant> = if profile_enabled {
@@ -3934,9 +4143,9 @@ impl FishAudioCodecGraph {
             None
         };
         x = if can_use_gpu_latent_path {
-            self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames)?
+            self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames, &mut decode_profile)?
         } else {
-            self.apply_post_module_gpu_on_array(&context, &quantized_nsc, lengths, batch_size, frames)?
+            self.apply_post_module_gpu_on_array(&context, &quantized_nsc, lengths, batch_size, frames, &mut decode_profile)?
         };
         post_module_s = post_module_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
 
@@ -3950,25 +4159,43 @@ impl FishAudioCodecGraph {
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
         let profile_ops_enabled = runtime_options.profile_ops_enabled;
+        let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
         let chunked_command_buffers = runtime_options.chunked_command_buffers;
         let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
+        let mut submitted_command_buffers = Vec::<PendingAudioCommandBufferProfile>::new();
+        let mut command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
         let mut profile_stages = Vec::<(String, f64)>::new();
         let mut profile_stage_start: Option<Instant> = profile_ops_enabled.then(Instant::now);
         let mut flush_stage =
-            |label: String, command_buffer: &mut <Metal as Backend>::CommandBuffer| -> AudioResult<()> {
-                if !(profile_ops_enabled || chunked_command_buffers) {
+            |label: String, estimated_macs: Option<usize>, command_buffer: &mut MetalCommandBuffer| -> AudioResult<()> {
+                if !(profile_ops_enabled || chunked_command_buffers || profile_decoder_micro_stages) {
                     return Ok(());
                 }
+                let cpu_encode_ms =
+                    command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
                 command_buffer.submit();
+                let mut cpu_wait_ms = 0.0;
                 if profile_ops_enabled {
+                    let wait_start = Instant::now();
                     command_buffer.wait_until_completed();
+                    cpu_wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
                     if let Some(start) = profile_stage_start.replace(Instant::now()) {
-                        profile_stages.push((label, start.elapsed().as_secs_f64()));
+                        profile_stages.push((label.clone(), start.elapsed().as_secs_f64()));
                     }
+                }
+                if decode_profile.is_some() {
+                    submitted_command_buffers.push(PendingAudioCommandBufferProfile {
+                        label,
+                        cpu_encode_ms,
+                        cpu_wait_ms,
+                        command_buffer: command_buffer.clone(),
+                        estimated_macs,
+                    });
                 }
                 *command_buffer = context.create_command_buffer().map_err(|err| {
                     AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}"))
                 })?;
+                command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
                 Ok(())
             };
         let mut current_channels = self.input_dim;
@@ -4028,7 +4255,7 @@ impl FishAudioCodecGraph {
                 .map_err(|err| {
                     AudioError::Runtime(format!("FishAudio upsample block {block_index} convnext failed: {err}"))
                 })?;
-            flush_stage(format!("upsample_block_{block_index}"), &mut command_buffer)?;
+            flush_stage(format!("upsample_block_{block_index}"), None, &mut command_buffer)?;
 
             x_layout = SequenceLayout::Ncs;
             current_frames = next_frames;
@@ -4047,7 +4274,7 @@ impl FishAudioCodecGraph {
                 current_channels,
             )?;
             x_layout = SequenceLayout::Ncs;
-            flush_stage("upsample_to_decoder_layout".to_string(), &mut command_buffer)?;
+            flush_stage("upsample_to_decoder_layout".to_string(), None, &mut command_buffer)?;
         }
         debug_assert_eq!(x_layout, SequenceLayout::Ncs);
 
@@ -4068,7 +4295,11 @@ impl FishAudioCodecGraph {
             current_frames,
         )?;
         current_channels = vocoder_graph.first_conv.cout;
-        flush_stage("decoder_first_conv".to_string(), &mut command_buffer)?;
+        flush_stage(
+            "decoder_first_conv".to_string(),
+            Some(conv1d_estimated_macs(batch_size, current_frames, &vocoder_graph.first_conv)?),
+            &mut command_buffer,
+        )?;
 
         for (block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
             if block.trans_conv.cin != current_channels {
@@ -4105,6 +4336,7 @@ impl FishAudioCodecGraph {
                 SequenceLayout::Ncs,
                 &next_lengths_array,
             )?;
+            let trans_conv_estimated_macs = convtranspose_estimated_macs(batch_size, current_frames, &block.trans_conv)?;
 
             current_frames = next_frames;
             current_channels = block.trans_conv.cout;
@@ -4114,6 +4346,26 @@ impl FishAudioCodecGraph {
                 .checked_mul(current_channels)
                 .and_then(|value| value.checked_mul(current_frames))
                 .ok_or(AudioError::Runtime("FishAudio decoder element count overflow".to_string()))?;
+            let res1_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit1)?;
+            let res2_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit2)?;
+            let res3_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit3)?;
+            let block_total_estimated_macs = checked_add_usize(
+                checked_add_usize(
+                    checked_add_usize(trans_conv_estimated_macs, res1_estimated_macs, "decoder block estimated MACs")?,
+                    res2_estimated_macs,
+                    "decoder block estimated MACs",
+                )?,
+                res3_estimated_macs,
+                "decoder block estimated MACs",
+            )?;
+
+            if profile_decoder_micro_stages {
+                flush_stage(
+                    format!("decoder_block_{block_index}_trans_conv"),
+                    Some(trans_conv_estimated_macs),
+                    &mut command_buffer,
+                )?;
+            }
 
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -4126,8 +4378,22 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
-            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
-                flush_stage(format!("decoder_block_{block_index}_res1"), &mut command_buffer)?;
+            if profile_decoder_micro_stages {
+                flush_stage(
+                    format!("decoder_block_{block_index}_res1"),
+                    Some(res1_estimated_macs),
+                    &mut command_buffer,
+                )?;
+            } else if chunked_command_buffers && active_elements >= micro_flush_min_elements {
+                flush_stage(
+                    format!("decoder_block_{block_index}_res1"),
+                    Some(checked_add_usize(
+                        trans_conv_estimated_macs,
+                        res1_estimated_macs,
+                        "decoder block res1 estimated MACs",
+                    )?),
+                    &mut command_buffer,
+                )?;
             }
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -4140,8 +4406,12 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
-            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
-                flush_stage(format!("decoder_block_{block_index}_res2"), &mut command_buffer)?;
+            if profile_decoder_micro_stages || (chunked_command_buffers && active_elements >= micro_flush_min_elements) {
+                flush_stage(
+                    format!("decoder_block_{block_index}_res2"),
+                    Some(res2_estimated_macs),
+                    &mut command_buffer,
+                )?;
             }
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -4154,7 +4424,19 @@ impl FishAudioCodecGraph {
                 current_channels,
                 current_frames,
             )?;
-            flush_stage(format!("decoder_block_{block_index}"), &mut command_buffer)?;
+            flush_stage(
+                if profile_decoder_micro_stages {
+                    format!("decoder_block_{block_index}_res3")
+                } else {
+                    format!("decoder_block_{block_index}")
+                },
+                Some(if profile_decoder_micro_stages {
+                    res3_estimated_macs
+                } else {
+                    block_total_estimated_macs
+                }),
+                &mut command_buffer,
+            )?;
         }
 
         x = snake1d_enqueue(
@@ -4179,12 +4461,47 @@ impl FishAudioCodecGraph {
         x = tanh_enqueue(&context, &command_buffer, &x)?;
 
         if profile_ops_enabled {
-            flush_stage("decoder_final".to_string(), &mut command_buffer)?;
+            flush_stage("decoder_final".to_string(), None, &mut command_buffer)?;
         } else {
+            let cpu_encode_ms =
+                command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             command_buffer.submit();
+            let wait_start = decode_profile.is_some().then(Instant::now);
             command_buffer.wait_until_completed();
+            let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+            if decode_profile.is_some() {
+                submitted_command_buffers.push(PendingAudioCommandBufferProfile {
+                    label: "decoder_final".to_string(),
+                    cpu_encode_ms,
+                    cpu_wait_ms,
+                    command_buffer: command_buffer.clone(),
+                    estimated_macs: None,
+                });
+            }
         }
+        if let Some(capture) = capture.as_mut() {
+            let trace_path = capture.stop()?;
+            if let Some(profile) = decode_profile.as_mut() {
+                profile.trace_path = Some(trace_path);
+            }
+        }
+        if let Some(profile) = decode_profile.as_mut() {
+            for pending in submitted_command_buffers.drain(..) {
+                profile.command_buffers.push(AudioCommandBufferProfile {
+                    label: pending.label,
+                    cpu_encode_ms: pending.cpu_encode_ms,
+                    cpu_wait_ms: pending.cpu_wait_ms,
+                    gpu_execution_ms: pending.command_buffer.gpu_execution_time_ms(),
+                    estimated_macs: pending.estimated_macs,
+                });
+            }
+        }
+        let readback_start = decode_profile.is_some().then(Instant::now);
         let x = read_array_to_f32_vec(&x)?;
+        if let Some(profile) = decode_profile.as_mut() {
+            profile.readback_cpu_ms =
+                readback_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        }
 
         let out_lengths = lengths_i32
             .into_iter()
@@ -4194,12 +4511,15 @@ impl FishAudioCodecGraph {
             })
             .collect::<AudioResult<Vec<_>>>()?;
 
-        let result = Ok(super::decoder::DecodedPaddedAudio {
-            samples: x,
-            channels: vocoder_graph.final_conv.cout,
-            frames: current_frames,
-            lengths: out_lengths,
-        });
+        let result = Ok((
+            super::decoder::DecodedPaddedAudio {
+                samples: x,
+                channels: vocoder_graph.final_conv.cout,
+                frames: current_frames,
+                lengths: out_lengths,
+            },
+            decode_profile,
+        ));
 
         if profile_enabled {
             let vocoder_s = vocoder_start.map(|start| start.elapsed().as_secs_f64()).unwrap_or(0.0);
@@ -4214,7 +4534,6 @@ impl FishAudioCodecGraph {
                 eprintln!("fishaudio_profile_stage stage={} s={:.3}", stage, seconds);
             }
         }
-
         result
     }
 }
@@ -4432,6 +4751,7 @@ impl NanoCodecFsqRuntimeConfig {
 pub struct NanoCodecFsqRuntime {
     config: NanoCodecFsqRuntimeConfig,
     options: NanoCodecFsqRuntimeOptions,
+    last_decode_profile: Arc<RwLock<Option<AudioDecodeProfile>>>,
 }
 
 impl NanoCodecFsqRuntime {
@@ -4443,9 +4763,13 @@ impl NanoCodecFsqRuntime {
         config: NanoCodecFsqRuntimeConfig,
         options: NanoCodecFsqRuntimeOptions,
     ) -> Self {
+        if options.capture_single_decode {
+            <Metal as Backend>::Context::enable_capture();
+        }
         Self {
             config,
             options,
+            last_decode_profile: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -4477,6 +4801,10 @@ impl NanoCodecFsqRuntime {
 
     pub fn options(&self) -> NanoCodecFsqRuntimeOptions {
         self.options
+    }
+
+    pub fn last_decode_profile(&self) -> Option<AudioDecodeProfile> {
+        self.last_decode_profile.read().ok().and_then(|profile| profile.as_ref().cloned())
     }
 
     fn validate_fishaudio_token_delta(
@@ -4543,7 +4871,7 @@ impl NanoCodecFsqRuntime {
         let batch_size = state.batch_size;
         let codebooks = state.codebooks;
         let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
-        let decoded_window = fishaudio.decode_padded(
+        let (decoded_window, decode_profile) = fishaudio.decode_padded(
             self.options,
             window_tokens,
             window_lengths,
@@ -4551,6 +4879,9 @@ impl NanoCodecFsqRuntime {
             codebooks,
             window_frames,
         )?;
+        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
+            *last_decode_profile = decode_profile;
+        }
         let audio_offset_frames = window_start
             .checked_mul(fishaudio.upsample_factor)
             .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;
@@ -4788,6 +5119,9 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         &self,
         tokens: &AudioTokenGrid,
     ) -> AudioResult<AudioPcmBatch> {
+        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
+            *last_decode_profile = None;
+        }
         if tokens.codebooks() != self.config.num_groups() {
             return Err(AudioError::Runtime(format!(
                 "token codebook mismatch: expected {}, got {}",
@@ -4865,7 +5199,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
                     }
                 }
             }
-            let decoded = fishaudio.decode_padded(
+            let (decoded, decode_profile) = fishaudio.decode_padded(
                 self.options,
                 codebook_major.tokens(),
                 &lengths_usize,
@@ -4873,6 +5207,9 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
                 codebook_major.codebooks(),
                 frames,
             )?;
+            if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
+                *last_decode_profile = decode_profile;
+            }
             let samples =
                 unpack_padded_to_pcm(&decoded.samples, batch_size, decoded.channels, decoded.frames, &decoded.lengths)?;
             return AudioPcmBatch::new(
