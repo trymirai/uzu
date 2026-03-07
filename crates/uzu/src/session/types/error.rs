@@ -4,8 +4,12 @@ use crate::classifier::ClassifierError;
 pub enum Error {
     #[error("Model folder not found")]
     ModelFolderNotFound,
-    #[error("Unable to create Backend context")]
-    UnableToCreateBackendContext,
+    #[error("Unable to open any backend")]
+    UnableToOpenAnyBackend,
+    #[error("Unable to create Context: {0}")]
+    UnableToCreateContext(Box<dyn std::error::Error>),
+    #[error("Unable to create CommandBuffer: {0}")]
+    UnableToCreateCommandBuffer(Box<dyn std::error::Error>),
     #[error("Unable to load model configuration")]
     UnableToLoadConfig,
     #[error("Unable to load model weights")]

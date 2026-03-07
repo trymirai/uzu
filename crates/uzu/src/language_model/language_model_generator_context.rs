@@ -9,7 +9,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Buffer, CommandBuffer, CommandBufferInitial, Context, Kernels,
+        Backend, Buffer, Context, Kernels,
         kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
@@ -122,7 +122,6 @@ impl<B: Backend> AsyncBuffers<B> {
 
 pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -150,8 +149,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
-        let command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -198,23 +196,23 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
         let kv_cache_update = Box::new(
             KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
-                .map_err(|_| Error::UnableToCreateBackendContext)?,
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?,
         );
 
         let gpu_sampler =
             Sampling::<B>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(|_| Error::UnableToCreateBackendContext)?;
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
-            .map_err(|_| Error::UnableToCreateBackendContext)?;
+            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
         let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(&context)
-            .map_err(|_| Error::UnableToCreateBackendContext)?;
+            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
                 <B::Kernels as Kernels>::MaskUpdateKernel::new(&context, intermediate_data_type)
-                    .map_err(|_| Error::UnableToCreateBackendContext)?,
+                    .map_err(|e| Error::UnableToCreateContext(e.into()))?,
             )
         } else {
             None
@@ -227,7 +225,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
 
         let context = Self {
             context,
-            command_buffer,
             cache_layers,
             shared_buffers,
             scratch_buffers,
@@ -245,12 +242,5 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         };
 
         Ok(context)
-    }
-
-    pub fn replace_command_buffer(&mut self) -> <B::CommandBuffer as CommandBuffer>::Encoding {
-        std::mem::replace(
-            &mut self.command_buffer,
-            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
-        )
     }
 }

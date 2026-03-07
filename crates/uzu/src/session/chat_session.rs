@@ -65,7 +65,7 @@ impl ChatSession {
         model_path: PathBuf,
         decoding_config: DecodingConfig,
     ) -> Result<Self, Error> {
-        select_backend!(Self::new_with_backend::<B>(model_path, decoding_config), Error::UnableToCreateBackendContext)
+        select_backend!(Self::new_with_backend::<B>(model_path, decoding_config), Error::UnableToOpenAnyBackend)
     }
 
     pub fn new_with_backend<B: Backend>(

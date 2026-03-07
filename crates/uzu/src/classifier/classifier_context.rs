@@ -2,7 +2,7 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer, CommandBufferInitial, Context, Kernels, kernel::SigmoidKernel},
+    backends::common::{Backend, Context, Kernels, kernel::SigmoidKernel},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::{
@@ -20,7 +20,6 @@ use crate::{
 
 pub struct ClassifierContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
     pub scratch_buffers: ScratchBuffers<B>,
@@ -43,10 +42,7 @@ pub struct ClassifierContext<B: Backend> {
 
 impl<B: Backend> ClassifierContext<B> {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
-
-        let command_buffer =
-            context.create_command_buffer().map_err(|_| Error::UnableToCreateBackendContext)?.start_encoding();
+        let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -254,7 +250,7 @@ impl<B: Backend> ClassifierContext<B> {
 
         let sigmoid_kernel = <B::Kernels as Kernels>::SigmoidKernel::new(&context, data_type.into()).map_err(|e| {
             eprintln!("Failed to create sigmoid kernel: {:?}", e);
-            Error::UnableToCreateBackendContext
+            Error::UnableToCreateContext(e.into())
         })?;
 
         let pooling = Box::new(
@@ -266,7 +262,7 @@ impl<B: Backend> ClassifierContext<B> {
             )
             .map_err(|e| {
                 eprintln!("Failed to create pooling: {:?}", e);
-                Error::UnableToCreateBackendContext
+                Error::UnableToCreateContext(e.into())
             })?,
         );
 
@@ -282,7 +278,6 @@ impl<B: Backend> ClassifierContext<B> {
 
         Ok(Self {
             context,
-            command_buffer,
             shared_buffers,
             scratch_buffers,
             model_config: classifier_model_config.clone(),
@@ -309,12 +304,5 @@ impl<B: Backend> ClassifierContext<B> {
                 .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?,
         );
         Ok(Rc::new(rotation))
-    }
-
-    pub fn replace_command_buffer(&mut self) -> <B::CommandBuffer as CommandBuffer>::Encoding {
-        std::mem::replace(
-            &mut self.command_buffer,
-            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
-        )
     }
 }

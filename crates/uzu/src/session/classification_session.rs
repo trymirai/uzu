@@ -24,7 +24,7 @@ pub struct ClassificationSession {
 
 impl ClassificationSession {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
-        select_backend!(Self::new_with_backend::<B>(model_path), Error::UnableToCreateBackendContext)
+        select_backend!(Self::new_with_backend::<B>(model_path), Error::UnableToOpenAnyBackend)
     }
 
     pub fn new_with_backend<B: Backend>(model_path: PathBuf) -> Result<Self, Error> {
