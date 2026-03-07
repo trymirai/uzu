@@ -23,8 +23,27 @@ fn format_output(output: Output) -> String {
     };
 
     let style_stats = Style::new().bold();
-    let stats_info = style_stats.apply_to(format!("{:.3}s, {:.3}t/s", stats.total_stats.duration, tokens_per_second,));
 
+    let acceptance_info = if let Some(generate_stats) = &stats.generate_stats {
+        if generate_stats.speculator_proposed > 0 {
+            let acceptance_rate = generate_stats.speculator_accepted as f64 / generate_stats.speculator_proposed as f64;
+            format!(
+                ", speculation-rate: {:.0}/{:.0} ({:.0}%)",
+                generate_stats.speculator_accepted,
+                generate_stats.speculator_proposed,
+                acceptance_rate * 100.0
+            )
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let stats_info = style_stats.apply_to(format!(
+        "time: {:.3}s, speed: {:.3}t/s, tokens: {}{}",
+        stats.total_stats.duration, tokens_per_second, stats.total_stats.tokens_count_output, acceptance_info
+    ));
     let result = format!("{}\n\n{}", output.text.original, stats_info,);
     result
 }
@@ -36,6 +55,7 @@ pub fn handle_run(
     seed: Option<u64>,
     speculator: Option<String>,
     mut message: Option<String>,
+    no_thinking: bool,
 ) {
     let mut session = load_session(model_path, prefill_step_size, seed, speculator);
 
@@ -96,7 +116,7 @@ pub fn handle_run(
 
         let session_output = match session.run(
             Input::Text(input.to_string()),
-            RunConfig::new(tokens_limit as u64, true, SamplingPolicy::Default, None),
+            RunConfig::new(tokens_limit as u64, !no_thinking, SamplingPolicy::Default, None),
             Some(session_progress),
         ) {
             Ok(output) => output,

@@ -396,6 +396,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let speculator_proposed = active_suffix_length.saturating_sub(1);
+        let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 
         self.update_cache_layers(&accepted_token_indices, None, false)?;
 
@@ -405,6 +407,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         Ok(GenerateResult {
             tokens: accepted_tokens,
             forwardpass_duration: run_time,
+            speculator_proposed,
+            speculator_accepted,
         })
     }
 

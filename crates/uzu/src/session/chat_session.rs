@@ -470,6 +470,8 @@ impl ChatSession {
                 results.push(GenerateResult {
                     tokens: vec![token],
                     forwardpass_duration: duration,
+                    speculator_proposed: 0,
+                    speculator_accepted: 0,
                 });
                 durations.push(duration);
 
@@ -634,14 +636,15 @@ impl ChatSession {
                     average_duration: model_run_average_duration,
                 },
                 run: None,
+                speculator_proposed: 0,
+                speculator_accepted: 0,
             }
         };
 
         let generate_stats: Option<StepStats>;
         if generate_results.len() != 0 {
             let duration = generate_durations.iter().sum::<f64>();
-            let tokens_count =
-                generate_results.iter().flat_map(|result| result.tokens.clone()).collect::<Vec<u64>>().len();
+            let tokens_count: usize = generate_results.iter().map(|result| result.tokens.len()).sum();
             let tokens_per_second: f64 = tokens_count as f64 / duration;
 
             let model_run_count = generate_results.len();
@@ -650,6 +653,9 @@ impl ChatSession {
 
             let run_count = generate_durations.len();
             let run_average_duration = generate_durations.iter().sum::<f64>() / run_count as f64;
+
+            let speculator_proposed: usize = generate_results.iter().map(|result| result.speculator_proposed).sum();
+            let speculator_accepted: usize = generate_results.iter().map(|result| result.speculator_accepted).sum();
 
             generate_stats = Some(StepStats {
                 duration,
@@ -665,6 +671,8 @@ impl ChatSession {
                     count: run_count as u64,
                     average_duration: run_average_duration,
                 }),
+                speculator_proposed: speculator_proposed as u64,
+                speculator_accepted: speculator_accepted as u64,
             });
         } else {
             generate_stats = None;

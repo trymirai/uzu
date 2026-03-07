@@ -130,6 +130,8 @@ fn zero_stats() -> Stats {
                 average_duration: 0.0,
             },
             run: None,
+            speculator_proposed: 0,
+            speculator_accepted: 0,
         },
         generate_stats: None,
         total_stats: TotalStats {

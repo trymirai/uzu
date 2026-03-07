@@ -8,4 +8,6 @@ pub struct PrefillResult {
 pub struct GenerateResult {
     pub tokens: Vec<u64>,
     pub forwardpass_duration: f64,
+    pub speculator_proposed: usize,
+    pub speculator_accepted: usize,
 }
