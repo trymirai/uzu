@@ -64,12 +64,12 @@ fn dispatch_path_name(descriptor: &MatmulDispatchDescriptor) -> &'static str {
     }
 }
 
-fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]) {
     if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
         let path = std::path::Path::new(&dir);
         std::fs::create_dir_all(path).expect("create results dir");
         let file = path.join(format!("{test_name}.json"));
-        let wrapper = serde_json::json!({ "device": device, "mpp_available": mpp, "results": results });
+        let wrapper = serde_json::json!({ "device": device, "results": results });
         let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
         std::fs::write(&file, json).expect("write results");
         eprintln!("Results written to {}", file.display());
@@ -292,8 +292,6 @@ fn print_results_table(results: &[TestResult]) {
 fn matmul_correctness() {
     let ctx = MetalContext::new().expect("Metal context required");
 
-    eprintln!("MPP available: {}", ctx.is_mpp_available());
-
     let combos = vec![
         DtypeCombo { a_dtype: DataType::BF16, b_dtype: DataType::BF16, output_dtype: DataType::BF16 },
         DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::I8, output_dtype: DataType::I32 },
@@ -322,7 +320,7 @@ fn matmul_correctness() {
 
     pb.finish_with_message("done");
     print_results_table(&results);
-    write_json_results("matmul_correctness", &ctx.device.name(), ctx.is_mpp_available(), &results);
+    write_json_results("matmul_correctness", &ctx.device.name(), &results);
 
     let failures: Vec<_> = results.iter().filter(|r| !r.passed).collect();
     if !failures.is_empty() {

@@ -22,8 +22,6 @@ use shapes::test_shapes;
 fn matmul_perf() {
     let context = MetalContext::new().expect("Metal context required");
 
-    eprintln!("MPP available: {}", context.is_mpp_available());
-
     let dtype_combos = test_combos();
     let test_shapes = test_shapes();
 
@@ -69,7 +67,7 @@ fn matmul_perf() {
 
     progress_bar.finish_with_message("done");
     print_results_table(&results);
-    write_json_results("matmul_perf", &context.device.name(), context.is_mpp_available(), &results);
+    write_json_results("matmul_perf", &context.device.name(), &results);
 
     let error_results: Vec<_> = results.iter().filter(|r| r.status != "ok").collect();
     if !error_results.is_empty() {

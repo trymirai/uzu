@@ -164,10 +164,6 @@ impl DeviceArchitecture {
         }
     }
 
-    pub fn is_mpp_available(&self) -> bool {
-        self.generation.generation_number() >= 18
-    }
-
     pub fn is_high_performance(&self) -> bool {
         self.tier.is_high_performance()
     }
@@ -182,10 +178,6 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
-    pub fn is_mpp_available(&self) -> bool {
-        self.architecture.is_mpp_available()
-    }
-
     pub fn is_high_performance(&self) -> bool {
         self.architecture.is_high_performance()
     }

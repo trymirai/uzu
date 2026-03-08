@@ -21,7 +21,7 @@ impl Specialization {
         let prefer_half_or_tf32 = !is_float32 || context.tf32_enabled();
 
         let (block_rows, block_cols, block_depth, warps_per_row, warps_per_col, swizzle_log2) =
-            if context.is_mpp_available() && prefer_half_or_tf32 {
+            if prefer_half_or_tf32 {
                 let tile_rows = (arguments.batch + 128 - 1) / 128;
                 let swizzle_log2 = if tile_rows <= 3 {
                     0

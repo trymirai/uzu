@@ -71,12 +71,12 @@ fn quant_dispatch_path(batch: usize, output_dim: usize) -> &'static str {
     if batch < 32 || output_dim == 1 { "MatrixVector" } else { "MatrixMatrix" }
 }
 
-fn write_json_results<T: Serialize>(test_name: &str, device: &str, mpp: bool, results: &[T]) {
+fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]) {
     if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
         let path = std::path::Path::new(&dir);
         std::fs::create_dir_all(path).expect("create results dir");
         let file = path.join(format!("{test_name}.json"));
-        let wrapper = serde_json::json!({ "device": device, "mpp_available": mpp, "results": results });
+        let wrapper = serde_json::json!({ "device": device, "results": results });
         let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
         std::fs::write(&file, json).expect("write results");
         eprintln!("Results written to {}", file.display());
@@ -346,7 +346,7 @@ fn quant_matmul_perf() {
 
     pb.finish_with_message("done");
     print_results_table(&results);
-    write_json_results("quant_matmul_perf", &ctx.device.name(), ctx.is_mpp_available(), &results);
+    write_json_results("quant_matmul_perf", &ctx.device.name(), &results);
 
     let errors: Vec<_> = results.iter().filter(|r| r.status != "ok").collect();
     if !errors.is_empty() {
