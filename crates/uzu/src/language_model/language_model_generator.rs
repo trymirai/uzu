@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    collections::HashMap,
     iter::repeat_n,
     ops::{Deref, DerefMut, Range},
     path::Path,
@@ -33,7 +34,7 @@ use crate::{
         parameter::{ConfigResolvableValue, ResolvableValue, SamplingMethod},
         types::Error,
     },
-    trie::{TrieCreationConfig, TrieNode},
+    trie::TrieNode,
 };
 
 #[derive(Debug, Clone)]
@@ -161,7 +162,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
-            &TrieCreationConfig::default(),
+            &speculator.trie_creation_config(),
             suffix_length + 1,
         );
         let flat_trie = suffix_root.linearize();
@@ -339,7 +340,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
-            &TrieCreationConfig::default(),
+            &speculator.trie_creation_config(),
             suffix_length,
         );
 
@@ -970,5 +971,167 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let has_speculative_suffix = self.decoding_config.generate_suffix_length() > 1;
 
         has_sliding_window || has_speculative_suffix
+    }
+
+    /// Single GPU pass: updates KV cache for `prefix` and returns top-k logits for `query`.
+    ///
+    /// Replaces two-pass `prefill(prefix)` + `get_multi_logits(query)`, saving one round-trip.
+    /// After the pass: KV is updated for `prefix` only, `self.tokens` is extended with `prefix`.
+    ///
+    /// Caller must ensure `prefix.len() + query.len() <= self.generate_suffix_length()`.
+    pub fn extend_kv_and_get_logits(
+        &mut self,
+        prefix: &[u64],
+        query: &[u64],
+        top_k: usize,
+    ) -> Vec<HashMap<u64, f32>> {
+        debug_assert!(!prefix.is_empty(), "prefix must be non-empty; use get_multi_logits for empty prefix");
+        debug_assert!(!query.is_empty(), "query must be non-empty");
+
+        let cache_len = self.tokens.len();
+        let total_len = prefix.len() + query.len();
+
+        let mut token_ids: Vec<u64> = Vec::with_capacity(total_len);
+        token_ids.extend_from_slice(prefix);
+        token_ids.extend_from_slice(query);
+
+        let token_positions: Vec<usize> = (cache_len..cache_len + total_len).collect();
+        let token_seeds: Vec<u64> = vec![0u64; total_len];
+
+        let task = Task {
+            token_ids: &token_ids,
+            token_positions: &token_positions,
+            token_bitmask: None,
+            token_seeds: &token_seeds,
+            expected_number_of_new_tokens: total_len,
+            active_suffix_length: total_len,
+            sampling_start: 0,
+            sampling_length: total_len,
+            is_prefilling: false,
+        };
+
+        // Causal mask required whenever processing more than 1 token.
+        let fill_bias = total_len > 1 || self.should_fill_attention_bias();
+
+        let (state, _) = self.run_model(task, false, false, SamplingMethod::default(), fill_bias).unwrap();
+
+        // Update KV cache for prefix positions only (not query — those are speculative).
+        let prefix_indices: Vec<usize> = (0..prefix.len()).collect();
+        self.update_cache_layers(&prefix_indices, None, true).unwrap();
+
+        // Register prefix positions as accepted in cache layer metadata.
+        let prefix_positions: Vec<usize> = (cache_len..cache_len + prefix.len()).collect();
+        self.context.cache_layers.borrow_mut().register_accepted_tokens(&prefix_positions);
+        self.registered_prefix_len = cache_len + prefix.len();
+
+        // Extend self.tokens with prefix (mirrors what prefill does for KV-cache-only steps).
+        self.tokens.extend_from_slice(prefix);
+
+        self.read_logits_rows(&state, prefix.len(), query.len(), top_k)
+    }
+
+    /// Forward pass over `extra_tokens` without modifying `self.tokens` or the KV cache.
+    /// Returns top-`top_k` probabilities per position.
+    pub fn get_multi_logits(
+        &mut self,
+        extra_tokens: &[u64],
+        top_k: usize,
+    ) -> Vec<HashMap<u64, f32>> {
+        let n = extra_tokens.len();
+        if n == 0 {
+            return Vec::new();
+        }
+
+        let start_pos = self.tokens.len();
+        let token_positions: Vec<usize> = (start_pos..start_pos + n).collect();
+        let token_seeds: Vec<u64> = vec![0u64; n];
+
+        let task = Task {
+            token_ids: extra_tokens,
+            token_positions: &token_positions,
+            token_bitmask: None,
+            token_seeds: &token_seeds,
+            expected_number_of_new_tokens: n,
+            active_suffix_length: n,
+            sampling_start: 0,
+            // sampling_length must be > 0 for the readout kernel to populate the logits buffer.
+            // We use n so that all positions get logits computed; we read them directly and
+            // ignore the GPU sampling output.
+            sampling_length: n,
+            is_prefilling: false,
+        };
+
+        // Always fill attention bias for multi-token decode (causal mask required).
+        let fill_bias = n > 1 || self.should_fill_attention_bias();
+
+        let (state, _) = self.run_model(task, false, false, SamplingMethod::default(), fill_bias).unwrap();
+
+        self.read_logits_rows(&state, 0, n, top_k)
+    }
+
+    /// Read `n` rows of logits from the GPU buffer starting at `row_offset`,
+    /// returning the top-`top_k` token probabilities for each position.
+    fn read_logits_rows(
+        &self,
+        state: &ForwardPassState<B>,
+        row_offset: usize,
+        n: usize,
+        top_k: usize,
+    ) -> Vec<HashMap<u64, f32>> {
+        let vocab_size = self.context.model_shape.logits_shape(1)[1];
+        let logits_borrow = state.llm_state().logits.borrow();
+        let data_type = logits_borrow.data_type();
+        let elem_size = data_type.size_in_bytes();
+        let raw_bytes = logits_borrow.as_bytes();
+
+        let mut result = Vec::with_capacity(n);
+        for pos in 0..n {
+            let offset = (row_offset + pos) * vocab_size * elem_size;
+            let row_bytes = &raw_bytes[offset..offset + vocab_size * elem_size];
+
+            let f32_logits: Vec<f32> = match data_type {
+                crate::DataType::F32 => bytemuck::cast_slice::<u8, f32>(row_bytes).to_vec(),
+                crate::DataType::F16 => {
+                    bytemuck::cast_slice::<u8, half::f16>(row_bytes).iter().map(|&x| half::f16::to_f32(x)).collect()
+                },
+                crate::DataType::BF16 => {
+                    bytemuck::cast_slice::<u8, half::bf16>(row_bytes).iter().map(|&x| half::bf16::to_f32(x)).collect()
+                },
+                dt => panic!("Unsupported logits data type: {dt:?}"),
+            };
+
+            result.push(logits_to_top_k_probs(f32_logits, top_k));
+        }
+
+        result
+    }
+}
+
+/// Convert a full-vocabulary logit vector into a top-k softmax probability map.
+///
+/// `speculator_sample` expects `HashMap<u64, f32>` where values are probabilities
+/// (it applies `ln(v)` before adding Gumbel noise, matching the GPU kernel which
+/// applies Gumbel noise to raw logits, i.e. `logit + g = ln(softmax) + const + g`).
+fn logits_to_top_k_probs(
+    f32_logits: Vec<f32>,
+    top_k: usize,
+) -> HashMap<u64, f32> {
+    let vocab_size = f32_logits.len();
+
+    // Numerically stable softmax: subtract max before exp.
+    let max_logit = f32_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let sum_exp: f32 = f32_logits.iter().map(|&l| (l - max_logit).exp()).sum();
+    let log_sum_exp = max_logit + sum_exp.ln();
+
+    // Partial selection to find top-k by logit value in O(V) average time.
+    let effective_k = top_k.min(vocab_size);
+    let mut indexed: Vec<(u64, f32)> = f32_logits.into_iter().enumerate().map(|(i, v)| (i as u64, v)).collect();
+
+    if effective_k < indexed.len() {
+        let kth = indexed.len() - effective_k;
+        indexed.select_nth_unstable_by(kth, |a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        indexed[kth..].iter().map(|&(tok, logit)| (tok, (logit - log_sum_exp).exp())).collect()
+    } else {
+        indexed.into_iter().map(|(tok, logit)| (tok, (logit - log_sum_exp).exp())).collect()
     }
 }

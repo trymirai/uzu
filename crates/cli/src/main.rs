@@ -1,5 +1,8 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use cli::handlers::{handle_bench, handle_run, handle_serve};
+use cli::{
+    handlers::{handle_bench, handle_run, handle_serve},
+    speculator_args::SpeculatorArgs,
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -15,17 +18,17 @@ enum Commands {
         model_path: String,
         /// Prefill step size
         prefill_step_size: Option<usize>,
-        // Seed
+        /// Seed
         #[arg(long)]
         seed: Option<u64>,
-        // Speculator
-        #[arg(long)]
-        speculator: Option<String>,
         /// Non-interactive mode: run a single message and exit
         #[arg(long, short)]
         message: Option<String>,
         #[arg(long, short)]
+        /// Disable thinking mode
         no_thinking: bool,
+        #[command(flatten)]
+        speculator_args: SpeculatorArgs,
     },
     /// Start a server with the specified model path
     Serve {
@@ -33,6 +36,8 @@ enum Commands {
         model_path: String,
         /// Prefill step size
         prefill_step_size: Option<usize>,
+        #[command(flatten)]
+        speculator_args: SpeculatorArgs,
     },
     /// Run benchmarks for the specified model
     Bench {
@@ -53,17 +58,18 @@ fn main() {
             model_path,
             prefill_step_size,
             seed,
-            speculator,
             message,
             no_thinking,
+            speculator_args,
         }) => {
-            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking);
+            handle_run(model_path, 2048, prefill_step_size, seed, message, no_thinking, speculator_args);
         },
         Some(Commands::Serve {
             model_path,
             prefill_step_size,
+            speculator_args,
         }) => {
-            handle_serve(model_path, prefill_step_size);
+            handle_serve(model_path, prefill_step_size, speculator_args);
         },
         Some(Commands::Bench {
             model_path,

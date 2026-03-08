@@ -6,7 +6,7 @@ use std::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
-    prelude::{SamplingSeed, SpeculatorConfig},
+    prelude::SamplingSeed,
     session::{
         Session,
         config::{DecodingConfig, RunConfig},
@@ -14,6 +14,8 @@ use uzu::{
         types::{Error, Input, Output},
     },
 };
+
+use crate::speculator_args::SpeculatorArgs;
 
 pub trait RunSession {
     fn run(
@@ -59,7 +61,7 @@ pub fn load_session(
     model_path: String,
     prefill_step_size: Option<usize>,
     seed: Option<u64>,
-    speculator: Option<String>,
+    speculator_args: SpeculatorArgs,
 ) -> Session {
     let style_bold = Style::new().bold();
 
@@ -71,12 +73,10 @@ pub fn load_session(
     progress_bar.set_style(ProgressStyle::default_spinner().template("{spinner:.green} Loading: {msg}").unwrap());
     progress_bar.set_message(model_name.clone());
 
-    let prefill_step_size_config: PrefillStepSize;
-    if let Some(value) = prefill_step_size {
-        prefill_step_size_config = PrefillStepSize::Custom(value);
-    } else {
-        prefill_step_size_config = PrefillStepSize::Default;
-    }
+    let prefill_step_size_config = match prefill_step_size {
+        Some(value) => PrefillStepSize::Custom(value),
+        None => PrefillStepSize::Default,
+    };
 
     let decoding_config = DecodingConfig::default()
         .with_prefill_step_size(prefill_step_size_config)
@@ -84,22 +84,7 @@ pub fn load_session(
             Some(seed) => SamplingSeed::Custom(seed),
             None => SamplingSeed::Default,
         })
-        .with_speculator_config(match speculator {
-            Some(speculator) => {
-                let (speculator, number_of_speculated_tokens) =
-                    speculator.split_once(':').unwrap_or((&speculator, "1"));
-
-                let number_of_speculated_tokens = number_of_speculated_tokens.parse().unwrap();
-
-                let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load(speculator));
-
-                SpeculatorConfig {
-                    number_of_speculated_tokens,
-                    speculator,
-                }
-            },
-            None => SpeculatorConfig::default(),
-        });
+        .with_speculator_config(speculator_args.build_speculator_config(&model_path_buf));
     let session = Session::new(model_path_buf, decoding_config).expect("Failed to create session");
 
     progress_bar.set_style(ProgressStyle::default_spinner().template("Loaded: {msg}").unwrap());

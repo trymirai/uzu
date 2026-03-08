@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use log::LevelFilter;
 use rocket::{Config, config::LogLevel, log::private as log, routes};
 
-use crate::server::{SessionState, SessionWrapper, handle_chat_completions, handle_models, load_session};
+use crate::{
+    server::{SessionState, SessionWrapper, handle_chat_completions, handle_models, load_session},
+    speculator_args::SpeculatorArgs,
+};
 
 struct SilentLogger;
 static SILENT_LOGGER: SilentLogger = SilentLogger;
@@ -26,6 +29,7 @@ impl log::Log for SilentLogger {
 pub async fn run_server(
     model_path: String,
     prefill_step_size: Option<usize>,
+    speculator_args: SpeculatorArgs,
 ) {
     // Install the silent logger **before** Rocket initializes its own logger.
     let _ = log::set_logger(&SILENT_LOGGER).map(|_| log::set_max_level(LevelFilter::Off));
@@ -43,7 +47,7 @@ pub async fn run_server(
     println!("🌐 Server will be available at: http://localhost:{}", config.port);
     println!("📝 Endpoints:\n   POST /chat/completions - Chat completions API\n");
 
-    let session = load_session(model_path, prefill_step_size, None, None);
+    let session = load_session(model_path, prefill_step_size, None, speculator_args);
     let state = SessionState {
         model_name,
         session_wrapper: std::sync::Arc::new(SessionWrapper::new(session)),

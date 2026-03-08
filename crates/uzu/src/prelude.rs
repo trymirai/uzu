@@ -20,6 +20,9 @@ pub use crate::{
             Error, FinishReason, Input, Message, Output, ParsedText, Role, RunStats, Stats, StepStats, Text, TotalStats,
         },
     },
-    speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
+    speculators::{
+        empty_speculator::EmptySpeculator, neural_speculator::NeuralSpeculator, ngram_speculator::NGramSpeculator,
+        speculator::Speculator,
+    },
     storage_path,
 };
