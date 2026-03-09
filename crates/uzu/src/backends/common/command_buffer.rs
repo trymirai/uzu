@@ -80,5 +80,6 @@ pub trait CommandBufferPending {
 pub trait CommandBufferCompleted {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
-    fn gpu_execution_time(&self) -> Duration;
+    /// Returns GPU execution time.
+    fn gpu_execution_time(&self) -> Option<Duration>;
 }

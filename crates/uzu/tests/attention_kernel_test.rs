@@ -1198,16 +1198,29 @@ fn perf_two_pass_attention() {
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    let gpu_elapsed = completed.gpu_execution_time();
-    println!(
-        "Two-pass attention perf (heads={}, prefix={}, suffix={}, head_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
-        num_heads,
-        seq_len - suffix_length,
-        suffix_length,
-        head_dim,
-        gpu_elapsed.as_secs_f64() * 1e3,
-        host_elapsed_ms
-    );
+    match completed.gpu_execution_time() {
+        Some(gpu_time) => {
+            println!(
+                "Two-pass attention perf (heads={}, prefix={}, suffix={}, head_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
+                num_heads,
+                seq_len - suffix_length,
+                suffix_length,
+                head_dim,
+                gpu_time.as_secs_f64() * 1e3,
+                host_elapsed_ms
+            );
+        },
+        None => {
+            println!(
+                "Two-pass attention perf (heads={}, prefix={}, suffix={}, head_dim={}): Host-side={:.2} ms (GPU timing unavailable)",
+                num_heads,
+                seq_len - suffix_length,
+                suffix_length,
+                head_dim,
+                host_elapsed_ms
+            );
+        },
+    }
 
     // ---- Sanity check ----
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;

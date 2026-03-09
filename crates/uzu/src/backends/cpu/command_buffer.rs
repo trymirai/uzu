@@ -121,9 +121,7 @@ impl CommandBufferExecutable for CpuCommandBuffer {
             command()
         }
 
-        self.gpu_execution_time
-            .set(Instant::now() - start)
-            .expect("gpu execution time already set");
+        self.gpu_execution_time.set(Instant::now() - start).expect("gpu execution time already set");
 
         for completion_handler in self.completion_handlers.drain(..).collect::<Vec<_>>() {
             completion_handler(Ok(&self));
@@ -148,7 +146,7 @@ impl CommandBufferPending for CpuCommandBuffer {
 impl CommandBufferCompleted for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn gpu_execution_time(&self) -> Duration {
-        self.gpu_execution_time.get().copied().unwrap_or_default()
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        self.gpu_execution_time.get().copied()
     }
 }
