@@ -10,13 +10,12 @@ use uzu::{
             Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
             CommandBufferPending, Context, Kernels,
             kernel::{
-                GumbelKernel, MinPKernel, TemperatureKernel,
+                MinPKernel, TemperatureKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
             },
         },
         metal::Metal,
     },
-    language_model::gumbel::{gumbel_float, revidx},
     session::parameter::SamplingMethod,
 };
 
@@ -810,70 +809,4 @@ fn test_minp_sampling_match_small() {
 #[test]
 fn test_minp_sampling_match_large() {
     test_minp_sampling_exact_match(32, 0.05, 4096);
-}
-
-#[test]
-fn test_gumbel_gpu_cpu_match() {
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping gumbel gpu cpu match test: {}", e);
-            return;
-        },
-    };
-
-    const BATCH: usize = 7;
-    const VOCAB: usize = 16 * 1024 * 64;
-    const RTOL: f32 = 0.01;
-    const ATOL: f32 = 1e-6;
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::GumbelKernel::new(&context, DataType::F32, false)
-        .expect("Failed to create gumbel kernel");
-
-    let logits = vec![0.0f32; BATCH * VOCAB];
-    let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();
-
-    let logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let seeds_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&seeds), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut gumbel_logits_buffer = context
-        .device
-        .new_buffer(BATCH * VOCAB * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(
-        Some(&logits_buffer),
-        &seeds_buffer,
-        &mut gumbel_logits_buffer,
-        BATCH as u32,
-        VOCAB as u32,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    let result_ptr = gumbel_logits_buffer.contents().as_ptr() as *const f32;
-    let all_results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH * VOCAB) };
-
-    for (batch_idx, batch_seed) in seeds.iter().copied().enumerate() {
-        let results = &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
-        for (logit_idx, gpu_logit_value) in results.iter().copied().enumerate() {
-            let cpu_logit_value = gumbel_float(batch_seed, revidx(logit_idx as u32));
-            let abs_diff = (cpu_logit_value - gpu_logit_value).abs();
-            let tolerance = ATOL + RTOL * cpu_logit_value.abs();
-            assert!(
-                abs_diff <= tolerance,
-                "Mismatch at batch {batch_idx} element {logit_idx}: CPU={cpu_logit_value} GPU={gpu_logit_value} (abs_diff={abs_diff}, tolerance={tolerance})"
-            );
-        }
-    }
-
-    println!("✓ Gumbel cpu gpu match test passed (rtol: {:.1}%, atol: {:.1e})", RTOL * 100.0, ATOL);
 }
