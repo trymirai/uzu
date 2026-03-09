@@ -80,5 +80,9 @@ pub trait CommandBufferPending {
 pub trait CommandBufferCompleted {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
-    fn gpu_execution_time_ms(&self) -> Option<f64>;
+    /// Returns kernel execution time in milliseconds.
+    fn kernel_execution_time(&self) -> Option<f64>;
+
+    /// Returns GPU execution time in milliseconds.
+    fn gpu_execution_time(&self) -> Option<f64>;
 }

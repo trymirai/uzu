@@ -478,7 +478,7 @@ fn perf_topp_128k_vocab() {
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
+    let gpu_elapsed_ms = completed.gpu_execution_time();
 
     match gpu_elapsed_ms {
         Some(gpu_time) => {
@@ -573,7 +573,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
+    let gpu_elapsed_ms = completed.gpu_execution_time();
 
     match gpu_elapsed_ms {
         Some(gpu_time) => {
@@ -930,7 +930,7 @@ fn perf_categorical_128k_vocab() {
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
+    let gpu_elapsed_ms = completed.gpu_execution_time();
 
     match gpu_elapsed_ms {
         Some(gpu_time) => {

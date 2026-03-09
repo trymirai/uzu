@@ -1199,7 +1199,7 @@ fn perf_two_pass_attention() {
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
+    let gpu_elapsed_ms = completed.gpu_execution_time();
 
     match gpu_elapsed_ms {
         Some(gpu_time) => {
