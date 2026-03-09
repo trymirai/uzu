@@ -2,7 +2,7 @@ use std::ops::DerefMut;
 
 use super::{
     MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
-    gemm_mixed_types_simple::GemmMixedTypesSimpleKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments, split_k::SplitKKernel,
+    gemm_mixed_types_simple::GemmMixedTypesSimpleKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments,
 };
 use crate::{
     DataType,
@@ -34,7 +34,6 @@ pub struct MatmulKernel<B: Backend> {
     pub(crate) output_dtype: DataType,
     gemm: Option<GemmKernel<B>>,
     gemv: Option<GemvKernel<B>>,
-    splitk: Option<SplitKKernel<B>>,
     gemm_mpp: Option<GemmMppKernel<B>>,
     gemm_mixed_types_simple: Option<GemmMixedTypesSimpleKernel<B>>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
@@ -60,7 +59,6 @@ impl<B: Backend> MatmulKernel<B> {
             output_dtype,
             gemm: None,
             gemv: None,
-            splitk: None,
             gemm_mpp: None,
             gemm_mixed_types_simple: None,
             bias_add: None,
@@ -77,9 +75,6 @@ impl<B: Backend> MatmulKernel<B> {
         let gemv = self.get_or_create_gemv()?;
         gemv.precompile(context)?;
 
-        let splitk = self.get_or_create_splitk()?;
-        splitk.precompile(context)?;
-
         Ok(())
     }
 
@@ -95,13 +90,6 @@ impl<B: Backend> MatmulKernel<B> {
             self.gemv = Some(GemvKernel::<B>::new(self.output_dtype)?);
         }
         Ok(self.gemv.as_mut().unwrap())
-    }
-
-    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKKernel<B>, MatmulError<B>> {
-        if self.splitk.is_none() {
-            self.splitk = Some(SplitKKernel::<B>::new(self.output_dtype)?);
-        }
-        Ok(self.splitk.as_mut().unwrap())
     }
 
     fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, MatmulError<B>> {
@@ -135,10 +123,6 @@ impl<B: Backend> MatmulKernel<B> {
             MatmulDispatchDescriptor::Gemv(d) => {
                 let gemv = self.get_or_create_gemv()?;
                 gemv.encode(context, arguments, d, command_buffer)
-            },
-            MatmulDispatchDescriptor::SplitK(d) => {
-                let splitk = self.get_or_create_splitk()?;
-                splitk.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::Gemm(d) => {
                 let gemm = self.get_or_create_gemm()?;

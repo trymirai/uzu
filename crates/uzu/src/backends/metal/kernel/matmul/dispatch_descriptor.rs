@@ -1,4 +1,4 @@
-use super::gemm_mpp;
+use super::{gemm, gemm_mpp};
 use crate::{
     DataType,
     backends::{
@@ -40,6 +40,10 @@ fn gemv_max_batch(context: &MetalContext) -> i32 {
     default_gemv_max_batch(context.device_generation(), context.device_class())
 }
 
+fn is_mpp_available(context: &MetalContext) -> bool {
+    context.device_generation().generation_number() >= 18
+}
+
 pub fn choose_dispatch_descriptor(
     context: &MetalContext,
     _a_dtype: DataType,
@@ -53,9 +57,13 @@ pub fn choose_dispatch_descriptor(
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
 
-    Ok(MatmulDispatchDescriptor::GemmMpp(
-        gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?,
-    ))
+    if is_mpp_available(context) {
+        return Ok(MatmulDispatchDescriptor::GemmMpp(
+            gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?,
+        ));
+    }
+
+    Ok(MatmulDispatchDescriptor::Gemm(gemm::DispatchDescriptor::new(context, output_dtype, arguments)?))
 }
 
 #[cfg(test)]

@@ -7,7 +7,6 @@ pub mod gemv;
 mod grid_size;
 mod kernel;
 mod matmul_arguments;
-pub mod split_k;
 
 pub use dispatch_descriptor::MatmulDispatchDescriptor;
 pub use full_precision::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel};
