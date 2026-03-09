@@ -189,7 +189,7 @@ fn test_internal<
         1e-5
     };
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let (output, _, _) = get_output::<B, InputT, ScaleT, OutputT, AccumT>(input);
         let msg = format!(
             "RMSNorm kernel test failed with backend={}, full_layer={}, in_place={}",

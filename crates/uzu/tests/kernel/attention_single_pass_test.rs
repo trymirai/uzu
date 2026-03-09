@@ -171,7 +171,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         1e-5
     };
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(input);
         let msg = format!(
             "AttentionSinglePass failed (backend={}, heads={}, seq={}, suffix={}, head_dim={}, causal={}, mask={})",

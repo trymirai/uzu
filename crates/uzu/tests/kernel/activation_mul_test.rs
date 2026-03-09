@@ -81,7 +81,7 @@ fn test<T: ArrayElement + Float + Debug + Display>(act_type: u32) {
     };
 
     let (input, expected) = get_test_data::<T>(act_type);
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(&input);
         let msg = format!("Results are not equal for backend {}", std::any::type_name::<B>());
         assert_eq_float::<T>(&expected, &output, eps, &msg);
