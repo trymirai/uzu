@@ -87,26 +87,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     output_array.as_slice().to_vec()
 }
 
-// Verify that the CPU kernel produces valid Gumbel noise:
-// output should differ from input and be finite.
-fn test_cpu_produces_valid_output<T: ArrayElement + Float + Debug + Display>(
-    batch_size: u32,
-    vocab_size: u32,
-    in_place: bool,
-) {
-    let (input, output) = get_test_data::<T>(batch_size, vocab_size, in_place);
-    let len = (batch_size * vocab_size) as usize;
-
-    for i in 0..len {
-        let out = output[i].to_f32().unwrap();
-        assert!(out.is_finite(), "Output at index {} is not finite: {}", i, out);
-    }
-
-    // At least some outputs should differ from logits (Gumbel noise was added)
-    let num_different = (0..len).filter(|&i| output[i] != input.logits[i]).count();
-    assert!(num_different > len / 2, "Too few outputs differ from logits: {}/{}", num_different, len);
-}
-
 // Verify determinism: same seeds produce same output.
 fn test_determinism<T: ArrayElement + Float + Debug + Display>(
     batch_size: u32,
@@ -117,15 +97,14 @@ fn test_determinism<T: ArrayElement + Float + Debug + Display>(
     assert_eq!(output1, output2, "Determinism check failed");
 }
 
-// Test that Metal output matches the gumbel_float/revidx reference implementation.
-fn test_gpu_reference_match(
+fn test_internal<T: ArrayElement + Float + Display>(
     batch_size: usize,
     vocab_size: usize,
 ) {
     const RTOL: f32 = 0.01;
     const ATOL: f32 = 1e-6;
 
-    let logits = vec![0.0f32; batch_size * vocab_size];
+    let logits = vec![T::zero(); batch_size * vocab_size];
     let seeds: Vec<u64> = (0_u64..batch_size as u64).collect();
 
     let input = Input {
@@ -137,14 +116,14 @@ fn test_gpu_reference_match(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<f32, B>(&input);
+        let output = get_output::<T, B>(&input);
 
         for (batch_idx, batch_seed) in seeds.iter().copied().enumerate() {
             let results = &output[batch_idx * vocab_size..(batch_idx + 1) * vocab_size];
             for (logit_idx, gpu_logit_value) in results.iter().copied().enumerate() {
-                let cpu_logit_value = gumbel_float(batch_seed, revidx(logit_idx as u32));
-                let abs_diff = (cpu_logit_value - gpu_logit_value).abs();
-                let tolerance = ATOL + RTOL * cpu_logit_value.abs();
+                let cpu_logit_value = T::from(gumbel_float(batch_seed, revidx(logit_idx as u32))).unwrap();
+                let abs_diff = (cpu_logit_value - gpu_logit_value).abs().to_f32().unwrap();
+                let tolerance = ATOL + RTOL * cpu_logit_value.abs().to_f32().unwrap();
                 assert!(
                     abs_diff <= tolerance,
                     "Mismatch at batch {batch_idx} element {logit_idx}: CPU={cpu_logit_value} GPU={gpu_logit_value} (abs_diff={abs_diff}, tolerance={tolerance})"
@@ -155,46 +134,31 @@ fn test_gpu_reference_match(
 }
 
 #[test]
-fn test_f32() {
-    test_cpu_produces_valid_output::<f32>(4, 128, false);
-}
-
-#[test]
-fn test_f16() {
-    test_cpu_produces_valid_output::<f16>(4, 128, false);
-}
-
-#[test]
-fn test_bf16() {
-    test_cpu_produces_valid_output::<bf16>(4, 128, false);
-}
-
-#[test]
-fn test_in_place_f32() {
-    test_cpu_produces_valid_output::<f32>(4, 128, true);
-}
-
-#[test]
-fn test_in_place_f16() {
-    test_cpu_produces_valid_output::<f16>(4, 128, true);
-}
-
-#[test]
-fn test_in_place_bf16() {
-    test_cpu_produces_valid_output::<bf16>(4, 128, true);
-}
-
-#[test]
 fn test_determinism_f32() {
     test_determinism::<f32>(4, 128);
 }
 
 #[test]
-fn test_single_batch_f32() {
-    test_cpu_produces_valid_output::<f32>(1, 256, false);
+fn test_determinism_f16() {
+    test_determinism::<f16>(4, 128);
 }
 
 #[test]
-fn test_gumbel_gpu_cpu_match() {
-    test_gpu_reference_match(7, 16 * 1024 * 64);
+fn test_determinism_bf16() {
+    test_determinism::<bf16>(4, 128);
+}
+
+#[test]
+fn test_f32() {
+    test_internal::<f32>(7, 16 * 1024 * 64);
+}
+
+#[test]
+fn test_f16() {
+    test_internal::<f16>(7, 16 * 1024 * 64);
+}
+
+#[test]
+fn test_bf16() {
+    test_internal::<bf16>(7, 16 * 1024 * 64);
 }
