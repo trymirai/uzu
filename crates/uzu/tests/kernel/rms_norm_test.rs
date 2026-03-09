@@ -1,7 +1,7 @@
 use std::{
     fmt::{Debug, Display},
     ops::{Deref, DerefMut},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use half::{bf16, f16};
@@ -122,7 +122,7 @@ fn get_output<
     AccumT: ArrayElement + Float,
 >(
     input: &Input<InputT, ScaleT, OutputT>
-) -> (Vec<OutputT>, f64, Option<f64>) {
+) -> (Vec<OutputT>, f64, Duration) {
     let context = B::Context::new().expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
@@ -164,10 +164,10 @@ fn get_output<
     let instant = Instant::now();
     let completed =
         command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
-    let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
-    let gpu_elapsed_ms = completed.gpu_execution_time();
+    let host_elapsed = instant.elapsed();
+    let gpu_elapsed = completed.gpu_execution_time();
 
-    (output_array.as_slice().to_vec(), host_elapsed_ms, gpu_elapsed_ms)
+    (output_array.as_slice().to_vec(), host_elapsed.as_secs_f64() * 1e3, gpu_elapsed)
 }
 
 fn test_internal<
@@ -271,28 +271,15 @@ fn test_performance<B: Backend>(
         full_layer: false,
         in_place: false,
     };
-    let (output_data, host_elapsed_ms, gpu_elapsed_ms) = get_output::<B, f32, f32, f32, f32>(&input);
-    match gpu_elapsed_ms {
-        Some(gpu_time) => {
-            println!(
-                "RMS norm perf (backend={}, batch={}, model_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
-                std::any::type_name::<B>(),
-                batch_size,
-                model_dim,
-                gpu_time,
-                host_elapsed_ms
-            );
-        },
-        None => {
-            println!(
-                "RMS norm perf (backend={}, batch={}, model_dim={}): Host-side={:.2} ms (GPU timing unavailable)",
-                std::any::type_name::<B>(),
-                batch_size,
-                model_dim,
-                host_elapsed_ms
-            );
-        },
-    }
+    let (output_data, host_elapsed_ms, gpu_elapsed) = get_output::<B, f32, f32, f32, f32>(&input);
+    println!(
+        "RMS norm perf (backend={}, batch={}, model_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
+        std::any::type_name::<B>(),
+        batch_size,
+        model_dim,
+        gpu_elapsed.as_secs_f64() * 1e3,
+        host_elapsed_ms
+    );
 
     // Sample check for large outputs
     let sample_size = std::cmp::min(1000, output_data.len());

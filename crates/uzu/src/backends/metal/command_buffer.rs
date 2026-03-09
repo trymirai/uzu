@@ -1,5 +1,7 @@
 use std::cell::Cell;
 
+use std::time::Duration;
+
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
     MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
@@ -222,17 +224,10 @@ pub struct MetalCommandBufferCompleted {
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn kernel_execution_time(&self) -> Option<f64> {
-        match (self.command_buffer.kernel_start_time(), self.command_buffer.kernel_end_time()) {
-            (Some(start), Some(end)) => Some((end - start) * 1000.0),
-            _ => None,
-        }
-    }
-
-    fn gpu_execution_time(&self) -> Option<f64> {
+    fn gpu_execution_time(&self) -> Duration {
         match (self.command_buffer.gpu_start_time(), self.command_buffer.gpu_end_time()) {
-            (Some(start), Some(end)) => Some((end - start) * 1000.0),
-            _ => None,
+            (Some(start), Some(end)) => Duration::from_secs_f64(end - start),
+            _ => Duration::ZERO,
         }
     }
 }

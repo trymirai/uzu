@@ -1,6 +1,6 @@
 use std::{
     cell::{OnceCell, RefCell},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use super::Cpu;
@@ -15,7 +15,7 @@ use crate::backends::{
 pub struct CpuCommandBuffer {
     commands: Vec<Box<dyn Fn()>>,
     completion_handlers: Vec<Box<dyn FnOnce(Result<&CpuCommandBuffer, CpuError>)>>,
-    gpu_execution_time: OnceCell<f64>,
+    gpu_execution_time: OnceCell<Duration>,
 }
 
 impl CommandBuffer for CpuCommandBuffer {
@@ -122,7 +122,7 @@ impl CommandBufferExecutable for CpuCommandBuffer {
         }
 
         self.gpu_execution_time
-            .set((Instant::now() - start).as_secs_f64() * 1000.0)
+            .set(Instant::now() - start)
             .expect("gpu execution time already set");
 
         for completion_handler in self.completion_handlers.drain(..).collect::<Vec<_>>() {
@@ -148,11 +148,7 @@ impl CommandBufferPending for CpuCommandBuffer {
 impl CommandBufferCompleted for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn kernel_execution_time(&self) -> Option<f64> {
-        None
-    }
-
-    fn gpu_execution_time(&self) -> Option<f64> {
-        self.gpu_execution_time.get().copied()
+    fn gpu_execution_time(&self) -> Duration {
+        self.gpu_execution_time.get().copied().unwrap_or_default()
     }
 }
