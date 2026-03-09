@@ -2,7 +2,6 @@
 
 use std::ops::{Deref, DerefMut};
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -58,13 +57,10 @@ impl<B: Backend> Pooling<B> {
             model_dim,
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for Pooling<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let batch_size = 1;

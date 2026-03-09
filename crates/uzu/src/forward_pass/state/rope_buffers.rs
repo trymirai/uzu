@@ -46,10 +46,10 @@ impl<B: Backend> RopeBuffers<B> {
             return;
         };
 
-        let cosines_view = rope_tree.leaf("cosines").unwrap();
+        let cosines_view = rope_tree.leaf_array("cosines").unwrap();
         self.cosines.borrow_mut().copy_from_array(&cosines_view);
 
-        let sines_view = rope_tree.leaf("sines").unwrap();
+        let sines_view = rope_tree.leaf_array("sines").unwrap();
         self.sines.borrow_mut().copy_from_array(&sines_view);
     }
 }

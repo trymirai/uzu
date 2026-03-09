@@ -6,7 +6,7 @@ use std::{
 
 use thiserror::Error;
 
-use super::{EncodableBlock, EncodingParameters};
+use super::Linear;
 use crate::{
     DataType,
     backends::common::{
@@ -22,7 +22,7 @@ pub enum FullPrecisionLinearError<B: Backend> {
     #[error("Matmul error: {0}")]
     MatmulError(#[from] MatmulError<B>),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError),
+    ParameterError(ParameterLoaderError<B>),
     #[error("Unsupported data type for full precision linear kernel: {0:?}")]
     UnsupportedDataType(DataType),
     #[error("Unexpected weights shape: got {got:?}, expected [{expected_output_dim}, {expected_input_dim}]")]
@@ -72,7 +72,7 @@ impl<B: Backend> FullPrecisionLinear<B> {
             return Err(FullPrecisionLinearError::UnsupportedDataType(precision));
         }
 
-        let weights = parameter_tree.leaf("weights").map_err(FullPrecisionLinearError::ParameterError)?;
+        let weights = parameter_tree.leaf_array("weights").map_err(FullPrecisionLinearError::ParameterError)?;
         let weights_shape = weights.shape().to_vec();
         if weights_shape != [output_dim, input_dim] {
             return Err(FullPrecisionLinearError::InvalidWeightsShape {
@@ -89,7 +89,7 @@ impl<B: Backend> FullPrecisionLinear<B> {
             });
         }
 
-        let bias_buffer = match parameter_tree.leaf("biases") {
+        let bias_buffer = match parameter_tree.leaf_array("biases") {
             Ok(biases) => {
                 let bias_shape = biases.shape().to_vec();
                 if bias_shape != [output_dim] {
@@ -125,11 +125,10 @@ impl<B: Backend> FullPrecisionLinear<B> {
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
+impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

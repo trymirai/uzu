@@ -21,7 +21,7 @@ use crate::{
         CommandBufferPending, Context,
         kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::EncodingParameters,
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
@@ -536,7 +536,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         // Encode sampling
         self.context
             .gpu_sampler
-            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
+            .encode(&mut state, &mut command_buffer)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -885,7 +885,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         if sample {
             self.context
                 .gpu_sampler
-                .encode(state, parameters, &mut command_buffer)
+                .encode(state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
 

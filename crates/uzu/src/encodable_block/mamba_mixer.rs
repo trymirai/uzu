@@ -16,7 +16,7 @@ use crate::{
         },
     },
     config::{DecoderLayerType, Mamba2Config},
-    encodable_block::{EncodableBlock, EncodingParameters, transformer_layer::linear_block},
+    encodable_block::linear::Linear,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterTree, resolve_subtree},
 };
@@ -24,8 +24,8 @@ use crate::{
 pub(crate) struct MambaMixer<B: Backend> {
     layer_index: usize,
     config: Mamba2Config,
-    in_projection: Box<dyn EncodableBlock<B>>,
-    out_projection: Box<dyn EncodableBlock<B>>,
+    in_projection: Box<dyn Linear<B>>,
+    out_projection: Box<dyn Linear<B>>,
     split_inproj: <B::Kernels as Kernels>::SplitInProjKernel,
     conv_decode: <B::Kernels as Kernels>::Conv1dDecodeKernel,
     conv_pack: <B::Kernels as Kernels>::Conv1dPackKernel,
@@ -37,6 +37,17 @@ pub(crate) struct MambaMixer<B: Backend> {
     gate_bias: Array<B>,
     skip_connection_weight: Array<B>,
     prefill_mode: SSDPrefillMode,
+}
+
+fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
+    match env::var("UZU_SSM_PREFILL_MODE") {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "seq" | "sequential" | "baseline" => SSDPrefillMode::Sequential,
+            "single" | "singlepass" | "single_pass" => SSDPrefillMode::SinglePass,
+            _ => SSDPrefillMode::SinglePass,
+        },
+        Err(_) => SSDPrefillMode::SinglePass,
+    }
 }
 
 impl<B: Backend> MambaMixer<B> {
@@ -61,7 +72,7 @@ impl<B: Backend> MambaMixer<B> {
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
 
-        let in_projection = linear_block(
+        let in_projection = <dyn Linear<B>>::new(
             &mamba_config.in_projection_config,
             mamba_config.has_in_biases,
             model_dim,
@@ -73,7 +84,7 @@ impl<B: Backend> MambaMixer<B> {
         )
         .expect("Failed to create in-projection kernel");
 
-        let out_projection = linear_block(
+        let out_projection = <dyn Linear<B>>::new(
             &mamba_config.out_projection_config,
             mamba_config.has_out_biases,
             mamba_config.inner_dim(),
@@ -85,14 +96,14 @@ impl<B: Backend> MambaMixer<B> {
         )
         .expect("Failed to create out-projection kernel");
 
-        let conv_weight = conv_tree.leaf("weights").unwrap();
+        let conv_weight = conv_tree.leaf_array("weights").unwrap();
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases").unwrap())
+            Some(conv_tree.leaf_array("biases").unwrap())
         } else {
             None
         };
-        let gate_bias = split_tree.leaf("gate_bias").unwrap();
-        let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap();
+        let gate_bias = split_tree.leaf_array("gate_bias").unwrap();
+        let skip_connection_weight = split_tree.leaf_array("skip_connection_weight").unwrap();
 
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
             .expect("Failed to create split in-projection kernel");
@@ -136,9 +147,7 @@ impl<B: Backend> MambaMixer<B> {
             prefill_mode,
         }
     }
-}
 
-impl<B: Backend> MambaMixer<B> {
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState<B>,
@@ -397,24 +406,10 @@ impl<B: Backend> MambaMixer<B> {
             Activation::Gelu => 2,
         }
     }
-}
 
-fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
-    match env::var("UZU_SSM_PREFILL_MODE") {
-        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-            "seq" | "sequential" | "baseline" => SSDPrefillMode::Sequential,
-            "single" | "singlepass" | "single_pass" => SSDPrefillMode::SinglePass,
-            _ => SSDPrefillMode::SinglePass,
-        },
-        Err(_) => SSDPrefillMode::SinglePass,
-    }
-}
-
-impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
-    fn encode(
+    pub(crate) fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let active_suffix_length = state.active_suffix_length();
@@ -422,7 +417,7 @@ impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
             return Ok(());
         }
 
-        self.in_projection.encode(state, parameters, command_buffer)?;
+        self.in_projection.encode(state, command_buffer)?;
         self.run_split_inproj(state, command_buffer, active_suffix_length);
         self.run_conv_scan(state, command_buffer, active_suffix_length);
         if active_suffix_length == 1 {
@@ -430,7 +425,7 @@ impl<B: Backend> EncodableBlock<B> for MambaMixer<B> {
         } else {
             self.run_prefill_ssm(state, command_buffer, active_suffix_length);
         }
-        self.out_projection.encode(state, parameters, command_buffer)?;
+        self.out_projection.encode(state, command_buffer)?;
         Ok(())
     }
 }

@@ -22,7 +22,7 @@ use crate::{
             },
         },
     },
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::mlp::Mlp,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -63,7 +63,7 @@ pub enum MoeBlockError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
-    ParameterLoaderError(#[source] ParameterLoaderError),
+    ParameterLoaderError(#[source] ParameterLoaderError<B>),
 }
 
 impl<B: Backend> MoeBlock<B> {
@@ -92,8 +92,8 @@ impl<B: Backend> MoeBlock<B> {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let weights_arr = router_tree.leaf("weights").map_err(MoeBlockError::ParameterLoaderError)?;
-                let biases_arr = router_tree.leaf("biases").map_err(MoeBlockError::ParameterLoaderError)?;
+                let weights_arr = router_tree.leaf_array("weights").map_err(MoeBlockError::ParameterLoaderError)?;
+                let biases_arr = router_tree.leaf_array("biases").map_err(MoeBlockError::ParameterLoaderError)?;
                 RouterBlock {
                     weights_buf: weights_arr.buffer(),
                     biases_buf: biases_arr.buffer(),
@@ -128,25 +128,25 @@ impl<B: Backend> MoeBlock<B> {
         let w13_arr = experts_tree
             .subtree("up_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("weights")
+            .leaf_array("weights")
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
         let w2_arr = experts_tree
             .subtree("down_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("weights")
+            .leaf_array("weights")
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
         let up_biases_arr = experts_tree
             .subtree("up_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("biases")
+            .leaf_array("biases")
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
         let down_biases_arr = experts_tree
             .subtree("down_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("biases")
+            .leaf_array("biases")
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
         let shared_weights = SharedMoeWeights {
@@ -188,11 +188,10 @@ impl<B: Backend> MoeBlock<B> {
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for MoeBlock<B> {
+impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let suffix_length = state.active_suffix_length();

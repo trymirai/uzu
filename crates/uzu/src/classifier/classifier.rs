@@ -12,7 +12,7 @@ use crate::{
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
     },
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
 };
@@ -124,11 +124,11 @@ impl<B: Backend> Classifier<B> {
 
             self.context
                 .embed
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode_lookup(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             self.context
                 .embedding_norm
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             #[cfg(feature = "tracing")]
             {
@@ -143,7 +143,7 @@ impl<B: Backend> Classifier<B> {
             }
             self.context
                 .output_norm
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             #[cfg(feature = "tracing")]
             {
@@ -153,12 +153,12 @@ impl<B: Backend> Classifier<B> {
 
             self.context
                 .pooling
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             self.context
                 .prediction_head
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             command_buffer
@@ -204,11 +204,11 @@ impl<B: Backend> Classifier<B> {
 
             self.context
                 .embed
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode_lookup(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             self.context
                 .embedding_norm
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             for layer in self.context.layers.iter() {
                 layer
@@ -217,15 +217,15 @@ impl<B: Backend> Classifier<B> {
             }
             self.context
                 .output_norm
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             self.context
                 .pooling
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             self.context
                 .prediction_head
-                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .encode(&mut state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             command_buffer

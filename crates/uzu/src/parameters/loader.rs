@@ -10,7 +10,7 @@ use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::Context,
+    backends::common::{Backend, Buffer, Context},
 };
 
 pub struct ParameterMetadata {
@@ -43,7 +43,7 @@ fn st_metadata_into_index(
 }
 
 #[derive(Debug, Error)]
-pub enum ParameterLoaderError {
+pub enum ParameterLoaderError<B: Backend> {
     #[error("Array with key \"{0}\" not found.")]
     KeyNotFound(String),
     #[error("Couldn't find any arrays with prefix \"{0}\".")]
@@ -58,6 +58,8 @@ pub enum ParameterLoaderError {
         expected_size: usize,
         actual_size: usize,
     },
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
     #[error("Failed to read data")]
     ArrayLoadingError(#[from] std::io::Error),
 }
@@ -92,10 +94,21 @@ where
         self.index.keys()
     }
 
+    pub fn get_leaf<'leaf>(
+        &'leaf self,
+        key: &str,
+    ) -> Result<ParameterLeaf<'file, 'context, 'leaf, C>, ParameterLoaderError<C::Backend>> {
+        Ok(ParameterLeaf {
+            key: key.to_string(),
+            metadata: self.index.get(key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.to_string()))?,
+            loader: self,
+        })
+    }
+
     pub fn get(
         &self,
         key: &str,
-    ) -> Result<Array<C::Backend>, ParameterLoaderError> {
+    ) -> Result<Array<C::Backend>, ParameterLoaderError<C::Backend>> {
         let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
         let (offset, size) = (metadata_entry.offset, metadata_entry.size);
         let array_key = key.replace(".", "_");
@@ -120,7 +133,7 @@ where
         buf: &mut [u8],
         shape: &mut Box<[usize]>,
         data_type: &mut DataType,
-    ) -> Result<(), ParameterLoaderError> {
+    ) -> Result<(), ParameterLoaderError<C::Backend>> {
         let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
         self.file.read_exact_at(buf, metadata_entry.offset as u64)?;
         *shape = metadata_entry.shape.to_owned();
@@ -133,6 +146,37 @@ where
             loader: self,
             prefix: None,
         }
+    }
+}
+
+pub struct ParameterLeaf<'file, 'context, 'leaf, C: Context> {
+    key: String,
+    metadata: &'leaf ParameterMetadata,
+    loader: &'leaf ParameterLoader<'context, 'file, C>,
+}
+
+impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C> {
+    pub fn shape(&self) -> &[usize] {
+        &self.metadata.shape
+    }
+
+    pub fn data_type(&self) -> DataType {
+        self.metadata.data_type
+    }
+
+    pub fn size(&self) -> usize {
+        self.metadata.size
+    }
+
+    pub fn read_buffer(&self) -> Result<<C::Backend as Backend>::Buffer, ParameterLoaderError<C::Backend>> {
+        let mut buffer =
+            self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
+        buffer.set_label(Some(&format!("parameter_loader_{}", self.key.replace(".", "_"))));
+        self.loader.file.read_exact_at(
+            unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, self.metadata.size) },
+            self.metadata.offset as u64,
+        )?;
+        Ok(buffer)
     }
 }
 
@@ -163,7 +207,7 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
     pub fn subtree(
         &self,
         name: &str,
-    ) -> Result<Self, ParameterLoaderError> {
+    ) -> Result<Self, ParameterLoaderError<C::Backend>> {
         let new_prefix = self.join_prefix(name);
         let num_suffixes = self.loader.keys().filter_map(|suffix| suffix.strip_prefix(&new_prefix)).count();
         if num_suffixes > 0 {
@@ -176,11 +220,18 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
         }
     }
 
-    pub fn leaf(
+    pub fn leaf_array(
         &self,
         name: &str,
-    ) -> Result<Array<C::Backend>, ParameterLoaderError> {
+    ) -> Result<Array<C::Backend>, ParameterLoaderError<C::Backend>> {
         self.loader.get(&self.join_prefix(name))
+    }
+
+    pub fn leaf<'leaf>(
+        &'leaf self,
+        name: &str,
+    ) -> Result<ParameterLeaf<'loader, 'loader, 'leaf, C>, ParameterLoaderError<C::Backend>> {
+        self.loader.get_leaf(&self.join_prefix(name))
     }
 
     pub fn read_extract_at(
@@ -189,7 +240,7 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
         buf: &mut [u8],
         shape: &mut Box<[usize]>,
         data_type: &mut DataType,
-    ) -> Result<(), ParameterLoaderError> {
+    ) -> Result<(), ParameterLoaderError<C::Backend>> {
         self.loader.read_extract_at(&self.join_prefix(name), buf, shape, data_type)
     }
 }

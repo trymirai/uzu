@@ -65,7 +65,7 @@ impl<B: Backend> SharedBuffers<B> {
             for (layer_idx, sink_cell) in sinks_vec.iter_mut().enumerate() {
                 let layer_tree = transformer_tree.subtree(&format!("layers.{}", layer_idx)).unwrap();
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
-                let sinks_arr = attn_tree.leaf("sinks").unwrap();
+                let sinks_arr = attn_tree.leaf_array("sinks").unwrap();
                 let mut dst = sink_cell.borrow_mut();
                 let dst_slice = dst.as_slice_mut::<f32>();
 

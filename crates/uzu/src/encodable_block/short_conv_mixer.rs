@@ -8,7 +8,7 @@ use crate::{
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::{DecoderLayerType, ShortConvConfig},
-    encodable_block::{EncodableBlock, EncodingParameters, transformer_layer::linear_block},
+    encodable_block::linear::Linear,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterTree, resolve_subtree},
 };
@@ -17,8 +17,8 @@ pub struct ShortConvMixer<B: Backend> {
     layer_index: usize,
     config: ShortConvConfig,
     model_dim: usize,
-    in_projection: Box<dyn EncodableBlock<B>>,
-    out_projection: Box<dyn EncodableBlock<B>>,
+    in_projection: Box<dyn Linear<B>>,
+    out_projection: Box<dyn Linear<B>>,
     short_conv_pack: <B::Kernels as Kernels>::ShortConvPackKernel,
     short_conv_prefill: <B::Kernels as Kernels>::ShortConvPrefillKernel,
     short_conv_decode: <B::Kernels as Kernels>::ShortConvDecodeKernel,
@@ -45,7 +45,7 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
-        let in_projection = linear_block(
+        let in_projection = <dyn Linear<B>>::new(
             &short_conv_config.in_projection_config,
             false,
             model_dim,
@@ -57,7 +57,7 @@ impl<B: Backend> ShortConvMixer<B> {
         )
         .expect("Failed to create in-projection kernel");
 
-        let out_projection = linear_block(
+        let out_projection = <dyn Linear<B>>::new(
             &short_conv_config.out_projection_config,
             false,
             model_dim,
@@ -69,9 +69,9 @@ impl<B: Backend> ShortConvMixer<B> {
         )
         .expect("Failed to create out-projection kernel");
 
-        let conv_weight = conv_tree.leaf("weights").unwrap().clone();
+        let conv_weight = conv_tree.leaf_array("weights").unwrap().clone();
         let conv_bias = if short_conv_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases").unwrap().clone())
+            Some(conv_tree.leaf_array("biases").unwrap().clone())
         } else {
             None
         };
@@ -100,9 +100,7 @@ impl<B: Backend> ShortConvMixer<B> {
             conv_bias,
         }
     }
-}
 
-impl<B: Backend> ShortConvMixer<B> {
     fn clear_suffix_state_valid_range(
         &self,
         state: &ForwardPassState<B>,
@@ -322,13 +320,10 @@ impl<B: Backend> ShortConvMixer<B> {
             compute,
         )
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for ShortConvMixer<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let active_suffix_length = state.active_suffix_length();
@@ -336,11 +331,11 @@ impl<B: Backend> EncodableBlock<B> for ShortConvMixer<B> {
             return Ok(());
         }
 
-        self.in_projection.encode(state, parameters, command_buffer)?;
+        self.in_projection.encode(state, command_buffer)?;
 
         self.run_conv(state, command_buffer, active_suffix_length);
 
-        self.out_projection.encode(state, parameters, command_buffer)?;
+        self.out_projection.encode(state, command_buffer)?;
 
         Ok(())
     }

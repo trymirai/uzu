@@ -6,8 +6,7 @@ use crate::{
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, EncodableBlock, Normalization, Pooling, Rope,
-        embed_block, linear_block,
+        Activation, ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope,
     },
     forward_pass::{
         model_shape::ModelShape,
@@ -27,15 +26,15 @@ pub struct ClassifierContext<B: Backend> {
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
 
-    pub embed: Box<dyn EncodableBlock<B>>,
+    pub embed: Embedding<B>,
     pub embedding_norm: Normalization<B>,
     pub layers: Box<[ClassifierLayer<B>]>,
     pub output_norm: Normalization<B>,
-    pub global_rope: Rc<Box<dyn EncodableBlock<B>>>,
-    pub local_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
+    pub global_rope: Rc<Rope<B>>,
+    pub local_rope: Option<Rc<Rope<B>>>,
 
-    pub pooling: Box<dyn EncodableBlock<B>>,
-    pub prediction_head: Box<dyn EncodableBlock<B>>,
+    pub pooling: Pooling<B>,
+    pub prediction_head: ClassifierPredictionHead<B>,
 
     pub sigmoid_kernel: <B::Kernels as Kernels>::SigmoidKernel,
 }
@@ -90,7 +89,14 @@ impl<B: Backend> ClassifierContext<B> {
             .activation_precision()
             .into();
 
-        let embed = embed_block(&decoder_config, context.as_ref(), &root_loader_view);
+        let embed = Embedding::new(
+            context.as_ref(),
+            decoder_config.vocab_size as u32,
+            decoder_config.model_dim as u32,
+            &decoder_config.embedding_config,
+            &root_loader_view.subtree("embedding").expect("Failed to get embedding subtree"),
+        )
+        .expect("Failed to create embedding");
 
         let global_rope = Self::create_rope_block(&context, data_type, RopeType::Global).map_err(Error::Classifier)?;
         let local_rope = classifier_model_config
@@ -192,7 +198,7 @@ impl<B: Backend> ClassifierContext<B> {
         let prediction_head_dense_tree = prediction_head_tree.subtree("dense").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.dense".to_string()))
         })?;
-        let prediction_head_dense = linear_block::<1, B>(
+        let prediction_head_dense = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.dense_config,
             prediction_head_config.use_dense_bias,
             model_dim,
@@ -203,18 +209,16 @@ impl<B: Backend> ClassifierContext<B> {
             ArrayId::ClassifierPredictionHeadDense,
         );
 
-        let prediction_head_activation = Box::new(
-            Activation::<B>::new(
-                &context,
-                prediction_head_data_type,
-                prediction_head_config.activation.clone(),
-                ArrayId::ClassifierPredictionHeadDense,
-                ArrayId::ClassifierPredictionHeadDense,
-            )
-            .map_err(|e| {
-                Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head activation: {:?}", e)))
-            })?,
-        );
+        let prediction_head_activation = Activation::<B>::new(
+            &context,
+            prediction_head_data_type,
+            prediction_head_config.activation.clone(),
+            ArrayId::ClassifierPredictionHeadDense,
+            ArrayId::ClassifierPredictionHeadDense,
+        )
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head activation: {:?}", e)))
+        })?;
 
         let prediction_head_norm_tree = prediction_head_tree.subtree("norm").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.norm".to_string()))
@@ -234,7 +238,7 @@ impl<B: Backend> ClassifierContext<B> {
         let prediction_head_readout_tree = prediction_head_tree.subtree("readout").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.readout".to_string()))
         })?;
-        let prediction_head_final_linear = linear_block::<1, B>(
+        let prediction_head_final_linear = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.readout_config,
             true,
             model_dim,
@@ -253,28 +257,26 @@ impl<B: Backend> ClassifierContext<B> {
             Error::UnableToCreateContext(e.into())
         })?;
 
-        let pooling = Box::new(
-            Pooling::<B>::new(
-                context.as_ref(),
-                data_type,
-                classifier_model_config.model_config.classifier_pooling.clone(),
-                model_dim,
-            )
-            .map_err(|e| {
-                eprintln!("Failed to create pooling: {:?}", e);
-                Error::UnableToCreateContext(e.into())
-            })?,
-        );
+        let pooling = Pooling::<B>::new(
+            context.as_ref(),
+            data_type,
+            classifier_model_config.model_config.classifier_pooling.clone(),
+            model_dim,
+        )
+        .map_err(|e| {
+            eprintln!("Failed to create pooling: {:?}", e);
+            Error::UnableToCreateContext(e.into())
+        })?;
 
-        let prediction_head = Box::new(ClassifierPredictionHead::new(
+        let prediction_head = ClassifierPredictionHead::new(
             prediction_head_dense.map_err(|e| {
                 Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
             })?,
             prediction_head_activation,
-            Box::new(prediction_head_norm),
+            prediction_head_norm,
             prediction_head_final_linear,
             num_labels,
-        ));
+        );
 
         Ok(Self {
             context,
@@ -298,11 +300,9 @@ impl<B: Backend> ClassifierContext<B> {
         context: &B::Context,
         data_type: DataType,
         rope_type: RopeType,
-    ) -> Result<Rc<Box<dyn EncodableBlock<B>>>, ClassifierError> {
-        let rotation: Box<dyn EncodableBlock<B>> = Box::new(
-            Rope::<B>::new(context, data_type, rope_type)
-                .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?,
-        );
+    ) -> Result<Rc<Rope<B>>, ClassifierError> {
+        let rotation = Rope::<B>::new(context, data_type, rope_type)
+            .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?;
         Ok(Rc::new(rotation))
     }
 }
