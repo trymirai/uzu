@@ -13,22 +13,6 @@ pub struct PerfResult {
     pub error: Option<String>,
 }
 
-pub fn write_json_results(
-    test_name: &str,
-    device: &str,
-    results: &[PerfResult],
-) {
-    if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
-        let path = std::path::Path::new(&dir);
-        std::fs::create_dir_all(path).expect("create results dir");
-        let file = path.join(format!("{test_name}.json"));
-        let wrapper = serde_json::json!({ "device": device, "results": results });
-        let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
-        std::fs::write(&file, json).expect("write results");
-        eprintln!("Results written to {}", file.display());
-    }
-}
-
 pub fn print_results_table(results: &[PerfResult]) {
     let mut table = Table::new();
     table

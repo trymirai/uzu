@@ -1,19 +1,83 @@
+#![allow(dead_code)]
+
+use metal::MTLBuffer;
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
-        common::{
-            gpu_types::GEMMSpiltKParams,
-            kernel::matmul::{
-                MatmulArguments, MatmulDispatchDescriptor, GridSize, gemm, gemm_mixed_types_simple, gemm_mpp,
-                gemv::{DispatchDescriptor as GemvDescriptor, OutputSource as GemvOutputSource, Specialization as GemvSpecialization},
-                split_k::{DispatchDescriptor as SplitKDescriptor, TileConfiguration},
+        common::kernel::matmul::{
+            MatmulArguments, MatmulDispatchDescriptor, gemm, gemm_mixed_types_simple, gemm_mpp,
+            gemv::{
+                DispatchDescriptor as GemvDescriptor, OutputSource as GemvOutputSource,
+                Specialization as GemvSpecialization,
             },
         },
         metal::{Metal, MetalContext},
     },
 };
 
-use super::combos::DtypeCombo;
+#[derive(Clone)]
+pub struct DtypeCombo {
+    pub a_dtype: DataType,
+    pub b_dtype: DataType,
+    pub output_dtype: DataType,
+}
+
+impl std::fmt::Display for DtypeCombo {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "{:?}*{:?}->{:?}", self.a_dtype, self.b_dtype, self.output_dtype)
+    }
+}
+
+#[derive(Clone)]
+pub struct TestShape {
+    pub batch: usize,
+    pub input_dim: usize,
+    pub output_dim: usize,
+}
+
+impl std::fmt::Display for TestShape {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "{}x{}x{}", self.batch, self.input_dim, self.output_dim)
+    }
+}
+
+pub fn test_combos() -> Vec<DtypeCombo> {
+    vec![
+        DtypeCombo {
+            a_dtype: DataType::I8,
+            b_dtype: DataType::I8,
+            output_dtype: DataType::I32,
+        },
+        DtypeCombo {
+            a_dtype: DataType::I8,
+            b_dtype: DataType::F16,
+            output_dtype: DataType::F16,
+        },
+        DtypeCombo {
+            a_dtype: DataType::I8,
+            b_dtype: DataType::F32,
+            output_dtype: DataType::F32,
+        },
+        DtypeCombo {
+            a_dtype: DataType::BF16,
+            b_dtype: DataType::BF16,
+            output_dtype: DataType::BF16,
+        },
+        DtypeCombo {
+            a_dtype: DataType::I8,
+            b_dtype: DataType::BF16,
+            output_dtype: DataType::BF16,
+        },
+    ]
+}
 
 pub fn try_all_descriptors(
     context: &MetalContext,
@@ -28,7 +92,10 @@ pub fn try_all_descriptors(
 
     if gemm_mixed_types_simple::supports_combo(combo.a_dtype, combo.b_dtype, combo.output_dtype) {
         if let Ok(descriptor) = gemm_mixed_types_simple::DispatchDescriptor::new(combo.output_dtype, arguments) {
-            descriptors.push(("MixedTypesSimpleGemm", MatmulDispatchDescriptor::GemmMixedTypesSimple(descriptor)));
+            descriptors.push((
+                "GemmMixedTypesSimple",
+                MatmulDispatchDescriptor::GemmMixedTypesSimple(descriptor),
+            ));
         }
     }
 
@@ -40,10 +107,6 @@ pub fn try_all_descriptors(
 
         if let Some(descriptor) = force_gemv_descriptor(combo.output_dtype, arguments) {
             descriptors.push(("Gemv", MatmulDispatchDescriptor::Gemv(descriptor)));
-        }
-
-        if let Some(descriptor) = force_splitk_descriptor(arguments) {
-            descriptors.push(("SplitK", MatmulDispatchDescriptor::SplitK(descriptor)));
         }
     }
 
@@ -124,78 +187,37 @@ fn force_gemv_descriptor(
     })
 }
 
-fn force_splitk_descriptor(arguments: &MatmulArguments<Metal>) -> Option<SplitKDescriptor> {
-    if !arguments.transpose_b || arguments.batch_count != 1 {
-        return None;
+pub fn make_arguments<'a>(
+    a_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    b_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
+    d_buffer: &'a mut Retained<ProtocolObject<dyn MTLBuffer>>,
+    shape: &TestShape,
+) -> MatmulArguments<'a, Metal> {
+    MatmulArguments {
+        a: a_buffer,
+        a_offset: 0,
+        b: b_buffer,
+        d: d_buffer,
+        bias: None,
+        batch: shape.batch as i32,
+        input_dim: shape.input_dim as i32,
+        output_dim: shape.output_dim as i32,
+        lda: shape.input_dim as i32,
+        ldb: shape.input_dim as i32,
+        ldd: shape.output_dim as i32,
+        batch_count: 1,
+        transpose_b: true,
     }
+}
 
-    let m = arguments.batch;
-    let n = arguments.output_dim;
-    let k = arguments.input_dim;
-
-    if m <= 0 || n <= 0 || k <= 0 {
-        return None;
+pub fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]) {
+    if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
+        let path = std::path::Path::new(&dir);
+        std::fs::create_dir_all(path).expect("create results dir");
+        let file = path.join(format!("{test_name}.json"));
+        let wrapper = serde_json::json!({ "device": device, "results": results });
+        let json = serde_json::to_string_pretty(&wrapper).expect("serialize");
+        std::fs::write(&file, json).expect("write results");
+        eprintln!("Results written to {}", file.display());
     }
-
-    let tile = TileConfiguration {
-        tile_rows: 16,
-        tile_cols: 32,
-        tile_depth: 16,
-        warps_per_row: 2,
-        warps_per_col: 2,
-    };
-
-    let k_aligned = (k % tile.tile_depth) == 0;
-    if !k_aligned {
-        return None;
-    }
-
-    let k_tiles = k / 16;
-    let partition_count = if k_tiles < 16 {
-        2
-    } else if k_tiles < 32 {
-        4
-    } else if k_tiles < 64 {
-        8
-    } else {
-        16
-    };
-
-    let tile_count_m = (m + tile.tile_rows - 1) / tile.tile_rows;
-    let tile_count_n = (n + tile.tile_cols - 1) / tile.tile_cols;
-    let gemm_k_iterations = (k / tile.tile_depth) / partition_count;
-    let k_elements_per_partition = gemm_k_iterations * tile.tile_depth;
-    let output_elements_per_partition = m * n;
-    let accumulator_element_count = partition_count * output_elements_per_partition * arguments.batch_count;
-    let accumulator_bytes = (accumulator_element_count as usize) * std::mem::size_of::<f32>();
-
-    Some(SplitKDescriptor {
-        params: GEMMSpiltKParams {
-            M: m,
-            N: n,
-            K: k,
-            lda: arguments.lda,
-            ldb: arguments.ldb,
-            ldc: n,
-            tiles_n: tile_count_n,
-            tiles_m: tile_count_m,
-            split_k_partitions: partition_count,
-            split_k_partition_stride: output_elements_per_partition,
-            split_k_partition_size: k_elements_per_partition,
-            gemm_k_iterations_aligned: gemm_k_iterations,
-        },
-        partition_count,
-        output_elements_per_partition,
-        accumulator_bytes,
-        partial_threadgroups: GridSize {
-            x: tile_count_n as usize,
-            y: tile_count_m as usize,
-            z: partition_count as usize,
-        },
-        accum_total_threads: GridSize {
-            x: n as usize,
-            y: m as usize,
-            z: 1,
-        },
-    })
 }

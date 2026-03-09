@@ -1,8 +1,8 @@
 #![cfg(target_os = "macos")]
 
+#[path = "../common/mod.rs"]
+mod common;
 mod bench;
-mod combos;
-mod descriptors;
 mod error;
 mod output;
 mod shapes;
@@ -11,10 +11,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use metal::{MTLDeviceExt, MTLResourceOptions};
 use uzu::backends::{common::Context, metal::MetalContext};
 
-use bench::{benchmark_single, make_arguments};
-use combos::test_combos;
-use descriptors::try_all_descriptors;
-use output::{print_results_table, write_json_results};
+use common::matmul::{make_arguments, test_combos, try_all_descriptors};
+use output::print_results_table;
 use shapes::test_shapes;
 
 #[test]
@@ -58,7 +56,7 @@ fn matmul_perf() {
 
             for (path_name, dispatch_descriptor) in &dispatch_descriptors {
                 progress_bar.set_message(format!("{} {} {}", combo, shape, path_name));
-                let result = benchmark_single(&context, combo, shape, path_name, dispatch_descriptor);
+                let result = bench::benchmark_single(&context, combo, shape, path_name, dispatch_descriptor);
                 results.push(result);
                 progress_bar.inc(1);
             }
@@ -67,7 +65,7 @@ fn matmul_perf() {
 
     progress_bar.finish_with_message("done");
     print_results_table(&results);
-    write_json_results("matmul_perf", &context.device.name(), &results);
+    common::matmul::write_json_results("matmul_perf", &context.device.name(), &results);
 
     let error_results: Vec<_> = results.iter().filter(|r| r.status != "ok").collect();
     if !error_results.is_empty() {

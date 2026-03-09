@@ -1,14 +1,17 @@
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
+use objc2::runtime::ProtocolObject;
 use uzu::backends::{
-    common::kernel::matmul::{MatmulArguments, MatmulDispatchDescriptor, MatmulKernel},
+    common::{
+        CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+        CommandBufferPending, Context,
+        kernel::matmul::{MatmulDispatchDescriptor, MatmulKernel},
+    },
     metal::{Metal, MetalContext},
 };
 
-use super::combos::DtypeCombo;
+use super::common::matmul::{DtypeCombo, TestShape, make_arguments};
 use super::error::BenchError;
 use super::output::PerfResult;
-use super::shapes::TestShape;
 
 const WARMUP_ITERATIONS: usize = 3;
 const BENCHMARK_ITERATIONS: usize = 10;
@@ -27,50 +30,32 @@ fn fill_buffer_random(
 fn encode_and_run(
     context: &MetalContext,
     kernel: &mut MatmulKernel<Metal>,
-    arguments: MatmulArguments<Metal>,
+    shape: &TestShape,
+    a_buffer: &objc2::rc::Retained<ProtocolObject<dyn MTLBuffer>>,
+    b_buffer: &objc2::rc::Retained<ProtocolObject<dyn MTLBuffer>>,
+    d_buffer: &mut objc2::rc::Retained<ProtocolObject<dyn MTLBuffer>>,
     dispatch_descriptor: &MatmulDispatchDescriptor,
 ) -> Result<f64, BenchError> {
-    let command_buffer = context
-        .command_queue
-        .command_buffer()
-        .ok_or(BenchError::CommandBuffer)?
-        .to_owned();
-    let mut compute_encoder = command_buffer
-        .new_compute_command_encoder()
-        .ok_or(BenchError::ComputeEncoder)?;
-    kernel
-        .encode_with_descriptor(context, arguments, dispatch_descriptor, &mut compute_encoder)
-        .map_err(|e| BenchError::Encode(e.to_string()))?;
-    compute_encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
-    match (command_buffer.gpu_start_time(), command_buffer.gpu_end_time()) {
-        (Some(start), Some(end)) => Ok((end - start) * 1000.0),
-        _ => Err(BenchError::GpuTimestamps),
-    }
-}
+    let mut command_buffer = context
+        .create_command_buffer()
+        .map_err(|_| BenchError::CommandBuffer)?
+        .start_encoding();
 
-pub fn make_arguments<'a>(
-    a_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
-    b_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
-    d_buffer: &'a mut Retained<ProtocolObject<dyn MTLBuffer>>,
-    shape: &TestShape,
-) -> MatmulArguments<'a, Metal> {
-    MatmulArguments {
-        a: a_buffer,
-        a_offset: 0,
-        b: b_buffer,
-        d: d_buffer,
-        bias: None,
-        batch: shape.batch as i32,
-        input_dim: shape.input_dim as i32,
-        output_dim: shape.output_dim as i32,
-        lda: shape.input_dim as i32,
-        ldb: shape.input_dim as i32,
-        ldd: shape.output_dim as i32,
-        batch_count: 1,
-        transpose_b: true,
-    }
+    let arguments = make_arguments(a_buffer, b_buffer, d_buffer, shape);
+
+    kernel
+        .encode_with_descriptor(context, arguments, dispatch_descriptor, &mut command_buffer)
+        .map_err(|e| BenchError::Encode(e.to_string()))?;
+
+    let completed = command_buffer
+        .end_encoding()
+        .submit()
+        .wait_until_completed()
+        .map_err(|_| BenchError::CommandBuffer)?;
+
+    completed
+        .gpu_execution_time_ms()
+        .ok_or(BenchError::GpuTimestamps)
 }
 
 fn run_benchmark(
@@ -99,16 +84,15 @@ fn run_benchmark(
     fill_buffer_random(&b_buffer, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        let arguments = make_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
-        encode_and_run(context, &mut kernel, arguments, dispatch_descriptor)
+        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, dispatch_descriptor)
             .map_err(|source| BenchError::Warmup { iteration, source: Box::new(source) })?;
     }
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
-        let arguments = make_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
-        let gpu_ms = encode_and_run(context, &mut kernel, arguments, dispatch_descriptor)
-            .map_err(|source| BenchError::Benchmark { iteration, source: Box::new(source) })?;
+        let gpu_ms =
+            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, dispatch_descriptor)
+                .map_err(|source| BenchError::Benchmark { iteration, source: Box::new(source) })?;
         gpu_time_total_ms += gpu_ms;
     }
 
