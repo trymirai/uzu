@@ -95,3 +95,14 @@ macro_rules! for_each_backend {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! for_each_non_cpu_backend {
+    (|$B:ident| $body:expr) => {{
+        #[cfg(feature = "metal")]
+        {
+            type $B = uzu::backends::metal::Metal;
+            $body
+        }
+    }};
+}

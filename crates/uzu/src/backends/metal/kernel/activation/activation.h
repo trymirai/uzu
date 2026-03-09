@@ -8,7 +8,7 @@ enum ActivationType : uint {
 template <typename T>
 inline T silu(T x) {
   float xf = float(x);
-  float yf = xf / (1.0f + exp(-xf));
+  float yf = xf / (1.0f + metal::exp(-xf));
   return T(yf);
 }
 

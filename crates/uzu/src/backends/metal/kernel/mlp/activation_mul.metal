@@ -1,7 +1,6 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
-
 #include "../activation/activation.h"
+#include "../definitions.metal"
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
