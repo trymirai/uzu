@@ -40,7 +40,7 @@ fn gelu<T: Float>(x: T) -> T {
 
 pub fn activate<T: Float>(
     x: T,
-    activation_type: ActivationType,
+    activation_type: &ActivationType,
 ) -> T {
     match activation_type {
         ActivationType::SiLU => silu(x),
