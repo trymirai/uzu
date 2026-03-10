@@ -19,27 +19,6 @@ pub fn audio_fsq_decode<T: ArrayElement + Float>(
     todo!()
 }
 
-#[kernel(AudioLeakyRelu)]
-#[variants(T, f32, f16, bf16)]
-pub fn audio_leaky_relu<T: ArrayElement + Float>(
-    #[allow(unused)] input: *const T,
-    #[allow(unused)] output: *mut T,
-    #[allow(unused)] n: i32,
-    #[allow(unused)] negative_slope: f32,
-) {
-    todo!()
-}
-
-#[kernel(AudioTanh)]
-#[variants(T, f32, f16, bf16)]
-pub fn audio_tanh<T: ArrayElement + Float>(
-    #[allow(unused)] input: *const T,
-    #[allow(unused)] output: *mut T,
-    #[allow(unused)] n: i32,
-) {
-    todo!()
-}
-
 #[kernel(AudioAdd)]
 #[variants(T, f32, f16, bf16)]
 pub fn audio_add<T: ArrayElement + Float>(

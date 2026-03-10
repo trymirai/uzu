@@ -1,7 +1,8 @@
 mod backend;
 mod buffer;
-mod command_buffer;
+pub mod command_buffer;
 mod context;
+mod copy_encoder;
 mod error;
 mod event;
 mod kernel;

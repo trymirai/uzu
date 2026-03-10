@@ -53,6 +53,10 @@ impl<B: Backend> Array<B> {
         self.buffer.clone()
     }
 
+    pub fn buffer_rc(&self) -> Rc<RefCell<B::Buffer>> {
+        self.buffer.clone()
+    }
+
     pub fn offset(&self) -> usize {
         self.offset
     }

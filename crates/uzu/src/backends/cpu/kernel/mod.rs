@@ -2,6 +2,7 @@
 mod activation;
 mod attention;
 mod audio;
+mod compat_stubs;
 mod embedding;
 mod kv_cache_update;
 mod layer_norm;

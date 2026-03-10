@@ -116,14 +116,19 @@ pub fn bindgen(
                     let (mut ty, mut set, generic) = match arg_type {
                         MetalArgumentType::Buffer(access) => {
                             let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
+                            let with_parts_fn = match access {
+                                MetalBufferAccess::Read => quote! { with_parts },
+                                MetalBufferAccess::ReadWrite => quote! { with_parts_mut },
+                            };
                             (
                                 match access {
                                     MetalBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
                                     MetalBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
                                 },
                                 quote! {
-                                    let (__dsl_buffer, __dsl_offset) = #arg_name.into_parts();
-                                    compute_encoder.set_buffer(Some(__dsl_buffer), __dsl_offset, #arg_count);
+                                    #arg_name.#with_parts_fn(|__dsl_buffer, __dsl_offset| {
+                                        compute_encoder.set_buffer(Some(__dsl_buffer), __dsl_offset, #arg_count);
+                                    });
                                 },
                                 Some(quote! { #buffer_lifetime }),
                             )
@@ -245,12 +250,13 @@ pub fn bindgen(
 
             (
                 quote! {
-                    let (__dsl_buffer, __dsl_offset) = __dsl_indirect_dispatch_buffer.into_parts();
-                    compute_encoder.dispatch_threadgroups_indirect(
-                        __dsl_buffer,
-                        __dsl_offset,
-                        MTLSize::new(#((#threads) as usize, )*),
-                    );
+                    __dsl_indirect_dispatch_buffer.with_parts(|__dsl_buffer, __dsl_offset| {
+                        compute_encoder.dispatch_threadgroups_indirect(
+                            __dsl_buffer,
+                            __dsl_offset,
+                            MTLSize::new(#((#threads) as usize, )*),
+                        );
+                    });
                 },
                 vec![].into_iter().chain(threads.into_iter()),
             )

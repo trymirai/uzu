@@ -26,7 +26,7 @@ use crate::{
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     backends::{
         common::{
-            Backend, CommandBuffer, Context, CopyEncoder, Kernels,
+            Backend, Context, CopyEncoder, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
                 AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
@@ -199,7 +199,9 @@ impl SubmittedDecodedPaddedAudio {
         if let Some(command_buffer) = self.final_command_buffer.as_ref() {
             let wait_start = self.decode_profile.is_some().then(Instant::now);
             if !command_buffer.is_completed() {
-                command_buffer.wait_until_completed();
+                command_buffer.wait_until_completed().map_err(|err| {
+                    AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
+                })?;
             }
             let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             if let Some(profile) = self.decode_profile.as_mut() {
@@ -2487,7 +2489,11 @@ fn fishaudio_kernels(
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize pointwise conv1d kernel: {err}")))?,
             norm_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel::new(context.as_ref(), data_type)
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize norm kernel: {err}")))?,
-            activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(context.as_ref(), data_type)
+            activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(
+                context.as_ref(),
+                data_type,
+                false,
+            )
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize activation kernel: {err}")))?,
             add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(context.as_ref(), data_type)
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize add kernel: {err}")))?,
@@ -2500,7 +2506,7 @@ fn fishaudio_kernels(
 
 fn transpose_nsc_to_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     batch_size: usize,
     seq_len: usize,
@@ -2535,7 +2541,7 @@ fn transpose_nsc_to_ncs_enqueue(
 
 fn snake1d_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     alpha: &Array<Metal>,
     batch_size: usize,
@@ -2590,7 +2596,7 @@ fn snake1d_enqueue(
 
 fn causal_conv1d_grouped_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     layer: &FishAudioConv1dGpuLayer,
     lengths: &[i32],
@@ -2685,7 +2691,7 @@ fn causal_conv1d_grouped_enqueue(
 
 fn causal_conv1d_grouped_residual_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     residual: &Array<Metal>,
     layer: &FishAudioConv1dGpuLayer,
@@ -2771,7 +2777,7 @@ fn causal_conv1d_grouped_residual_enqueue(
 
 fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     layer: &FishAudioConvTranspose1dGpuLayer,
     lengths: &[i32],
@@ -2859,7 +2865,7 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
 
 fn conv1d_pointwise_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     layer: &FishAudioPointwiseConvGpuLayer,
     lengths: &[i32],
@@ -2934,7 +2940,7 @@ fn conv1d_pointwise_ncs_enqueue(
 
 fn norm_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     norm: &FishAudioNormGpuLayer,
     lengths: &[i32],
@@ -3006,7 +3012,7 @@ fn norm_ncs_enqueue(
 
 fn gelu_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
     let data_type = input.data_type();
@@ -3016,14 +3022,16 @@ fn gelu_enqueue(
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels.activation.encode(input.buffer(), output.buffer(), n_u32, gelu_id, 0.0_f32, compute_encoder);
+        kernels
+            .activation
+            .encode(Some(input.buffer()), output.buffer(), n_u32, gelu_id, compute_encoder);
     });
     Ok(output)
 }
 
 fn add_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     a: &Array<Metal>,
     b: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
@@ -3053,7 +3061,7 @@ fn add_enqueue(
 
 fn tanh_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &<Metal as Backend>::CommandBuffer,
+    command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
     let data_type = input.data_type();
@@ -3063,7 +3071,9 @@ fn tanh_enqueue(
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
     let tanh_id = 2_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels.activation.encode(input.buffer(), output.buffer(), n_u32, tanh_id, 0.0_f32, compute_encoder);
+        kernels
+            .activation
+            .encode(Some(input.buffer()), output.buffer(), n_u32, tanh_id, compute_encoder);
     });
     Ok(output)
 }
@@ -3327,7 +3337,7 @@ impl FishAudioCodecGraph {
         let residual_cardinality_i32 = usize_to_i32(quantizer_resources.residual_cardinality, "residual_cardinality")?;
 
         let encode_start = profile.is_some().then(Instant::now);
-        let command_buffer = context
+        let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create quantizer command buffer: {err}")))?;
         command_buffer.with_compute_encoder(|compute_encoder| {
@@ -3355,7 +3365,9 @@ impl FishAudioCodecGraph {
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         command_buffer.submit();
         let wait_start = profile.is_some().then(Instant::now);
-        command_buffer.wait_until_completed();
+        command_buffer.wait_until_completed().map_err(|err| {
+            AudioError::Runtime(format!("failed to wait for quantizer command buffer: {err}"))
+        })?;
         let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         push_audio_command_buffer_profile(profile, "quantizer", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
@@ -3500,7 +3512,7 @@ impl FishAudioCodecGraph {
     fn apply_convnext_ncs_enqueued(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
-        command_buffer: &<Metal as Backend>::CommandBuffer,
+        command_buffer: &mut <Metal as Backend>::CommandBuffer,
         input: &Array<Metal>,
         layer: &FishAudioConvNeXtGpuLayer,
         lengths: &[i32],
@@ -3979,13 +3991,19 @@ impl FishAudioCodecGraph {
     fn encode_post_module_layers(
         runtime: &FishAudioPostModuleRuntime,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &<Metal as Backend>::CommandBuffer,
-    ) {
-        let encoding_parameters = EncodingParameters::new(false, false, false);
+        command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    ) -> AudioResult<()> {
+        let encoding_parameters = EncodingParameters::new();
         for layer in runtime.layers.iter() {
-            layer.encode(state, &encoding_parameters, command_buffer);
+            layer
+                .encode(state, &encoding_parameters, command_buffer)
+                .map_err(|err| AudioError::Runtime(format!("post_module layer encode failed: {err}")))?;
         }
-        runtime.output_norm.encode(state, &encoding_parameters, command_buffer);
+        runtime
+            .output_norm
+            .encode(state, &encoding_parameters, command_buffer)
+            .map_err(|err| AudioError::Runtime(format!("post_module output norm encode failed: {err}")))?;
+        Ok(())
     }
 
     fn apply_post_module_gpu_on_array_single_batch(
@@ -4049,18 +4067,24 @@ impl FishAudioCodecGraph {
             .checked_mul(latent_nsc.data_type().size_in_bytes())
             .ok_or(AudioError::Runtime("post_module copy size overflow".to_string()))?;
         let encode_start = profile.is_some().then(Instant::now);
-        let command_buffer = runtime
+        let mut command_buffer = runtime
             .context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
         command_buffer.with_copy_encoder(|copy_encoder| {
-            copy_encoder.encode_copy(latent_nsc.buffer(), main_output.buffer(), copy_bytes);
+            let latent_buffer = latent_nsc.buffer();
+            let main_output_buffer = main_output.buffer();
+            let latent_buffer = latent_buffer.borrow();
+            let main_output_buffer = main_output_buffer.borrow();
+            copy_encoder.encode_copy(&latent_buffer, &main_output_buffer, copy_bytes);
         });
-        Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
+        Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         command_buffer.submit();
         let wait_start = profile.is_some().then(Instant::now);
-        command_buffer.wait_until_completed();
+        command_buffer.wait_until_completed().map_err(|err| {
+            AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}"))
+        })?;
         let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         push_audio_command_buffer_profile(profile, "post_module", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
@@ -4160,14 +4184,18 @@ impl FishAudioCodecGraph {
 
             for &batch_index in &batch_indices {
                 let encode_start = profile.is_some().then(Instant::now);
-                let command_buffer = runtime.context.create_command_buffer().map_err(|err| {
+                let mut command_buffer = runtime.context.create_command_buffer().map_err(|err| {
                     AudioError::Runtime(format!("failed to create post_module command buffer: {err}"))
                 })?;
                 if !copied_output_prefix {
                     command_buffer.with_copy_encoder(|copy_encoder| {
+                        let latent_buffer = latent_nsc.buffer();
+                        let output_buffer = output.buffer();
+                        let latent_buffer = latent_buffer.borrow();
+                        let output_buffer = output_buffer.borrow();
                         copy_encoder.encode_copy_ranges(
-                            (latent_nsc.buffer(), latent_nsc.offset()),
-                            (output.buffer(), output.offset()),
+                            (&latent_buffer, latent_nsc.offset()),
+                            (&output_buffer, output.offset()),
                             full_copy_bytes,
                         );
                     });
@@ -4175,25 +4203,35 @@ impl FishAudioCodecGraph {
                 }
                 let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
                 command_buffer.with_copy_encoder(|copy_encoder| {
+                    let source_buffer = source.buffer();
+                    let main_output_buffer = main_output.buffer();
+                    let source_buffer = source_buffer.borrow();
+                    let main_output_buffer = main_output_buffer.borrow();
                     copy_encoder.encode_copy_ranges(
-                        (source.buffer(), source.offset()),
-                        (main_output.buffer(), main_output.offset()),
+                        (&source_buffer, source.offset()),
+                        (&main_output_buffer, main_output.offset()),
                         source.size(),
                     );
                 });
-                Self::encode_post_module_layers(&runtime, &mut state, &command_buffer);
+                Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
                 let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
                 command_buffer.with_copy_encoder(|copy_encoder| {
+                    let main_output_buffer = main_output.buffer();
+                    let destination_buffer = destination.buffer();
+                    let main_output_buffer = main_output_buffer.borrow();
+                    let destination_buffer = destination_buffer.borrow();
                     copy_encoder.encode_copy_ranges(
-                        (main_output.buffer(), main_output.offset()),
-                        (destination.buffer(), destination.offset()),
+                        (&main_output_buffer, main_output.offset()),
+                        (&destination_buffer, destination.offset()),
                         destination.size(),
                     );
                 });
                 let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
                 command_buffer.submit();
                 let wait_start = profile.is_some().then(Instant::now);
-                command_buffer.wait_until_completed();
+                command_buffer.wait_until_completed().map_err(|err| {
+                    AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}"))
+                })?;
                 let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
                 let label = if batch_size == 1 && active_len == frames {
                     "post_module".to_string()
@@ -4210,7 +4248,7 @@ impl FishAudioCodecGraph {
     fn run_residual_unit_enqueued(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
-        command_buffer: &<Metal as Backend>::CommandBuffer,
+        command_buffer: &mut <Metal as Backend>::CommandBuffer,
         input: &Array<Metal>,
         unit: &FishAudioResidualUnitGpuLayer,
         lengths: &[i32],
@@ -4385,7 +4423,7 @@ impl FishAudioCodecGraph {
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 trans_conv,
                 &next_lengths_i32,
@@ -4408,7 +4446,7 @@ impl FishAudioCodecGraph {
             x = self
                 .apply_convnext_ncs_enqueued(
                     &context,
-                    &command_buffer,
+                    &mut command_buffer,
                     &x,
                     convnext,
                     &next_lengths_i32,
@@ -4432,7 +4470,7 @@ impl FishAudioCodecGraph {
         if x_layout == SequenceLayout::Nsc {
             x = transpose_nsc_to_ncs_enqueue(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 batch_size,
                 current_frames,
@@ -4451,7 +4489,7 @@ impl FishAudioCodecGraph {
         }
         x = causal_conv1d_grouped_enqueue(
             &context,
-            &command_buffer,
+            &mut command_buffer,
             &x,
             &vocoder_graph.first_conv,
             &lengths_i32,
@@ -4475,7 +4513,7 @@ impl FishAudioCodecGraph {
             }
             x = snake1d_enqueue(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 &block.snake_alpha,
                 batch_size,
@@ -4491,7 +4529,7 @@ impl FishAudioCodecGraph {
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 &block.trans_conv,
                 &next_lengths_i32,
@@ -4535,7 +4573,7 @@ impl FishAudioCodecGraph {
 
             x = self.run_residual_unit_enqueued(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 &block.res_unit1,
                 &lengths_i32,
@@ -4563,7 +4601,7 @@ impl FishAudioCodecGraph {
             }
             x = self.run_residual_unit_enqueued(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 &block.res_unit2,
                 &lengths_i32,
@@ -4582,7 +4620,7 @@ impl FishAudioCodecGraph {
             }
             x = self.run_residual_unit_enqueued(
                 &context,
-                &command_buffer,
+                &mut command_buffer,
                 &x,
                 &block.res_unit3,
                 &lengths_i32,
@@ -4608,7 +4646,7 @@ impl FishAudioCodecGraph {
 
         x = snake1d_enqueue(
             &context,
-            &command_buffer,
+            &mut command_buffer,
             &x,
             &vocoder_graph.final_snake_alpha,
             batch_size,
@@ -4617,7 +4655,7 @@ impl FishAudioCodecGraph {
         )?;
         x = causal_conv1d_grouped_enqueue(
             &context,
-            &command_buffer,
+            &mut command_buffer,
             &x,
             &vocoder_graph.final_conv,
             &lengths_i32,
@@ -4625,7 +4663,7 @@ impl FishAudioCodecGraph {
             batch_size,
             current_frames,
         )?;
-        x = tanh_enqueue(&context, &command_buffer, &x)?;
+        x = tanh_enqueue(&context, &mut command_buffer, &x)?;
 
         let final_cpu_encode_ms =
             command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
@@ -5260,7 +5298,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
             "nanocodec_fsq_encode_tokens",
         );
 
-        let command_buffer = context
+        let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?;
 
@@ -5286,7 +5324,9 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         });
 
         command_buffer.submit();
-        command_buffer.wait_until_completed();
+        command_buffer.wait_until_completed().map_err(|err| {
+            AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}"))
+        })?;
 
         let mut tokens_u32 = vec![0_u32; tokens.num_elements()];
         for (index, &token) in tokens.as_slice::<i32>().iter().enumerate() {
@@ -5457,7 +5497,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
             "nanocodec_fsq_decode_output",
         );
 
-        let command_buffer = context
+        let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?;
 
@@ -5481,7 +5521,9 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         });
 
         command_buffer.submit();
-        command_buffer.wait_until_completed();
+        command_buffer.wait_until_completed().map_err(|err| {
+            AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}"))
+        })?;
 
         let (padded_output, out_channels, out_frames, out_lengths) = if let Some(decoder) = self.config.decoder() {
             let decoded = decoder.decode_padded(

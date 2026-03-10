@@ -88,16 +88,18 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>) -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
-    let mut kernels: HashMap<Box<[Box<str>]>, Box<[Kernel]>> = HashMap::new();
+    let mut kernels_by_name: HashMap<Box<str>, Kernel> = HashMap::new();
 
     for backend_kernels in backends_kernels {
-        for (file_path, file_kernels) in backend_kernels {
-            if let Some(cached_kernels) = kernels.get(&file_path) {
-                if cached_kernels != &file_kernels {
-                    bail!("{cached_kernels:?} != {file_kernels:?}");
+        for (_file_path, file_kernels) in backend_kernels {
+            for kernel in file_kernels.into_vec() {
+                if let Some(cached_kernel) = kernels_by_name.get(kernel.name.as_ref()) {
+                    if cached_kernel != &kernel {
+                        bail!("{cached_kernel:?} != {kernel:?}");
+                    }
+                } else {
+                    kernels_by_name.insert(kernel.name.clone(), kernel);
                 }
-            } else {
-                kernels.insert(file_path, file_kernels);
             }
         }
     }
@@ -105,43 +107,78 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
     let mut kernel_traits = Vec::new();
     let mut kernel_types = Vec::new();
 
-    for (_file_path, file_kernels) in kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::")) {
-        for (tr, ty) in file_kernels.iter().map(traitgen) {
-            kernel_traits.push(tr);
-            kernel_types.push(ty);
-        }
+    for (_kernel_name, kernel) in kernels_by_name.into_iter().sorted_by_key(|(name, _kernel)| name.clone()) {
+        let (tr, ty) = traitgen(&kernel);
+        kernel_traits.push(tr);
+        kernel_types.push(ty);
     }
 
     let kernel_traits = quote! {
         pub trait BufferArg<'a, B: crate::backends::common::Buffer> {
-            fn into_parts(self) -> (&'a B, usize);
+            fn with_parts<T>(self, f: impl FnOnce(&B, usize) -> T) -> T;
         }
 
         impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for &'a B {
-            fn into_parts(self) -> (&'a B, usize) {
-                (self, 0)
+            fn with_parts<T>(self, f: impl FnOnce(&B, usize) -> T) -> T {
+                f(self, 0)
             }
         }
 
         impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for (&'a B, usize) {
-            fn into_parts(self) -> (&'a B, usize) {
-                self
+            fn with_parts<T>(self, f: impl FnOnce(&B, usize) -> T) -> T {
+                let (buffer, offset) = self;
+                f(buffer, offset)
+            }
+        }
+
+        impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for std::rc::Rc<std::cell::RefCell<B>> {
+            fn with_parts<T>(self, f: impl FnOnce(&B, usize) -> T) -> T {
+                let buffer = self.borrow();
+                f(&buffer, 0)
+            }
+        }
+
+        impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B>
+            for (std::rc::Rc<std::cell::RefCell<B>>, usize)
+        {
+            fn with_parts<T>(self, f: impl FnOnce(&B, usize) -> T) -> T {
+                let (buffer, offset) = self;
+                let buffer = buffer.borrow();
+                f(&buffer, offset)
             }
         }
 
         pub trait BufferArgMut<'a, B: crate::backends::common::Buffer> {
-            fn into_parts(self) -> (&'a mut B, usize);
+            fn with_parts_mut<T>(self, f: impl FnOnce(&mut B, usize) -> T) -> T;
         }
 
         impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for &'a mut B {
-            fn into_parts(self) -> (&'a mut B, usize) {
-                (self, 0)
+            fn with_parts_mut<T>(self, f: impl FnOnce(&mut B, usize) -> T) -> T {
+                f(self, 0)
             }
         }
 
         impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for (&'a mut B, usize) {
-            fn into_parts(self) -> (&'a mut B, usize) {
-                self
+            fn with_parts_mut<T>(self, f: impl FnOnce(&mut B, usize) -> T) -> T {
+                let (buffer, offset) = self;
+                f(buffer, offset)
+            }
+        }
+
+        impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for std::rc::Rc<std::cell::RefCell<B>> {
+            fn with_parts_mut<T>(self, f: impl FnOnce(&mut B, usize) -> T) -> T {
+                let mut buffer = self.borrow_mut();
+                f(&mut buffer, 0)
+            }
+        }
+
+        impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B>
+            for (std::rc::Rc<std::cell::RefCell<B>>, usize)
+        {
+            fn with_parts_mut<T>(self, f: impl FnOnce(&mut B, usize) -> T) -> T {
+                let (buffer, offset) = self;
+                let mut buffer = buffer.borrow_mut();
+                f(&mut buffer, offset)
             }
         }
 
