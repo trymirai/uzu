@@ -3,8 +3,7 @@
 #include <metal_simdgroup>
 #include <metal_stdlib>
 
-#include "steel/defines.h"
-#include "steel/utils/type_traits.h"
+#include "defines.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
@@ -32,12 +31,12 @@ namespace matmul {
 /// (cols {0,1,8,9}) while this layout uses consecutive columns (cols {0,1,2,3}).
 /// Direct linear copy ct[i]=frag[i] produces incorrect results on pre-M5 chips.
 struct SimdgroupFragmentLayout {
-  STEEL_CONST short kFragmentRows = 16;
-  STEEL_CONST short kFragmentColumns = 16;
-  STEEL_CONST short kElementsPerFragment = (kFragmentRows * kFragmentColumns) / 32;
-  STEEL_CONST short kElementRows = 2;
-  STEEL_CONST short kElementColumns = 4;
-  STEEL_CONST short kElementRowStride = 8;
+  UZU_MTL_CONST short kFragmentRows = 16;
+  UZU_MTL_CONST short kFragmentColumns = 16;
+  UZU_MTL_CONST short kElementsPerFragment = (kFragmentRows * kFragmentColumns) / 32;
+  UZU_MTL_CONST short kElementRows = 2;
+  UZU_MTL_CONST short kElementColumns = 4;
+  UZU_MTL_CONST short kElementRowStride = 8;
 
   static_assert(
       kElementRows * kElementColumns == kElementsPerFragment,
@@ -80,11 +79,11 @@ struct SimdgroupFragmentLayout {
       OffsetRow offset_row = 0,
       OffsetCol offset_col = 0) {
     const short2 simd_coordinate = get_coordinate();
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short row_group = 0; row_group < kElementRows; row_group++) {
       const auto row = offset_row + row_group * kElementRowStride + simd_coordinate.y;
       const auto col = offset_col + simd_coordinate.x;
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short col_offset = 0; col_offset < kElementColumns; col_offset++) {
         destination[row_group * kElementColumns + col_offset] =
             static_cast<T>(source[row * stride_row + (col + col_offset) * stride_col]);
@@ -112,11 +111,11 @@ struct SimdgroupFragmentLayout {
       OffsetRow offset_row = 0,
       OffsetCol offset_col = 0) {
     const short2 simd_coordinate = get_coordinate();
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short row_group = 0; row_group < kElementRows; row_group++) {
       const auto row = offset_row + row_group * kElementRowStride + simd_coordinate.y;
       const auto col = offset_col + simd_coordinate.x;
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short col_offset = 0; col_offset < kElementColumns; col_offset++) {
         if (row < row_limit && (col + col_offset) < column_limit) {
           destination[row_group * kElementColumns + col_offset] =
@@ -143,13 +142,13 @@ struct SimdgroupFragmentLayout {
       StrideCol stride_col,
       OffsetRow offset_row = 0,
       OffsetCol offset_col = 0) {
-    using OutputElementType = metal::pointer_element_t<DestinationPointerType>;
+    using OutputElementType = pointer_element_t<DestinationPointerType>;
     const short2 simd_coordinate = get_coordinate();
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short row_group = 0; row_group < kElementRows; row_group++) {
       const auto row = offset_row + row_group * kElementRowStride + simd_coordinate.y;
       const auto col = offset_col + simd_coordinate.x;
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short col_offset = 0; col_offset < kElementColumns; col_offset++) {
         destination[row * stride_row + (col + col_offset) * stride_col] =
             static_cast<OutputElementType>(source[row_group * kElementColumns + col_offset]);
@@ -176,13 +175,13 @@ struct SimdgroupFragmentLayout {
       ColumnLimit column_limit,
       OffsetRow offset_row = 0,
       OffsetCol offset_col = 0) {
-    using OutputElementType = metal::pointer_element_t<DestinationPointerType>;
+    using OutputElementType = pointer_element_t<DestinationPointerType>;
     const short2 simd_coordinate = get_coordinate();
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short row_group = 0; row_group < kElementRows; row_group++) {
       const auto row = offset_row + row_group * kElementRowStride + simd_coordinate.y;
       const auto col = offset_col + simd_coordinate.x;
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short col_offset = 0; col_offset < kElementColumns; col_offset++) {
         if (row < row_limit && (col + col_offset) < column_limit) {
           destination[row * stride_row + (col + col_offset) * stride_col] =
@@ -290,21 +289,21 @@ METAL_FUNC void cooperative_tensor_gemm(
   short output_col[16], output_row[16];
   bool output_valid[16];
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < left_capacity; i++) {
     auto coord = left_tensor.get_multidimensional_index(i);
     left_col[i] = coord[0];
     left_row[i] = coord[1];
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < right_capacity; i++) {
     auto coord = right_tensor.get_multidimensional_index(i);
     right_col[i] = coord[0];
     right_row[i] = coord[1];
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < accumulator_capacity; i++) {
     auto coord = accumulator_tensor.get_multidimensional_index(i);
     output_col[i] = coord[0];
@@ -317,7 +316,7 @@ METAL_FUNC void cooperative_tensor_gemm(
   bool left_in_bounds[16];
   bool right_in_bounds[16];
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < left_capacity; i++) {
     if constexpr (!transpose_left) {
       left_load_offset[i] = left_row[i] * leading_dimension_a + left_col[i];
@@ -328,7 +327,7 @@ METAL_FUNC void cooperative_tensor_gemm(
     }
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < right_capacity; i++) {
     if constexpr (!transpose_right) {
       right_load_offset[i] = right_row[i] * leading_dimension_b + right_col[i];
@@ -339,7 +338,7 @@ METAL_FUNC void cooperative_tensor_gemm(
     }
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < accumulator_capacity; i++) {
     accumulator_tensor[i] = AccumulatorType(0);
   }
@@ -347,7 +346,7 @@ METAL_FUNC void cooperative_tensor_gemm(
   const int aligned_k_iterations = aligned_k ? k_dimension : (k_dimension / unroll_k) * unroll_k;
 
   for (int k = 0; k < aligned_k_iterations; k += unroll_k) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < left_capacity; i++) {
       if constexpr (aligned_rows) {
         left_tensor[i] = left_input_pointer[left_load_offset[i]];
@@ -356,7 +355,7 @@ METAL_FUNC void cooperative_tensor_gemm(
       }
     }
 
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < right_capacity; i++) {
       if constexpr (aligned_columns) {
         right_tensor[i] = right_input_pointer[right_load_offset[i]];
@@ -375,7 +374,7 @@ METAL_FUNC void cooperative_tensor_gemm(
     if (aligned_k_iterations < k_dimension) {
       const short k_remaining = short(k_dimension - aligned_k_iterations);
 
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short i = 0; i < left_capacity; i++) {
         const short k_coord = transpose_left ? left_row[i] : left_col[i];
         if (left_in_bounds[i] && k_coord < k_remaining) {
@@ -385,7 +384,7 @@ METAL_FUNC void cooperative_tensor_gemm(
         }
       }
 
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short i = 0; i < right_capacity; i++) {
         const short k_coord = transpose_right ? right_col[i] : right_row[i];
         if (right_in_bounds[i] && k_coord < k_remaining) {
@@ -399,7 +398,7 @@ METAL_FUNC void cooperative_tensor_gemm(
     }
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < accumulator_capacity; i++) {
     if constexpr (aligned_rows && aligned_columns) {
       if (output_valid[i]) {
@@ -428,26 +427,26 @@ template <
     short kCols_,
     typename FragmentLayout = SimdgroupFragmentLayout>
 struct MppSubTile {
-  STEEL_CONST short kRows = kRows_;
-  STEEL_CONST short kCols = kCols_;
-  STEEL_CONST short kFragmentRows = FragmentLayout::kFragmentRows;
-  STEEL_CONST short kFragmentColumns = FragmentLayout::kFragmentColumns;
-  STEEL_CONST short kElementsPerFragment = FragmentLayout::kElementsPerFragment;
-  STEEL_CONST short kSubTileRows = kRows / kFragmentRows;
-  STEEL_CONST short kSubTileCols = kCols / kFragmentColumns;
-  STEEL_CONST short kNumFragments = kSubTileRows * kSubTileCols;
-  STEEL_CONST short kElementsPerSubTile = kNumFragments * kElementsPerFragment;
-  STEEL_CONST int kRowsPerThread = kSubTileRows * FragmentLayout::kElementRows;
-  STEEL_CONST int kColsPerThread = kSubTileCols * FragmentLayout::kElementColumns;
-  STEEL_CONST short kFragmentThreadRows = FragmentLayout::kElementRows;
-  STEEL_CONST short kFragmentThreadColumns = FragmentLayout::kElementColumns;
-  STEEL_CONST short kFragmentRowStride = FragmentLayout::kElementRowStride;
+  UZU_MTL_CONST short kRows = kRows_;
+  UZU_MTL_CONST short kCols = kCols_;
+  UZU_MTL_CONST short kFragmentRows = FragmentLayout::kFragmentRows;
+  UZU_MTL_CONST short kFragmentColumns = FragmentLayout::kFragmentColumns;
+  UZU_MTL_CONST short kElementsPerFragment = FragmentLayout::kElementsPerFragment;
+  UZU_MTL_CONST short kSubTileRows = kRows / kFragmentRows;
+  UZU_MTL_CONST short kSubTileCols = kCols / kFragmentColumns;
+  UZU_MTL_CONST short kNumFragments = kSubTileRows * kSubTileCols;
+  UZU_MTL_CONST short kElementsPerSubTile = kNumFragments * kElementsPerFragment;
+  UZU_MTL_CONST int kRowsPerThread = kSubTileRows * FragmentLayout::kElementRows;
+  UZU_MTL_CONST int kColsPerThread = kSubTileCols * FragmentLayout::kElementColumns;
+  UZU_MTL_CONST short kFragmentThreadRows = FragmentLayout::kElementRows;
+  UZU_MTL_CONST short kFragmentThreadColumns = FragmentLayout::kElementColumns;
+  UZU_MTL_CONST short kFragmentRowStride = FragmentLayout::kElementRowStride;
 
   using fragment_type = typename FragmentLayout::template fragment_vector_t<T>;
   fragment_type value_fragments[kNumFragments];
 
   METAL_FUNC constexpr void clear() {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kNumFragments; ++i) {
       value_fragments[i] = fragment_type(0);
     }
@@ -466,9 +465,9 @@ struct MppSubTile {
 
   template <typename SourcePointerType, typename StrideRow, typename StrideCol, typename OffsetRow = int, typename OffsetCol = int>
   METAL_FUNC constexpr void load(SourcePointerType source, StrideRow stride_row, StrideCol stride_col, OffsetRow offset_row = 0, OffsetCol offset_col = 0) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kSubTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kSubTileCols; ++j) {
         FragmentLayout::load(fragment_at(i, j), source, stride_row, stride_col, offset_row + i * kFragmentRows, offset_col + j * kFragmentColumns);
       }
@@ -477,9 +476,9 @@ struct MppSubTile {
 
   template <typename DestinationPointerType, typename StrideRow, typename StrideCol, typename OffsetRow = int, typename OffsetCol = int>
   METAL_FUNC constexpr void store(DestinationPointerType destination, StrideRow stride_row, StrideCol stride_col, OffsetRow offset_row = 0, OffsetCol offset_col = 0) const {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kSubTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kSubTileCols; ++j) {
         FragmentLayout::store(fragment_at(i, j), destination, stride_row, stride_col, offset_row + i * kFragmentRows, offset_col + j * kFragmentColumns);
       }
@@ -488,9 +487,9 @@ struct MppSubTile {
 
   template <typename SourcePointerType, typename StrideRow, typename StrideCol, typename RowLimit, typename ColumnLimit, typename OffsetRow = int, typename OffsetCol = int>
   METAL_FUNC constexpr void load_safe(SourcePointerType source, StrideRow stride_row, StrideCol stride_col, RowLimit row_limit, ColumnLimit column_limit, OffsetRow offset_row = 0, OffsetCol offset_col = 0) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (int i = 0; i < kSubTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int j = 0; j < kSubTileCols; ++j) {
         FragmentLayout::load_safe(fragment_at(i, j), source, stride_row, stride_col, row_limit, column_limit, offset_row + (i * kFragmentRows), offset_col + (j * kFragmentColumns));
       }
@@ -499,9 +498,9 @@ struct MppSubTile {
 
   template <typename DestinationPointerType, typename StrideRow, typename StrideCol, typename RowLimit, typename ColumnLimit, typename OffsetRow = int, typename OffsetCol = int>
   METAL_FUNC constexpr void store_safe(DestinationPointerType destination, StrideRow stride_row, StrideCol stride_col, RowLimit row_limit, ColumnLimit column_limit, OffsetRow offset_row = 0, OffsetCol offset_col = 0) const {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (int i = 0; i < kSubTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int j = 0; j < kSubTileCols; ++j) {
         FragmentLayout::store_safe(fragment_at(i, j), destination, stride_row, stride_col, row_limit, column_limit, offset_row + (i * kFragmentRows), offset_col + (j * kFragmentColumns));
       }
@@ -558,40 +557,40 @@ METAL_FUNC void native_fragment_matmul(
   auto accumulator_tensor = matmul_operation.template get_destination_cooperative_tensor<
       decltype(left_tensor), decltype(right_tensor), AccumulatorType>();
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short tile_m = 0; tile_m < tiles_m; tile_m++) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short tile_k = 0; tile_k < tiles_k; tile_k++) {
       const short fragment_row = transpose_left ? tile_k : tile_m;
       const short fragment_col = transpose_left ? tile_m : tile_k;
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short element = 0; element < 8; element++) {
         left_tensor[(tiles_k * tile_m + tile_k) * 8 + element] = left_input.fragment_at(fragment_row, fragment_col)[element];
       }
     }
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short tile_n = 0; tile_n < tiles_n; tile_n++) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short tile_k = 0; tile_k < tiles_k; tile_k++) {
       const short fragment_row = transpose_right ? tile_n : tile_k;
       const short fragment_col = transpose_right ? tile_k : tile_n;
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short element = 0; element < 8; element++) {
         right_tensor[(tiles_n * tile_k + tile_n) * 8 + element] = right_input.fragment_at(fragment_row, fragment_col)[element];
       }
     }
   }
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < accumulator_tensor.get_capacity(); i++) {
     accumulator_tensor[i] = accumulator.elements()[i];
   }
 
   matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < accumulator_tensor.get_capacity(); i++) {
     accumulator.elements()[i] = accumulator_tensor[i];
   }
@@ -603,24 +602,24 @@ struct MppTile {
   using subtile_type = SubTileType;
   using element_type = T;
 
-  STEEL_CONST short kSubTileRows = subtile_type::kRows;
-  STEEL_CONST short kSubTileCols = subtile_type::kCols;
-  STEEL_CONST short kElementsPerSubTile = subtile_type::kElementsPerSubTile;
-  STEEL_CONST short kTileRows = kTileRows_;
-  STEEL_CONST short kTileCols = kTileCols_;
-  STEEL_CONST short kRows = kTileRows * kSubTileRows;
-  STEEL_CONST short kCols = kTileCols * kSubTileCols;
-  STEEL_CONST short kSubTiles = kTileRows * kTileCols;
-  STEEL_CONST short kElementsPerTile = kSubTiles * kElementsPerSubTile;
-  STEEL_CONST short kRowsPerThread = kTileRows * subtile_type::kRowsPerThread;
-  STEEL_CONST short kColsPerThread = kTileCols * subtile_type::kColsPerThread;
+  UZU_MTL_CONST short kSubTileRows = subtile_type::kRows;
+  UZU_MTL_CONST short kSubTileCols = subtile_type::kCols;
+  UZU_MTL_CONST short kElementsPerSubTile = subtile_type::kElementsPerSubTile;
+  UZU_MTL_CONST short kTileRows = kTileRows_;
+  UZU_MTL_CONST short kTileCols = kTileCols_;
+  UZU_MTL_CONST short kRows = kTileRows * kSubTileRows;
+  UZU_MTL_CONST short kCols = kTileCols * kSubTileCols;
+  UZU_MTL_CONST short kSubTiles = kTileRows * kTileCols;
+  UZU_MTL_CONST short kElementsPerTile = kSubTiles * kElementsPerSubTile;
+  UZU_MTL_CONST short kRowsPerThread = kTileRows * subtile_type::kRowsPerThread;
+  UZU_MTL_CONST short kColsPerThread = kTileCols * subtile_type::kColsPerThread;
 
   subtile_type value_subtiles[kSubTiles];
 
   METAL_FUNC MppTile() thread {}
 
   METAL_FUNC constexpr void clear() {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kSubTiles; ++i) { value_subtiles[i].clear(); }
   }
 
@@ -637,9 +636,9 @@ struct MppTile {
 
   template <typename U>
   METAL_FUNC void load(const device U* source, const int leading_dimension) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         subtile_at(i, j).load(&source[(i * kSubTileRows * leading_dimension + j * kSubTileCols)], leading_dimension, 1);
       }
@@ -648,9 +647,9 @@ struct MppTile {
 
   template <typename U>
   METAL_FUNC void store(device U* destination, const int leading_dimension) const {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         subtile_at(i, j).store(&destination[(i * kSubTileRows * leading_dimension + j * kSubTileCols)], leading_dimension, 1);
       }
@@ -659,9 +658,9 @@ struct MppTile {
 
   template <typename U>
   METAL_FUNC void load_safe(const device U* source, const int leading_dimension, const short2 tile_dimensions) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int j = 0; j < kTileCols; ++j) {
         subtile_at(i, j).load_safe(source, leading_dimension, 1, tile_dimensions.y, tile_dimensions.x, i * kSubTileRows, j * kSubTileCols);
       }
@@ -670,9 +669,9 @@ struct MppTile {
 
   template <typename U>
   METAL_FUNC void store_safe(device U* destination, const int leading_dimension, const short2 tile_dimensions) const {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (int j = 0; j < kTileCols; ++j) {
         subtile_at(i, j).store_safe(destination, leading_dimension, 1, tile_dimensions.y, tile_dimensions.x, i * kSubTileRows, j * kSubTileCols);
       }
@@ -695,11 +694,11 @@ METAL_FUNC void native_tiled_matmul(
   constexpr short tiles_n = AccumulatorTile::kTileCols;
   constexpr short tiles_k = transpose_left ? LeftTile::kTileRows : LeftTile::kTileCols;
 
-  STEEL_PRAGMA_UNROLL
+  UZU_PRAGMA_UNROLL
   for (short i = 0; i < tiles_m; ++i) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short j = 0; j < tiles_n; ++j) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short k = 0; k < tiles_k; ++k) {
         const short left_row = transpose_left ? k : i;
         const short left_col = transpose_left ? i : k;

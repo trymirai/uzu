@@ -6,7 +6,7 @@
 #include <metal_simdgroup_matrix>
 #include <metal_stdlib>
 
-#include "../defines.h"
+#include "../../defines.h"
 #include "../utils/type_traits.h"
 #include "transforms.h"
 
@@ -22,19 +22,19 @@ namespace steel {
 // GEMM: TM up to 8 (64/(8*1)), TN up to 4 (64/(8*2))
 // Split-K: TM up to 1, TN up to 2
 // tile_matmad K dim is always 1
-#define STEEL_MAX_TM 8
-#define STEEL_MAX_TN 4
-#define STEEL_MAX_CTILE_FRAGS (STEEL_MAX_TM * STEEL_MAX_TN) // 32
+#define UZU_MAX_TM 8
+#define UZU_MAX_TN 4
+#define UZU_MAX_CTILE_FRAGS (UZU_MAX_TM * UZU_MAX_TN) // 32
 
 template <typename T>
 struct BaseMMAFrag {
-  STEEL_CONST int kFragRows = 8;
-  STEEL_CONST int kFragCols = 8;
+  UZU_MTL_CONST int kFragRows = 8;
+  UZU_MTL_CONST int kFragCols = 8;
 
-  STEEL_CONST int kElemsPerFrag = (kFragRows * kFragCols) / 32;
+  UZU_MTL_CONST int kElemsPerFrag = (kFragRows * kFragCols) / 32;
 
-  STEEL_CONST int kElemRows = 1;
-  STEEL_CONST int kElemCols = 2;
+  UZU_MTL_CONST int kElemRows = 1;
+  UZU_MTL_CONST int kElemCols = 2;
 
   typedef metal::simdgroup_matrix<T, kFragRows, kFragCols> mat_type;
   typedef metal::vec<T, kElemsPerFrag> frag_type;
@@ -55,9 +55,9 @@ struct BaseMMAFrag {
       int str_x,
       int str_y
   ) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         dst[i * kElemCols + j] = static_cast<T>(src[i * str_x + j * str_y]);
       }
@@ -75,9 +75,9 @@ struct BaseMMAFrag {
       int off_x = 0,
       int off_y = 0
   ) {
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         if ((off_x + i) < lim_x && (off_y + j) < lim_y) {
           dst[i * kElemCols + j] =
@@ -98,9 +98,9 @@ struct BaseMMAFrag {
   ) {
     using U = pointer_element_t<DstPtrType>;
 
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         dst[i * str_x + j * str_y] = static_cast<U>(src[i * kElemCols + j]);
       }
@@ -120,9 +120,9 @@ struct BaseMMAFrag {
   ) {
     using U = pointer_element_t<DstPtrType>;
 
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         if ((off_x + i) < lim_x && (off_y + j) < lim_y) {
           dst[(off_x + i) * str_x + (off_y + j) * str_y] =
@@ -147,9 +147,9 @@ struct BaseMMAFrag {
   ) {
     using U = pointer_element_t<DstPtrType>;
 
-    STEEL_PRAGMA_UNROLL
+    UZU_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      STEEL_PRAGMA_UNROLL
+      UZU_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         if ((off_x + i) < stop_x && (off_x + i) >= start_x &&
             (off_y + j) < stop_y && (off_y + j) >= start_y) {
@@ -194,15 +194,15 @@ template <typename T>
 struct MMATile {
   using MMAFrag_t = BaseMMAFrag<T>;
   using elem_type = T;
-  STEEL_CONST int kFragRows = MMAFrag_t::kFragRows;
-  STEEL_CONST int kFragCols = MMAFrag_t::kFragCols;
-  STEEL_CONST int kElemsPerFrag = MMAFrag_t::kElemsPerFrag;
+  UZU_MTL_CONST int kFragRows = MMAFrag_t::kFragRows;
+  UZU_MTL_CONST int kFragCols = MMAFrag_t::kFragCols;
+  UZU_MTL_CONST int kElemsPerFrag = MMAFrag_t::kElemsPerFrag;
 
   typedef typename MMAFrag_t::mat_type mat_type;
   typedef typename MMAFrag_t::frag_type frag_type;
 
   // Max-sized array — runtime kTileRows/kTileCols control how much is used
-  frag_type val_frags[STEEL_MAX_CTILE_FRAGS] = {};
+  frag_type val_frags[UZU_MAX_CTILE_FRAGS] = {};
 
   short kTileRows;
   short kTileCols;
@@ -216,8 +216,8 @@ struct MMATile {
         kNumFrags(tile_rows* tile_cols) {}
 
   METAL_FUNC constexpr void clear() {
-    STEEL_PRAGMA_UNROLL
-    for (short i = 0; i < STEEL_MAX_CTILE_FRAGS; ++i) {
+    UZU_PRAGMA_UNROLL
+    for (short i = 0; i < UZU_MAX_CTILE_FRAGS; ++i) {
       val_frags[i] = frag_type(0);
     }
   }
@@ -427,7 +427,7 @@ template <
     typename AccumType = float,
     typename Epilogue = TransformNone<U, AccumType>>
 struct BlockMMA {
-  STEEL_CONST short kFragSize = 8;
+  UZU_MTL_CONST short kFragSize = 8;
   using MMAFrag_acc_t = BaseMMAFrag<AccumType>;
 
   // Tile params (set at construction)
@@ -548,7 +548,7 @@ struct BlockMMA {
         thread auto& accum = Ctile.frag_at(i, j);
         int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
 
-        STEEL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (short k = 0; k < kElemsPerFrag; k++) {
           accum[k] = epilogue_op.apply(accum[k], C[offset_c + k * fdc]);
         }
@@ -556,7 +556,7 @@ struct BlockMMA {
     }
   }
 
-  STEEL_CONST short kElemsPerFrag = MMAFrag_acc_t::kElemsPerFrag;
+  UZU_MTL_CONST short kElemsPerFrag = MMAFrag_acc_t::kElemsPerFrag;
 
   /* Apply epilogue safe */
   template <typename BinaryEpilogue>
@@ -580,14 +580,14 @@ struct BlockMMA {
 
         U c_elems[2] = {0};
 
-        STEEL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (short k = 0; k < kElemsPerFrag; k++) {
           if ((j * TN_stride + k) < dst_tile_dims.x) {
             c_elems[k] = C[offset_c + k * fdc];
           }
         }
 
-        STEEL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (short k = 0; k < kElemsPerFrag; k++) {
           accum[k] = epilogue_op.apply(accum[k], c_elems[k]);
         }
@@ -613,7 +613,7 @@ struct BlockMMA {
         int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
         int offset_d = (i * TM_stride) * ldd + (j * TN_stride);
 
-        STEEL_PRAGMA_UNROLL
+        UZU_PRAGMA_UNROLL
         for (short k = 0; k < kElemsPerFrag; k++) {
           D[offset_d + k] = epilogue_op.apply(accum[k], C[offset_c + k * fdc]);
         }
@@ -644,7 +644,7 @@ struct BlockMMA {
           int offset_c = (i * TM_stride) * ldc + (j * TN_stride) * fdc;
           int offset_d = (i * TM_stride) * ldd + (j * TN_stride);
 
-          STEEL_PRAGMA_UNROLL
+          UZU_PRAGMA_UNROLL
           for (short k = 0; k < kElemsPerFrag; k++) {
             if ((j * TN_stride + k) < dst_tile_dims.x) {
               D[offset_d + k] =
