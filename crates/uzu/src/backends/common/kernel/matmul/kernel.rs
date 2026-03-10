@@ -1,8 +1,8 @@
 use std::ops::DerefMut;
 
 use super::{
-    MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemm_mpp::GemmMppKernel,
-    gemm_mixed_types_simple::GemmMixedTypesSimpleKernel, gemv::GemvKernel, matmul_arguments::MatmulArguments,
+    MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm_mpp::GemmMppKernel,
+    gemv::GemvKernel, matmul_arguments::MatmulArguments,
 };
 use crate::{
     DataType,
@@ -17,14 +17,7 @@ fn is_valid_dtype_combo(
     matches!(
         (a, b, out),
         (DataType::F16, DataType::F16, DataType::F16)
-            | (DataType::F16, DataType::F16, DataType::F32)
             | (DataType::BF16, DataType::BF16, DataType::BF16)
-            | (DataType::BF16, DataType::BF16, DataType::F32)
-            | (DataType::F32, DataType::F32, DataType::F32)
-            | (DataType::I8, DataType::I8, DataType::I32)
-            | (DataType::I8, DataType::F16, DataType::F16)
-            | (DataType::I8, DataType::F32, DataType::F32)
-            | (DataType::I8, DataType::BF16, DataType::BF16)
     )
 }
 
@@ -32,10 +25,8 @@ pub struct MatmulKernel<B: Backend> {
     pub(crate) a_dtype: DataType,
     pub(crate) b_dtype: DataType,
     pub(crate) output_dtype: DataType,
-    gemm: Option<GemmKernel<B>>,
     gemv: Option<GemvKernel<B>>,
     gemm_mpp: Option<GemmMppKernel<B>>,
-    gemm_mixed_types_simple: Option<GemmMixedTypesSimpleKernel<B>>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
@@ -57,10 +48,8 @@ impl<B: Backend> MatmulKernel<B> {
             a_dtype,
             b_dtype,
             output_dtype,
-            gemm: None,
             gemv: None,
             gemm_mpp: None,
-            gemm_mixed_types_simple: None,
             bias_add: None,
         })
     }
@@ -69,20 +58,10 @@ impl<B: Backend> MatmulKernel<B> {
         &mut self,
         context: &B::Context,
     ) -> Result<(), MatmulError<B>> {
-        let gemm = self.get_or_create_gemm()?;
-        gemm.precompile(context)?;
-
         let gemv = self.get_or_create_gemv()?;
         gemv.precompile(context)?;
 
         Ok(())
-    }
-
-    fn get_or_create_gemm(&mut self) -> Result<&mut GemmKernel<B>, MatmulError<B>> {
-        if self.gemm.is_none() {
-            self.gemm = Some(GemmKernel::<B>::new(self.output_dtype)?);
-        }
-        Ok(self.gemm.as_mut().unwrap())
     }
 
     fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, MatmulError<B>> {
@@ -95,21 +74,11 @@ impl<B: Backend> MatmulKernel<B> {
     fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, MatmulError<B>> {
         if self.gemm_mpp.is_none() {
             self.gemm_mpp = Some(
-                GemmMppKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)
+                GemmMppKernel::<B>::new(self.output_dtype)
                     .map_err(MatmulError::BackendError)?,
             );
         }
         Ok(self.gemm_mpp.as_mut().unwrap())
-    }
-
-    fn get_or_create_gemm_mixed_types_simple(
-        &mut self,
-    ) -> Result<&mut GemmMixedTypesSimpleKernel<B>, MatmulError<B>> {
-        if self.gemm_mixed_types_simple.is_none() {
-            self.gemm_mixed_types_simple =
-                Some(GemmMixedTypesSimpleKernel::<B>::new(self.a_dtype, self.b_dtype, self.output_dtype)?);
-        }
-        Ok(self.gemm_mixed_types_simple.as_mut().unwrap())
     }
 
     fn encode_dispatch_descriptor(
@@ -124,17 +93,9 @@ impl<B: Backend> MatmulKernel<B> {
                 let gemv = self.get_or_create_gemv()?;
                 gemv.encode(context, arguments, d, command_buffer)
             },
-            MatmulDispatchDescriptor::Gemm(d) => {
-                let gemm = self.get_or_create_gemm()?;
-                gemm.encode(context, arguments, d, command_buffer)
-            },
             MatmulDispatchDescriptor::GemmMpp(d) => {
                 let gemm_mpp = self.get_or_create_gemm_mpp()?;
                 gemm_mpp.encode(context, arguments, d, command_buffer)
-            },
-            MatmulDispatchDescriptor::GemmMixedTypesSimple(d) => {
-                let gemm_mixed_types_simple = self.get_or_create_gemm_mixed_types_simple()?;
-                gemm_mixed_types_simple.encode(context, arguments, d, command_buffer)
             },
         }
     }
