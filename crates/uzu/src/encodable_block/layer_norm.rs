@@ -1,6 +1,10 @@
 //! LayerNorm encodable.
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -8,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, LayerNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -29,7 +33,7 @@ pub struct LayerNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<B::NativeBuffer>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
 }
 
 impl<B: Backend> LayerNorm<B> {
@@ -52,6 +56,7 @@ impl<B: Backend> LayerNorm<B> {
             scale_data_type,
             scale_data_type,
             accumulation_data_type,
+            input_array_id == output_array_id,
         )
         .map_err(LayerNormError::BackendError)?;
 
@@ -60,22 +65,18 @@ impl<B: Backend> LayerNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer: scales.buffer_rc(),
+            scales_buffer: scales.buffer(),
         })
     }
 }
 
 impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
 
@@ -84,7 +85,7 @@ impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
             input_array.shape().to_vec()
         };
 
-        let input_array = input_binding[0].borrow_mut();
+        let input_array = input_binding[0].borrow();
         let output_array = output_binding[0].borrow_mut();
 
         let batch_size = input_shape[0] as u32;
@@ -95,16 +96,19 @@ impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
             0u32
         };
 
+        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
+        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
         self.kernel.encode(
-            input_array.buffer(),
-            self.scales_buffer.as_ref(),
-            output_array.buffer(),
+            input_buffer_borrow.as_deref(),
+            self.scales_buffer.borrow().deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
             batch_size,
             model_dim,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             full_layer,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

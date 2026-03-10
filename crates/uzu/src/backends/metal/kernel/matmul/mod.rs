@@ -6,11 +6,14 @@ pub use dispatch_descriptor::choose_dispatch_descriptor;
 use crate::{
     DataType,
     backends::{
-        common::kernel::matmul::{
-            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulArguments,
-            MatmulKernel,
+        common::{
+            Backend, CommandBuffer,
+            kernel::matmul::{
+                FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait,
+                MatmulArguments, MatmulError, MatmulKernel,
+            },
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext},
     },
 };
 
@@ -20,7 +23,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
     fn new(
         context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, MatmulError<Metal>> {
         let mut kernel = MatmulKernel::new(data_type)?;
         kernel.precompile(context)?;
         Ok(kernel)
@@ -29,7 +32,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
     fn encode(
         &mut self,
         context: &MetalContext,
-        encoder: &<Metal as crate::backends::common::Backend>::ComputeEncoder,
+        encoder: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
         arguments: FullPrecisionMatmulArguments<Metal>,
     ) {
         let mut matmul_arguments = MatmulArguments {

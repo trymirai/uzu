@@ -1,6 +1,10 @@
 //! Quantized embedding lookup encodable.
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -8,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, NativeBuffer,
+        Backend, Buffer, CommandBuffer, Context,
         kernel::{Kernels, QuantizedEmbeddingLookupKernel},
     },
     config::QuantizationMode,
@@ -67,9 +71,9 @@ pub enum QuantizedEmbeddingLookupError<B: Backend> {
 
 pub struct QuantizedEmbeddingLookup<B: Backend> {
     kernel: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-    weights_buffer: Rc<B::NativeBuffer>,
-    scales_buffer: Rc<B::NativeBuffer>,
-    biases_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
+    biases_buffer: Rc<RefCell<B::Buffer>>,
     mode: QuantizationMode,
     input_scale: f32,
     vocab_size: u32,
@@ -198,7 +202,7 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                     });
                 }
 
-                biases.buffer_rc()
+                biases.buffer()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -216,14 +220,14 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
                 }
 
-                Rc::new(buffer)
+                Rc::new(RefCell::new(buffer))
             },
         };
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
-            scales_buffer: scales.buffer_rc(),
+            weights_buffer: weights.buffer(),
+            scales_buffer: scales.buffer(),
             biases_buffer,
             mode,
             input_scale,
@@ -235,16 +239,12 @@ impl<B: Backend> QuantizedEmbeddingLookup<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
         let token_ids_array = arrays[0].borrow_mut();
@@ -257,18 +257,19 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingLookup<B> {
         };
 
         self.kernel.encode(
-            token_ids_array.buffer(),
-            self.weights_buffer.as_ref(),
-            self.scales_buffer.as_ref(),
-            self.biases_buffer.as_ref(),
-            output_array.buffer(),
+            token_ids_array.buffer().borrow().deref(),
+            self.weights_buffer.borrow().deref(),
+            self.scales_buffer.borrow().deref(),
+            self.biases_buffer.borrow().deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
             batch_size as u32,
             self.vocab_size,
             self.model_dim,
             self.group_size,
             self.input_scale,
             quant_mode,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

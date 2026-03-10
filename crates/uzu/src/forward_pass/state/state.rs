@@ -1,11 +1,16 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType, DecoderConfig,
     array::{Array, ArrayCell, ArrayCellExt},
-    backends::common::{Backend, CommandBuffer, Context, CopyEncoder},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -157,8 +162,8 @@ impl<B: Backend> ForwardPassState<B> {
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
         should_fill_attention_bias: bool,
-        async_positions: Option<(Rc<B::NativeBuffer>, usize)>,
-        async_seeds: Option<(Rc<B::NativeBuffer>, usize)>,
+        async_positions: Option<(Rc<RefCell<B::Buffer>>, usize)>,
+        async_seeds: Option<(Rc<RefCell<B::Buffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
@@ -398,7 +403,9 @@ impl<B: Backend> ForwardPassState<B> {
         let create_buffer = |size: usize| -> ArrayCell<B> {
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, &[batch_size, size / batch_size], data_type) })
+            RefCell::new(unsafe {
+                Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, size / batch_size], data_type)
+            })
         };
 
         ClassifierModeState {
@@ -408,7 +415,9 @@ impl<B: Backend> ForwardPassState<B> {
             classifier_logits: {
                 let buffer_size = batch_size * num_labels * data_type.size_in_bytes();
                 let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-                RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, &[batch_size, num_labels], data_type) })
+                RefCell::new(unsafe {
+                    Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, num_labels], data_type)
+                })
             },
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,
@@ -434,7 +443,7 @@ impl<B: Backend> ForwardPassState<B> {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe { Array::from_parts(Rc::new(buffer), 0, dims, data_type) })
+            RefCell::new(unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) })
         };
 
         ClassifierModeState {
@@ -779,7 +788,7 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn encode_copy_array(
         &self,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         source_array_id: ArrayId,
         destination_array: RefCell<Array<B>>,
     ) {
@@ -787,14 +796,12 @@ impl<B: Backend> ForwardPassState<B> {
         let src_borrow = source_ref.borrow();
         let dst_borrow = destination_array.borrow();
 
-        let src_buf = src_borrow.buffer();
-        let dst_buf = dst_borrow.buffer();
+        let src_buf_rc = src_borrow.buffer();
+        let dst_buf_rc = dst_borrow.buffer();
 
         let copy_size_bytes = dst_borrow.size();
         debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
-        command_buffer.with_copy_encoder(|encoder| {
-            encoder.encode_copy(src_buf, dst_buf, copy_size_bytes);
-        });
+        command_buffer.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
     }
 }

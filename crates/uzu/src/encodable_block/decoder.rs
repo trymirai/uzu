@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::{
     DataType, DecoderConfig,
-    backends::common::{Backend, kernel::matmul::MatmulKernels},
+    backends::common::{Backend, CommandBuffer},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
         EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope,
@@ -27,10 +27,7 @@ pub struct Decoder<B: Backend> {
     pub local_rope: Option<Rc<Box<dyn EncodableBlock<B>>>>,
 }
 
-impl<B: Backend + 'static> Decoder<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> Decoder<B> {
     pub fn new(
         context: Rc<B::Context>,
         decoder_config: Rc<DecoderConfig>,
@@ -178,43 +175,35 @@ where
 }
 
 impl<B: Backend> EncodableBlock<B> for Decoder<B> {
-    fn encode_with_shared_encoder(
-        &self,
-        _state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        _encoder: &B::ComputeEncoder,
-    ) {
-        unimplemented!("Decoder does not support shared encoder")
-    }
-
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
-    ) {
-        self.embed.encode(state, parameters, command_buffer);
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        self.embed.encode(state, parameters, command_buffer)?;
 
         for layer in self.layers.iter() {
-            layer.encode(state, parameters, command_buffer);
+            layer.encode(state, parameters, command_buffer)?;
         }
 
         if state.is_prefilling() {
-            return;
+            return Ok(());
         }
 
-        self.norm.encode(state, parameters, command_buffer);
+        self.norm.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
             state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.readout.encode(state, parameters, command_buffer);
+        self.readout.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
             state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
         }
+        Ok(())
     }
 }

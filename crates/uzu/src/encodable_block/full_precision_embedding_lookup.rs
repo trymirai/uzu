@@ -1,6 +1,10 @@
 //! Full precision embedding lookup encodable.
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -8,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{FullPrecisionEmbeddingLookupKernel, Kernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -38,7 +42,7 @@ pub enum FullPrecisionEmbeddingLookupError<B: Backend> {
 
 pub struct FullPrecisionEmbeddingLookup<B: Backend> {
     kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-    weights_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
     vocab_size: u32,
     model_dim: u32,
     input_scale: f32,
@@ -78,7 +82,7 @@ impl<B: Backend> FullPrecisionEmbeddingLookup<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
+            weights_buffer: weights.buffer(),
             vocab_size: vocab_size as u32,
             model_dim: model_dim as u32,
             input_scale: input_scale.unwrap_or(1.0),
@@ -87,30 +91,27 @@ impl<B: Backend> FullPrecisionEmbeddingLookup<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingLookup<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
         let batch_size = state.active_suffix_length();
         let token_ids_array = arrays[0].borrow_mut();
         let output_array = arrays[1].borrow_mut();
 
         self.kernel.encode(
-            token_ids_array.buffer(),
-            self.weights_buffer.as_ref(),
-            output_array.buffer(),
+            token_ids_array.buffer().borrow().deref(),
+            self.weights_buffer.borrow().deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
             batch_size as u32,
             self.vocab_size,
             self.model_dim,
             self.input_scale,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

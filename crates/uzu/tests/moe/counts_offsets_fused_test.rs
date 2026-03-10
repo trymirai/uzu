@@ -1,14 +1,15 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use metal::MTLBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Kernels,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels,
             kernel::{MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel},
         },
         metal::Metal,
@@ -71,30 +72,27 @@ fn gen_topk_ids_from_logits(
     let input_buf = alloc_buffer_with_data(ctx, &input);
     let weight_buf = alloc_buffer_with_data(ctx, &weight);
     let bias_buf = alloc_buffer_with_data(ctx, &bias);
-    let topk_ids_buf = alloc_buffer::<i32>(ctx, t * k);
-    let topk_probs_buf = alloc_buffer::<bf16>(ctx, t * k);
+    let mut topk_ids_buf = alloc_buffer::<i32>(ctx, t * k);
+    let mut topk_probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
     // Use fused router+topk kernel
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let router_topk_encoder = cb.new_compute_command_encoder().expect("router_topk encoder");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
     let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16)
         .expect("router_topk kernel");
     router_topk.encode(
         &input_buf,
         &weight_buf,
         &bias_buf,
-        &topk_ids_buf,
-        &topk_probs_buf,
+        &mut topk_ids_buf,
+        &mut topk_probs_buf,
         t as u32,
         d_model as u32,
         e as u32,
         k as u32,
         true,
-        &router_topk_encoder,
+        &mut command_buffer,
     );
-    router_topk_encoder.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let ids_ptr = topk_ids_buf.contents().as_ptr() as *const i32;
     let ids = unsafe { std::slice::from_raw_parts(ids_ptr, t * k) };
@@ -119,30 +117,28 @@ fn test_counts_offsets_fused_parity_random() {
             let (offsets_cpu, sum_cpu) = cpu_offsets_from_counts(&counts_cpu);
 
             // GPU fused kernel
-            let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-            let sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
+            let mut offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+            let mut sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
             let num_tiles = ((e + 511) / 512).max(1);
-            let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
+            let mut partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
             let kernel =
                 <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-            let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-            let encoder = cb.new_compute_command_encoder().expect("encoder");
+            let mut command_buffer =
+                ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
             kernel.encode(
                 &topk_ids_buf,
-                &offsets_buf,
-                &sum_k_buf,
-                &partials_buf,
+                &mut offsets_buf,
+                &mut sum_k_buf,
+                &mut partials_buf,
                 t as u32,
                 e as u32,
                 k as u32,
-                &encoder,
+                &mut command_buffer,
             );
 
-            encoder.end_encoding();
-            cb.commit();
-            cb.wait_until_completed();
+            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
             // Verify offsets
             let offsets_ptr = offsets_buf.contents().as_ptr() as *const u32;
@@ -171,19 +167,25 @@ fn test_counts_offsets_fused_edge_cases() {
     }
     let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
 
-    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
+    let mut offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_tiles = ((e + 511) / 512).max(1);
-    let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
+    let mut partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
     let kernel =
         <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let encoder = cb.new_compute_command_encoder().expect("encoder");
-    kernel.encode(&topk_ids_buf, &offsets_buf, &sum_k_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);
-    encoder.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        &topk_ids_buf,
+        &mut offsets_buf,
+        &mut sum_k_buf,
+        &mut partials_buf,
+        t as u32,
+        e as u32,
+        k as u32,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
 
@@ -195,19 +197,25 @@ fn test_counts_offsets_fused_edge_cases() {
     let (t, e, k) = (0usize, 8usize, 2usize);
     let topk_ids: Vec<i32> = vec![];
     let topk_ids_buf = alloc_buffer_with_data(&ctx, &topk_ids);
-    let offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
-    let sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
+    let mut offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut sum_k_buf = alloc_buffer::<u32>(&ctx, 1);
     let num_tiles = ((e + 511) / 512).max(1);
-    let partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
+    let mut partials_buf = alloc_buffer::<u32>(&ctx, num_tiles * 512);
 
     let kernel =
         <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let encoder = cb.new_compute_command_encoder().expect("encoder");
-    kernel.encode(&topk_ids_buf, &offsets_buf, &sum_k_buf, &partials_buf, t as u32, e as u32, k as u32, &encoder);
-    encoder.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    kernel.encode(
+        &topk_ids_buf,
+        &mut offsets_buf,
+        &mut sum_k_buf,
+        &mut partials_buf,
+        t as u32,
+        e as u32,
+        k as u32,
+        &mut command_buffer,
+    );
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
     assert!(offsets_gpu.iter().all(|&v| v == 0));

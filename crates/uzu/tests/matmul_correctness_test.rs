@@ -2,13 +2,14 @@
 
 use bytemuck;
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::Array2;
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Context,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context,
             kernel::matmul::{MatmulArguments, MatmulKernel},
         },
         metal::{Metal, choose_dispatch_descriptor},
@@ -32,7 +33,7 @@ fn run_metal_matmul(
         .device
         .new_buffer_with_data(bytemuck::cast_slice(b_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let d_buf = ctx
+    let mut d_buf = ctx
         .device
         .new_buffer(m * n * core::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
@@ -45,13 +46,12 @@ fn run_metal_matmul(
 
     let mut kernel = MatmulKernel::<Metal>::new(DataType::BF16).expect("kernel");
 
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer").to_owned();
-    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
     let mut arguments = MatmulArguments {
         a: &a_buf,
         a_offset: 0,
         b: &b_buf,
-        d: &d_buf,
+        d: &mut d_buf,
         bias: None,
         batch: m as i32,
         input_dim: k as i32,
@@ -64,11 +64,8 @@ fn run_metal_matmul(
     };
     MatmulKernel::<Metal>::apply_batch_collapse(&mut arguments);
     let descriptor = choose_dispatch_descriptor(ctx, DataType::BF16, &arguments).expect("dispatch descriptor");
-    let encode_result = kernel.encode_with_descriptor(ctx, arguments, &descriptor, &enc);
-    enc.end_encoding();
-    encode_result.expect("encode");
-    cb.commit();
-    cb.wait_until_completed();
+    kernel.encode_with_descriptor(ctx, arguments, &descriptor, &mut command_buffer).expect("encode");
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     unsafe {
         let ptr = d_buf.contents().as_ptr() as *const bf16;

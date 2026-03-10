@@ -1,38 +1,84 @@
+use std::ops::Range;
+
 use super::Backend;
 
 pub trait CommandBuffer {
-    type Backend: Backend;
+    type Backend: Backend<CommandBuffer = Self>;
 
-    fn with_compute_encoder<T>(
-        &self,
-        callback: impl FnOnce(&<Self::Backend as Backend>::ComputeEncoder) -> T,
-    ) -> T;
+    type Initial: CommandBufferInitial<CommandBuffer = Self>;
+    type Encoding: CommandBufferEncoding<CommandBuffer = Self>;
+    type Executable: CommandBufferExecutable<CommandBuffer = Self>;
+    type Pending: CommandBufferPending<CommandBuffer = Self>;
+    type Completed: CommandBufferCompleted<CommandBuffer = Self>;
+}
 
-    fn with_copy_encoder<T>(
-        &self,
-        callback: impl FnOnce(&<Self::Backend as Backend>::CopyEncoder) -> T,
-    ) -> T;
+pub trait CommandBufferInitial {
+    type CommandBuffer: CommandBuffer<Initial = Self>;
+
+    fn start_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Encoding;
+}
+
+pub trait CommandBufferEncoding {
+    type CommandBuffer: CommandBuffer<Encoding = Self>;
+
+    fn encode_copy(
+        &mut self,
+        src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        size: usize,
+    );
+
+    fn encode_fill(
+        &mut self,
+        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        range: Range<usize>,
+        value: u8,
+    );
 
     fn encode_wait_for_event(
         &mut self,
-        event: &<Self::Backend as Backend>::Event,
+        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Event,
         value: u64,
     );
 
     fn encode_signal_event(
         &mut self,
-        event: &<Self::Backend as Backend>::Event,
+        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Event,
         value: u64,
     );
 
     fn add_completion_handler(
         &mut self,
-        handler: impl Fn() + 'static,
+        handler: impl FnOnce(
+            Result<
+                &<Self::CommandBuffer as CommandBuffer>::Completed,
+                <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
+            >,
+        ) + 'static,
     );
 
-    fn submit(&self);
+    fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
+}
 
-    fn wait_until_completed(&self);
+pub trait CommandBufferExecutable {
+    type CommandBuffer: CommandBuffer<Executable = Self>;
+
+    fn submit(self) -> <Self::CommandBuffer as CommandBuffer>::Pending;
+}
+
+pub trait CommandBufferPending {
+    type CommandBuffer: CommandBuffer<Pending = Self>;
+
+    fn wait_until_completed(
+        self
+    ) -> Result<
+        <Self::CommandBuffer as CommandBuffer>::Completed,
+        <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
+    >;
+}
+
+pub trait CommandBufferCompleted {
+    type CommandBuffer: CommandBuffer<Completed = Self>;
 
     fn is_completed(&self) -> bool;
 

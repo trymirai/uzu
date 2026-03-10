@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/uzu", "crates/benchmarks"]
+members = ["crates/cli", "crates/uzu", "crates/benchmarks", "crates/dsl"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,7 @@ repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
 benchmarks = { path = "crates/benchmarks" }
+dsl = { path = "crates/dsl" }
 uzu = { path = "crates/uzu" }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
@@ -26,6 +27,9 @@ objc2-foundation = "0.3"
 metal = { package = "mtl-rs", version = "0.1.6" }
 block2 = "0.6"
 bytemuck = "1.23"
+zerocopy = "0.8.27"
+xxhash-rust = "0.8.15"
+memmap2 = "0.9.8"
 num-traits = "0.2"
 regex = "1.12"
 libc = "0.2"

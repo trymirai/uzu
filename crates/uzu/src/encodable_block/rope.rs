@@ -1,10 +1,12 @@
 //! Rope (Rotary Position Embedding) encodable.
 
+use std::ops::{Deref, DerefMut};
+
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, RopeKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
@@ -29,16 +31,12 @@ impl<B: Backend> Rope<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Rope<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
@@ -82,18 +80,19 @@ impl<B: Backend> EncodableBlock<B> for Rope<B> {
         let token_positions_offset = token_positions.offset();
 
         self.kernel.encode(
-            qkv.buffer(),
-            rope_cosines.buffer(),
-            rope_sines.buffer(),
-            (token_positions.buffer(), token_positions_offset),
-            rotated_queries.buffer(),
-            rotated_keys.buffer(),
+            qkv.buffer().borrow().deref(),
+            rope_cosines.buffer().borrow().deref(),
+            rope_sines.buffer().borrow().deref(),
+            (token_positions.buffer().borrow().deref(), token_positions_offset),
+            rotated_queries.buffer().borrow_mut().deref_mut(),
+            rotated_keys.buffer().borrow_mut().deref_mut(),
             head_dim as u32,
             num_heads as u32,
             num_groups as u32,
             suffix_length as u32,
             rope_max_seq_len as u32,
-            encoder,
-        )
+            command_buffer,
+        );
+        Ok(())
     }
 }

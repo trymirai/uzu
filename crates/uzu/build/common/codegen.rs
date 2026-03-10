@@ -10,7 +10,8 @@ pub fn write_tokens(
     let tokens = tokens.into();
     let file = file.as_ref();
 
-    let parsed = syn::parse2(tokens.into()).context("cannot parse generated bindings")?;
+    let parsed = syn::parse2(tokens.clone().into())
+        .with_context(|| format!("cannot parse generated bindings: {}", tokens.to_string()))?;
     fs::write(&file, prettyplease::unparse(&parsed))
         .with_context(|| format!("cannot write file {}", file.display()))?;
 

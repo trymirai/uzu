@@ -5,14 +5,15 @@ mod common;
 use std::mem::size_of;
 
 use bytemuck;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array3, Array4, s};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBuffer, Context, Kernels,
+            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+            CommandBufferPending, Context, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
@@ -311,13 +312,12 @@ fn run_single_pass_attention(
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -332,7 +332,7 @@ fn run_single_pass_attention(
         &query_buffer,
         &key_cache_buffer,
         &value_cache_buffer,
-        &output_buffer,
+        &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -347,12 +347,9 @@ fn run_single_pass_attention(
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
-        &compute_encoder,
+        &mut command_buffer,
     );
-    compute_encoder.end_encoding();
-
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -384,13 +381,12 @@ fn run_single_pass_attention_with_is_causal(
     let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -404,7 +400,7 @@ fn run_single_pass_attention_with_is_causal(
         &query_buffer,
         &key_cache_buffer,
         &value_cache_buffer,
-        &output_buffer,
+        &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -419,12 +415,9 @@ fn run_single_pass_attention_with_is_causal(
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
-        &compute_encoder,
+        &mut command_buffer,
     );
-    compute_encoder.end_encoding();
-
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -455,19 +448,18 @@ fn run_gemm_attention(
     let mask_buffer = mask.map(|m| create_mask_2d_buffer(m, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     let args = AttentionGemmArguments {
         queries_buffer: &query_buffer,
         keys_buffer: &key_cache_buffer,
         values_buffer: &value_cache_buffer,
-        output_buffer: &output_buffer,
+        output_buffer: &mut output_buffer,
         mask_buffer: mask_buffer.as_ref(),
         sinks_buffer: sinks_buffer.as_ref(),
         num_heads,
@@ -481,12 +473,8 @@ fn run_gemm_attention(
         scale,
     };
 
-    let encode_result = kernel.encode(context, &compute_encoder, &args);
-    compute_encoder.end_encoding();
-    encode_result?;
-
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    kernel.encode(context, &mut command_buffer, args)?;
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -912,22 +900,22 @@ fn run_two_pass_attention(
     let partials_size = num_heads * seq_len * total_blocks_count * head_dim;
     let sums_maxs_size = num_heads * seq_len * total_blocks_count;
 
-    let partials_buffer = context
+    let mut partials_buffer = context
         .device
         .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let sums_buffer = context
+    let mut sums_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let maxs_buffer = context
+    let mut maxs_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(
             num_heads * seq_len * head_dim * std::mem::size_of::<f32>(),
@@ -935,8 +923,7 @@ fn run_two_pass_attention(
         )
         .expect("Failed to create buffer");
 
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -950,9 +937,9 @@ fn run_two_pass_attention(
         &queries_buffer,
         &keys_buffer,
         &values_buffer,
-        &partials_buffer,
-        &sums_buffer,
-        &maxs_buffer,
+        &mut partials_buffer,
+        &mut sums_buffer,
+        &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -967,21 +954,18 @@ fn run_two_pass_attention(
         mask_q_seq_stride,
         mask_head_stride,
         sinks_buffer.as_ref().map(|b| b),
-        &compute_encoder,
+        &mut command_buffer,
     );
     kernel_pass2.encode(
         &partials_buffer,
         &sums_buffer,
         &maxs_buffer,
-        &output_buffer,
+        &mut output_buffer,
         num_heads as u32,
         seq_len as u32,
-        &compute_encoder,
+        &mut command_buffer,
     );
-    compute_encoder.end_encoding();
-
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -1152,19 +1136,19 @@ fn perf_two_pass_attention() {
     let partials_size = num_heads * suffix_length * total_blocks_count * head_dim;
     let sums_maxs_size = num_heads * suffix_length * total_blocks_count;
 
-    let partials_buffer = context
+    let mut partials_buffer = context
         .device
         .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let sums_buffer = context
+    let mut sums_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let maxs_buffer = context
+    let mut maxs_buffer = context
         .device
         .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let output_buffer = context
+    let mut output_buffer = context
         .device
         .new_buffer(
             num_heads * suffix_length * head_dim * std::mem::size_of::<f32>(),
@@ -1173,8 +1157,7 @@ fn perf_two_pass_attention() {
         .expect("Failed to create buffer");
 
     // ---- Launch and time ----
-    let command_buffer = context.command_queue.command_buffer().expect("Failed to create command buffer");
-    let compute_encoder = command_buffer.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     let mask_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
     let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
@@ -1182,9 +1165,9 @@ fn perf_two_pass_attention() {
         &queries_buffer,
         &keys_buffer,
         &values_buffer,
-        &partials_buffer,
-        &sums_buffer,
-        &maxs_buffer,
+        &mut partials_buffer,
+        &mut sums_buffer,
+        &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
         (seq_len * head_dim) as u32,
@@ -1199,27 +1182,24 @@ fn perf_two_pass_attention() {
         None,
         None,
         sinks_buffer.as_ref().map(|b| b),
-        &compute_encoder,
+        &mut command_buffer,
     );
     kernel_pass2.encode(
         &partials_buffer,
         &sums_buffer,
         &maxs_buffer,
-        &output_buffer,
+        &mut output_buffer,
         num_heads as u32,
         suffix_length as u32,
-        &compute_encoder,
+        &mut command_buffer,
     );
-    compute_encoder.end_encoding();
-
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
+    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     // Get actual GPU execution time
-    let gpu_elapsed_ms = command_buffer.gpu_execution_time_ms();
+    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
 
     match gpu_elapsed_ms {
         Some(gpu_time) => {

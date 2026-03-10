@@ -1,12 +1,15 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::{Backend, Kernels, kernel::MoeFinalizeKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels, kernel::MoeFinalizeKernel,
+        },
         metal::Metal,
     },
 };
@@ -85,26 +88,23 @@ fn test_finalize_correctness() {
         let tok2row_buf = alloc_buffer_with_data(&ctx, &tok2row);
         let probs_buf = alloc_buffer_with_data(&ctx, &probs);
         let y_partial_buf = alloc_buffer_with_data(&ctx, &y_partial);
-        let y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
+        let mut y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
 
         // Execute finalize kernel
         let finalize = <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16)
             .expect("finalize kernel");
-        let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-        let encoder = cb.new_compute_command_encoder().expect("encoder");
+        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
         finalize.encode(
             &tok2row_buf,
             &probs_buf,
             &y_partial_buf,
-            &y_out_buf,
+            &mut y_out_buf,
             t as u32,
             d_model as u32,
             k as u32,
-            &encoder,
+            &mut command_buffer,
         );
-        encoder.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
         // Compare
         let y_gpu = unsafe { std::slice::from_raw_parts(y_out_buf.contents().as_ptr() as *const bf16, t * d_model) };

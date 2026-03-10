@@ -43,10 +43,10 @@ pub async fn run_server(
     println!("🌐 Server will be available at: http://localhost:{}", config.port);
     println!("📝 Endpoints:\n   POST /chat/completions - Chat completions API\n");
 
-    let session = load_session(model_path, prefill_step_size, None);
+    let session = load_session(model_path, prefill_step_size, None, None);
     let state = SessionState {
         model_name,
-        session_wrapper: SessionWrapper::new(session),
+        session_wrapper: std::sync::Arc::new(SessionWrapper::new(session)),
     };
 
     let _ =

@@ -19,8 +19,8 @@ use crate::{
     ArrayElement, DataType,
     array::Array,
     backends::common::{
-        Backend, CommandBuffer, Context,
-        kernel::{kv_cache_update::KVCacheUpdate, matmul::MatmulKernels},
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        kernel::kv_cache_update::KVCacheUpdate,
     },
     classifier::Classifier,
     config::ModelMetadata,
@@ -32,7 +32,7 @@ use crate::{
         traces::ActivationTrace,
     },
     language_model::{
-        LanguageModelGeneratorContext,
+        language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
     },
     parameters::{ParameterLoader, ParameterTree, read_safetensors_metadata},
@@ -155,10 +155,7 @@ pub enum ArrayTransform {
 // Model Context (internal)
 // ============================================================================
 
-enum ModelContext<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+enum ModelContext<B: Backend> {
     LanguageModelGenerator(LanguageModelGeneratorContext<B>),
     Classifier(Classifier<B>),
 }
@@ -171,18 +168,12 @@ where
 ///
 /// Automatically detects whether the model is an LLM or classifier and
 /// runs the appropriate validation.
-pub struct TraceValidator<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct TraceValidator<B: Backend> {
     model_path: PathBuf,
     context: ModelContext<B>,
 }
 
-impl<B: Backend + 'static> TraceValidator<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> TraceValidator<B> {
     /// Create a new trace validator for the given model path.
     ///
     /// Automatically detects the model type from config.json.
@@ -282,11 +273,14 @@ where
             None,
         );
 
-        let command_buffer = ctx.context.create_command_buffer().expect("Failed to create command buffer");
+        let mut command_buffer =
+            ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
-        ctx.executables.encode(&mut state, &EncodingParameters::new(false, false, false), &command_buffer);
-        command_buffer.submit();
-        command_buffer.wait_until_completed();
+        ctx.executables
+            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let pending = command_buffer.end_encoding().submit();
+        pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let traces = state.traces().clone();
         let data_type = ctx.model_shape.activation_data_type();

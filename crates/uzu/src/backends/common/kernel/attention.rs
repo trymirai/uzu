@@ -6,7 +6,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Kernels,
+        Backend, CommandBuffer, Kernels,
         gpu_types::{AttnMaskParams, AttnParams},
         kernel::AttentionGemmKernel,
     },
@@ -15,12 +15,12 @@ use crate::{
 const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a, B: Backend> {
-    pub queries_buffer: &'a B::NativeBuffer,       // buffer(0)
-    pub keys_buffer: &'a B::NativeBuffer,          // buffer(1)
-    pub values_buffer: &'a B::NativeBuffer,        // buffer(2)
-    pub output_buffer: &'a B::NativeBuffer,        // buffer(3)
-    pub mask_buffer: Option<&'a B::NativeBuffer>,  // buffer(6)
-    pub sinks_buffer: Option<&'a B::NativeBuffer>, // buffer(7)
+    pub queries_buffer: &'a B::Buffer,       // buffer(0)
+    pub keys_buffer: &'a B::Buffer,          // buffer(1)
+    pub values_buffer: &'a B::Buffer,        // buffer(2)
+    pub output_buffer: &'a mut B::Buffer,    // buffer(3)
+    pub mask_buffer: Option<&'a B::Buffer>,  // buffer(6)
+    pub sinks_buffer: Option<&'a B::Buffer>, // buffer(7)
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
@@ -49,8 +49,8 @@ impl<B: Backend> AttentionGemmBlock<B> {
     pub fn encode(
         &self,
         context: &B::Context,
-        compute_encoder: &B::ComputeEncoder,
-        args: &AttentionGemmArguments<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        args: AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
             32
@@ -138,7 +138,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             args.sinks_buffer,
             args.num_heads as u32,
             args.suffix_length as u32,
-            &compute_encoder,
+            command_buffer,
         );
 
         Ok(())

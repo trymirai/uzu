@@ -1,6 +1,10 @@
 //! RMS Normalization encodable.
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -8,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::{Kernels, RMSNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -29,7 +33,7 @@ pub struct RMSNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<B::NativeBuffer>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
     use_sampling_range: bool,
 }
 
@@ -58,6 +62,7 @@ impl<B: Backend> RMSNorm<B> {
             scales_type,
             output_type,
             accumulation_data_type,
+            input_array_id == output_array_id,
         )
         .map_err(RMSNormError::BackendError)?;
 
@@ -66,7 +71,7 @@ impl<B: Backend> RMSNorm<B> {
             config,
             input_array_id,
             output_array_id,
-            scales_buffer: scales.buffer_rc(),
+            scales_buffer: scales.buffer(),
             use_sampling_range: false,
         })
     }
@@ -80,16 +85,12 @@ impl<B: Backend> RMSNorm<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
 
@@ -98,7 +99,7 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
             input_array.shape().to_vec()
         };
 
-        let input_array = input_binding[0].borrow_mut();
+        let input_array = input_binding[0].borrow();
         let output_array = output_binding[0].borrow_mut();
 
         let suffix_length = input_shape[0];
@@ -112,7 +113,7 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
         };
         let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
         if batch_len == 0 {
-            return;
+            return Ok(());
         }
 
         let row_size_in_bytes = input_shape[1] * input_elem_size;
@@ -121,16 +122,20 @@ impl<B: Backend> EncodableBlock<B> for RMSNorm<B> {
         let output_row_size_in_bytes = input_shape[1] * output_elem_size;
         let output_offset = batch_start * output_row_size_in_bytes;
 
+        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
+        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
+
         self.kernel.encode(
-            (input_array.buffer(), input_offset),
-            self.scales_buffer.as_ref(),
-            (output_array.buffer(), output_offset),
+            input_buffer_borrow.as_deref().map(|b| (b, input_offset)),
+            self.scales_buffer.borrow().deref(),
+            (output_array.buffer().borrow_mut().deref_mut(), output_offset),
             batch_len as u32,
             input_shape[1] as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             self.config.upcast_mode == UpcastMode::FullLayer,
-            encoder,
+            command_buffer,
         );
+        Ok(())
     }
 }

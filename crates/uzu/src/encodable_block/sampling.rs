@@ -1,10 +1,12 @@
 //! Sampling kernel encodable.
 
+use std::ops::{Deref, DerefMut};
+
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
+        Backend, CommandBuffer,
         kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -43,12 +45,12 @@ impl<B: Backend> Sampling<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for Sampling<B> {
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 
         let logits_binding = state.arrays(&[ArrayId::Logits]);
@@ -57,7 +59,7 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
         let logits_shape = logits.shape();
         let batch_size = state.sampling_length();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
         let sampling_start = state.sampling_start();
         let vocab_size = logits_shape[1];
@@ -74,21 +76,29 @@ impl<B: Backend> EncodableBlock<B> for Sampling<B> {
             let bitmask = cell.borrow();
             let bitmask_row_len = bitmask.shape()[1];
             let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
-            (Some(bitmask.buffer_rc()), bitmask_offset)
+            (Some(bitmask.buffer()), bitmask_offset)
         });
-        if let Err(e) = self.kernel.encode_with_encoder(
-            logits.buffer(),
-            Some(seeds.buffer()),
+        let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
+        let logits_buf_rc = logits.buffer();
+        let mut logits_buf_borrow = logits_buf_rc.borrow_mut();
+        let seeds_buf_rc = seeds.buffer();
+        let seeds_buf_borrow = seeds_buf_rc.borrow();
+        let output_buf_rc = output_buffer_ref.buffer();
+        let mut output_buf_borrow = output_buf_rc.borrow_mut();
+        if let Err(e) = self.kernel.encode(
+            logits_buf_borrow.deref_mut(),
+            Some(seeds_buf_borrow.deref()),
             seeds_offset,
-            bitmask_buffer.as_ref().map(|b| b.as_ref()),
+            bitmask_borrow.as_deref(),
             bitmask_offset,
-            output_buffer_ref.buffer(),
+            output_buf_borrow.deref_mut(),
             sampling_method,
             batch_size,
             vocab_size,
-            encoder,
+            command_buffer,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
         }
+        Ok(())
     }
 }

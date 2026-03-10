@@ -8,7 +8,7 @@
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(TopK)(
-    device const T* logits,
+    device const T* logits OPTIONAL(!in_place),
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],
     constant uint& batch_size,
@@ -16,8 +16,13 @@ KERNEL(TopK)(
     constant uint& top_k,
     const Simd simd,
     uint batch_idx GROUPS(batch_size),
-    uint thread_idx THREADS(BLOCK_SIZE)
+    uint thread_idx THREADS(BLOCK_SIZE),
+    const bool in_place SPECIALIZE
 ) {
+  if (in_place) {
+    logits = processed_logits;
+  }
+
   uint batch_start = batch_idx * vocab_size;
 
   // Find min and max logit for binary search

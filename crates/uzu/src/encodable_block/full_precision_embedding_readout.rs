@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -6,8 +10,8 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
-        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
+        Backend, CommandBuffer,
+        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -15,8 +19,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum FullPrecisionEmbeddingReadoutError<B: Backend> {
-    #[error("Backend error: {0}")]
-    BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    MatmulError(#[from] MatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(ParameterLoaderError),
     #[error("Unsupported data type: {0:?}")]
@@ -36,20 +40,14 @@ pub enum FullPrecisionEmbeddingReadoutError<B: Backend> {
     },
 }
 
-pub struct FullPrecisionEmbeddingReadout<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct FullPrecisionEmbeddingReadout<B: Backend> {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    weights_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
 
-impl<B: Backend> FullPrecisionEmbeddingReadout<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> FullPrecisionEmbeddingReadout<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
@@ -84,36 +82,28 @@ where
             });
         }
 
-        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, data_type)
-            .map_err(FullPrecisionEmbeddingReadoutError::BackendError)?;
+        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, data_type)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            weights_buffer: weights.buffer_rc(),
+            weights_buffer: weights.buffer(),
             vocab_size,
             model_dim,
         })
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B>
-where
-    B::Kernels: MatmulKernels,
-{
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+impl<B: Backend> EncodableBlock<B> for FullPrecisionEmbeddingReadout<B> {
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
 
         let sampling_start = state.sampling_start();
@@ -123,17 +113,18 @@ where
 
         self.kernel.borrow_mut().encode(
             state.context(),
-            encoder,
+            command_buffer,
             FullPrecisionMatmulArguments {
-                a: input_array.buffer(),
+                a: input_array.buffer().borrow().deref(),
                 a_offset: sampling_start * self.model_dim * element_size,
-                b: &self.weights_buffer,
-                output: output_array.buffer(),
+                b: self.weights_buffer.borrow().deref(),
+                output: output_array.buffer().borrow_mut().deref_mut(),
                 bias: None,
                 batch: batch_size,
                 input_dim: self.model_dim,
                 output_dim: self.vocab_size,
             },
         );
+        Ok(())
     }
 }

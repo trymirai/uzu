@@ -1,6 +1,9 @@
 //! Attention kernel encodable.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     DataType,
@@ -36,6 +39,7 @@ pub struct Attention<B: Backend> {
     two_pass_1_kernels: HashMap<KernelKey, <B::Kernels as Kernels>::AttentionTwoPass1Kernel>,
     two_pass_2_kernels: HashMap<u32, <B::Kernels as Kernels>::AttentionTwoPass2Kernel>,
     update_kv_cache_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
+    update_kv_cache_inplace_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
     gemm_block: AttentionGemmBlock<B>,
     layer_index: usize,
     attention_scale: Option<f32>,
@@ -82,7 +86,10 @@ impl<B: Backend> Attention<B> {
             }
         }
 
-        let update_kv_cache_kernel = <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type)?;
+        let update_kv_cache_kernel =
+            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, false)?;
+        let update_kv_cache_inplace_kernel =
+            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, true)?;
         let gemm_block = AttentionGemmBlock::new(data_type);
 
         Ok(Self {
@@ -90,6 +97,7 @@ impl<B: Backend> Attention<B> {
             two_pass_1_kernels,
             two_pass_2_kernels,
             update_kv_cache_kernel,
+            update_kv_cache_inplace_kernel,
             gemm_block,
             layer_index,
             attention_scale,
@@ -131,27 +139,9 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
-    ) {
-        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, &encoder));
-
-        if parameters.wait_until_completed {
-            command_buffer.submit();
-            command_buffer.wait_until_completed();
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        compute_encoder: &B::ComputeEncoder,
-    ) {
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
@@ -221,58 +211,56 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         };
 
         let rotated_keys_array = rotated_keys_binding[0].borrow_mut();
-        let rotated_keys_buffer = rotated_keys_array.buffer();
+        let rotated_keys_buf_rc = rotated_keys_array.buffer();
+        let mut rotated_keys_buf_borrow = rotated_keys_buf_rc.borrow_mut();
 
         let qkv_array = qkv_binding[0].borrow_mut();
-        let qkv_buffer = qkv_array.buffer();
+        let qkv_buf_rc = qkv_array.buffer();
+        let qkv_buf_borrow = qkv_buf_rc.borrow();
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
 
         let key_cache_binding = has_kv_cache.then(|| state.arrays(&[ArrayId::Keys(self.layer_index)]));
         let key_cache_array = key_cache_binding.as_ref().map(|b| b[0].borrow_mut());
+        let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
+        let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
         let value_cache_binding = has_kv_cache.then(|| state.arrays(&[ArrayId::Values(self.layer_index)]));
         let value_cache_array = value_cache_binding.as_ref().map(|b| b[0].borrow_mut());
+        let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
+        let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
         let extracted_values_binding = (!has_kv_cache).then(|| state.arrays(&[ArrayId::ExtractedValues]));
         let extracted_values_array = extracted_values_binding.as_ref().map(|b| b[0].borrow_mut());
+        let extracted_values_buf_rc = extracted_values_array.as_ref().map(|a| a.buffer());
+        let mut extracted_values_buf_borrow = extracted_values_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
         // For classifiers (no KV cache): extract values from QKV into a dedicated extracted_values buffer.
         if !has_kv_cache {
-            let extracted_values_buf = extracted_values_array.as_ref().unwrap().buffer();
-            self.update_kv_cache_kernel.encode(
-                rotated_keys_buffer,
-                qkv_buffer,
+            self.update_kv_cache_inplace_kernel.encode(
+                None::<&B::Buffer>,
+                qkv_buf_borrow.deref(),
                 // keys already in desired layout; harmless overwrite
-                rotated_keys_buffer,
-                extracted_values_buf,
+                rotated_keys_buf_borrow.deref_mut(),
+                extracted_values_buf_borrow.as_mut().unwrap().deref_mut(),
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
                 suffix_length as u32,
                 0u32,
                 max_sequence_length as u32,
-                &compute_encoder,
+                command_buffer,
             );
         }
 
-        let key_cache_buffer = if has_kv_cache {
-            key_cache_array.as_ref().unwrap().buffer()
-        } else {
-            rotated_keys_buffer
-        };
-        let value_cache_buffer = if has_kv_cache {
-            value_cache_array.as_ref().unwrap().buffer()
-        } else {
-            extracted_values_array.as_ref().unwrap().buffer()
-        };
-
         let queries_array = rotated_queries_binding[0].borrow_mut();
-        let queries_buffer = queries_array.buffer();
+        let queries_buf_rc = queries_array.buffer();
+        let queries_buf_borrow = queries_buf_rc.borrow();
 
         let attention_output_array = attention_output_binding[0].borrow_mut();
-        let attention_output_buffer = attention_output_array.buffer();
+        let attention_output_buf_rc = attention_output_array.buffer();
+        let mut attention_output_buf_borrow = attention_output_buf_rc.borrow_mut();
 
         let attention_bias_array_borrow = if use_mask {
             Some(
@@ -284,40 +272,58 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         } else {
             None
         };
-        let attention_bias_buffer = attention_bias_array_borrow.as_ref().map(|a| a.buffer());
+        let attention_bias_buf_rc = attention_bias_array_borrow.as_ref().map(|a| a.buffer());
+        let attention_bias_buf_borrow = attention_bias_buf_rc.as_ref().map(|rc| rc.borrow());
+        let attention_bias_buffer: Option<&B::Buffer> = attention_bias_buf_borrow.as_ref().map(|b| b.deref());
 
         let partials_binding = state.arrays(&[ArrayId::AttentionPartials]);
         let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
         let maxs_binding = state.arrays(&[ArrayId::AttentionMaxs]);
 
         let partials_array = partials_binding[0].borrow_mut();
-        let partials_buffer = partials_array.buffer();
+        let partials_buf_rc = partials_array.buffer();
+        let mut partials_buf_borrow = partials_buf_rc.borrow_mut();
 
         let sums_array = sums_binding[0].borrow_mut();
-        let sums_buffer = sums_array.buffer();
+        let sums_buf_rc = sums_array.buffer();
+        let mut sums_buf_borrow = sums_buf_rc.borrow_mut();
 
         let maxs_array = maxs_binding[0].borrow_mut();
-        let maxs_buffer = maxs_array.buffer();
+        let maxs_buf_rc = maxs_array.buffer();
+        let mut maxs_buf_borrow = maxs_buf_rc.borrow_mut();
 
         let sinks_borrow = sinks_binding.as_ref().map(|binding| binding[0].borrow());
-        let sinks_buffer = sinks_borrow.as_ref().map(|b| b.buffer());
+        let sinks_buf_rc = sinks_borrow.as_ref().map(|b| b.buffer());
+        let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
+        let sinks_buffer: Option<&B::Buffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
             self.update_kv_cache_kernel.encode(
-                rotated_keys_buffer,
-                qkv_buffer,
-                key_cache_buffer,
-                value_cache_buffer,
+                Some(rotated_keys_buf_borrow.deref()),
+                qkv_buf_borrow.deref(),
+                key_cache_buf_borrow.as_mut().unwrap().deref_mut(),
+                value_cache_buf_borrow.as_mut().unwrap().deref_mut(),
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
                 suffix_length as u32,
                 segment_prefix_length as u32,
                 max_sequence_length as u32,
-                &compute_encoder,
+                command_buffer,
             );
         }
+
+        let key_cache_buffer: &B::Buffer = if has_kv_cache {
+            key_cache_buf_borrow.as_ref().unwrap().deref()
+        } else {
+            rotated_keys_buf_borrow.deref()
+        };
+        let value_cache_buffer: &B::Buffer = if has_kv_cache {
+            value_cache_buf_borrow.as_ref().unwrap().deref()
+        } else {
+            extracted_values_buf_borrow.as_ref().unwrap().deref()
+        };
 
         let k_head_stride = (max_sequence_length * head_dim) as i32;
         let k_seq_stride = head_dim as i32;
@@ -341,10 +347,10 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
         match variant {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
-                    queries_buffer,
+                    queries_buffer: queries_buf_borrow.deref(),
                     keys_buffer: key_cache_buffer,
                     values_buffer: value_cache_buffer,
-                    output_buffer: attention_output_buffer,
+                    output_buffer: attention_output_buf_borrow.deref_mut(),
                     mask_buffer: attention_bias_buffer,
                     sinks_buffer,
                     num_heads,
@@ -358,7 +364,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     scale,
                 };
                 self.gemm_block
-                    .encode(state.context(), compute_encoder, &args)
+                    .encode(state.context(), command_buffer, args)
                     .expect("Failed to encode AttentionGemmBlock");
             },
             KernelVariant::SinglePass => {
@@ -367,10 +373,10 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     None => panic!("Can not find AttentionSinglePassKernel for key {:?}", kernel_key),
                 };
                 kernel.encode(
-                    queries_buffer,
+                    queries_buf_borrow.deref(),
                     key_cache_buffer,
                     value_cache_buffer,
-                    attention_output_buffer,
+                    attention_output_buf_borrow.deref_mut(),
                     gqa_factor as u32,
                     sequence_length as u32,
                     k_head_stride as u32,
@@ -385,7 +391,7 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
-                    &compute_encoder,
+                    command_buffer,
                 )
             },
             KernelVariant::TwoPass => {
@@ -398,12 +404,12 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     None => panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key),
                 };
                 kernel_pass1.encode(
-                    queries_buffer,
+                    queries_buf_borrow.deref(),
                     key_cache_buffer,
                     value_cache_buffer,
-                    partials_buffer,
-                    sums_buffer,
-                    maxs_buffer,
+                    partials_buf_borrow.deref_mut(),
+                    sums_buf_borrow.deref_mut(),
+                    maxs_buf_borrow.deref_mut(),
                     gqa_factor as u32,
                     sequence_length as u32,
                     k_head_stride as u32,
@@ -418,19 +424,21 @@ impl<B: Backend> EncodableBlock<B> for Attention<B> {
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
                     sinks_buffer,
-                    &compute_encoder,
+                    command_buffer,
                 );
                 kernel_pass2.encode(
-                    partials_buffer,
-                    sums_buffer,
-                    maxs_buffer,
-                    attention_output_buffer,
+                    partials_buf_borrow.deref(),
+                    sums_buf_borrow.deref(),
+                    maxs_buf_borrow.deref(),
+                    attention_output_buf_borrow.deref_mut(),
                     num_heads as u32,
                     suffix_length as u32,
-                    &compute_encoder,
+                    command_buffer,
                 );
             },
         }
+
+        Ok(())
     }
 }
 

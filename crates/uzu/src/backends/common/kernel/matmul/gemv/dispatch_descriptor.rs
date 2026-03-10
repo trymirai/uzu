@@ -1,7 +1,10 @@
 use std::sync::OnceLock;
 
 use super::{super::matmul_arguments::MatmulArguments, specialization::Specialization};
-use crate::{DataType, backends::common::Backend};
+use crate::{
+    DataType,
+    backends::common::{Backend, kernel::matmul::MatmulError},
+};
 
 const DEFAULT_GEMV_MAX_BATCH: i32 = 8;
 
@@ -41,12 +44,9 @@ impl DispatchDescriptor {
     pub fn try_new<B: Backend>(
         data_type: DataType,
         arguments: &MatmulArguments<B>,
-    ) -> Result<Option<Self>, B::Error>
-    where
-        B::Error: From<String>,
-    {
+    ) -> Result<Option<Self>, MatmulError<B>> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(B::Error::from(format!("Unsupported data type for GEMV: {data_type:?}")));
+            return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
         if !arguments.transpose_b {

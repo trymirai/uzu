@@ -39,17 +39,13 @@ impl<B: Backend> EncodableBlock<B> for ClassifierPredictionHead<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
-    ) {
-        if self.supports_shared_encoder() {
-            command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
-        } else {
-            self.dense.encode(state, parameters, command_buffer);
-            self.activation.encode(state, parameters, command_buffer);
-            self.norm.encode(state, parameters, command_buffer);
-            self.readout.encode(state, parameters, command_buffer);
-        }
+        parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        self.dense.encode(state, parameters, command_buffer)?;
+        self.activation.encode(state, parameters, command_buffer)?;
+        self.norm.encode(state, parameters, command_buffer)?;
+        self.readout.encode(state, parameters, command_buffer)?;
 
         #[cfg(feature = "tracing")]
         {
@@ -61,28 +57,6 @@ impl<B: Backend> EncodableBlock<B> for ClassifierPredictionHead<B> {
             );
         }
 
-        if parameters.wait_until_completed {
-            command_buffer.submit();
-            command_buffer.wait_until_completed();
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        self.dense.supports_shared_encoder()
-            && self.activation.supports_shared_encoder()
-            && self.norm.supports_shared_encoder()
-            && self.readout.supports_shared_encoder()
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
-        self.dense.encode_with_shared_encoder(state, parameters, encoder);
-        self.activation.encode_with_shared_encoder(state, parameters, encoder);
-        self.norm.encode_with_shared_encoder(state, parameters, encoder);
-        self.readout.encode_with_shared_encoder(state, parameters, encoder);
+        Ok(())
     }
 }

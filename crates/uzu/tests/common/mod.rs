@@ -4,6 +4,8 @@ use std::{collections::HashMap, path::PathBuf};
 
 use uzu::{VERSION, speculators::speculator::Speculator};
 
+pub mod assert;
+
 pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
@@ -76,4 +78,20 @@ impl Speculator for RepeatSpeculator {
 
         hm.into_iter().map(|(pos, weight)| (pos, weight / sum)).collect()
     }
+}
+
+/// Invokes `$body` once per available backend, with `$B` bound to each backend type.
+#[macro_export]
+macro_rules! for_each_backend {
+    (|$B:ident| $body:expr) => {{
+        {
+            type $B = uzu::backends::cpu::Cpu;
+            $body
+        }
+        #[cfg(feature = "metal")]
+        {
+            type $B = uzu::backends::metal::Metal;
+            $body
+        }
+    }};
 }

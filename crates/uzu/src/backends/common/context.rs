@@ -1,6 +1,7 @@
 use std::{path::Path, rc::Rc};
 
-use super::{Allocator, Backend};
+use super::Backend;
+use crate::backends::common::CommandBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceClass {
@@ -26,16 +27,14 @@ pub trait Context: Sized {
 
     fn debug_active(&self) -> bool;
 
-    fn allocator(&self) -> &Allocator<Self::Backend>;
+    fn create_command_buffer(
+        &self
+    ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Initial, <Self::Backend as Backend>::Error>;
 
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<<Self::Backend as Backend>::NativeBuffer, <Self::Backend as Backend>::Error>;
-
-    fn create_command_buffer(
-        &self
-    ) -> Result<<Self::Backend as Backend>::CommandBuffer, <Self::Backend as Backend>::Error>;
+    ) -> Result<<Self::Backend as Backend>::Buffer, <Self::Backend as Backend>::Error>;
 
     fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
 

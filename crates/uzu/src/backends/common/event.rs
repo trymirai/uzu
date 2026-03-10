@@ -1,5 +1,5 @@
 use super::Backend;
 
 pub trait Event {
-    type Backend: Backend;
+    type Backend: Backend<Event = Self>;
 }

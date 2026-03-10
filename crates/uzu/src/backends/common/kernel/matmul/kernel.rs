@@ -1,10 +1,12 @@
+use std::ops::DerefMut;
+
 use super::{
-    dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemv::GemvKernel,
+    MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemv::GemvKernel,
     matmul_arguments::MatmulArguments, split_k::SplitKKernel,
 };
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::TensorAddBiasKernel},
+    backends::common::{Backend, CommandBuffer, Kernels, kernel::TensorAddBiasKernel},
 };
 
 pub struct MatmulKernel<B: Backend> {
@@ -15,13 +17,10 @@ pub struct MatmulKernel<B: Backend> {
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
-impl<B: Backend> MatmulKernel<B>
-where
-    B::Error: From<String>,
-{
-    pub fn new(data_type: DataType) -> Result<Self, B::Error> {
+impl<B: Backend> MatmulKernel<B> {
+    pub fn new(data_type: DataType) -> Result<Self, MatmulError<B>> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(B::Error::from(format!("Unsupported dtype for MatmulKernel: {data_type:?}")));
+            return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
         Ok(Self {
@@ -36,7 +35,7 @@ where
     pub fn precompile(
         &mut self,
         context: &B::Context,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         let gemm = self.get_or_create_gemm()?;
         gemm.precompile(context)?;
 
@@ -49,21 +48,21 @@ where
         Ok(())
     }
 
-    fn get_or_create_gemm(&mut self) -> Result<&mut GemmKernel<B>, B::Error> {
+    fn get_or_create_gemm(&mut self) -> Result<&mut GemmKernel<B>, MatmulError<B>> {
         if self.gemm.is_none() {
             self.gemm = Some(GemmKernel::<B>::new(self.data_type)?);
         }
         Ok(self.gemm.as_mut().unwrap())
     }
 
-    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, B::Error> {
+    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, MatmulError<B>> {
         if self.gemv.is_none() {
             self.gemv = Some(GemvKernel::<B>::new(self.data_type)?);
         }
         Ok(self.gemv.as_mut().unwrap())
     }
 
-    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKKernel<B>, B::Error> {
+    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKKernel<B>, MatmulError<B>> {
         if self.splitk.is_none() {
             self.splitk = Some(SplitKKernel::<B>::new(self.data_type)?);
         }
@@ -73,22 +72,22 @@ where
     fn encode_dispatch_descriptor(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
-        encoder: &B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), MatmulError<B>> {
         match dispatch_descriptor {
             MatmulDispatchDescriptor::Gemv(d) => {
                 let gemv = self.get_or_create_gemv()?;
-                gemv.encode(context, arguments, d, encoder)
+                gemv.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::SplitK(d) => {
                 let splitk = self.get_or_create_splitk()?;
-                splitk.encode(context, arguments, d, encoder)
+                splitk.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::Gemm(d) => {
                 let gemm = self.get_or_create_gemm()?;
-                gemm.encode(context, arguments, d, encoder)
+                gemm.encode(context, arguments, d, command_buffer)
             },
         }
     }
@@ -96,15 +95,15 @@ where
     pub fn encode_with_descriptor(
         &mut self,
         context: &B::Context,
-        arguments: MatmulArguments<B>,
+        mut arguments: MatmulArguments<B>,
         dispatch_descriptor: &MatmulDispatchDescriptor,
-        encoder: &B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
-        self.encode_dispatch_descriptor(context, &arguments, dispatch_descriptor, encoder)?;
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), MatmulError<B>> {
+        self.encode_dispatch_descriptor(context, &mut arguments, dispatch_descriptor, command_buffer)?;
 
         if let Some(bias) = arguments.bias {
             if !dispatch_descriptor.bias_is_fused() {
-                self.apply_bias_add(context, &arguments, bias, encoder)?;
+                self.apply_bias_add(context, &mut arguments, bias, command_buffer)?;
             }
         }
 
@@ -114,10 +113,10 @@ where
     fn apply_bias_add(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
-        bias: &B::NativeBuffer,
-        encoder: &B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
+        arguments: &mut MatmulArguments<B>,
+        bias: &B::Buffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), MatmulError<B>> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
         let batch_count = arguments.batch_count as usize;
@@ -127,10 +126,13 @@ where
         }
 
         if self.bias_add.is_none() {
-            self.bias_add = Some(<B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.data_type)?);
+            self.bias_add = Some(
+                <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.data_type, true)
+                    .map_err(MatmulError::BackendError)?,
+            );
         }
         let bias_add = self.bias_add.as_ref().unwrap();
-        bias_add.encode(arguments.d, bias, arguments.d, n as u32, total_len as u32, encoder);
+        bias_add.encode(None::<&B::Buffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, command_buffer);
         Ok(())
     }
 

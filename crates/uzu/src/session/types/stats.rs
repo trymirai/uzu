@@ -15,6 +15,8 @@ pub struct StepStats {
     pub processed_tokens_per_second: f64,
     pub model_run: RunStats,
     pub run: Option<RunStats>,
+    pub speculator_proposed: u64,
+    pub speculator_accepted: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

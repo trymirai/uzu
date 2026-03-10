@@ -1,14 +1,17 @@
 use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer, MTLCommandQueue,
-    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLLibrary, MTLResourceOptions,
+    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
+    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
+    MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{Metal, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions};
-use crate::backends::common::{Allocator, Context, DeviceClass as CommonDeviceClass};
+use crate::backends::{
+    common::{Context, DeviceClass as CommonDeviceClass},
+    metal::command_buffer::MetalCommandBufferInitial,
+};
 
 /// Apple GPU architecture generation.
 /// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
@@ -127,7 +130,6 @@ pub struct MetalContext {
     architecture: DeviceArchitecture,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    allocator: Allocator<Metal>,
 }
 
 impl MetalContext {
@@ -178,26 +180,24 @@ impl Context for MetalContext {
     type Backend = Metal;
 
     fn new() -> Result<Rc<Self>, MetalError> {
-        let device: Retained<ProtocolObject<dyn MTLDevice>> = <dyn metal::MTLDevice>::system_default()
-            .ok_or(MetalError::Generic("cannot open system default device".into()))?;
+        let device: Retained<ProtocolObject<dyn MTLDevice>> =
+            <dyn metal::MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
-        let command_queue = device
-            .new_command_queue_with_max_command_buffer_count(1024)
-            .ok_or(MetalError::Generic("cannot create command queue".into()))?;
+        let command_queue =
+            device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
 
         let library = device
             .new_library_with_data(kernel::MTLB)
-            .map_err(|nserror| MetalError::Generic(format!("Failed to create Metal library: {}", nserror)))?;
+            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
 
         let architecture = DeviceArchitecture::from_device(&device);
 
-        Ok(Rc::new_cyclic(|weak_self| Self {
+        Ok(Rc::new(Self {
             device,
             command_queue,
             architecture,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
-            allocator: Allocator::new(weak_self.clone()),
         }))
     }
 
@@ -222,25 +222,21 @@ impl Context for MetalContext {
         matches!(upper.as_str(), "1" | "YES" | "TRUE")
     }
 
-    fn allocator(&self) -> &Allocator<Metal> {
-        &self.allocator
-    }
-
     fn create_buffer(
         &self,
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        self.device
-            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .ok_or(MetalError::Generic("cannot create buffer".into()))
+        self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer)
     }
 
-    fn create_command_buffer(&self) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>, MetalError> {
-        self.command_queue.command_buffer().ok_or(MetalError::Generic("cannot create command buffer".into()))
+    fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
+        Ok(MetalCommandBufferInitial::new(
+            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
+        ))
     }
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
-        self.device.new_event().ok_or(MetalError::Generic("cannot create event".into()))
+        self.device.new_event().ok_or(MetalError::CannotCreateEvent)
     }
 
     fn enable_capture() {
@@ -263,7 +259,7 @@ impl Context for MetalContext {
 
         capture_manager
             .start_capture_with_descriptor_error(&capture_descriptor)
-            .map_err(|e| format!("Failed to start GPU capture: {}", e))?;
+            .map_err(|nserror| MetalError::CannotStartGpuCapture(nserror.to_string()))?;
 
         Ok(())
     }

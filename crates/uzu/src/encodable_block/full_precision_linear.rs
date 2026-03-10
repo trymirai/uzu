@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -6,8 +10,8 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend,
-        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
+        Backend, CommandBuffer,
+        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -15,8 +19,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum FullPrecisionLinearError<B: Backend> {
-    #[error("Backend error: {0}")]
-    BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    MatmulError(#[from] MatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(ParameterLoaderError),
     #[error("Unsupported data type for full precision linear kernel: {0:?}")]
@@ -44,23 +48,17 @@ pub enum FullPrecisionLinearError<B: Backend> {
     },
 }
 
-pub struct FullPrecisionLinear<B: Backend>
-where
-    B::Kernels: MatmulKernels,
-{
+pub struct FullPrecisionLinear<B: Backend> {
     kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
-    bias_buffer: Option<Rc<B::NativeBuffer>>,
-    weights_buffer: Rc<B::NativeBuffer>,
+    bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 }
 
-impl<B: Backend> FullPrecisionLinear<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> FullPrecisionLinear<B> {
     pub fn new(
         context: &B::Context,
         precision: DataType,
@@ -108,18 +106,17 @@ where
                     });
                 }
 
-                Some(biases.buffer_rc())
+                Some(biases.buffer())
             },
             Err(_) => None,
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, precision)
-            .map_err(FullPrecisionLinearError::BackendError)?;
+        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, precision)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
             bias_buffer,
-            weights_buffer: weights.buffer_rc(),
+            weights_buffer: weights.buffer(),
             input_dim,
             output_dim,
             input_array_id,
@@ -128,38 +125,33 @@ where
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B>
-where
-    B::Kernels: MatmulKernels,
-{
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+impl<B: Backend> EncodableBlock<B> for FullPrecisionLinear<B> {
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
         let input_array = arrays[0].borrow_mut();
         let output_array = arrays[1].borrow_mut();
 
+        let bias_borrow = self.bias_buffer.as_ref().map(|b| b.borrow());
         self.kernel.borrow_mut().encode(
             state.context(),
-            encoder,
+            command_buffer,
             FullPrecisionMatmulArguments {
-                a: input_array.buffer(),
+                a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
-                b: &self.weights_buffer,
-                output: output_array.buffer(),
-                bias: self.bias_buffer.as_ref().map(|b| b.as_ref()),
+                b: self.weights_buffer.borrow().deref(),
+                output: output_array.buffer().borrow_mut().deref_mut(),
+                bias: bias_borrow.as_deref(),
                 batch: batch_size,
                 input_dim: self.input_dim,
                 output_dim: self.output_dim,
             },
         );
+        Ok(())
     }
 }

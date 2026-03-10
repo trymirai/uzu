@@ -2,10 +2,10 @@
 #include "../definitions.metal"
 #include "quant_matmul.metal"
 
-template <typename T, int group_size, int bits>
+template <typename T, int GROUP_SIZE, int BITS>
 VARIANTS(T, bfloat)
-VARIANTS(group_size, 64, 128)
-VARIANTS(bits, 4, 8)
+VARIANTS(GROUP_SIZE, 64, 128)
+VARIANTS(BITS, 4, 8)
 KERNEL(QuantizedMatmulQmmTransposed64x64)(
     const device uint32_t* w,
     const device T* scales,
@@ -33,7 +33,7 @@ KERNEL(QuantizedMatmulQmmTransposed64x64)(
   const uint simd_lid = tid_x;
 
   if (use_mlx_quant) {
-    qmm_transposed_impl<T, group_size, bits, true, 64, 64, 64, true>(
+    qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 64, 64, 64, true>(
         w,
         scales,
         zero_points,
@@ -51,7 +51,7 @@ KERNEL(QuantizedMatmulQmmTransposed64x64)(
         simd_lid
     );
   } else {
-    qmm_transposed_impl<T, group_size, bits, true, 64, 64, 64, false>(
+    qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 64, 64, 64, false>(
         w,
         scales,
         zero_points,

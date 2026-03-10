@@ -4,8 +4,12 @@ use crate::classifier::ClassifierError;
 pub enum Error {
     #[error("Model folder not found")]
     ModelFolderNotFound,
-    #[error("Unable to create Backend context")]
-    UnableToCreateBackendContext,
+    #[error("Unable to open any backend")]
+    UnableToOpenAnyBackend,
+    #[error("Unable to create Context: {0}")]
+    UnableToCreateContext(Box<dyn std::error::Error>),
+    #[error("Unable to create CommandBuffer: {0}")]
+    UnableToCreateCommandBuffer(Box<dyn std::error::Error>),
     #[error("Unable to load model configuration")]
     UnableToLoadConfig,
     #[error("Unable to load model weights")]
@@ -14,6 +18,10 @@ pub enum Error {
     UnableToLoadTokenizer,
     #[error("Model is too large to fit into available RAM")]
     NotEnoughMemory,
+    #[error("Command buffer failed: {0}")]
+    CommandBufferFailed(Box<dyn std::error::Error>),
+    #[error("Encode failed: {0}")]
+    EncodeFailed(Box<dyn std::error::Error>),
     #[error("Unsupported context mode for model")]
     UnsupportedContextModeForModel,
     #[error("Unsupported speculator config for model")]

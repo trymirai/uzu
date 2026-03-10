@@ -2,10 +2,7 @@ use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
 
 use crate::{
     DataType,
-    backends::common::{
-        Backend, Context, Kernels,
-        kernel::{SigmoidKernel, matmul::MatmulKernels},
-    },
+    backends::common::{Backend, Context, Kernels, kernel::SigmoidKernel},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::{
@@ -23,7 +20,6 @@ use crate::{
 
 pub struct ClassifierContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: B::CommandBuffer,
 
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
     pub scratch_buffers: ScratchBuffers<B>,
@@ -44,14 +40,9 @@ pub struct ClassifierContext<B: Backend> {
     pub sigmoid_kernel: <B::Kernels as Kernels>::SigmoidKernel,
 }
 
-impl<B: Backend + 'static> ClassifierContext<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> ClassifierContext<B> {
     pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
-
-        let command_buffer = context.create_command_buffer().map_err(|_| Error::UnableToCreateBackendContext)?;
+        let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -259,7 +250,7 @@ where
 
         let sigmoid_kernel = <B::Kernels as Kernels>::SigmoidKernel::new(&context, data_type.into()).map_err(|e| {
             eprintln!("Failed to create sigmoid kernel: {:?}", e);
-            Error::UnableToCreateBackendContext
+            Error::UnableToCreateContext(e.into())
         })?;
 
         let pooling = Box::new(
@@ -271,7 +262,7 @@ where
             )
             .map_err(|e| {
                 eprintln!("Failed to create pooling: {:?}", e);
-                Error::UnableToCreateBackendContext
+                Error::UnableToCreateContext(e.into())
             })?,
         );
 
@@ -287,7 +278,6 @@ where
 
         Ok(Self {
             context,
-            command_buffer,
             shared_buffers,
             scratch_buffers,
             model_config: classifier_model_config.clone(),
@@ -314,9 +304,5 @@ where
                 .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?,
         );
         Ok(Rc::new(rotation))
-    }
-
-    pub fn reset_command_buffer(&mut self) {
-        self.command_buffer = self.context.create_command_buffer().expect("Failed to create command buffer");
     }
 }

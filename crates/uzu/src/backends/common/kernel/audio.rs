@@ -1,4 +1,4 @@
-use crate::backends::common::Backend;
+use crate::backends::common::{Backend, CommandBuffer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioPadMode {
@@ -7,9 +7,9 @@ pub enum AudioPadMode {
 }
 
 pub struct AudioFsqDecodeArguments<'a, B: Backend> {
-    pub tokens: &'a B::NativeBuffer,
-    pub lengths: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
+    pub tokens: &'a B::Buffer,
+    pub lengths: &'a B::Buffer,
+    pub output: &'a B::Buffer,
     pub batch_size: usize,
     pub num_groups: usize,
     pub seq_len: usize,
@@ -18,9 +18,9 @@ pub struct AudioFsqDecodeArguments<'a, B: Backend> {
 }
 
 pub struct AudioFsqEncodeArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub tokens: &'a B::NativeBuffer,
-    pub lengths: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub tokens: &'a B::Buffer,
+    pub lengths: &'a B::Buffer,
     pub batch_size: usize,
     pub num_groups: usize,
     pub seq_len: usize,
@@ -31,11 +31,11 @@ pub struct AudioFsqEncodeArguments<'a, B: Backend> {
 }
 
 pub struct AudioConv1dArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub weight: &'a B::NativeBuffer,
-    pub bias: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
-    pub lengths: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub weight: &'a B::Buffer,
+    pub bias: &'a B::Buffer,
+    pub output: &'a B::Buffer,
+    pub lengths: &'a B::Buffer,
     pub batch_size: usize,
     pub cin: usize,
     pub cout: usize,
@@ -49,11 +49,11 @@ pub struct AudioConv1dArguments<'a, B: Backend> {
 }
 
 pub struct AudioCausalConv1dArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub weight: &'a B::NativeBuffer,
-    pub bias: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
-    pub lengths: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub weight: &'a B::Buffer,
+    pub bias: &'a B::Buffer,
+    pub output: &'a B::Buffer,
+    pub lengths: &'a B::Buffer,
     pub batch_size: usize,
     pub cin: usize,
     pub cout: usize,
@@ -63,11 +63,11 @@ pub struct AudioCausalConv1dArguments<'a, B: Backend> {
 }
 
 pub struct AudioCausalConvTranspose1dArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub weight: &'a B::NativeBuffer,
-    pub bias: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
-    pub lengths: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub weight: &'a B::Buffer,
+    pub bias: &'a B::Buffer,
+    pub output: &'a B::Buffer,
+    pub lengths: &'a B::Buffer,
     pub batch_size: usize,
     pub cin: usize,
     pub cout: usize,
@@ -78,9 +78,9 @@ pub struct AudioCausalConvTranspose1dArguments<'a, B: Backend> {
 }
 
 pub struct AudioHalfSnakeArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub alpha: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub alpha: &'a B::Buffer,
+    pub output: &'a B::Buffer,
     pub batch_size: usize,
     pub channels: usize,
     pub seq_len: usize,
@@ -89,23 +89,28 @@ pub struct AudioHalfSnakeArguments<'a, B: Backend> {
     pub eps: f32,
 }
 
+pub struct AudioElementwiseArguments<'a, B: Backend> {
+    pub input: &'a B::Buffer,
+    pub output: &'a B::Buffer,
+    pub n: usize,
+}
 pub struct AudioAddArguments<'a, B: Backend> {
-    pub a: &'a B::NativeBuffer,
-    pub b: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
+    pub a: &'a B::Buffer,
+    pub b: &'a B::Buffer,
+    pub output: &'a B::Buffer,
     pub n: usize,
 }
 
 pub struct AudioScaleArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub output: &'a B::Buffer,
     pub n: usize,
     pub scale: f32,
 }
 
 pub struct AudioClampArguments<'a, B: Backend> {
-    pub input: &'a B::NativeBuffer,
-    pub output: &'a B::NativeBuffer,
+    pub input: &'a B::Buffer,
+    pub output: &'a B::Buffer,
     pub n: usize,
     pub min_value: f32,
     pub max_value: f32,
@@ -114,55 +119,67 @@ pub struct AudioClampArguments<'a, B: Backend> {
 pub trait AudioKernelRuntime<B: Backend> {
     fn encode_fsq_decode(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioFsqDecodeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_fsq_encode(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioFsqEncodeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_conv1d(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioConv1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv1d(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioCausalConv1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv_transpose1d(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioCausalConvTranspose1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_half_snake(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioHalfSnakeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
+    fn encode_leaky_relu(
+        &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        arguments: AudioElementwiseArguments<'_, B>,
+        negative_slope: f32,
+    ) -> Result<(), B::Error>;
+
+    fn encode_tanh(
+        &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        arguments: AudioElementwiseArguments<'_, B>,
+    ) -> Result<(), B::Error>;
     fn encode_add(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioAddArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_scale(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioScaleArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_clamp(
         &self,
-        compute_encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioClampArguments<'_, B>,
     ) -> Result<(), B::Error>;
 }

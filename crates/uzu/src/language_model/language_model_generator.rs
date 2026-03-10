@@ -1,77 +1,137 @@
-use std::{collections::HashMap, iter::repeat_n, ops::Deref, path::Path, sync::Arc, time::Instant};
+use std::{
+    any::Any,
+    iter::repeat_n,
+    ops::{Deref, DerefMut, Range},
+    path::Path,
+    time::Instant,
+};
 
 use itertools::{Either, Itertools, izip};
 
 use super::{
-    LanguageModelGeneratorContext,
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
+    language_model_generator_context::LanguageModelGeneratorContext,
     result::{GenerateResult, PrefillResult},
     rng::PRng,
-    tasks::{LanguageModelGeneratorEncodedTask, LanguageModelGeneratorRunTask},
 };
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, Context, NativeBuffer,
-        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, matmul::MatmulKernels},
+        Backend, Buffer, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+        CommandBufferPending, Context,
+        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
     encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::{
+        cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
         state::ForwardPassState,
     },
     session::{
         config::DecodingConfig,
+        helpers::Context as LlmContext,
         parameter::{ConfigResolvableValue, ResolvableValue, SamplingMethod},
         types::Error,
     },
     trie::{TrieCreationConfig, TrieNode},
 };
 
-pub struct LanguageModelGenerator<B: Backend + 'static>
-where
-    B::Kernels: MatmulKernels,
-{
+#[derive(Debug, Clone)]
+struct Task<'a> {
+    token_ids: &'a [u64],
+    token_positions: &'a [usize],
+    token_bitmask: Option<&'a [u32]>,
+    token_seeds: &'a [u64],
+    expected_number_of_new_tokens: usize,
+    active_suffix_length: usize,
+    sampling_start: usize,
+    sampling_length: usize,
+    is_prefilling: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TaskEncodingKey {
+    context_len: usize,
+    batch_size: usize,
+    expected_number_of_new_tokens: usize,
+    active_suffix_len: usize,
+    sampling_method: SamplingMethod,
+    sampling_start: usize,
+    sampling_len: usize,
+    has_bitmask: bool,
+    is_prefilling: bool,
+}
+
+pub struct LanguageModelGenerator<B: Backend> {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
 
     pub context: LanguageModelGeneratorContext<B>,
-    encoded_tasks: HashMap<String, LanguageModelGeneratorEncodedTask<B>>,
+    pre_encoded_task: Option<(TaskEncodingKey, <B::CommandBuffer as CommandBuffer>::Executable)>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager<B>,
 }
 
-impl<B: Backend + 'static> LanguageModelGenerator<B>
-where
-    B::Kernels: MatmulKernels,
-{
-    pub fn new(
+pub trait LanguageModelGeneratorTrait {
+    fn prefill(
+        &mut self,
+        tokens: Vec<u64>,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+        prefix_offset: usize,
+        sample_suffix: bool,
+    ) -> Result<PrefillResult, Error>;
+
+    fn generate(
+        &mut self,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error>;
+
+    fn prepare_async(
+        &mut self,
+        tokens_to_generate: usize,
+    );
+    fn async_generate(
+        &mut self,
+        pass_idx: usize,
+        sampling_method: SamplingMethod,
+        on_complete: Box<dyn FnOnce(u64) + Send>,
+    ) -> Result<(), Error>;
+
+    fn clear_cache(&mut self);
+    fn reset_state(&mut self);
+
+    fn tokens_len(&self) -> usize;
+    fn tokens_push(
+        &mut self,
+        token: u64,
+    );
+    fn generate_suffix_length(&self) -> usize;
+    fn async_batch_size(
+        &self,
         model_path: &Path,
-        decoding_config: DecodingConfig,
-    ) -> Result<Self, Error> {
-        let gpu_capture = GpuCaptureManager::new();
+    ) -> usize;
 
-        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
-        let prefill_step_size = decoding_config.prefill_step_size.resolve(&context.model_config);
-        let generate_suffix_length = decoding_config.generate_suffix_length();
+    fn get_slice(
+        &self,
+        range: Range<usize>,
+    ) -> Option<Box<dyn Any>>;
+    fn apply_slice(
+        &mut self,
+        slice: &dyn Any,
+        range: Range<usize>,
+    );
 
-        let mut generator = Self {
-            decoding_config,
-            tokens: Vec::new(),
-            context,
-            encoded_tasks: HashMap::new(),
-            registered_prefix_len: 0,
-            gpu_capture,
-        };
+    fn build_llm_context(&self) -> Box<dyn Any>;
+    fn reconfigure_from_context(
+        &mut self,
+        context: &dyn Any,
+    );
+}
 
-        //Warmup
-        generator.warmup(prefill_step_size);
-        generator.warmup(generate_suffix_length);
-
-        Ok(generator)
-    }
-
-    pub fn prefill(
+impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
+    fn prefill(
         &mut self,
         tokens: Vec<u64>,
         mut compiled_grammar: Option<&mut CompiledGrammar>,
@@ -181,7 +241,7 @@ where
                 let _ = last_state.take();
             });
 
-            let task = LanguageModelGeneratorRunTask {
+            let task = Task {
                 token_ids: &step_token_ids,
                 token_positions: &step_token_positions,
                 token_bitmask: step_token_bitmask.as_deref(),
@@ -199,7 +259,7 @@ where
                 self.allow_pre_encode(),
                 sampling_method,
                 self.should_fill_attention_bias(),
-            );
+            )?;
 
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
@@ -220,7 +280,7 @@ where
                 if !positions_for_step.is_empty() {
                     let accept_indices_for_step: Vec<usize> = (0..positions_for_step.len()).collect();
                     if !accept_indices_for_step.is_empty() {
-                        self.update_cache_layers(&accept_indices_for_step, None, true);
+                        self.update_cache_layers(&accept_indices_for_step, None, true)?;
                     }
 
                     self.context.cache_layers.borrow_mut().register_accepted_tokens(&positions_for_step);
@@ -243,7 +303,7 @@ where
                 forwardpass_durations: run_times,
             });
         }
-        let sampled_tokens = self.sample(&mut final_state)?;
+        let sampled_tokens = self.read_sampling_output(&mut final_state)?;
 
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
@@ -255,7 +315,7 @@ where
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
             Some(last_suffix_start),
             false,
-        );
+        )?;
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -266,7 +326,7 @@ where
         })
     }
 
-    pub fn generate(
+    fn generate(
         &mut self,
         mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
@@ -317,7 +377,7 @@ where
         let token_seeds =
             flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_suffix_length)).collect::<Box<[u64]>>();
 
-        let task = LanguageModelGeneratorRunTask {
+        let task = Task {
             token_ids: &token_ids,
             token_positions: &token_positions,
             token_bitmask: token_bitmask.as_deref(),
@@ -330,14 +390,16 @@ where
         };
 
         let (mut state, run_time) =
-            self.run_model(task, false, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias());
+            self.run_model(task, false, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
 
-        let sampled_tokens = self.sample(&mut state)?;
+        let sampled_tokens = self.read_sampling_output(&mut state)?;
 
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let speculator_proposed = active_suffix_length.saturating_sub(1);
+        let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 
-        self.update_cache_layers(&accepted_token_indices, None, false);
+        self.update_cache_layers(&accepted_token_indices, None, false)?;
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -345,12 +407,14 @@ where
         Ok(GenerateResult {
             tokens: accepted_tokens,
             forwardpass_duration: run_time,
+            speculator_proposed,
+            speculator_accepted,
         })
     }
 
     /// Prepares async buffers for generation.
     /// Must be called after prefill, before async_generate loop.
-    pub fn prepare_async(
+    fn prepare_async(
         &mut self,
         tokens_to_generate: usize,
     ) {
@@ -378,15 +442,12 @@ where
     /// - `pass_idx`: Index of this pass (0, 1, 2, ...)
     /// - `sampling_method`: Sampling configuration
     /// - `on_complete`: Callback receiving sampled token as u64
-    pub fn async_generate<F>(
+    fn async_generate(
         &mut self,
         pass_idx: usize,
         sampling_method: SamplingMethod,
-        on_complete: F,
-    ) -> Result<(), Error>
-    where
-        F: FnOnce(u64) + Send + 'static,
-    {
+        on_complete: Box<dyn FnOnce(u64) + Send>,
+    ) -> Result<(), Error> {
         assert_eq!(self.decoding_config.generate_suffix_length(), 1, "async_generate only supports suffix_length=1");
 
         // Extract values from async_buffers before mutable borrow
@@ -402,11 +463,11 @@ where
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
 
         let token_position = unsafe {
-            let ptr = async_positions_buffer.cpu_ptr().as_ptr() as *const u32;
+            let ptr = async_positions_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
             *ptr.add(pass_idx) as usize
         };
 
-        let task = LanguageModelGeneratorRunTask {
+        let task = Task {
             token_ids: &[last_token],
             token_positions: &[token_position],
             token_bitmask: None,
@@ -455,120 +516,117 @@ where
             *sm = Some(sampling_method);
         }
 
-        self.context.reset_command_buffer();
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
 
         // Wait on previous pass if this is a continuation
         if is_continuation {
-            self.context
-                .command_buffer
-                .borrow_mut()
-                .encode_wait_for_event(&self.context.async_buffers.event, current_counter);
+            command_buffer.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
-        self.context.executables.encode(
-            &mut state,
-            &EncodingParameters::new(false, false, false),
-            self.context.command_buffer.borrow().deref(),
-        );
+        self.context
+            .executables
+            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Encode sampling
-        self.context.gpu_sampler.encode(
-            &mut state,
-            &EncodingParameters::new(false, false, false),
-            self.context.command_buffer.borrow().deref(),
-        );
+        self.context
+            .gpu_sampler
+            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
         let sampling_output_binding = sampling_output.borrow();
-        let sampling_output_buffer = sampling_output_binding.buffer();
+        let sampling_output_buf_rc = sampling_output_binding.buffer();
+        let sampling_output_buf_borrow = sampling_output_buf_rc.borrow();
         let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
-        let token_ids_buffer = token_ids_binding.buffer();
+        let token_ids_buf_rc = token_ids_binding.buffer();
+        let mut token_ids_buf_borrow = token_ids_buf_rc.borrow_mut();
 
-        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
-            self.context.token_copy_sampled.encode(sampling_output_buffer, token_ids_buffer, encoder);
-            let results_offset = slot * std::mem::size_of::<u32>();
-            self.context.token_copy_results.encode(
-                sampling_output_buffer,
-                (results_buffer.as_ref(), results_offset),
-                encoder,
-            );
-        });
+        self.context.token_copy_sampled.encode(
+            sampling_output_buf_borrow.deref(),
+            token_ids_buf_borrow.deref_mut(),
+            &mut command_buffer,
+        );
+        let results_offset = slot * std::mem::size_of::<u32>();
+        self.context.token_copy_results.encode(
+            sampling_output_buf_borrow.deref(),
+            (results_buffer.borrow_mut().deref_mut(), results_offset),
+            &mut command_buffer,
+        );
 
         // Scatter + register for all transformer layers
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
-            self.context.command_buffer.borrow().deref(),
+            &mut command_buffer,
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
 
-        self.context.command_buffer.borrow().with_compute_encoder(|encoder| {
-            if let Some(mask_update) = &self.context.mask_update {
-                let updates: Vec<AttentionBiasUpdate> =
-                    self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
-                for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
-                    if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
-                        if update.unmask_col >= 0 || update.mask_col >= 0 {
-                            mask_update.encode(
-                                mask_buffer.borrow().buffer(),
-                                update.unmask_col,
-                                update.mask_col,
-                                &encoder,
-                            );
-                        }
+        if let Some(mask_update) = &self.context.mask_update {
+            let updates: Vec<AttentionBiasUpdate> =
+                self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
+            for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
+                if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
+                    if update.unmask_col >= 0 || update.mask_col >= 0 {
+                        let mask_buf_rc = mask_buffer.borrow().buffer();
+                        let mut mask_buf_borrow = mask_buf_rc.borrow_mut();
+                        mask_update.encode(
+                            mask_buf_borrow.deref_mut(),
+                            update.unmask_col,
+                            update.mask_col,
+                            &mut command_buffer,
+                        );
                     }
                 }
             }
-        });
+        }
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        self.context.command_buffer.borrow_mut().encode_signal_event(&self.context.async_buffers.event, next_counter);
+        command_buffer.encode_signal_event(&self.context.async_buffers.event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
-        let results_buffer_clone = results_buffer.clone();
-        let callback = Arc::new(std::sync::Mutex::new(Some(on_complete)));
+        let results_buffer_ptr = results_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
 
-        let handler = move || {
-            let token = {
-                let ptr = results_buffer_clone.cpu_ptr().as_ptr() as *const u32;
-                unsafe { *ptr.add(slot) as u64 }
-            };
-            if let Some(cb) = callback.lock().unwrap().take() {
-                cb(token);
-            }
+        let handler = move |result: Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>| {
+            result.expect("async decoding forward pass completed with error");
+            let token = { unsafe { *results_buffer_ptr.add(slot) as u64 } };
+            on_complete(token);
         };
 
-        self.context.command_buffer.borrow_mut().add_completion_handler(handler);
-        self.context.command_buffer.borrow().submit();
+        command_buffer.add_completion_handler(handler);
+        drop(token_ids_binding);
+
+        let pending = command_buffer.end_encoding().submit();
 
         if should_capture {
-            self.context.command_buffer.borrow().wait_until_completed();
+            pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
         Ok(())
     }
 
-    pub fn has_attention_layers(&self) -> bool {
-        self.context.decoder_config.has_attention_layers()
-    }
-
-    pub fn clear_cache(&mut self) {
+    fn clear_cache(&mut self) {
         objc2::rc::autoreleasepool(|_pool| {
-            self.encoded_tasks.clear();
+            self.pre_encoded_task = None;
         });
     }
 
-    pub fn reset_state(&mut self) {
+    fn reset_state(&mut self) {
         self.context.cache_layers.borrow_mut().clear();
         self.tokens.clear();
         self.registered_prefix_len = 0;
-        self.encoded_tasks.clear();
+        self.pre_encoded_task = None;
         self.gpu_capture.reset();
 
         let seed = self.decoding_config.sampling_seed.resolve();
@@ -576,19 +634,129 @@ where
         self.context.async_buffers.reset_counter();
     }
 
-    pub fn prefix_len(&self) -> usize {
-        self.registered_prefix_len
+    fn tokens_len(&self) -> usize {
+        self.tokens.len()
+    }
+    fn tokens_push(
+        &mut self,
+        token: u64,
+    ) {
+        self.tokens.push(token);
+    }
+    fn generate_suffix_length(&self) -> usize {
+        self.decoding_config.generate_suffix_length()
+    }
+    fn async_batch_size(
+        &self,
+        model_path: &Path,
+    ) -> usize {
+        self.decoding_config.async_batch_size.resolve::<B>(model_path, self.context.context.as_ref())
+    }
+
+    fn get_slice(
+        &self,
+        range: Range<usize>,
+    ) -> Option<Box<dyn Any>> {
+        self.context.cache_layers.borrow().slice(&self.context.context, range).map(|s| Box::new(s) as Box<dyn Any>)
+    }
+    fn apply_slice(
+        &mut self,
+        slice: &dyn Any,
+        range: Range<usize>,
+    ) {
+        let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
+        self.context.cache_layers.borrow_mut().apply_slice(slice, Some(range));
+    }
+
+    fn build_llm_context(&self) -> Box<dyn Any> {
+        let cache_layers = self.context.cache_layers.borrow().clone(&self.context.context);
+        let context = LlmContext::new(self.tokens.clone(), cache_layers, self.decoding_config.clone());
+        Box::new(context)
+    }
+    fn reconfigure_from_context(
+        &mut self,
+        context: &dyn Any,
+    ) {
+        let ctx = context.downcast_ref::<LlmContext<B>>().unwrap();
+        let mut llm_state = self.context.cache_layers.borrow_mut();
+        for (_layer_idx, (ctx_layer, gen_layer)) in
+            ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()).enumerate()
+        {
+            match (ctx_layer, gen_layer) {
+                (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
+                    let copy_rows = src.prefix_segment_length();
+                    if copy_rows > 0 {
+                        {
+                            let mut dst_keys = dst.keys.borrow_mut();
+                            let src_keys = src.keys.borrow();
+                            dst_keys.copy_slice(&src_keys, 1, 0..copy_rows, 0);
+                        }
+                        {
+                            let mut dst_values = dst.values.borrow_mut();
+                            let src_values = src.values.borrow();
+                            dst_values.copy_slice(&src_values, 1, 0..copy_rows, 0);
+                        }
+                    }
+                    dst.state = src.state.clone();
+                    dst.prefix_token_positions = src.prefix_token_positions.clone();
+                },
+                (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
+                    {
+                        let mut dst_conv = dst.conv_state.borrow_mut();
+                        let src_conv = src.conv_state.borrow();
+                        dst_conv.copy_from_array(&src_conv);
+                    }
+                    {
+                        let mut dst_ssm = dst.ssm_state.borrow_mut();
+                        let src_ssm = src.ssm_state.borrow();
+                        dst_ssm.copy_from_array(&src_ssm);
+                    }
+                },
+                _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
+            }
+        }
+        drop(llm_state);
+
+        self.tokens = ctx.tokens.clone();
+    }
+}
+
+impl<B: Backend> LanguageModelGenerator<B> {
+    pub fn new(
+        model_path: &Path,
+        decoding_config: DecodingConfig,
+    ) -> Result<Self, Error> {
+        let gpu_capture = GpuCaptureManager::new();
+
+        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
+        let prefill_step_size = decoding_config.prefill_step_size.resolve(&context.model_config);
+        let generate_suffix_length = decoding_config.generate_suffix_length();
+
+        let mut generator = Self {
+            decoding_config,
+            tokens: Vec::new(),
+            context,
+            pre_encoded_task: None,
+            registered_prefix_len: 0,
+            gpu_capture,
+        };
+
+        //Warmup
+        generator.warmup(prefill_step_size)?;
+        generator.warmup(generate_suffix_length)?;
+
+        Ok(generator)
     }
 
     fn warmup(
         &mut self,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), Error> {
         let token_ids: Vec<u64> = vec![0; suffix_length];
         let token_positions: Vec<usize> = (0..suffix_length).collect();
         let token_seeds: Vec<u64> = vec![0; suffix_length];
 
-        let task = LanguageModelGeneratorRunTask {
+        let task = Task {
             token_ids: &token_ids,
             token_positions: &token_positions,
             token_bitmask: None,
@@ -600,94 +768,133 @@ where
             is_prefilling: false,
         };
 
-        let (_, _) = self.run_model(task, true, false, SamplingMethod::default(), false);
+        self.run_model(task, true, false, SamplingMethod::default(), false)?;
+        Ok(())
     }
 
     fn run_model(
         &mut self,
-        task: LanguageModelGeneratorRunTask,
+        task: Task,
         warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
-    ) -> (ForwardPassState<B>, f64) {
+    ) -> Result<(ForwardPassState<B>, f64), Error> {
         objc2::rc::autoreleasepool(|_pool| {
             let run_start = Instant::now();
 
-            let mut state = task.create_state(&mut self.context, None, should_fill_attention_bias);
+            let mut state = ForwardPassState::new_llm(
+                self.context.context.clone(),
+                &self.context.decoder_config,
+                &self.context.model_shape,
+                &self.context.scratch_buffers,
+                self.context.cache_layers.clone(),
+                self.context.shared_buffers.clone(),
+                task.token_ids,
+                task.token_positions,
+                task.token_bitmask,
+                task.token_seeds,
+                task.active_suffix_length,
+                task.sampling_start,
+                task.sampling_length,
+                task.is_prefilling,
+                None,
+                false,
+                should_fill_attention_bias,
+                None,
+                None,
+            );
+
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling_method);
             }
+
+            let encoding_key = TaskEncodingKey {
+                context_len: self.tokens.len(),
+                batch_size: task.token_ids.len(),
+                expected_number_of_new_tokens: task.expected_number_of_new_tokens,
+                active_suffix_len: task.active_suffix_length,
+                sampling_method,
+                sampling_start: task.sampling_start,
+                sampling_len: task.sampling_length,
+                has_bitmask: task.token_bitmask.is_some(),
+                is_prefilling: task.is_prefilling,
+            };
 
             let is_first_decode = !warmup && task.token_ids.len() == 1;
             let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
+                self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+                self.pre_encoded_task = None;
             }
 
-            let encoded_task_key = task.encoded_task_key(self.tokens.len());
+            let sample = !warmup && !task.is_prefilling;
 
-            if should_capture {
-                self.encoded_tasks.remove(&encoded_task_key);
-            }
-
-            if let Some(_) = self.encoded_tasks.remove(&encoded_task_key) {
-                // Nothing
+            let executable = if let Some((pre_encoded_key, pre_encoded_executable)) = self.pre_encoded_task.take()
+                && pre_encoded_key == encoding_key
+            {
+                pre_encoded_executable
             } else {
-                self.context.reset_command_buffer();
+                self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample)?
+            };
 
-                _ = task.build_encoded_task(
-                    &self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, true, false),
-                    encoded_task_key.clone(),
-                );
-            }
-
-            let command_buffer = self.context.command_buffer.clone();
-
-            if !warmup {
-                if !task.is_prefilling {
-                    self.context.gpu_sampler.encode(
-                        &mut state,
-                        &EncodingParameters::new(warmup, true, false),
-                        &self.context.command_buffer.as_ref().borrow(),
-                    );
-                }
-            }
-
-            command_buffer.borrow().submit();
+            let pending = executable.submit();
 
             if allow_pre_encode {
-                self.context.reset_command_buffer();
+                let mut next_encoding_key = encoding_key;
 
-                let next_task_key: String = task.encoded_task_key(self.tokens.len() + 1);
+                next_encoding_key.context_len += 1;
 
-                let next_encoded_task = task.build_encoded_task(
-                    &self.context,
-                    &mut state,
-                    &EncodingParameters::new(warmup, false, false).with_projection(1),
-                    next_task_key.clone(),
-                );
+                let next_executable =
+                    self.encode_forward_pass(&mut state, &EncodingParameters::new().with_projection(1), sample)?;
 
-                self.encoded_tasks.insert(next_task_key.clone(), next_encoded_task);
+                self.pre_encoded_task = Some((next_encoding_key, next_executable));
             }
 
-            command_buffer.borrow().wait_until_completed();
+            pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+
             let run_time = run_start.elapsed().as_secs_f64();
+
             if should_capture {
-                self.gpu_capture
-                    .stop_capture(&self.context.context, "decode")
-                    .map_err(|_| Error::CaptureFailed)
-                    .expect("failed to stop capture");
+                self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
             }
 
-            (state, run_time)
+            Ok((state, run_time))
         })
     }
 
-    fn sample(
+    fn encode_forward_pass(
+        &self,
+        state: &mut ForwardPassState<B>,
+        parameters: &EncodingParameters,
+        sample: bool,
+    ) -> Result<<B::CommandBuffer as CommandBuffer>::Executable, Error> {
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
+
+        self.context
+            .executables
+            .encode(state, parameters, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+
+        if sample {
+            self.context
+                .gpu_sampler
+                .encode(state, parameters, &mut command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        }
+
+        let executable = command_buffer.end_encoding();
+
+        Ok(executable)
+    }
+
+    fn read_sampling_output(
         &mut self,
         state: &mut ForwardPassState<B>,
     ) -> Result<Vec<u64>, Error> {
@@ -712,24 +919,26 @@ where
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
         wait_until_completed: bool,
-    ) {
-        let command_buffer = self.context.context.create_command_buffer().expect("Failed to create command buffer");
+    ) -> Result<(), Error> {
+        let mut command_buffer =
+            self.context.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
             cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
-                &command_buffer,
+                &mut command_buffer,
                 &self.context.kv_cache_update,
             );
         }
 
-        command_buffer.submit();
+        let pending = command_buffer.end_encoding().submit();
 
         if wait_until_completed {
-            command_buffer.wait_until_completed();
+            pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
+        Ok(())
     }
 
     fn allow_pre_encode(&self) -> bool {

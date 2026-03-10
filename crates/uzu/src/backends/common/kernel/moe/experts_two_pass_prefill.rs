@@ -1,10 +1,12 @@
+use std::ops::{Deref, DerefMut};
+
 use super::{
     MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments,
 };
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, CopyEncoder, Kernels,
+        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{MoeExpertsPrefillPassAKernel, MoeExpertsPrefillPassBKernel},
     },
 };
@@ -46,40 +48,40 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &B::CommandBuffer,
-        args: &MoeExpertsTwoPassArguments<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        mut args: MoeExpertsTwoPassArguments<B>,
     ) {
         if args.total_rows == 0 {
             return;
         }
 
         let hidden_bytes = args.total_rows * args.d_ff * args.data_type.size_in_bytes();
-        command_buffer.with_copy_encoder(|encoder| encoder.encode_fill(args.hidden_buffer, 0..hidden_bytes, 0));
+        command_buffer.encode_fill(args.hidden_buffer.deref_mut(), 0..hidden_bytes, 0);
 
         self.tile_map.encode_counts(
             command_buffer,
-            &MoeTileCountsArguments {
+            MoeTileCountsArguments {
                 offsets_buffer: args.expert_offsets,
-                tile_counts_buffer: args.tile_counts,
+                tile_counts_buffer: args.tile_counts.deref_mut(),
                 e: args.e,
             },
         );
         self.tile_map.encode_scan(
             command_buffer,
-            &MoeTileScanArguments {
+            MoeTileScanArguments {
                 tile_counts_buffer: args.tile_counts,
-                tile_offsets_buffer: args.tile_offsets,
-                total_tiles_buffer: args.total_tiles,
+                tile_offsets_buffer: args.tile_offsets.deref_mut(),
+                total_tiles_buffer: args.total_tiles.deref_mut(),
                 e: args.e,
             },
         );
         self.tile_map.encode_build_map(
             command_buffer,
-            &MoeTileMapBuildArguments {
+            MoeTileMapBuildArguments {
                 expert_offsets: args.expert_offsets,
                 tile_offsets: args.tile_offsets,
                 tile_counts: args.tile_counts,
-                tile_map: args.tile_map,
+                tile_map: args.tile_map.deref_mut(),
                 e: args.e,
             },
         );
@@ -99,9 +101,9 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         };
         self.tile_map.encode_dispatch_args(
             command_buffer,
-            &MoeTileDispatchArguments {
+            MoeTileDispatchArguments {
                 total_tiles: args.total_tiles,
-                dispatch_args: args.dispatch_args,
+                dispatch_args: args.dispatch_args.deref_mut(),
                 num_tiles_x: n_tiles_ff,
             },
         );
@@ -109,70 +111,66 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = DTYPES.iter().position(|t| *t == args.data_type).unwrap();
 
-        command_buffer.with_compute_encoder(|encoder| {
-            let kernel_pass_a = &self.pass_a_indirect[gate_idx][dtype_idx];
-            kernel_pass_a.encode(
-                args.x_perm_buffer,
-                args.expert_offsets,
-                args.w13_all,
-                args.up_biases,
-                args.hidden_buffer,
-                args.d_model as u32,
-                args.d_ff as u32,
-                args.e as u32,
-                args.gate_clip_min,
-                args.gate_clip_max,
-                args.up_clip_min,
-                args.up_clip_max,
-                args.silu_alpha,
-                args.tile_map,
-                args.dispatch_args,
-                encoder,
-            );
-        });
+        let kernel_pass_a = &self.pass_a_indirect[gate_idx][dtype_idx];
+        kernel_pass_a.encode(
+            args.x_perm_buffer,
+            args.expert_offsets,
+            args.w13_all,
+            args.up_biases,
+            args.hidden_buffer.deref_mut(),
+            args.d_model as u32,
+            args.d_ff as u32,
+            args.e as u32,
+            args.gate_clip_min,
+            args.gate_clip_max,
+            args.up_clip_min,
+            args.up_clip_max,
+            args.silu_alpha,
+            args.tile_map.deref(),
+            args.dispatch_args.deref(),
+            command_buffer,
+        );
 
         let dispatch_args = MoeTileDispatchArguments {
             total_tiles: args.total_tiles,
-            dispatch_args: args.dispatch_args,
+            dispatch_args: args.dispatch_args.deref_mut(),
             num_tiles_x: n_tiles_model,
         };
-        self.tile_map.encode_dispatch_args(command_buffer, &dispatch_args);
+        self.tile_map.encode_dispatch_args(command_buffer, dispatch_args);
 
-        command_buffer.with_compute_encoder(|encoder| {
-            let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
-            kernel_pass_b.encode(
-                args.hidden_buffer,
-                args.expert_offsets,
-                args.w2_all,
-                args.down_biases,
-                args.output_buffer,
-                args.d_model as u32,
-                args.d_ff as u32,
-                args.e as u32,
-                args.tile_map,
-                args.dispatch_args,
-                encoder,
-            );
-        });
+        let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
+        kernel_pass_b.encode(
+            args.hidden_buffer.deref(),
+            args.expert_offsets,
+            args.w2_all,
+            args.down_biases,
+            args.output_buffer.deref_mut(),
+            args.d_model as u32,
+            args.d_ff as u32,
+            args.e as u32,
+            args.tile_map.deref(),
+            args.dispatch_args.deref(),
+            command_buffer,
+        );
     }
 }
 
 #[derive(Debug)]
 pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
-    pub x_perm_buffer: &'a B::NativeBuffer,
-    pub expert_offsets: &'a B::NativeBuffer,
-    pub row_expert_map: &'a B::NativeBuffer,
-    pub hidden_buffer: &'a B::NativeBuffer,
-    pub output_buffer: &'a B::NativeBuffer,
-    pub w13_all: &'a B::NativeBuffer,
-    pub w2_all: &'a B::NativeBuffer,
-    pub up_biases: &'a B::NativeBuffer,
-    pub down_biases: &'a B::NativeBuffer,
-    pub tile_counts: &'a B::NativeBuffer,
-    pub tile_offsets: &'a B::NativeBuffer,
-    pub tile_map: &'a B::NativeBuffer,
-    pub total_tiles: &'a B::NativeBuffer,
-    pub dispatch_args: &'a B::NativeBuffer,
+    pub x_perm_buffer: &'a B::Buffer,
+    pub expert_offsets: &'a B::Buffer,
+    pub row_expert_map: &'a mut B::Buffer,
+    pub hidden_buffer: &'a mut B::Buffer,
+    pub output_buffer: &'a mut B::Buffer,
+    pub w13_all: &'a B::Buffer,
+    pub w2_all: &'a B::Buffer,
+    pub up_biases: &'a B::Buffer,
+    pub down_biases: &'a B::Buffer,
+    pub tile_counts: &'a mut B::Buffer,
+    pub tile_offsets: &'a mut B::Buffer,
+    pub tile_map: &'a mut B::Buffer,
+    pub total_tiles: &'a mut B::Buffer,
+    pub dispatch_args: &'a mut B::Buffer,
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,

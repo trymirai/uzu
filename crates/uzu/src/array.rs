@@ -4,12 +4,12 @@ use ndarray::{ArrayView, Dimension, IxDyn};
 
 use crate::{
     ArrayElement, DataType,
-    backends::common::{Backend, Context, NativeBuffer},
+    backends::common::{Backend, Buffer, Context},
 };
 
 #[derive(Debug)]
 pub struct Array<B: Backend> {
-    buffer: Rc<B::NativeBuffer>,
+    buffer: Rc<RefCell<B::Buffer>>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -18,20 +18,20 @@ pub struct Array<B: Backend> {
 impl<B: Backend> Array<B> {
     // Constructors
     pub unsafe fn from_parts(
-        buffer: Rc<B::NativeBuffer>,
+        buffer: Rc<RefCell<B::Buffer>>,
         offset: usize,
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
         assert!(
-            offset + required_bytes <= buffer.length(),
+            offset + required_bytes <= buffer.borrow().length(),
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,
             offset,
             offset + required_bytes,
-            buffer.length()
+            buffer.borrow().length()
         );
         Self {
             buffer: buffer.clone(),
@@ -49,11 +49,7 @@ impl<B: Backend> Array<B> {
     }
 
     // Getters
-    pub fn buffer(&self) -> &B::NativeBuffer {
-        &self.buffer.as_ref()
-    }
-
-    pub fn buffer_rc(&self) -> Rc<B::NativeBuffer> {
+    pub fn buffer(&self) -> Rc<RefCell<B::Buffer>> {
         self.buffer.clone()
     }
 
@@ -71,7 +67,7 @@ impl<B: Backend> Array<B> {
 
     // Utility
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { self.buffer.cpu_ptr().add(self.offset) }
+        unsafe { self.buffer.borrow().cpu_ptr().add(self.offset) }
     }
 
     pub fn size(&self) -> usize {
@@ -262,6 +258,26 @@ pub trait ArrayContextExt {
         array.as_bytes_mut().fill(0);
         array
     }
+
+    fn create_array_from<T: ArrayElement>(
+        &self,
+        shape: &[usize],
+        data: &[T],
+        label: &str,
+    ) -> Array<Self::Backend> {
+        let size_from_shape: usize = shape.iter().product();
+        assert_eq!(
+            data.len(),
+            size_from_shape,
+            "Shape size {} and data size {} are not equal",
+            size_from_shape,
+            data.len()
+        );
+
+        let mut array = self.create_array_uninitialized(shape, T::data_type(), label);
+        array.as_slice_mut().copy_from_slice(data);
+        array
+    }
 }
 
 impl<C: Context> ArrayContextExt for C {
@@ -278,6 +294,6 @@ impl<C: Context> ArrayContextExt for C {
         let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
         buffer.set_label(Some(label));
 
-        unsafe { Array::from_parts(Rc::new(buffer), 0, shape, data_type) }
+        unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, shape, data_type) }
     }
 }

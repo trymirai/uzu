@@ -18,9 +18,14 @@ enum Commands {
         // Seed
         #[arg(long)]
         seed: Option<u64>,
+        // Speculator
+        #[arg(long)]
+        speculator: Option<String>,
         /// Non-interactive mode: run a single message and exit
         #[arg(long, short)]
         message: Option<String>,
+        #[arg(long, short)]
+        no_thinking: bool,
     },
     /// Start a server with the specified model path
     Serve {
@@ -48,9 +53,11 @@ fn main() {
             model_path,
             prefill_step_size,
             seed,
+            speculator,
             message,
+            no_thinking,
         }) => {
-            handle_run(model_path, 2048, prefill_step_size, seed, message);
+            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking);
         },
         Some(Commands::Serve {
             model_path,

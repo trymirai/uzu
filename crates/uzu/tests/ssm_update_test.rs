@@ -2,11 +2,14 @@
 
 use bytemuck;
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use uzu::{
     DataType,
     backends::{
-        common::{Backend, Context, Kernels, kernel::SSDUpdateKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels, kernel::SSDUpdateKernel,
+        },
         metal::Metal,
     },
 };
@@ -229,19 +232,17 @@ fn ssd_update_with_z_bf16() {
         .device
         .new_buffer_with_data(bytemuck::cast_slice(&state), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let y_buf = ctx
+    let mut y_buf = ctx
         .device
         .new_buffer(bsz * h * dh * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
-    let ns_buf = ctx
+    let mut ns_buf = ctx
         .device
         .new_buffer(bsz * h * dh * n * std::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16).unwrap();
-    let cb_ref = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let cb = cb_ref.to_owned();
-    let enc = cb.new_compute_command_encoder().expect("Failed to create compute encoder");
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16, false).unwrap();
+    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
     kernel.encode(
         &x_buf,
         &dt_buf,
@@ -249,9 +250,9 @@ fn ssd_update_with_z_bf16() {
         &c_buf,
         &d_buf,
         &z_buf,
-        &state_buf,
-        &y_buf,
-        &ns_buf,
+        Some(&state_buf),
+        &mut y_buf,
+        &mut ns_buf,
         (h / g) as u32,
         n as u32,
         x_strides.as_slice(),
@@ -261,11 +262,9 @@ fn ssd_update_with_z_bf16() {
         bsz as u32,
         h as u32,
         dh as u32,
-        &enc,
+        &mut command_buffer,
     );
-    enc.end_encoding();
-    cb_ref.commit();
-    cb_ref.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_ptr = y_buf.contents().as_ptr() as *const bf16;
     let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h * dh) };

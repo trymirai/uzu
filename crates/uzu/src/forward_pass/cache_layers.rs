@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Backend, CommandBuffer, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KVSlice},
@@ -276,7 +276,7 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &B::CommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);

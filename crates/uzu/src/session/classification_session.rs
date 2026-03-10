@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::metal::Metal,
-    classifier::{ClassificationOutput, Classifier},
+    backends::{common::Backend, select_backend},
+    classifier::{ClassificationOutput, Classifier, ClassifierTrait},
     config::ModelMetadata,
     session::{
         helpers::{InputProcessor, InputProcessorDefault},
@@ -18,12 +18,16 @@ pub struct ClassificationSession {
     #[allow(dead_code)]
     model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    classifier: Classifier<Metal>,
+    classifier: Box<dyn ClassifierTrait>,
     input_processor: Box<dyn InputProcessor>,
 }
 
 impl ClassificationSession {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
+        select_backend!(Self::new_with_backend::<B>(model_path), Error::UnableToOpenAnyBackend)
+    }
+
+    pub fn new_with_backend<B: Backend>(model_path: PathBuf) -> Result<Self, Error> {
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
             return Err(Error::ModelFolderNotFound);
@@ -43,7 +47,7 @@ impl ClassificationSession {
         let input_processor =
             Box::new(InputProcessorDefault::new(classifier_model_config.message_processor_config.clone()))
                 as Box<dyn InputProcessor>;
-        let classifier = Classifier::new(&model_path)?;
+        let classifier = Box::new(Classifier::<B>::new(&model_path)?);
 
         Ok(Self {
             model_path,

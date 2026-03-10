@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::DerefMut};
 
 use super::{
     super::matmul_arguments::MatmulArguments,
@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::MatmulGemvKernel},
+    backends::common::{
+        Backend, CommandBuffer, Kernels,
+        kernel::{MatmulGemvKernel, matmul::MatmulError},
+    },
 };
 
 pub struct GemvKernel<B: Backend> {
@@ -15,13 +18,10 @@ pub struct GemvKernel<B: Backend> {
     pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemvKernel>,
 }
 
-impl<B: Backend> GemvKernel<B>
-where
-    B::Error: From<String>,
-{
-    pub fn new(data_type: DataType) -> Result<Self, B::Error> {
+impl<B: Backend> GemvKernel<B> {
+    pub fn new(data_type: DataType) -> Result<Self, MatmulError<B>> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(B::Error::from(format!("Unsupported data type for GEMV: {data_type:?}")));
+            return Err(MatmulError::UnsupportedDataType(data_type));
         }
         Ok(Self {
             data_type,
@@ -32,7 +32,7 @@ where
     pub fn precompile(
         &mut self,
         context: &B::Context,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), MatmulError<B>> {
         for &config in Specialization::precompile_configs(self.data_type) {
             self.get_or_create_kernel(context, config)?;
         }
@@ -43,7 +43,7 @@ where
         &mut self,
         context: &B::Context,
         config: Specialization,
-    ) -> Result<&<B::Kernels as Kernels>::MatmulGemvKernel, B::Error> {
+    ) -> Result<&<B::Kernels as Kernels>::MatmulGemvKernel, MatmulError<B>> {
         if !self.pipelines.contains_key(&config) {
             let kernel = <B::Kernels as Kernels>::MatmulGemvKernel::new(
                 context,
@@ -55,7 +55,8 @@ where
                 config.elements_per_thread_row,
                 config.elements_per_thread_col,
                 config.apply_output_scale_and_accumulate,
-            )?;
+            )
+            .map_err(MatmulError::BackendError)?;
             self.pipelines.insert(config, kernel);
         }
         Ok(self.pipelines.get(&config).unwrap())
@@ -64,10 +65,10 @@ where
     pub fn encode(
         &mut self,
         context: &B::Context,
-        arguments: &MatmulArguments<B>,
+        arguments: &mut MatmulArguments<B>,
         dispatch_descriptor: &DispatchDescriptor,
-        encoder: &B::ComputeEncoder,
-    ) -> Result<(), B::Error> {
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
         let pipeline = self.get_or_create_kernel(context, config)?;
 
@@ -85,43 +86,26 @@ where
         let output_source = if config.apply_output_scale_and_accumulate {
             match dispatch_descriptor.output_source {
                 OutputSource::None => {
-                    return Err(B::Error::from(
-                        "GEMV descriptor mismatch: apply_output_scale_and_accumulate=true but output_source=None"
-                            .to_owned(),
-                    ));
+                    return Err(MatmulError::GemvOutputSourceMismatch);
                 },
-                OutputSource::Bias => Some(
-                    arguments.bias.ok_or_else(|| B::Error::from("GEMV descriptor requires bias buffer".to_owned()))?,
-                ),
+                OutputSource::Bias => Some(arguments.bias.ok_or(MatmulError::<B>::GemvMissingBias)?),
             }
         } else {
             None
         };
 
-        let vector_batch_stride = [i32::try_from(dispatch_descriptor.vector_batch_stride[0]).map_err(|_| {
-            B::Error::from(format!(
-                "GEMV path requires i32 vector_batch_stride but got {}",
-                dispatch_descriptor.vector_batch_stride[0]
-            ))
-        })?];
-        let matrix_batch_stride = [i32::try_from(dispatch_descriptor.matrix_batch_stride[0]).map_err(|_| {
-            B::Error::from(format!(
-                "GEMV path requires i32 matrix_batch_stride but got {}",
-                dispatch_descriptor.matrix_batch_stride[0]
-            ))
-        })?];
-        let output_source_batch_stride = [i32::try_from(dispatch_descriptor.bias_batch_stride[0]).map_err(|_| {
-            B::Error::from(format!(
-                "GEMV path requires i32 output_source_batch_stride but got {}",
-                dispatch_descriptor.bias_batch_stride[0]
-            ))
-        })?];
+        let vector_batch_stride = [i32::try_from(dispatch_descriptor.vector_batch_stride[0])
+            .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.vector_batch_stride[0]))?];
+        let matrix_batch_stride = [i32::try_from(dispatch_descriptor.matrix_batch_stride[0])
+            .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.matrix_batch_stride[0]))?];
+        let output_source_batch_stride = [i32::try_from(dispatch_descriptor.bias_batch_stride[0])
+            .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.bias_batch_stride[0]))?];
 
         pipeline.encode(
             (matrix, matrix_offset),
             (input_vector, input_vector_offset),
             output_source.map(|buffer| (buffer, 0usize)),
-            arguments.d,
+            arguments.d.deref_mut(),
             dispatch_descriptor.input_dimension,
             dispatch_descriptor.output_dimension,
             dispatch_descriptor.matrix_leading_dim,
@@ -134,7 +118,7 @@ where
             dispatch_descriptor.bias_stride,
             dispatch_descriptor.batch_rows,
             config.output_rows_per_threadgroup() as i32,
-            encoder,
+            command_buffer,
         );
 
         Ok(())

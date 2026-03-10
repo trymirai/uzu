@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     common::mangling::dynamic_mangle,
-    metal::ast::{MetalGroupsType, MetalTemplateParameterType},
+    metal::ast::{MetalBufferAccess, MetalGroupsType, MetalTemplateParameterType},
 };
 
 pub fn bindgen(
@@ -99,11 +99,10 @@ pub fn bindgen(
     let mut arg_count: usize = 0;
     let mut indirect_flag = false;
 
-    let (conditional_buffer_fields,conditional_buffer_sets, encode_generics, encode_args_defs, encode_args_sets, encode_args_names): (
+    let (conditional_buffer_fields,conditional_buffer_sets, encode_generics, encode_args_defs, encode_args_sets): (
         Vec<Option<TokenStream>>,
         Vec<Option<TokenStream>>,
         Vec<Option<TokenStream>>,
-        Vec<TokenStream>,
         Vec<TokenStream>,
         Vec<TokenStream>,
     ) = kernel
@@ -113,12 +112,15 @@ pub fn bindgen(
             let arg_name = format_ident!("{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
-                arg_type @ (MetalArgumentType::Buffer | MetalArgumentType::Constant(_)) => {
+                arg_type @ (MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) => {
                     let (mut ty, mut set, generic) = match arg_type {
-                        MetalArgumentType::Buffer => {
+                        MetalArgumentType::Buffer(access) => {
                             let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
                             (
-                                quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                match access {
+                                    MetalBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                    MetalBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                },
                                 quote! {
                                     let (__dsl_buffer, __dsl_offset) = #arg_name.into_parts();
                                     compute_encoder.set_buffer(Some(__dsl_buffer), __dsl_offset, #arg_count);
@@ -173,13 +175,12 @@ pub fn bindgen(
                         generic,
                         quote! { #arg_name: #ty },
                         set,
-                        quote! { #arg_name },
                     ))
                 }
                 MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_flag => {
                     indirect_flag = true;
 
-                    Some((None, None, Some(quote! { '__dsl_indirect_dispatch_buffer }), quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> }, quote! {}, quote! { __dsl_indirect_dispatch_buffer }))
+                    Some((None, None, Some(quote! { '__dsl_indirect_dispatch_buffer }), quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> }, quote! {}))
                 }
                 _ => None,
             }
@@ -320,28 +321,12 @@ pub fn bindgen(
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 
-            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#encode_args_defs, )* compute_encoder: &'encoder ProtocolObject<dyn MTLComputeCommandEncoder>) {
+            fn encode<#(#encode_generics, )* 'command_buffer>(&self, #(#encode_args_defs, )* command_buffer: &'command_buffer mut MetalCommandBufferEncoding) {
+                let compute_encoder = command_buffer.ensure_compute();
                 #empty_dispatch_guards
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_args_sets)*
                 #dispatch
-            }
-            fn encode_if<#(#encode_generics, )* 'encoder, 'predicate>(&self, #(#encode_args_defs, )* compute_encoder: &'encoder ProtocolObject<dyn MTLComputeCommandEncoder>, predicate: Option<impl crate::backends::common::kernel::BufferArg<'predicate, Retained<ProtocolObject<dyn MTLBuffer>>>>) {
-                #empty_dispatch_guards
-
-                if let Some(predicate) = predicate {
-                    let (__dsl_buffer, __dsl_offset) = predicate.into_parts();
-                    compute_encoder.condition(
-                        __dsl_buffer,
-                        __dsl_offset,
-                        || {
-                            self.encode(#(#encode_args_names, )* compute_encoder);
-                        },
-                        None::<fn()>,
-                    );
-                } else {
-                    self.encode(#(#encode_args_names, )* compute_encoder);
-                }
             }
         }
     };

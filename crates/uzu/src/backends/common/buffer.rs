@@ -1,38 +1,18 @@
-use std::{mem::ManuallyDrop, rc::Weak};
+use std::{fmt::Debug, os::raw::c_void, ptr::NonNull};
 
-use super::{Backend, Context};
+use super::Backend;
 
-pub struct Buffer<B: Backend> {
-    inner: ManuallyDrop<B::NativeBuffer>,
-    context: Weak<B::Context>,
-    is_scratch: bool,
-}
+pub trait Buffer: Debug {
+    type Backend: Backend<Buffer = Self>;
 
-impl<B: Backend> Buffer<B> {
-    pub fn new(
-        inner: B::NativeBuffer,
-        context: Weak<B::Context>,
-        is_scratch: bool,
-    ) -> Self {
-        Self {
-            inner: ManuallyDrop::new(inner),
-            context,
-            is_scratch,
-        }
-    }
+    fn set_label(
+        &mut self,
+        label: Option<&str>,
+    );
 
-    pub fn inner(&self) -> &B::NativeBuffer {
-        &self.inner
-    }
-}
+    fn cpu_ptr(&self) -> NonNull<c_void>;
 
-impl<B: Backend> Drop for Buffer<B> {
-    fn drop(&mut self) {
-        // Safety: drop is only called once, inner is valid
-        let inner = unsafe { ManuallyDrop::take(&mut self.inner) };
-        if let Some(ctx) = self.context.upgrade() {
-            ctx.allocator().handle_buffer_drop(inner, self.is_scratch);
-        }
-        // If context is gone, inner drops naturally here
-    }
+    fn length(&self) -> usize;
+
+    fn id(&self) -> usize;
 }

@@ -1,5 +1,7 @@
 //! Pooling encodable for sequence-level aggregation.
 
+use std::ops::{Deref, DerefMut};
+
 use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
@@ -19,16 +21,16 @@ enum PoolingKernel<B: Backend> {
 impl<B: Backend> PoolingKernel<B> {
     fn encode(
         &self,
-        input: &B::NativeBuffer,
-        output: &B::NativeBuffer,
+        input: &B::Buffer,
+        output: &mut B::Buffer,
         seq_len: u32,
         hidden_dim: u32,
         batch_size: u32,
-        encoder: &B::ComputeEncoder,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         match self {
-            Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
-            Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
+            Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, command_buffer),
+            Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, command_buffer),
         }
     }
 }
@@ -62,28 +64,9 @@ impl<B: Backend> EncodableBlock<B> for Pooling<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters<B>,
-        command_buffer: &B::CommandBuffer,
-    ) {
-        command_buffer.with_compute_encoder(|encoder| self.encode_with_shared_encoder(state, parameters, encoder));
-
-        #[cfg(feature = "tracing")]
-        {
-            let output_pooling_trace = state.traces().borrow().output_pooling().clone();
-            state.encode_copy_array(command_buffer, ArrayId::ClassifierPooling, output_pooling_trace);
-        }
-    }
-
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
-        &self,
-        state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let batch_size = 1;
         let seq_len = state.aux_buffers_suffix_length();
 
@@ -92,12 +75,19 @@ impl<B: Backend> EncodableBlock<B> for Pooling<B> {
         let pooling_array = arrays[1].borrow_mut();
 
         self.pooling_kernel.encode(
-            main_array.buffer(),
-            pooling_array.buffer(),
+            main_array.buffer().borrow().deref(),
+            pooling_array.buffer().borrow_mut().deref_mut(),
             seq_len as u32,
             self.model_dim as u32,
             batch_size,
-            encoder,
+            command_buffer,
         );
+
+        #[cfg(feature = "tracing")]
+        {
+            let output_pooling_trace = state.traces().borrow().output_pooling().clone();
+            state.encode_copy_array(command_buffer, ArrayId::ClassifierPooling, output_pooling_trace);
+        }
+        Ok(())
     }
 }

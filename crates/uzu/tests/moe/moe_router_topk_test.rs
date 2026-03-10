@@ -1,12 +1,15 @@
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
 use half::bf16;
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
+use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::{Backend, Kernels, kernel::MoeRouterTopKKernel},
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels, kernel::MoeRouterTopKKernel,
+        },
         metal::Metal,
     },
 };
@@ -153,28 +156,25 @@ fn run_router_topk_once(
     let input_buf = alloc_buffer_with_data(ctx, &input);
     let weight_buf = alloc_buffer_with_data(ctx, &weight);
     let bias_buf = alloc_buffer_with_data(ctx, &bias);
-    let ids_buf = alloc_buffer::<i32>(ctx, t * k);
+    let mut ids_buf = alloc_buffer::<i32>(ctx, t * k);
     // For BFloat16 kernel, probs buffer must be bf16, not f32
-    let probs_buf = alloc_buffer::<bf16>(ctx, t * k);
+    let mut probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
-    let cb = ctx.command_queue.command_buffer().expect("Failed to create command buffer");
-    let encoder = cb.new_compute_command_encoder().expect("Failed to create command encoder");
+    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
     kernel.encode(
         &input_buf,
         &weight_buf,
         &bias_buf,
-        &ids_buf,
-        &probs_buf,
+        &mut ids_buf,
+        &mut probs_buf,
         t as u32,
         d_model as u32,
         e as u32,
         k as u32,
         renorm,
-        &encoder,
+        &mut command_buffer,
     );
-    encoder.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let ids_ptr = ids_buf.contents().as_ptr() as *const i32;
     let probs_ptr = probs_buf.contents().as_ptr() as *const bf16;

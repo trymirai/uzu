@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     DataType,
     backends::common::{
-        Backend, Kernels,
+        Backend, CommandBuffer, Kernels,
         kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
             QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
@@ -54,12 +54,12 @@ pub struct QuantizedMatmulConfiguration {
 }
 
 pub struct QuantizedMatmulArguments<'a, B: Backend> {
-    pub a_buffer: &'a B::NativeBuffer,
+    pub a_buffer: &'a B::Buffer,
     pub a_offset: usize,
-    pub b_buffer: &'a B::NativeBuffer,
-    pub scales_buffer: &'a B::NativeBuffer,
-    pub zero_points_or_biases_buffer: &'a B::NativeBuffer,
-    pub output_buffer: &'a B::NativeBuffer,
+    pub b_buffer: &'a B::Buffer,
+    pub scales_buffer: &'a B::Buffer,
+    pub zero_points_or_biases_buffer: &'a B::Buffer,
+    pub output_buffer: &'a mut B::Buffer,
     pub batch: usize,
     pub input_dim: usize,
     pub output_dim: usize,
@@ -161,7 +161,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
 
     pub fn encode(
         &self,
-        encoder: &B::ComputeEncoder,
+        encoder: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: QuantizedMatmulArguments<B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
         if arguments.quantization_type != self.quantization_type {
@@ -487,9 +487,9 @@ fn to_i32<B: Backend>(
 }
 
 fn quant_buffers<'a, B: Backend>(
-    buffer: &'a B::NativeBuffer,
+    buffer: &'a B::Buffer,
     quantization_type: QuantizedMatmulType,
-) -> (Option<&'a B::NativeBuffer>, Option<&'a B::NativeBuffer>) {
+) -> (Option<&'a B::Buffer>, Option<&'a B::Buffer>) {
     match quantization_type {
         QuantizedMatmulType::ZeroPoint => (Some(buffer), None),
         QuantizedMatmulType::Mlx => (None, Some(buffer)),

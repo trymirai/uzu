@@ -1,6 +1,10 @@
 //! Quantized embedding readout encodable.
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -8,7 +12,7 @@ use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, NativeBuffer,
+        Backend, Buffer, CommandBuffer, Context,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
             QuantizedMatmulKernelEncodable, QuantizedMatmulType,
@@ -67,9 +71,9 @@ pub enum QuantizedEmbeddingReadoutError<B: Backend> {
 
 pub struct QuantizedEmbeddingReadout<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
-    weights_buffer: Rc<B::NativeBuffer>,
-    scales_buffer: Rc<B::NativeBuffer>,
-    biases_buffer: Rc<B::NativeBuffer>,
+    weights_buffer: Rc<RefCell<B::Buffer>>,
+    scales_buffer: Rc<RefCell<B::Buffer>>,
+    biases_buffer: Rc<RefCell<B::Buffer>>,
     vocab_size: usize,
     model_dim: usize,
 }
@@ -178,7 +182,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                         got: deq_biases.data_type(),
                     });
                 }
-                deq_biases.buffer_rc()
+                deq_biases.buffer()
             },
             Err(_) => {
                 let element_size = match data_type {
@@ -195,7 +199,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
                     std::ptr::write_bytes(buffer.cpu_ptr().as_ptr().cast::<u8>(), 0, size_bytes);
                 }
 
-                Rc::new(buffer)
+                Rc::new(RefCell::new(buffer))
             },
         };
 
@@ -215,8 +219,8 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
 
         Ok(Self {
             kernel,
-            weights_buffer: weights.buffer_rc(),
-            scales_buffer: scales.buffer_rc(),
+            weights_buffer: weights.buffer(),
+            scales_buffer: scales.buffer(),
             biases_buffer,
             vocab_size,
             model_dim,
@@ -225,20 +229,16 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
 }
 
 impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
-    fn supports_shared_encoder(&self) -> bool {
-        true
-    }
-
-    fn encode_with_shared_encoder(
+    fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters<B>,
-        encoder: &B::ComputeEncoder,
-    ) {
+        _parameters: &EncodingParameters,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
         let batch_size = state.sampling_length();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
 
         let sampling_start = state.sampling_start();
@@ -250,14 +250,14 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
 
         self.kernel
             .encode(
-                encoder,
+                command_buffer,
                 QuantizedMatmulArguments {
-                    a_buffer: input_array.buffer(),
+                    a_buffer: input_array.buffer().borrow().deref(),
                     a_offset,
-                    b_buffer: &self.weights_buffer,
-                    scales_buffer: &self.scales_buffer,
-                    zero_points_or_biases_buffer: &self.biases_buffer,
-                    output_buffer: output_array.buffer(),
+                    b_buffer: self.weights_buffer.borrow().deref(),
+                    scales_buffer: self.scales_buffer.borrow().deref(),
+                    zero_points_or_biases_buffer: self.biases_buffer.borrow().deref(),
+                    output_buffer: output_array.buffer().borrow_mut().deref_mut(),
                     batch: batch_size,
                     input_dim: self.model_dim,
                     output_dim: self.vocab_size,
@@ -265,5 +265,6 @@ impl<B: Backend> EncodableBlock<B> for QuantizedEmbeddingReadout<B> {
                 },
             )
             .expect("Failed to encode quantized embedding readout kernel");
+        Ok(())
     }
 }

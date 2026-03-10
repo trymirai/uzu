@@ -2,13 +2,12 @@
 #include <metal_atomic>
 #include "../definitions.metal"
 
+#include "argmax.h"
+
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 4
 
-struct ArgmaxPair {
-  float value;
-  uint index;
-};
+using namespace uzu::argmax;
 
 constant ArgmaxPair ARGMAX_INIT = {-INFINITY, UINT_MAX};
 

@@ -9,11 +9,8 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, Kernels, NativeBuffer,
-        kernel::{
-            MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate,
-            matmul::MatmulKernels,
-        },
+        Backend, Buffer, Context, Kernels,
+        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
@@ -34,13 +31,13 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Rc<B::NativeBuffer>,
+    pub positions: Rc<RefCell<B::Buffer>>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Rc<B::NativeBuffer>,
+    pub seeds: Rc<RefCell<B::Buffer>>,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Rc<B::NativeBuffer>,
+    pub results: Rc<RefCell<B::Buffer>>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
@@ -66,9 +63,9 @@ impl<B: Backend> AsyncBuffers<B> {
         let event = context.create_event().expect("Failed to create event");
 
         Self {
-            positions: Rc::new(positions),
-            seeds: Rc::new(seeds),
-            results: Rc::new(results),
+            positions: Rc::new(RefCell::new(positions)),
+            seeds: Rc::new(RefCell::new(seeds)),
+            results: Rc::new(RefCell::new(results)),
             event,
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
@@ -85,7 +82,7 @@ impl<B: Backend> AsyncBuffers<B> {
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let ptr = self.positions.cpu_ptr().as_ptr() as *mut i32;
+        let ptr = self.positions.borrow().cpu_ptr().as_ptr() as *mut i32;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = (base_position + i) as i32;
@@ -100,7 +97,7 @@ impl<B: Backend> AsyncBuffers<B> {
         prefix_len: usize,
         tokens_to_generate: usize,
     ) {
-        let ptr = self.seeds.cpu_ptr().as_ptr() as *mut u64;
+        let ptr = self.seeds.borrow().cpu_ptr().as_ptr() as *mut u64;
         for i in 0..tokens_to_generate {
             unsafe {
                 *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
@@ -118,14 +115,13 @@ impl<B: Backend> AsyncBuffers<B> {
         &self,
         pass_idx: usize,
     ) -> u32 {
-        let ptr = self.results.cpu_ptr().as_ptr() as *const u32;
+        let ptr = self.results.borrow().cpu_ptr().as_ptr() as *const u32;
         unsafe { *ptr.add(pass_idx % self.batch_size) }
     }
 }
 
 pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
-    pub command_buffer: Rc<RefCell<B::CommandBuffer>>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -148,17 +144,12 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub async_buffers: AsyncBuffers<B>,
 }
 
-impl<B: Backend + 'static> LanguageModelGeneratorContext<B>
-where
-    B::Kernels: MatmulKernels,
-{
+impl<B: Backend> LanguageModelGeneratorContext<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,
     ) -> Result<Self, Error> {
-        let context = B::Context::new().map_err(|_| Error::UnableToCreateBackendContext)?;
-        let command_buffer =
-            Rc::new(RefCell::new(context.create_command_buffer().expect("Failed to create command buffer")));
+        let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -205,23 +196,23 @@ where
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
         let kv_cache_update = Box::new(
             KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
-                .map_err(|_| Error::UnableToCreateBackendContext)?,
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?,
         );
 
         let gpu_sampler =
             Sampling::<B>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(|_| Error::UnableToCreateBackendContext)?;
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
-            .map_err(|_| Error::UnableToCreateBackendContext)?;
+            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
         let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(&context)
-            .map_err(|_| Error::UnableToCreateBackendContext)?;
+            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         // Create mask update kernel if model has attention layers
         let mask_update = if decoder_config.has_attention_layers() {
             Some(
                 <B::Kernels as Kernels>::MaskUpdateKernel::new(&context, intermediate_data_type)
-                    .map_err(|_| Error::UnableToCreateBackendContext)?,
+                    .map_err(|e| Error::UnableToCreateContext(e.into()))?,
             )
         } else {
             None
@@ -234,7 +225,6 @@ where
 
         let context = Self {
             context,
-            command_buffer,
             cache_layers,
             shared_buffers,
             scratch_buffers,
@@ -252,10 +242,5 @@ where
         };
 
         Ok(context)
-    }
-
-    pub fn reset_command_buffer(&mut self) {
-        self.command_buffer =
-            Rc::new(RefCell::new(self.context.create_command_buffer().expect("Failed to create command buffer")));
     }
 }
