@@ -577,57 +577,121 @@ METAL_FUNC void mpp_subtile_gemm_direct(
   auto ct_c = gemm_op.template get_destination_cooperative_tensor<
       decltype(ct_a), decltype(ct_b), AccumType>();
 
+  // Precompute coordinate mappings (constant per thread, reused across K iterations)
+  const short A_CAP = ct_a.get_capacity();
+  const short B_CAP = ct_b.get_capacity();
+  const short C_CAP = ct_c.get_capacity();
+
+  // Max capacity for cooperative tensors in MPP is small (typically 8-16 per operand)
+  short a_col[16], a_row[16];
+  short b_col[16], b_row[16];
+  short c_col[16], c_row[16];
+  bool c_valid[16];
+
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < A_CAP; i++) {
+    auto coord = ct_a.get_multidimensional_index(i);
+    a_col[i] = coord[0];
+    a_row[i] = coord[1];
+  }
+
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < B_CAP; i++) {
+    auto coord = ct_b.get_multidimensional_index(i);
+    b_col[i] = coord[0];
+    b_row[i] = coord[1];
+  }
+
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < C_CAP; i++) {
+    auto coord = ct_c.get_multidimensional_index(i);
+    c_col[i] = coord[0];
+    c_row[i] = coord[1];
+    c_valid[i] = ct_c.is_valid_element(i);
+  }
+
+  // Precompute A/B linear offsets for the non-K dimensions (constant across K)
+  int a_base_offset[16];
+  int b_base_offset[16];
+  bool a_in_bounds[16];
+  bool b_in_bounds[16];
+
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < A_CAP; i++) {
+    // For non-transposed A: row=M, col=K -> base = row * lda, k offset added in loop
+    // For transposed A: row=K, col=M -> base = col (M part), k offset = row
+    if constexpr (!transpose_a) {
+      a_base_offset[i] = a_row[i] * lda;
+      a_in_bounds[i] = a_row[i] < m_limit;
+    } else {
+      a_base_offset[i] = a_col[i] * lda;  // M dim * lda
+      a_in_bounds[i] = a_col[i] < m_limit;
+    }
+  }
+
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < B_CAP; i++) {
+    if constexpr (!transpose_b) {
+      b_base_offset[i] = b_col[i];
+      b_in_bounds[i] = b_col[i] < n_limit;
+    } else {
+      b_base_offset[i] = b_row[i] * ldb;  // N dim * ldb
+      b_in_bounds[i] = b_row[i] < n_limit;
+    }
+  }
+
   // Initialize accumulator to zero
-  for (short i = 0; i < ct_c.get_capacity(); i++) {
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < C_CAP; i++) {
     ct_c[i] = AccumType(0);
   }
 
-  // Loop over K in steps of UK
+  // Main K loop
   for (int k = 0; k < K; k += UK) {
     const short k_limit = short(min(int(UK), K - k));
 
-    // Load A block using cooperative tensor's coordinate mapping
-    // get_multidimensional_index returns {col, row} (column-first, matching Metal tensor convention)
-    for (short i = 0; i < ct_a.get_capacity(); i++) {
-      auto coord = ct_a.get_multidimensional_index(i);
-      short c = coord[0];  // column (K dimension for non-transposed A)
-      short r = coord[1];  // row (M dimension for non-transposed A)
-      const short r_lim = transpose_a ? k_limit : m_limit;
-      const short c_lim = transpose_a ? m_limit : k_limit;
-      if (r < r_lim && c < c_lim) {
-        ct_a[i] = a_ptr[r * lda + c + (transpose_a ? k * lda : k)];
+    // Load A
+    STEEL_PRAGMA_UNROLL
+    for (short i = 0; i < A_CAP; i++) {
+      const short k_coord = transpose_a ? a_row[i] : a_col[i];
+      if (a_in_bounds[i] && k_coord < k_limit) {
+        if constexpr (!transpose_a) {
+          ct_a[i] = a_ptr[a_base_offset[i] + a_col[i]];
+        } else {
+          ct_a[i] = a_ptr[a_base_offset[i] + a_row[i]];
+        }
       } else {
         ct_a[i] = AType(0);
       }
     }
 
-    // Load B block
-    for (short i = 0; i < ct_b.get_capacity(); i++) {
-      auto coord = ct_b.get_multidimensional_index(i);
-      short c = coord[0];  // column
-      short r = coord[1];  // row
-      const short r_lim = transpose_b ? n_limit : k_limit;
-      const short c_lim = transpose_b ? k_limit : n_limit;
-      if (r < r_lim && c < c_lim) {
-        ct_b[i] = b_ptr[r * ldb + c + (transpose_b ? k : k * ldb)];
+    // Load B
+    STEEL_PRAGMA_UNROLL
+    for (short i = 0; i < B_CAP; i++) {
+      const short k_coord = transpose_b ? b_col[i] : b_row[i];
+      if (b_in_bounds[i] && k_coord < k_limit) {
+        if constexpr (!transpose_b) {
+          ct_b[i] = b_ptr[b_row[i] * ldb + b_col[i]];
+        } else {
+          ct_b[i] = b_ptr[b_base_offset[i] + b_col[i]];
+        }
       } else {
         ct_b[i] = BType(0);
       }
     }
 
     gemm_op.run(ct_a, ct_b, ct_c);
+
+    // Advance pointers along K
+    a_ptr += transpose_a ? (UK * lda) : UK;
+    b_ptr += transpose_b ? UK : (UK * ldb);
   }
 
-  // Store result to device memory using ct_c's coordinate mapping
-  // {col, row} convention for Metal tensors
-  for (short i = 0; i < ct_c.get_capacity(); i++) {
-    if (ct_c.is_valid_element(i)) {
-      auto coord = ct_c.get_multidimensional_index(i);
-      short c = coord[0];  // N dimension
-      short r = coord[1];  // M dimension
-      if (r < m_limit && c < n_limit) {
-        d_ptr[r * ldd + c] = OutType(ct_c[i]);
-      }
+  // Store result
+  STEEL_PRAGMA_UNROLL
+  for (short i = 0; i < C_CAP; i++) {
+    if (c_valid[i] && c_row[i] < m_limit && c_col[i] < n_limit) {
+      d_ptr[c_row[i] * ldd + c_col[i]] = OutType(ct_c[i]);
     }
   }
 }

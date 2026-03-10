@@ -182,14 +182,32 @@ METAL_FUNC void gemm_mpp_impl(
   b += tn * params->ldb;
   d += tm * params->ldd + tn;
 
-  // Use direct device-pointer approach with proper cooperative tensor coordinates
-  mpp_subtile_gemm_direct<SM, SN, UK, AccumType, AType, BType, OutType,
-                          false, true>(
-      a, params->lda,
-      b, params->ldb,
-      d, params->ldd,
-      params->K,
-      sgp_sm, sgp_sn);
+  // Tile the output into UM x UN subtiles, each processed by mpp_subtile_gemm_direct
+  STEEL_PRAGMA_UNROLL
+  for (short mm = 0; mm < TM; mm++) {
+    STEEL_PRAGMA_UNROLL
+    for (short nn = 0; nn < TN; nn++) {
+      const short m_off = mm * UM;
+      const short n_off = nn * UN;
+
+      const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - m_off)) : UM;
+      const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - n_off)) : UN;
+
+      if (m_limit <= 0 || n_limit <= 0) continue;
+
+      const device AType* a_sub = a + m_off * params->lda;
+      const device BType* b_sub = b + n_off * params->ldb;
+      device OutType* d_sub = d + m_off * params->ldd + n_off;
+
+      mpp_subtile_gemm_direct<UM, UN, UK, AccumType, AType, BType, OutType,
+                              false, true>(
+          a_sub, params->lda,
+          b_sub, params->ldb,
+          d_sub, params->ldd,
+          params->K,
+          m_limit, n_limit);
+    }
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
