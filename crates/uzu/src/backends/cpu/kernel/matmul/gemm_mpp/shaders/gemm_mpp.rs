@@ -37,6 +37,9 @@ pub fn matmul_gemm_mpp<AType, BType, OutType>(
     #[allow(unused)]
     #[specialize]
     align_k: bool,
+    #[allow(unused)]
+    #[specialize]
+    use_native_fragment_layout: bool,
 ) {
     todo!()
 }

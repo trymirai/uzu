@@ -69,6 +69,7 @@ impl DispatchDescriptor {
             align_m: (m % block_rows) == 0,
             align_n: (n % block_cols) == 0,
             align_k: (k % block_depth) == 0,
+            use_native_fragment_layout: false,
         };
 
         let threadgroups = GridSize {

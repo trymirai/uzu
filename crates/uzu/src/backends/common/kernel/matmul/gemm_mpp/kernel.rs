@@ -60,6 +60,7 @@ impl<B: Backend> GemmMppKernel<B> {
                 config.align_m,
                 config.align_n,
                 config.align_k,
+                config.use_native_fragment_layout,
             )
             .map_err(MatmulError::BackendError)?;
             self.pipelines.insert(config, pipeline);

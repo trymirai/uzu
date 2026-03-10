@@ -234,6 +234,7 @@ KERNEL(MatmulGemmMpp)(
     const bool align_m SPECIALIZE,
     const bool align_n SPECIALIZE,
     const bool align_k SPECIALIZE,
+    const bool use_native_fragment_layout SPECIALIZE,
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint group_z GROUPS(group_count_z),

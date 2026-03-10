@@ -11,6 +11,7 @@ pub struct Specialization {
     pub align_m: bool,
     pub align_n: bool,
     pub align_k: bool,
+    pub use_native_fragment_layout: bool,
 }
 
 impl Specialization {
@@ -26,6 +27,7 @@ impl Specialization {
                 align_m: true,
                 align_n: true,
                 align_k: true,
+                use_native_fragment_layout: false,
             },
             Self {
                 block_rows: 64,
@@ -37,6 +39,7 @@ impl Specialization {
                 align_m: false,
                 align_n: true,
                 align_k: true,
+                use_native_fragment_layout: false,
             },
             Self {
                 block_rows: 64,
@@ -48,6 +51,7 @@ impl Specialization {
                 align_m: true,
                 align_n: false,
                 align_k: true,
+                use_native_fragment_layout: false,
             },
             Self {
                 block_rows: 64,
@@ -59,6 +63,7 @@ impl Specialization {
                 align_m: false,
                 align_n: false,
                 align_k: true,
+                use_native_fragment_layout: false,
             },
             Self {
                 block_rows: 128,
@@ -70,6 +75,7 @@ impl Specialization {
                 align_m: true,
                 align_n: true,
                 align_k: true,
+                use_native_fragment_layout: false,
             },
             Self {
                 block_rows: 128,
@@ -81,6 +87,7 @@ impl Specialization {
                 align_m: false,
                 align_n: true,
                 align_k: true,
+                use_native_fragment_layout: false,
             },
         ]
     }
