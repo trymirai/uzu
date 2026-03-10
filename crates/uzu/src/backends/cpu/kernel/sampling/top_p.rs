@@ -24,55 +24,31 @@ pub fn top_p<T: ArrayElement + Float>(
     for batch_idx in 0..batch_size as usize {
         let batch_start = batch_idx * vocab_size;
 
-        // Find min and max logit
-        let mut max_logit = f32::NEG_INFINITY;
-        let mut min_logit = f32::INFINITY;
-        for i in 0..vocab_size {
-            let logit_value = unsafe { (*logits.add(batch_start + i)).to_f32().unwrap() };
-            max_logit = max_logit.max(logit_value);
-            if logit_value > f32::NEG_INFINITY {
-                min_logit = min_logit.min(logit_value);
-            }
-        }
+        // Sort logits in descending order
+        let mut sorted_logits = unsafe { std::slice::from_raw_parts(logits.add(batch_start), vocab_size) }.to_vec();
+        sorted_logits.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
+        let max_logit: f32 = sorted_logits[0].to_f32().unwrap();
 
-        // Compute softmax denominator (unnormalized)
-        let mut total_sum: f32 = 0.0;
-        for i in 0..vocab_size {
-            let logit_value = unsafe { (*logits.add(batch_start + i)).to_f32().unwrap() };
-            if logit_value > f32::NEG_INFINITY {
-                total_sum += (logit_value - max_logit).exp();
-            }
-        }
+        // Compute softmax probabilities and find threshold via cumulative sum
+        let total_sum: f32 = sorted_logits
+            .iter()
+            .map(|&v| v.to_f32().unwrap())
+            .filter(|&v| v > f32::NEG_INFINITY)
+            .map(|v| (v - max_logit).exp())
+            .sum();
 
-        // Binary search for the threshold
-        let target_mass = top_p * total_sum;
-        let mut low = min_logit;
-        let mut high = max_logit;
-        let mut threshold = (min_logit + max_logit) / 2.0;
-
-        for _ in 0..16 {
-            let mut sum_above_threshold: f32 = 0.0;
-            let mut min_above_threshold: f32 = f32::INFINITY;
-            for i in 0..vocab_size {
-                let logit_value = unsafe { (*logits.add(batch_start + i)).to_f32().unwrap() };
-                if logit_value >= threshold {
-                    let logit_mass = (logit_value - max_logit).exp();
-                    sum_above_threshold += logit_mass;
-                    min_above_threshold = min_above_threshold.min(logit_mass);
-                }
-            }
-
-            // Early exit
-            if sum_above_threshold >= target_mass && sum_above_threshold - min_above_threshold < target_mass {
+        let mut cumulative: f32 = 0.0;
+        let mut threshold: f32 = sorted_logits[0].to_f32().unwrap();
+        for &logit in &sorted_logits {
+            let logit_f32 = logit.to_f32().unwrap();
+            if logit_f32 == f32::NEG_INFINITY {
                 break;
             }
-
-            if sum_above_threshold >= target_mass {
-                low = threshold;
-            } else {
-                high = threshold;
+            threshold = logit_f32;
+            cumulative += (logit_f32 - max_logit).exp() / total_sum;
+            if cumulative >= top_p {
+                break;
             }
-            threshold = (low + high) / 2.0;
         }
 
         let t_threshold = T::from(threshold).unwrap();
