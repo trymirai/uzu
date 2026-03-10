@@ -97,7 +97,6 @@ fn matmul_mpp_perf() {
 
     let combos = vec![
         DtypeCombo { a_dtype: DataType::F16, b_dtype: DataType::F16, output_dtype: DataType::F16 },
-        DtypeCombo { a_dtype: DataType::I8, b_dtype: DataType::F16, output_dtype: DataType::F16 },
     ];
     let shapes = mpp_perf_shapes();
 

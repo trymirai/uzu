@@ -2,13 +2,11 @@ use dsl::kernel;
 use half::{bf16, f16};
 
 #[kernel(MatmulGemmMpp)]
-#[variants(AType, f32, f16, bf16, i8)]
-#[variants(BType, f32, f16, bf16, i8)]
-#[variants(OutType, f32, f16, bf16, i32)]
-pub fn matmul_gemm_mpp<AType, BType, OutType>(
-    #[allow(unused)] a: *const AType,
-    #[allow(unused)] b: *const BType,
-    #[allow(unused)] d: *mut OutType,
+#[variants(T, f16, bf16)]
+pub fn matmul_gemm_mpp<T>(
+    #[allow(unused)] a: *const T,
+    #[allow(unused)] b: *const T,
+    #[allow(unused)] d: *mut T,
     #[allow(unused)] params: &[crate::backends::common::gpu_types::matmul::GEMMParams],
     #[allow(unused)] group_count_x: u32,
     #[allow(unused)] group_count_y: u32,
