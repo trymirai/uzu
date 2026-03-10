@@ -7,7 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::kernel::matmul::{
-            MatmulArguments, MatmulDispatchDescriptor, gemm, gemm_mixed_types_simple, gemm_mpp,
+            MatmulArguments, MatmulDispatchDescriptor, gemm_mpp,
             gemv::{
                 DispatchDescriptor as GemvDescriptor, OutputSource as GemvOutputSource,
                 Specialization as GemvSpecialization,
@@ -90,21 +90,8 @@ pub fn try_all_descriptors(
         descriptors.push(("GemmMpp", MatmulDispatchDescriptor::GemmMpp(descriptor)));
     }
 
-    if gemm_mixed_types_simple::supports_combo(combo.a_dtype, combo.b_dtype, combo.output_dtype) {
-        if let Ok(descriptor) = gemm_mixed_types_simple::DispatchDescriptor::new(combo.output_dtype, arguments) {
-            descriptors.push((
-                "GemmMixedTypesSimple",
-                MatmulDispatchDescriptor::GemmMixedTypesSimple(descriptor),
-            ));
-        }
-    }
-
     let is_same_type = combo.a_dtype == combo.b_dtype && combo.b_dtype == combo.output_dtype;
-    if is_same_type && matches!(combo.output_dtype, DataType::F16 | DataType::BF16 | DataType::F32) {
-        if let Ok(descriptor) = gemm::DispatchDescriptor::new(context, combo.output_dtype, arguments) {
-            descriptors.push(("Gemm", MatmulDispatchDescriptor::Gemm(descriptor)));
-        }
-
+    if is_same_type && matches!(combo.output_dtype, DataType::F16 | DataType::BF16) {
         if let Some(descriptor) = force_gemv_descriptor(combo.output_dtype, arguments) {
             descriptors.push(("Gemv", MatmulDispatchDescriptor::Gemv(descriptor)));
         }
