@@ -219,7 +219,10 @@ template <
     typename RightInputType,
     typename OutputType,
     bool transpose_left,
-    bool transpose_right>
+    bool transpose_right,
+    bool aligned_rows = false,
+    bool aligned_columns = false,
+    bool aligned_k = false>
 METAL_FUNC void cooperative_tensor_gemm(
     const device LeftInputType* left_input_pointer, int leading_dimension_a,
     const device RightInputType* right_input_pointer, int leading_dimension_b,
@@ -309,30 +312,30 @@ METAL_FUNC void cooperative_tensor_gemm(
     output_valid[i] = accumulator_tensor.is_valid_element(i);
   }
 
-  int left_base_offset[16];
-  int right_base_offset[16];
+  int left_load_offset[16];
+  int right_load_offset[16];
   bool left_in_bounds[16];
   bool right_in_bounds[16];
 
   STEEL_PRAGMA_UNROLL
   for (short i = 0; i < left_capacity; i++) {
     if constexpr (!transpose_left) {
-      left_base_offset[i] = left_row[i] * leading_dimension_a;
-      left_in_bounds[i] = left_row[i] < row_limit;
+      left_load_offset[i] = left_row[i] * leading_dimension_a + left_col[i];
+      left_in_bounds[i] = aligned_rows || (left_row[i] < row_limit);
     } else {
-      left_base_offset[i] = left_col[i] * leading_dimension_a;
-      left_in_bounds[i] = left_col[i] < row_limit;
+      left_load_offset[i] = left_col[i] * leading_dimension_a + left_row[i];
+      left_in_bounds[i] = aligned_rows || (left_col[i] < row_limit);
     }
   }
 
   STEEL_PRAGMA_UNROLL
   for (short i = 0; i < right_capacity; i++) {
     if constexpr (!transpose_right) {
-      right_base_offset[i] = right_col[i];
-      right_in_bounds[i] = right_col[i] < column_limit;
+      right_load_offset[i] = right_row[i] * leading_dimension_b + right_col[i];
+      right_in_bounds[i] = aligned_columns || (right_col[i] < column_limit);
     } else {
-      right_base_offset[i] = right_row[i] * leading_dimension_b;
-      right_in_bounds[i] = right_row[i] < column_limit;
+      right_load_offset[i] = right_row[i] * leading_dimension_b + right_col[i];
+      right_in_bounds[i] = aligned_columns || (right_row[i] < column_limit);
     }
   }
 
@@ -341,34 +344,24 @@ METAL_FUNC void cooperative_tensor_gemm(
     accumulator_tensor[i] = AccumulatorType(0);
   }
 
-  for (int k = 0; k < k_dimension; k += unroll_k) {
-    const short k_remaining = short(min(int(unroll_k), k_dimension - k));
+  const int aligned_k_iterations = aligned_k ? k_dimension : (k_dimension / unroll_k) * unroll_k;
 
+  for (int k = 0; k < aligned_k_iterations; k += unroll_k) {
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < left_capacity; i++) {
-      const short k_coordinate = transpose_left ? left_row[i] : left_col[i];
-      if (left_in_bounds[i] && k_coordinate < k_remaining) {
-        if constexpr (!transpose_left) {
-          left_tensor[i] = left_input_pointer[left_base_offset[i] + left_col[i]];
-        } else {
-          left_tensor[i] = left_input_pointer[left_base_offset[i] + left_row[i]];
-        }
+      if constexpr (aligned_rows) {
+        left_tensor[i] = left_input_pointer[left_load_offset[i]];
       } else {
-        left_tensor[i] = LeftInputType(0);
+        left_tensor[i] = left_in_bounds[i] ? left_input_pointer[left_load_offset[i]] : LeftInputType(0);
       }
     }
 
     STEEL_PRAGMA_UNROLL
     for (short i = 0; i < right_capacity; i++) {
-      const short k_coordinate = transpose_right ? right_col[i] : right_row[i];
-      if (right_in_bounds[i] && k_coordinate < k_remaining) {
-        if constexpr (!transpose_right) {
-          right_tensor[i] = right_input_pointer[right_row[i] * leading_dimension_b + right_col[i]];
-        } else {
-          right_tensor[i] = right_input_pointer[right_base_offset[i] + right_col[i]];
-        }
+      if constexpr (aligned_columns) {
+        right_tensor[i] = right_input_pointer[right_load_offset[i]];
       } else {
-        right_tensor[i] = RightInputType(0);
+        right_tensor[i] = right_in_bounds[i] ? right_input_pointer[right_load_offset[i]] : RightInputType(0);
       }
     }
 
@@ -378,10 +371,44 @@ METAL_FUNC void cooperative_tensor_gemm(
     right_input_pointer += transpose_right ? unroll_k : (unroll_k * leading_dimension_b);
   }
 
+  if constexpr (!aligned_k) {
+    if (aligned_k_iterations < k_dimension) {
+      const short k_remaining = short(k_dimension - aligned_k_iterations);
+
+      STEEL_PRAGMA_UNROLL
+      for (short i = 0; i < left_capacity; i++) {
+        const short k_coord = transpose_left ? left_row[i] : left_col[i];
+        if (left_in_bounds[i] && k_coord < k_remaining) {
+          left_tensor[i] = left_input_pointer[left_load_offset[i]];
+        } else {
+          left_tensor[i] = LeftInputType(0);
+        }
+      }
+
+      STEEL_PRAGMA_UNROLL
+      for (short i = 0; i < right_capacity; i++) {
+        const short k_coord = transpose_right ? right_col[i] : right_row[i];
+        if (right_in_bounds[i] && k_coord < k_remaining) {
+          right_tensor[i] = right_input_pointer[right_load_offset[i]];
+        } else {
+          right_tensor[i] = RightInputType(0);
+        }
+      }
+
+      matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
+    }
+  }
+
   STEEL_PRAGMA_UNROLL
   for (short i = 0; i < accumulator_capacity; i++) {
-    if (output_valid[i] && output_row[i] < row_limit && output_col[i] < column_limit) {
-      output_pointer[output_row[i] * leading_dimension_output + output_col[i]] = OutputType(accumulator_tensor[i]);
+    if constexpr (aligned_rows && aligned_columns) {
+      if (output_valid[i]) {
+        output_pointer[output_row[i] * leading_dimension_output + output_col[i]] = OutputType(accumulator_tensor[i]);
+      }
+    } else {
+      if (output_valid[i] && output_row[i] < row_limit && output_col[i] < column_limit) {
+        output_pointer[output_row[i] * leading_dimension_output + output_col[i]] = OutputType(accumulator_tensor[i]);
+      }
     }
   }
 }

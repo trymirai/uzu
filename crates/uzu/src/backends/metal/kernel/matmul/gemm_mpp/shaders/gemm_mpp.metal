@@ -182,7 +182,6 @@ METAL_FUNC void gemm_mpp_impl(
   b += tn * params->ldb;
   d += tm * params->ldd + tn;
 
-  // Tile the output into UM x UN subtiles, each processed by mpp_subtile_gemm_direct
   STEEL_PRAGMA_UNROLL
   for (short mm = 0; mm < TM; mm++) {
     STEEL_PRAGMA_UNROLL
@@ -199,13 +198,25 @@ METAL_FUNC void gemm_mpp_impl(
       const device BType* b_sub = b + n_off * params->ldb;
       device OutType* d_sub = d + m_off * params->ldd + n_off;
 
-      cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
-                             false, true>(
-          a_sub, params->lda,
-          b_sub, params->ldb,
-          d_sub, params->ldd,
-          params->K,
-          m_limit, n_limit);
+      const bool subtile_aligned_m = !is_unaligned_sm || (m_limit == UM);
+      const bool subtile_aligned_n = !is_unaligned_sn || (n_limit == UN);
+
+      if (subtile_aligned_m && subtile_aligned_n && align_k) {
+        cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+                               false, true, true, true, true>(
+            a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
+            params->K, m_limit, n_limit);
+      } else if (subtile_aligned_m && subtile_aligned_n) {
+        cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+                               false, true, true, true, false>(
+            a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
+            params->K, m_limit, n_limit);
+      } else {
+        cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+                               false, true, false, false, false>(
+            a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
+            params->K, m_limit, n_limit);
+      }
     }
   }
 }
