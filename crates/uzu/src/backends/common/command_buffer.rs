@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use super::Backend;
 
@@ -80,5 +80,6 @@ pub trait CommandBufferPending {
 pub trait CommandBufferCompleted {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
-    fn gpu_execution_time_ms(&self) -> Option<f64>;
+    /// Returns GPU execution time.
+    fn gpu_execution_time(&self) -> Option<Duration>;
 }

@@ -489,16 +489,14 @@ fn perf_topp_128k_vocab() {
         let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
         let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-        let gpu_elapsed_ms = completed.gpu_execution_time_ms();
-
-        match gpu_elapsed_ms {
+        match completed.gpu_execution_time() {
             Some(gpu_time) => {
                 println!(
                     "Top-p sampling perf (batch={}, vocab={}, backend={}): GPU={:.2} ms, Host-side={:.2} ms",
                     BATCH,
                     VOCAB,
                     std::any::type_name::<B>(),
-                    gpu_time,
+                    gpu_time.as_secs_f64() * 1e3,
                     host_elapsed_ms
                 );
             },
