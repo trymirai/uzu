@@ -27,5 +27,4 @@ class PerfResult:
 @dataclass(frozen=True)
 class BenchmarkRun:
     device: str
-    mpp_available: bool
     results: tuple[PerfResult, ...]

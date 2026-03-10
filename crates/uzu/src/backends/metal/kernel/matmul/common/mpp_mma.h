@@ -545,6 +545,94 @@ METAL_FUNC void subtile_matmad_mpp(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// MPP SubTile full GEMM -- device-pointer version with proper coordinate mapping
+// Handles the full K-dimension loop for one SM×SN output block
+///////////////////////////////////////////////////////////////////////////////
+
+template <
+    short SM,
+    short SN,
+    short UK,
+    typename AccumType,
+    typename AType,
+    typename BType,
+    typename OutType,
+    bool transpose_a,
+    bool transpose_b>
+METAL_FUNC void mpp_subtile_gemm_direct(
+    const device AType* a_ptr, int lda,
+    const device BType* b_ptr, int ldb,
+    device OutType* d_ptr, int ldd,
+    int K,
+    short m_limit, short n_limit) {
+
+  constexpr auto desc = mpp::tensor_ops::matmul2d_descriptor(
+      SM, SN, UK, transpose_a, transpose_b, false,
+      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate);
+
+  mpp::tensor_ops::matmul2d<desc, metal::execution_simdgroup> gemm_op;
+
+  auto ct_a = gemm_op.template get_left_input_cooperative_tensor<AType, BType, AccumType>();
+  auto ct_b = gemm_op.template get_right_input_cooperative_tensor<AType, BType, AccumType>();
+  auto ct_c = gemm_op.template get_destination_cooperative_tensor<
+      decltype(ct_a), decltype(ct_b), AccumType>();
+
+  // Initialize accumulator to zero
+  for (short i = 0; i < ct_c.get_capacity(); i++) {
+    ct_c[i] = AccumType(0);
+  }
+
+  // Loop over K in steps of UK
+  for (int k = 0; k < K; k += UK) {
+    const short k_limit = short(min(int(UK), K - k));
+
+    // Load A block using cooperative tensor's coordinate mapping
+    // get_multidimensional_index returns {col, row} (column-first, matching Metal tensor convention)
+    for (short i = 0; i < ct_a.get_capacity(); i++) {
+      auto coord = ct_a.get_multidimensional_index(i);
+      short c = coord[0];  // column (K dimension for non-transposed A)
+      short r = coord[1];  // row (M dimension for non-transposed A)
+      const short r_lim = transpose_a ? k_limit : m_limit;
+      const short c_lim = transpose_a ? m_limit : k_limit;
+      if (r < r_lim && c < c_lim) {
+        ct_a[i] = a_ptr[r * lda + c + (transpose_a ? k * lda : k)];
+      } else {
+        ct_a[i] = AType(0);
+      }
+    }
+
+    // Load B block
+    for (short i = 0; i < ct_b.get_capacity(); i++) {
+      auto coord = ct_b.get_multidimensional_index(i);
+      short c = coord[0];  // column
+      short r = coord[1];  // row
+      const short r_lim = transpose_b ? n_limit : k_limit;
+      const short c_lim = transpose_b ? k_limit : n_limit;
+      if (r < r_lim && c < c_lim) {
+        ct_b[i] = b_ptr[r * ldb + c + (transpose_b ? k : k * ldb)];
+      } else {
+        ct_b[i] = BType(0);
+      }
+    }
+
+    gemm_op.run(ct_a, ct_b, ct_c);
+  }
+
+  // Store result to device memory using ct_c's coordinate mapping
+  // {col, row} convention for Metal tensors
+  for (short i = 0; i < ct_c.get_capacity(); i++) {
+    if (ct_c.is_valid_element(i)) {
+      auto coord = ct_c.get_multidimensional_index(i);
+      short c = coord[0];  // N dimension
+      short r = coord[1];  // M dimension
+      if (r < m_limit && c < n_limit) {
+        d_ptr[r * ldd + c] = OutType(ct_c[i]);
+      }
+    }
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // MPP Tile - grid of subtiles
 ///////////////////////////////////////////////////////////////////////////////
 

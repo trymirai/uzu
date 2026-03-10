@@ -182,44 +182,14 @@ METAL_FUNC void gemm_mpp_impl(
   b += tn * params->ldb;
   d += tm * params->ldd + tn;
 
-  using DSubTile = MppSubTile<AccumType, UM, UN>;
-  MppTile<AccumType, TM, TN, DSubTile> Dtile;
-
-  dispatch_bool(align_k, [&](auto kAlignedK) {
-    dispatch_bool(align_m || !is_unaligned_sm, [&](auto kAlignedM) {
-      dispatch_bool(align_n || !is_unaligned_sn, [&](auto kAlignedN) {
-        Dtile = mpp_gemm_loop<
-            AType,
-            BType,
-            SM,
-            SN,
-            SK,
-            BK,
-            false,
-            true,
-            kAlignedM.value,
-            kAlignedN.value,
-            kAlignedK.value,
-            UM,
-            UN,
-            UK,
-            AccumType>(
-            a,
-            b,
-            params->lda,
-            params->ldb,
-            params->K,
-            params->gemm_k_iterations_aligned,
-            sgp_sm,
-            sgp_sn);
-        if (kAlignedM.value && kAlignedN.value) {
-          Dtile.store(d, int(params->ldd));
-        } else {
-          Dtile.store_safe(d, int(params->ldd), short2(sgp_sn, sgp_sm));
-        }
-      });
-    });
-  });
+  // Use direct device-pointer approach with proper cooperative tensor coordinates
+  mpp_subtile_gemm_direct<SM, SN, UK, AccumType, AType, BType, OutType,
+                          false, true>(
+      a, params->lda,
+      b, params->ldb,
+      d, params->ldd,
+      params->K,
+      sgp_sm, sgp_sn);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

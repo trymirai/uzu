@@ -20,7 +20,7 @@ def cmd_chart(args: argparse.Namespace) -> None:
     ok_count = sum(1 for r in run.results if r.status == "ok")
     err_count = len(run.results) - ok_count
     print(f"Loaded {len(run.results)} results ({ok_count} ok, {err_count} errors) from {json_path.name}")
-    print(f"Device: {run.device}, MPP available: {run.mpp_available}")
+    print(f"Device: {run.device}")
 
     files = generate_charts(run, output_dir, source_filename=json_path.name)
     print(f"\nGenerated {len(files)} chart(s) in {output_dir}")

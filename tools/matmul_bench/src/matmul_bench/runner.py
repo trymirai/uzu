@@ -22,7 +22,6 @@ def _structure_benchmark_run(data: dict) -> BenchmarkRun:
         BenchmarkRun,
         lambda d, _: BenchmarkRun(
             device=d["device"],
-            mpp_available=d["mpp_available"],
             results=tuple(converter.structure(r, PerfResult) for r in d["results"]),
         ),
     )
