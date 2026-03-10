@@ -1,3 +1,4 @@
+mod argmax_test;
 mod gumbel_test;
 mod temperature_test;
 mod top_k_test;
