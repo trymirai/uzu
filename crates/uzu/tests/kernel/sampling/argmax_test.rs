@@ -9,14 +9,11 @@ use num_traits::Float;
 use uzu::{
     ArrayElement, DataType,
     array::ArrayContextExt,
-    backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
-            gpu_types::ArgmaxPair,
-            kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
-        },
-        cpu::Cpu,
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        Kernels,
+        gpu_types::ArgmaxPair,
+        kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
 };
 
@@ -136,10 +133,6 @@ fn test_single_pass<T: ArrayElement + Float + Display>(
     vocab_size: u32,
 ) {
     let (input, expected) = get_test_data::<T>(batch_size, vocab_size);
-
-    let cpu_output = get_output_single::<T, Cpu>(&input);
-    assert_eq!(cpu_output, expected, "CPU single-pass output does not match reference");
-
     for_each_backend!(|B| {
         let output = get_output_single::<T, B>(&input);
         assert_eq!(output, expected, "Single-pass output does not match for backend {}", std::any::type_name::<B>());
@@ -151,10 +144,6 @@ fn test_two_pass<T: ArrayElement + Float + Display>(
     vocab_size: u32,
 ) {
     let (input, expected) = get_test_data::<T>(batch_size, vocab_size);
-
-    let cpu_output = get_output_two_pass::<T, Cpu>(&input);
-    assert_eq!(cpu_output, expected, "CPU two-pass output does not match reference");
-
     for_each_backend!(|B| {
         let output = get_output_two_pass::<T, B>(&input);
         assert_eq!(output, expected, "Two-pass output does not match for backend {}", std::any::type_name::<B>());
