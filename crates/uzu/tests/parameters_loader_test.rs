@@ -24,6 +24,6 @@ fn test_parameter_loader_basic() {
 
     // tree API check
     let subtree = loader.tree().subtree("embedding").unwrap();
-    let same = subtree.leaf("weights").unwrap();
+    let same = subtree.leaf_array("weights").unwrap();
     assert_eq!(view, same.as_view::<bf16>());
 }

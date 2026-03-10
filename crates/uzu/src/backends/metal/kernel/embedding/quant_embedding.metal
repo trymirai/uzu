@@ -18,9 +18,9 @@ KERNEL(QuantizedEmbeddingLookup) (
     constant uint32_t& batch_size,
     constant uint32_t& vocab_size,
     constant uint32_t& model_dim,
-    constant uint32_t& group_size,
     constant float& input_scale,
-    const constant uint& quant_mode,
+    const uint32_t group_size SPECIALIZE,
+    const uint quant_mode SPECIALIZE,
     const uint dim_idx AXIS(model_dim, 16),
     const uint batch_idx AXIS(batch_size, 16)
 ) {

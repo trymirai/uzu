@@ -14,7 +14,7 @@ use crate::{
             attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
     },
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState, HashMapId},
 };
 
@@ -133,10 +133,8 @@ impl<B: Backend> Attention<B> {
 
         KernelVariant::SinglePass
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for Attention<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
