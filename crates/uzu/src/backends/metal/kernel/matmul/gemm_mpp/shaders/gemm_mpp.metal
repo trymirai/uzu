@@ -154,15 +154,14 @@ METAL_FUNC void gemm_mpp_impl(
   b += c_col_long * params->ldb;
   d += c_row_long * params->ldd + c_col_long;
 
-  constexpr short UM = 16;
-  constexpr short UN = 32;
-  constexpr short UK = 16;
+  constexpr short kSubtileRows = 16;
+  constexpr short kSubtileCols = 32;
+  constexpr short kMatmulKStep = 16;
   constexpr short SM = BM / WM;
   constexpr short SN = BN / WN;
-  constexpr short SK = 32;
 
-  constexpr short TM = SM / UM;
-  constexpr short TN = SN / UN;
+  constexpr short TM = SM / kSubtileRows;
+  constexpr short TN = SN / kSubtileCols;
 
   const short tm = SM * (simd_group_id / WN);
   const short tn = SN * (simd_group_id % WN);
@@ -186,11 +185,11 @@ METAL_FUNC void gemm_mpp_impl(
   for (short mm = 0; mm < TM; mm++) {
     STEEL_PRAGMA_UNROLL
     for (short nn = 0; nn < TN; nn++) {
-      const short m_off = mm * UM;
-      const short n_off = nn * UN;
+      const short m_off = mm * kSubtileRows;
+      const short n_off = nn * kSubtileCols;
 
-      const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - m_off)) : UM;
-      const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - n_off)) : UN;
+      const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - m_off)) : kSubtileRows;
+      const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - n_off)) : kSubtileCols;
 
       if (m_limit <= 0 || n_limit <= 0) continue;
 
@@ -198,21 +197,21 @@ METAL_FUNC void gemm_mpp_impl(
       const device BType* b_sub = b + n_off * params->ldb;
       device OutType* d_sub = d + m_off * params->ldd + n_off;
 
-      const bool subtile_aligned_m = !is_unaligned_sm || (m_limit == UM);
-      const bool subtile_aligned_n = !is_unaligned_sn || (n_limit == UN);
+      const bool subtile_aligned_m = !is_unaligned_sm || (m_limit == kSubtileRows);
+      const bool subtile_aligned_n = !is_unaligned_sn || (n_limit == kSubtileCols);
 
       if (subtile_aligned_m && subtile_aligned_n && align_k) {
-        cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+        cooperative_tensor_gemm<kSubtileRows, kSubtileCols, kMatmulKStep, AccumType, AType, BType, OutType,
                                false, true, true, true, true>(
             a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
             params->K, m_limit, n_limit);
       } else if (subtile_aligned_m && subtile_aligned_n) {
-        cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+        cooperative_tensor_gemm<kSubtileRows, kSubtileCols, kMatmulKStep, AccumType, AType, BType, OutType,
                                false, true, true, true, false>(
             a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
             params->K, m_limit, n_limit);
       } else {
-        cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+        cooperative_tensor_gemm<kSubtileRows, kSubtileCols, kMatmulKStep, AccumType, AType, BType, OutType,
                                false, true, false, false, false>(
             a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
             params->K, m_limit, n_limit);
