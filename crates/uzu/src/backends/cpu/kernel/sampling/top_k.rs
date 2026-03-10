@@ -14,7 +14,7 @@ pub fn top_k<T: ArrayElement + Float>(
     top_k: u32,
     #[specialize] in_place: bool,
 ) {
-    if top_k == 0 || top_k >= vocab_size {
+    if top_k == 0 || top_k > vocab_size {
         return;
     }
 
