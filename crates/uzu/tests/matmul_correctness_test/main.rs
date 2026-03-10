@@ -306,7 +306,7 @@ fn mpp_layout_probe() {
 
     let per_lane = ((a_cap + b_cap + c_cap) * 2 + 8 * 2) as usize;
 
-    // Print mapping for lane 0 (should be representative)
+    // Print mapping for lane 0
     for lane in 0..1 {
         let base = 3 + lane * per_lane;
         let mut off = base;

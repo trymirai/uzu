@@ -27,3 +27,4 @@
 /external
 
 tools/gpu_trace/*.json
+results
