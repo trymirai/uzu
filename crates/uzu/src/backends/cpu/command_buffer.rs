@@ -1,6 +1,6 @@
 use std::{
     cell::{OnceCell, RefCell},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use super::Cpu;
@@ -15,7 +15,7 @@ use crate::backends::{
 pub struct CpuCommandBuffer {
     commands: Vec<Box<dyn Fn()>>,
     completion_handlers: Vec<Box<dyn FnOnce(Result<&CpuCommandBuffer, CpuError>)>>,
-    gpu_execution_time_ms: OnceCell<f64>,
+    gpu_execution_time: OnceCell<Duration>,
 }
 
 impl CommandBuffer for CpuCommandBuffer {
@@ -33,7 +33,7 @@ impl CpuCommandBuffer {
         CpuCommandBuffer {
             commands: Vec::new(),
             completion_handlers: Vec::new(),
-            gpu_execution_time_ms: OnceCell::new(),
+            gpu_execution_time: OnceCell::new(),
         }
     }
 
@@ -121,9 +121,7 @@ impl CommandBufferExecutable for CpuCommandBuffer {
             command()
         }
 
-        self.gpu_execution_time_ms
-            .set((Instant::now() - start).as_secs_f64() * 1000.0)
-            .expect("gpu execution time already set");
+        self.gpu_execution_time.set(Instant::now() - start).expect("gpu execution time already set");
 
         for completion_handler in self.completion_handlers.drain(..).collect::<Vec<_>>() {
             completion_handler(Ok(&self));
@@ -132,7 +130,7 @@ impl CommandBufferExecutable for CpuCommandBuffer {
         CpuCommandBuffer {
             commands: Vec::new(),
             completion_handlers: Vec::new(),
-            gpu_execution_time_ms: self.gpu_execution_time_ms,
+            gpu_execution_time: self.gpu_execution_time,
         }
     }
 }
@@ -148,7 +146,7 @@ impl CommandBufferPending for CpuCommandBuffer {
 impl CommandBufferCompleted for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn gpu_execution_time_ms(&self) -> Option<f64> {
-        self.gpu_execution_time_ms.get().copied()
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        self.gpu_execution_time.get().copied()
     }
 }
