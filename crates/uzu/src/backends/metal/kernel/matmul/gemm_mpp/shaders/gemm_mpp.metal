@@ -199,8 +199,8 @@ METAL_FUNC void gemm_mpp_impl(
       const device BType* b_sub = b + n_off * params->ldb;
       device OutType* d_sub = d + m_off * params->ldd + n_off;
 
-      mpp_subtile_gemm_direct<UM, UN, UK, AccumType, AType, BType, OutType,
-                              false, true>(
+      cooperative_tensor_gemm<UM, UN, UK, AccumType, AType, BType, OutType,
+                             false, true>(
           a_sub, params->lda,
           b_sub, params->ldb,
           d_sub, params->ldd,
