@@ -14,6 +14,10 @@ pub fn top_k<T: ArrayElement + Float>(
     top_k: u32,
     #[specialize] in_place: bool,
 ) {
+    if top_k == 0 || top_k >= vocab_size {
+        return;
+    }
+
     let logits: *const T = match in_place {
         true => processed_logits,
         false => logits.unwrap(),
