@@ -7,16 +7,25 @@ use crate::ArrayElement;
 #[kernel(Temperature)]
 #[variants(T, f32, f16, bf16)]
 pub fn temperature<T: ArrayElement + Float>(
-    #[allow(unused)]
-    #[optional(!in_place)]
-    logits: Option<*const T>,
-    #[allow(unused)] processed_logits: *mut T,
-    #[allow(unused)] batch_size: u32,
-    #[allow(unused)] vocab_size: u32,
-    #[allow(unused)] temperature: f32,
-    #[allow(unused)]
-    #[specialize]
-    in_place: bool,
+    #[optional(!in_place)] logits: Option<*const T>,
+    processed_logits: *mut T,
+    batch_size: u32,
+    vocab_size: u32,
+    temperature: f32,
+    #[specialize] in_place: bool,
 ) {
-    todo!()
+    let logits: *const T = match in_place {
+        true => processed_logits,
+        false => logits.unwrap(),
+    };
+
+    for batch_idx in 0..batch_size as usize {
+        for vocab_idx in 0..vocab_size as usize {
+            let global_idx = batch_idx * vocab_size as usize + vocab_idx;
+            unsafe {
+                let value: f32 = (*logits.add(global_idx)).to_f32().unwrap() / temperature;
+                *processed_logits.add(global_idx) = T::from(value).unwrap();
+            }
+        }
+    }
 }
