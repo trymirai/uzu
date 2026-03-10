@@ -2,7 +2,7 @@
 #include "../../../common/utils.h"
 #include "../../../definitions.metal"
 
-#include "../../common/mpp_gemm.h"
+#include "../../common/mpp_gemm_utilities.h"
 
 using namespace uzu::matmul;
 

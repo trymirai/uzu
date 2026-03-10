@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mpp_mma.h"
+#include "mpp_cooperative_matmul.h"
 #include "steel/gemm/params.h"
 #include "steel/gemm/transforms.h"
 

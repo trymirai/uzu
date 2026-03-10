@@ -577,6 +577,53 @@ METAL_FUNC void mpp_subtile_gemm_direct(
   auto ct_c = gemm_op.template get_destination_cooperative_tensor<
       decltype(ct_a), decltype(ct_b), AccumType>();
 
+  // Probe mode: when K == -999, dump CT layout info into d_ptr and return
+  // d_ptr is reinterpreted as int32 for this purpose.
+  // Layout: [A_CAP, B_CAP, C_CAP, then per-lane (32 lanes) * per-operand coords]
+  if (K == -999) {
+    device int* probe = reinterpret_cast<device int*>(d_ptr);
+    const ushort lane = __metal_get_thread_index_in_simdgroup(ushort());
+    if (lane == 0) {
+      probe[0] = ct_a.get_capacity();
+      probe[1] = ct_b.get_capacity();
+      probe[2] = ct_c.get_capacity();
+    }
+    // Header: 3 ints
+    // Per lane: A coords (cap*2) + B coords (cap*2) + C coords (cap*2) + BaseMppFrag coords (8*2)
+    const int a_cap = ct_a.get_capacity();
+    const int b_cap = ct_b.get_capacity();
+    const int c_cap = ct_c.get_capacity();
+    const int per_lane = (a_cap + b_cap + c_cap) * 2 + 8 * 2;
+    const int base = 3 + lane * per_lane;
+    int off = base;
+
+    // CT A coordinates
+    for (int i = 0; i < a_cap; i++) {
+      auto coord = ct_a.get_multidimensional_index(i);
+      probe[off++] = coord[0]; // col
+      probe[off++] = coord[1]; // row
+    }
+    // CT B coordinates
+    for (int i = 0; i < b_cap; i++) {
+      auto coord = ct_b.get_multidimensional_index(i);
+      probe[off++] = coord[0];
+      probe[off++] = coord[1];
+    }
+    // CT C coordinates
+    for (int i = 0; i < c_cap; i++) {
+      auto coord = ct_c.get_multidimensional_index(i);
+      probe[off++] = coord[0];
+      probe[off++] = coord[1];
+    }
+    // BaseMppFrag coordinates for this lane
+    for (short j = 0; j < 8; j++) {
+      short2 fc = BaseMppFrag::get_coord(j);
+      probe[off++] = fc.x; // col
+      probe[off++] = fc.y; // row
+    }
+    return;
+  }
+
   // Precompute coordinate mappings (constant per thread, reused across K iterations)
   const short A_CAP = ct_a.get_capacity();
   const short B_CAP = ct_b.get_capacity();
