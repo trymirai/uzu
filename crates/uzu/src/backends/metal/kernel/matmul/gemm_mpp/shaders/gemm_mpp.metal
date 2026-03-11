@@ -3,7 +3,7 @@
 #include "../../../definitions.metal"
 
 #include "../../common/params.h"
-#include "../../common/mpp_cooperative_matmul.h"
+#include "../../common/cooperative_tensor_gemm.h"
 #include "../../common/loader.h"
 
 using namespace uzu::matmul;
