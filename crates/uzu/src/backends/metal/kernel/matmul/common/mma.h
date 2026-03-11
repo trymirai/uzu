@@ -48,7 +48,11 @@ struct BaseMMAFrag<T, 8, 8> {
     return short2{fragment_col, fragment_row};
   }
 
-  template <typename SourcePointerType, typename StrideXType, typename StrideYType>
+  template <
+      typename SourcePointerType,
+      typename StrideXType,
+      typename StrideYType
+  >
   METAL_FUNC static constexpr void load(
       thread FragmentType& destination,
       SourcePointerType source,
@@ -59,7 +63,8 @@ struct BaseMMAFrag<T, 8, 8> {
     for (short i = 0; i < ELEMENT_ROWS; i++) {
       PRAGMA_UNROLL
       for (short j = 0; j < ELEMENT_COLS; j++) {
-        destination[i * ELEMENT_COLS + j] = static_cast<T>(source[i * stride_x + j * stride_y]);
+        destination[i * ELEMENT_COLS + j] =
+            static_cast<T>(source[i * stride_x + j * stride_y]);
       }
     }
   }
@@ -71,7 +76,8 @@ struct BaseMMAFrag<T, 8, 8> {
       typename LimitXType,
       typename LimitYType,
       typename OffsetXType,
-      typename OffsetYType>
+      typename OffsetYType
+  >
   METAL_FUNC static constexpr void load_checked(
       thread FragmentType& destination,
       SourcePointerType source,
@@ -87,8 +93,9 @@ struct BaseMMAFrag<T, 8, 8> {
       PRAGMA_UNROLL
       for (short j = 0; j < ELEMENT_COLS; j++) {
         if ((offset_x + i) < limit_x && (offset_y + j) < limit_y) {
-          destination[i * ELEMENT_COLS + j] =
-              static_cast<T>(source[(offset_x + i) * stride_x + (offset_y + j) * stride_y]);
+          destination[i * ELEMENT_COLS + j] = static_cast<T>(
+              source[(offset_x + i) * stride_x + (offset_y + j) * stride_y]
+          );
         } else {
           destination[i * ELEMENT_COLS + j] = T(0);
         }
@@ -96,7 +103,11 @@ struct BaseMMAFrag<T, 8, 8> {
     }
   }
 
-  template <typename DestinationPointerType, typename StrideXType, typename StrideYType>
+  template <
+      typename DestinationPointerType,
+      typename StrideXType,
+      typename StrideYType
+  >
   METAL_FUNC static constexpr void store(
       const thread FragmentType& source,
       DestinationPointerType destination,
@@ -109,7 +120,8 @@ struct BaseMMAFrag<T, 8, 8> {
     for (short i = 0; i < ELEMENT_ROWS; i++) {
       PRAGMA_UNROLL
       for (short j = 0; j < ELEMENT_COLS; j++) {
-        destination[i * stride_x + j * stride_y] = static_cast<U>(source[i * ELEMENT_COLS + j]);
+        destination[i * stride_x + j * stride_y] =
+            static_cast<U>(source[i * ELEMENT_COLS + j]);
       }
     }
   }
@@ -121,7 +133,8 @@ struct BaseMMAFrag<T, 8, 8> {
       typename LimitXType,
       typename LimitYType,
       typename OffsetXType,
-      typename OffsetYType>
+      typename OffsetYType
+  >
   METAL_FUNC static constexpr void store_checked(
       const thread FragmentType& source,
       DestinationPointerType destination,
@@ -184,7 +197,8 @@ template <
     typename T,
     int TILE_ROWS_,
     int TILE_COLS_,
-    class MMAFrag_ = BaseMMAFrag<T, 8, 8>>
+    class MMAFrag_ = BaseMMAFrag<T, 8, 8>
+>
 struct MMATile {
   using MMAFragType = MMAFrag_;
   using ElementType = T;
@@ -215,7 +229,10 @@ struct MMATile {
     }
   }
 
-  METAL_FUNC constexpr thread FragmentType& fragment_at(const short i, const short j) {
+  METAL_FUNC constexpr thread FragmentType& fragment_at(
+      const short i,
+      const short j
+  ) {
     return value_fragments[i * TILE_COLS + j];
   }
 
@@ -234,7 +251,13 @@ struct MMATile {
     return reinterpret_cast<const thread ElementType*>(value_fragments);
   }
 
-  template <typename U, int warp_stride_x, int warp_stride_y, int stride_x, int stride_y>
+  template <
+      typename U,
+      int warp_stride_x,
+      int warp_stride_y,
+      int stride_x,
+      int stride_y
+  >
   METAL_FUNC void load(const threadgroup U* source) {
     PRAGMA_UNROLL
     for (short i = 0; i < TILE_ROWS; ++i) {
@@ -242,10 +265,9 @@ struct MMATile {
       for (short j = 0; j < TILE_COLS; ++j) {
         MMAFragType::load(
             fragment_at(i, j),
-            &(
-                source[(i * FRAG_ROWS) * warp_stride_x * stride_x +
-                    (j * FRAG_COLS) * warp_stride_y * stride_y]
-            ),
+            &(source
+                  [(i * FRAG_ROWS) * warp_stride_x * stride_x +
+                   (j * FRAG_COLS) * warp_stride_y * stride_y]),
             stride_x,
             stride_y
         );
@@ -254,14 +276,19 @@ struct MMATile {
   }
 
   template <typename U, int warp_stride_x, int warp_stride_y>
-  METAL_FUNC void store(device U* destination, const int leading_dimension) const {
+  METAL_FUNC void store(
+      device U* destination,
+      const int leading_dimension
+  ) const {
     PRAGMA_UNROLL
     for (short i = 0; i < TILE_ROWS; ++i) {
       PRAGMA_UNROLL
       for (short j = 0; j < TILE_COLS; ++j) {
         MMAFragType::store(
             fragment_at(i, j),
-            &(destination[(i * FRAG_ROWS) * warp_stride_x * leading_dimension + (j * FRAG_COLS) * warp_stride_y]),
+            &(destination
+                  [(i * FRAG_ROWS) * warp_stride_x * leading_dimension +
+                   (j * FRAG_COLS) * warp_stride_y]),
             leading_dimension,
             1
         );
@@ -340,11 +367,13 @@ template <
     short threadgroup_leading_dim_a,
     short threadgroup_leading_dim_b,
     typename AccumulatorType = float,
-    typename Epilogue = TransformNone<U, AccumulatorType>>
+    typename Epilogue = TransformNone<U, AccumulatorType>
+>
 struct BlockMMA {
   // MMAFrag size
   MTL_CONST short FRAG_SIZE = 8;
-  using MMAFragAccumulatorType = BaseMMAFrag<AccumulatorType, FRAG_SIZE, FRAG_SIZE>;
+  using MMAFragAccumulatorType =
+      BaseMMAFrag<AccumulatorType, FRAG_SIZE, FRAG_SIZE>;
 
   // Warp tile simdgroup matrix strides along M
   MTL_CONST short TILES_M_STRIDE = FRAG_SIZE * WARPS_M;
@@ -357,12 +386,16 @@ struct BlockMMA {
   MTL_CONST short TILES_N = BLOCK_N / (FRAG_SIZE * WARPS_N);
 
   // Threadgroup A strides
-  MTL_CONST short left_stride_m = transpose_a ? 1 : threadgroup_leading_dim_a; // M
-  MTL_CONST short left_stride_k = transpose_a ? threadgroup_leading_dim_a : 1; // K
+  MTL_CONST short left_stride_m =
+      transpose_a ? 1 : threadgroup_leading_dim_a; // M
+  MTL_CONST short left_stride_k =
+      transpose_a ? threadgroup_leading_dim_a : 1; // K
 
   // Threadgroup B strides
-  MTL_CONST short right_stride_k = transpose_b ? 1 : threadgroup_leading_dim_b; // K
-  MTL_CONST short right_stride_n = transpose_b ? threadgroup_leading_dim_b : 1; // N
+  MTL_CONST short right_stride_k =
+      transpose_b ? 1 : threadgroup_leading_dim_b; // K
+  MTL_CONST short right_stride_n =
+      transpose_b ? threadgroup_leading_dim_b : 1; // N
 
   // Threadgroup strides along K
   MTL_CONST short tile_stride_a = FRAG_SIZE * left_stride_k;
@@ -371,7 +404,8 @@ struct BlockMMA {
   // Simdgroup matrices
   MMATile<AccumulatorType, TILES_M, 1, MMAFragAccumulatorType> left_tile;
   MMATile<AccumulatorType, 1, TILES_N, MMAFragAccumulatorType> right_tile;
-  MMATile<AccumulatorType, TILES_M, TILES_N, MMAFragAccumulatorType> accumulator_tile;
+  MMATile<AccumulatorType, TILES_M, TILES_N, MMAFragAccumulatorType>
+      accumulator_tile;
 
   // Offsets within threadgroup
   short simdgroup_row;
@@ -389,20 +423,27 @@ struct BlockMMA {
     short tile_row_offset = FRAG_SIZE * (simd_group_id / WARPS_N);
     short tile_col_offset = FRAG_SIZE * (simd_group_id % WARPS_N);
 
-    short2 simd_coordinate = MMAFragAccumulatorType::get_coordinate(simd_lane_id);
+    short2 simd_coordinate =
+        MMAFragAccumulatorType::get_coordinate(simd_lane_id);
     simdgroup_row = simd_coordinate.y;
     simdgroup_col = simd_coordinate.x;
 
     // Determine thread and simdgroup offset
-    left_shared_offset = (tile_row_offset + simdgroup_row) * left_stride_m + (simdgroup_col) * left_stride_k; // M, K
-    right_shared_offset = (simdgroup_row) * right_stride_k + (tile_col_offset + simdgroup_col) * right_stride_n; // K, N
+    left_shared_offset = (tile_row_offset + simdgroup_row) * left_stride_m +
+                         (simdgroup_col)*left_stride_k; // M, K
+    right_shared_offset =
+        (simdgroup_row)*right_stride_k +
+        (tile_col_offset + simdgroup_col) * right_stride_n; // K, N
 
     simdgroup_row += tile_row_offset;
     simdgroup_col += tile_col_offset;
   }
 
   /* (BLOCK_M, BLOCK_K) X (BLOCK_K, BLOCK_N) multiply accumulate function */
-  METAL_FUNC void mma(const threadgroup T* left_shared, const threadgroup T* right_shared) {
+  METAL_FUNC void mma(
+      const threadgroup T* left_shared,
+      const threadgroup T* right_shared
+  ) {
     // Adjust for simdgroup and thread location
     left_shared += left_shared_offset;
     right_shared += right_shared_offset;
@@ -412,15 +453,24 @@ struct BlockMMA {
     for (short k_inner = 0; k_inner < BLOCK_K; k_inner += FRAG_SIZE) {
       simdgroup_barrier(mem_flags::mem_none);
 
-      left_tile.template load<T, WARPS_M, 1, left_stride_m, left_stride_k>(left_shared);
+      left_tile.template load<T, WARPS_M, 1, left_stride_m, left_stride_k>(
+          left_shared
+      );
 
       simdgroup_barrier(mem_flags::mem_none);
 
-      right_tile.template load<T, 1, WARPS_N, right_stride_k, right_stride_n>(right_shared);
+      right_tile.template load<T, 1, WARPS_N, right_stride_k, right_stride_n>(
+          right_shared
+      );
 
       simdgroup_barrier(mem_flags::mem_none);
 
-      tile_multiply_add(accumulator_tile, left_tile, right_tile, accumulator_tile);
+      tile_multiply_add(
+          accumulator_tile,
+          left_tile,
+          right_tile,
+          accumulator_tile
+      );
 
       // Progress to next simdgroup tile
       left_shared += tile_stride_a;
@@ -429,17 +479,24 @@ struct BlockMMA {
   }
 
   /* Store results from simdgroup_matrix results into device memory */
-  METAL_FUNC void store_result(device U* output_matrix, const int leading_dim_d) {
+  METAL_FUNC void store_result(
+      device U* output_matrix,
+      const int leading_dim_d
+  ) {
     // Apply epilogue
     PRAGMA_UNROLL
     for (short i = 0; i < decltype(accumulator_tile)::ELEMENTS_PER_TILE; i++) {
-      accumulator_tile.elements()[i] = Epilogue::apply(accumulator_tile.elements()[i]);
+      accumulator_tile.elements()[i] =
+          Epilogue::apply(accumulator_tile.elements()[i]);
     }
 
     // Adjust for simdgroup and thread location
     output_matrix += simdgroup_row * leading_dim_d + simdgroup_col;
 
-    accumulator_tile.template store<U, WARPS_M, WARPS_N>(output_matrix, leading_dim_d);
+    accumulator_tile.template store<U, WARPS_M, WARPS_N>(
+        output_matrix,
+        leading_dim_d
+    );
   }
 
   METAL_FUNC void store_result_checked(
@@ -450,17 +507,23 @@ struct BlockMMA {
     // Apply epilogue
     PRAGMA_UNROLL
     for (short i = 0; i < decltype(accumulator_tile)::ELEMENTS_PER_TILE; i++) {
-      accumulator_tile.elements()[i] = Epilogue::apply(accumulator_tile.elements()[i]);
+      accumulator_tile.elements()[i] =
+          Epilogue::apply(accumulator_tile.elements()[i]);
     }
 
     // Adjust for simdgroup and thread location
     output_matrix += simdgroup_row * leading_dim_d + simdgroup_col;
     destination_tile_dimensions -= short2(simdgroup_col, simdgroup_row);
 
-    if (destination_tile_dimensions.x <= 0 || destination_tile_dimensions.y <= 0)
+    if (destination_tile_dimensions.x <= 0 ||
+        destination_tile_dimensions.y <= 0)
       return;
 
-    accumulator_tile.template store_checked<U, WARPS_M, WARPS_N>(output_matrix, leading_dim_d, destination_tile_dimensions);
+    accumulator_tile.template store_checked<U, WARPS_M, WARPS_N>(
+        output_matrix,
+        leading_dim_d,
+        destination_tile_dimensions
+    );
   }
 
   /* Apply epilogue with accumulate_source matrix */
@@ -471,7 +534,9 @@ struct BlockMMA {
       const int col_stride_c,
       thread const EpilogueOpType& epilogue_op
   ) {
-    const device U* accumulate_source_ptr = accumulate_source + simdgroup_row * leading_dim_c + simdgroup_col * col_stride_c;
+    const device U* accumulate_source_ptr = accumulate_source +
+                                            simdgroup_row * leading_dim_c +
+                                            simdgroup_col * col_stride_c;
 
     PRAGMA_UNROLL
     for (short i = 0; i < TILES_M; i++) {
@@ -479,12 +544,15 @@ struct BlockMMA {
       for (short j = 0; j < TILES_N; j++) {
         thread auto& frag = accumulator_tile.fragment_at(i, j);
         PRAGMA_UNROLL
-        for (short k = 0; k < decltype(accumulator_tile)::ELEMENTS_PER_FRAG; k++) {
+        for (short k = 0; k < decltype(accumulator_tile)::ELEMENTS_PER_FRAG;
+             k++) {
           short row_offset = (i * FRAG_SIZE * WARPS_M);
           short col_offset = (j * FRAG_SIZE * WARPS_N);
           // Get the accumulate_source element (accounting for fragment layout)
-          U c_val = accumulate_source_ptr[row_offset * leading_dim_c + col_offset * col_stride_c + k];
-          frag[k] = epilogue_op.apply(frag[k], static_cast<AccumulatorType>(c_val));
+          U c_val = accumulate_source_ptr
+              [row_offset * leading_dim_c + col_offset * col_stride_c + k];
+          frag[k] =
+              epilogue_op.apply(frag[k], static_cast<AccumulatorType>(c_val));
         }
       }
     }
@@ -498,7 +566,9 @@ struct BlockMMA {
       short2 tile_dimensions,
       thread const EpilogueOpType& epilogue_op
   ) {
-    const device U* accumulate_source_ptr = accumulate_source + simdgroup_row * leading_dim_c + simdgroup_col * col_stride_c;
+    const device U* accumulate_source_ptr = accumulate_source +
+                                            simdgroup_row * leading_dim_c +
+                                            simdgroup_col * col_stride_c;
     tile_dimensions -= short2(simdgroup_col, simdgroup_row);
 
     PRAGMA_UNROLL
@@ -509,10 +579,14 @@ struct BlockMMA {
         short row_offset = (i * FRAG_SIZE * WARPS_M);
         short col_offset = (j * FRAG_SIZE * WARPS_N);
         PRAGMA_UNROLL
-        for (short k = 0; k < decltype(accumulator_tile)::ELEMENTS_PER_FRAG; k++) {
-          if (row_offset < tile_dimensions.y && col_offset + k < tile_dimensions.x) {
-            U c_val = accumulate_source_ptr[row_offset * leading_dim_c + col_offset * col_stride_c + k];
-            frag[k] = epilogue_op.apply(frag[k], static_cast<AccumulatorType>(c_val));
+        for (short k = 0; k < decltype(accumulator_tile)::ELEMENTS_PER_FRAG;
+             k++) {
+          if (row_offset < tile_dimensions.y &&
+              col_offset + k < tile_dimensions.x) {
+            U c_val = accumulate_source_ptr
+                [row_offset * leading_dim_c + col_offset * col_stride_c + k];
+            frag[k] =
+                epilogue_op.apply(frag[k], static_cast<AccumulatorType>(c_val));
           }
         }
       }

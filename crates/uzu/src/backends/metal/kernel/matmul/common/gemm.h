@@ -33,15 +33,19 @@ template <
     bool MN_aligned,
     bool K_aligned,
     typename AccumType = float,
-    typename Epilogue = TransformNone<U, AccumType>>
+    typename Epilogue = TransformNone<U, AccumType>
+>
 struct GEMMKernel {
   MTL_CONST short THREADGROUP_PADDING_A = 16 / sizeof(T);
   MTL_CONST short THREADGROUP_PADDING_B = 16 / sizeof(T);
   MTL_CONST short THREADGROUP_MEMORY_SIZE_A =
-      transpose_a ? BLOCK_K * (BLOCK_M + THREADGROUP_PADDING_A) : BLOCK_M * (BLOCK_K + THREADGROUP_PADDING_A);
+      transpose_a ? BLOCK_K * (BLOCK_M + THREADGROUP_PADDING_A)
+                  : BLOCK_M * (BLOCK_K + THREADGROUP_PADDING_A);
   MTL_CONST short THREADGROUP_MEMORY_SIZE_B =
-      transpose_b ? BLOCK_N * (BLOCK_K + THREADGROUP_PADDING_B) : BLOCK_K * (BLOCK_N + THREADGROUP_PADDING_B);
-  MTL_CONST short THREADGROUP_MEMORY_SIZE = THREADGROUP_MEMORY_SIZE_A + THREADGROUP_MEMORY_SIZE_B;
+      transpose_b ? BLOCK_N * (BLOCK_K + THREADGROUP_PADDING_B)
+                  : BLOCK_K * (BLOCK_N + THREADGROUP_PADDING_B);
+  MTL_CONST short THREADGROUP_MEMORY_SIZE =
+      THREADGROUP_MEMORY_SIZE_A + THREADGROUP_MEMORY_SIZE_B;
 
   MTL_CONST short THREADGROUP_SIZE = WARPS_M * WARPS_N * 32;
 
@@ -49,16 +53,20 @@ struct GEMMKernel {
       T,
       transpose_a ? BLOCK_K : BLOCK_M,
       transpose_a ? BLOCK_M : BLOCK_K,
-      transpose_a ? BLOCK_M + THREADGROUP_PADDING_A : BLOCK_K + THREADGROUP_PADDING_A,
+      transpose_a ? BLOCK_M + THREADGROUP_PADDING_A
+                  : BLOCK_K + THREADGROUP_PADDING_A,
       !transpose_a,
-      THREADGROUP_SIZE>;
+      THREADGROUP_SIZE
+  >;
   using LoaderBType = BlockLoader<
       T,
       transpose_b ? BLOCK_N : BLOCK_K,
       transpose_b ? BLOCK_K : BLOCK_N,
-      transpose_b ? BLOCK_K + THREADGROUP_PADDING_B : BLOCK_N + THREADGROUP_PADDING_B,
+      transpose_b ? BLOCK_K + THREADGROUP_PADDING_B
+                  : BLOCK_N + THREADGROUP_PADDING_B,
       transpose_b,
-      THREADGROUP_SIZE>;
+      THREADGROUP_SIZE
+  >;
   using MMAType = BlockMMA<
       T,
       U,
@@ -69,10 +77,13 @@ struct GEMMKernel {
       WARPS_N,
       transpose_a,
       transpose_b,
-      transpose_a ? BLOCK_M + THREADGROUP_PADDING_A : BLOCK_K + THREADGROUP_PADDING_A,
-      transpose_b ? BLOCK_K + THREADGROUP_PADDING_B : BLOCK_N + THREADGROUP_PADDING_B,
+      transpose_a ? BLOCK_M + THREADGROUP_PADDING_A
+                  : BLOCK_K + THREADGROUP_PADDING_A,
+      transpose_b ? BLOCK_K + THREADGROUP_PADDING_B
+                  : BLOCK_N + THREADGROUP_PADDING_B,
       AccumType,
-      Epilogue>;
+      Epilogue
+  >;
 
   /* Main kernel function */
   template <bool M_aligned, bool N_aligned, bool K_aligned_>
@@ -91,8 +102,10 @@ struct GEMMKernel {
     // Appease the compiler
     (void)l;
 
-    short2 tile_dims_A = transpose_a ? short2(threadgroup_block_m, BLOCK_K) : short2(BLOCK_K, threadgroup_block_m);
-    short2 tile_dims_B = transpose_b ? short2(BLOCK_K, threadgroup_block_n) : short2(threadgroup_block_n, BLOCK_K);
+    short2 tile_dims_A = transpose_a ? short2(threadgroup_block_m, BLOCK_K)
+                                     : short2(BLOCK_K, threadgroup_block_m);
+    short2 tile_dims_B = transpose_b ? short2(BLOCK_K, threadgroup_block_n)
+                                     : short2(threadgroup_block_n, BLOCK_K);
 
     for (int k = 0; k < gemm_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -123,9 +136,11 @@ struct GEMMKernel {
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       short2 tile_dims_A_last =
-          transpose_a ? short2(threadgroup_block_m, leftover_block_k) : short2(leftover_block_k, threadgroup_block_m);
+          transpose_a ? short2(threadgroup_block_m, leftover_block_k)
+                      : short2(leftover_block_k, threadgroup_block_m);
       short2 tile_dims_B_last =
-          transpose_b ? short2(leftover_block_k, threadgroup_block_n) : short2(threadgroup_block_n, leftover_block_k);
+          transpose_b ? short2(leftover_block_k, threadgroup_block_n)
+                      : short2(threadgroup_block_n, leftover_block_k);
 
       loader_a.load_checked(tile_dims_A_last);
       loader_b.load_checked(tile_dims_B_last);
@@ -153,7 +168,8 @@ struct GEMMKernel {
     (void)thread_position;
 
     const int swizzle_size = 1 << params->swizzle_log;
-    const int tid_y = threadgroup_position.y * swizzle_size + (threadgroup_position.x % swizzle_size);
+    const int tid_y = threadgroup_position.y * swizzle_size +
+                      (threadgroup_position.x % swizzle_size);
     const int tid_x = threadgroup_position.x / swizzle_size;
 
     if (params->tiles_n <= tid_x || params->tiles_m <= tid_y) {
@@ -168,13 +184,28 @@ struct GEMMKernel {
     const size_t block_row_start_long = size_t(block_row_start);
     const size_t block_col_start_long = size_t(block_col_start);
 
-    left_matrix += transpose_a ? block_row_start_long : block_row_start_long * params->leading_dim_a;
-    right_matrix += transpose_b ? block_col_start_long * params->leading_dim_b : block_col_start_long;
-    output_matrix += block_row_start_long * params->leading_dim_d + block_col_start_long;
+    left_matrix += transpose_a ? block_row_start_long
+                               : block_row_start_long * params->leading_dim_a;
+    right_matrix += transpose_b ? block_col_start_long * params->leading_dim_b
+                                : block_col_start_long;
+    output_matrix +=
+        block_row_start_long * params->leading_dim_d + block_col_start_long;
 
     // Prepare threadgroup loading operations
-    thread LoaderAType loader_a(left_matrix, params->leading_dim_a, left_shared, simd_group_id, simd_lane_id);
-    thread LoaderBType loader_b(right_matrix, params->leading_dim_b, right_shared, simd_group_id, simd_lane_id);
+    thread LoaderAType loader_a(
+        left_matrix,
+        params->leading_dim_a,
+        left_shared,
+        simd_group_id,
+        simd_lane_id
+    );
+    thread LoaderBType loader_b(
+        right_matrix,
+        params->leading_dim_b,
+        right_shared,
+        simd_group_id,
+        simd_lane_id
+    );
 
     // Prepare threadgroup mma operation
     thread MMAType mma_operation(simd_group_id, simd_lane_id);
@@ -204,9 +235,12 @@ struct GEMMKernel {
 
       // Loop tail
       if (!K_aligned) {
-        int leftover_block_k = params->K - params->gemm_k_iterations_aligned * BLOCK_K;
-        short2 tile_dims_A = transpose_a ? short2(BLOCK_M, leftover_block_k) : short2(leftover_block_k, BLOCK_M);
-        short2 tile_dims_B = transpose_b ? short2(leftover_block_k, BLOCK_N) : short2(BLOCK_N, leftover_block_k);
+        int leftover_block_k =
+            params->K - params->gemm_k_iterations_aligned * BLOCK_K;
+        short2 tile_dims_A = transpose_a ? short2(BLOCK_M, leftover_block_k)
+                                         : short2(leftover_block_k, BLOCK_M);
+        short2 tile_dims_B = transpose_b ? short2(leftover_block_k, BLOCK_N)
+                                         : short2(BLOCK_N, leftover_block_k);
 
         loader_a.load_checked(tile_dims_A);
         loader_b.load_checked(tile_dims_B);
@@ -257,7 +291,11 @@ struct GEMMKernel {
             leftover_block_k
         );
 
-        mma_operation.store_result_checked(output_matrix, params->leading_dim_d, short2(threadgroup_block_n, threadgroup_block_m));
+        mma_operation.store_result_checked(
+            output_matrix,
+            params->leading_dim_d,
+            short2(threadgroup_block_n, threadgroup_block_m)
+        );
         return;
 
       } else if (threadgroup_block_m == BLOCK_M) {
@@ -273,7 +311,11 @@ struct GEMMKernel {
             leftover_block_k
         );
 
-        mma_operation.store_result_checked(output_matrix, params->leading_dim_d, short2(threadgroup_block_n, threadgroup_block_m));
+        mma_operation.store_result_checked(
+            output_matrix,
+            params->leading_dim_d,
+            short2(threadgroup_block_n, threadgroup_block_m)
+        );
         return;
 
       } else {
@@ -289,7 +331,11 @@ struct GEMMKernel {
             leftover_block_k
         );
 
-        mma_operation.store_result_checked(output_matrix, params->leading_dim_d, short2(threadgroup_block_n, threadgroup_block_m));
+        mma_operation.store_result_checked(
+            output_matrix,
+            params->leading_dim_d,
+            short2(threadgroup_block_n, threadgroup_block_m)
+        );
         return;
       }
     }

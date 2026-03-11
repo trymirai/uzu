@@ -2,7 +2,8 @@
 #include "../../../common/utils.h"
 #include "../../../definitions.metal"
 
-#include "../../common/mpp_gemm_utilities.h"
+#include "../../common/params.h"
+#include "../../common/mpp_cooperative_matmul.h"
 #include "../../common/loader.h"
 
 using namespace uzu::matmul;
@@ -202,16 +203,19 @@ METAL_FUNC void gemm_mpp_impl(
       const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
 
       PRAGMA_UNROLL
-      for (short i = 0; i < left_capacity; i++)
+      for (short i = 0; i < left_capacity; i++) {
         all_left_tg_base[subtile_index][i] = (a_m_base + left_row[i]) * THREADGROUP_LD + left_col[i];
+      }
 
       PRAGMA_UNROLL
-      for (short i = 0; i < right_capacity; i++)
+      for (short i = 0; i < right_capacity; i++) {
         all_right_tg_base[subtile_index][i] = (b_n_base + right_row[i]) * THREADGROUP_LD + right_col[i];
+      }
 
       PRAGMA_UNROLL
-      for (short i = 0; i < 16; i++)
+      for (short i = 0; i < 16; i++) {
         accum_storage[subtile_index][i] = AccumulatorType(0);
+      }
     }
   }
 
