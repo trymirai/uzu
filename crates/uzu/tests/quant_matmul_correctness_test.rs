@@ -2,14 +2,14 @@
 
 use comfy_table::{ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use indicatif::{ProgressBar, ProgressStyle};
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::rc::Retained;
 use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Context,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
             kernel::quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
                 QuantizedMatmulType,
@@ -535,12 +535,9 @@ fn run_quant_matmul_case(
         output_dim: shape.output_dim,
         quantization_type: config.quant_type,
     };
-    let cb = ctx.command_queue.command_buffer().expect("cb").to_owned();
-    let mut enc = cb.new_compute_command_encoder().expect("encoder");
-    kernel.encode(&mut enc, args).expect("encode");
-    enc.end_encoding();
-    cb.commit();
-    cb.wait_until_completed();
+    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+    kernel.encode(&mut command_buffer, args).expect("encode");
+    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_expected = cpu_reference(config, shape, &x_f32, &weights_packed, &params);
     let y_out: Vec<f32> = unsafe {

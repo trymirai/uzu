@@ -4,13 +4,13 @@ use std::time::Instant;
 
 use comfy_table::{CellAlignment, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use indicatif::{ProgressBar, ProgressStyle};
-use metal::{MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDeviceExt, MTLResourceOptions};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Context,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
             kernel::quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
                 QuantizedMatmulType,
@@ -279,8 +279,6 @@ fn benchmark_single(
     let mut y_buf = y_buf;
 
     for _ in 0..WARMUP_ITERATIONS {
-        let cb = ctx.command_queue.command_buffer().expect("cb").to_owned();
-        let mut enc = cb.new_compute_command_encoder().expect("enc");
         let arguments = QuantizedMatmulArguments {
             a_buffer: &x_buf,
             a_offset: 0,
@@ -293,18 +291,20 @@ fn benchmark_single(
             output_dim: shape.output_dim,
             quantization_type: config.quant_type,
         };
-        if let Err(e) = kernel.encode(&mut enc, arguments) {
+        let mut command_buffer = match ctx.create_command_buffer() {
+            Ok(cb) => cb.start_encoding(),
+            Err(e) => return error_result(format!("warmup cb: {e}")),
+        };
+        if let Err(e) = kernel.encode(&mut command_buffer, arguments) {
             return error_result(format!("warmup encode: {e}"));
         }
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        if let Err(e) = command_buffer.end_encoding().submit().wait_until_completed() {
+            return error_result(format!("warmup submit: {e}"));
+        }
     }
 
     let start = Instant::now();
     for _ in 0..BENCHMARK_ITERATIONS {
-        let cb = ctx.command_queue.command_buffer().expect("cb").to_owned();
-        let mut enc = cb.new_compute_command_encoder().expect("enc");
         let arguments = QuantizedMatmulArguments {
             a_buffer: &x_buf,
             a_offset: 0,
@@ -317,12 +317,16 @@ fn benchmark_single(
             output_dim: shape.output_dim,
             quantization_type: config.quant_type,
         };
-        if let Err(e) = kernel.encode(&mut enc, arguments) {
+        let mut command_buffer = match ctx.create_command_buffer() {
+            Ok(cb) => cb.start_encoding(),
+            Err(e) => return error_result(format!("bench cb: {e}")),
+        };
+        if let Err(e) = kernel.encode(&mut command_buffer, arguments) {
             return error_result(format!("bench encode: {e}"));
         }
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        if let Err(e) = command_buffer.end_encoding().submit().wait_until_completed() {
+            return error_result(format!("bench submit: {e}"));
+        }
     }
     let elapsed = start.elapsed();
 
