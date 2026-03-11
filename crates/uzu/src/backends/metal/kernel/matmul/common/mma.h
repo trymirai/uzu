@@ -297,6 +297,27 @@ struct MMATile {
   }
 
   template <typename U, int warp_stride_x, int warp_stride_y>
+  METAL_FUNC void store_to_threadgroup(
+      threadgroup U* destination,
+      const int leading_dimension
+  ) const {
+    PRAGMA_UNROLL
+    for (short i = 0; i < TILE_ROWS; ++i) {
+      PRAGMA_UNROLL
+      for (short j = 0; j < TILE_COLS; ++j) {
+        MMAFragType::store(
+            fragment_at(i, j),
+            &(destination
+                  [(i * FRAG_ROWS) * warp_stride_x * leading_dimension +
+                   (j * FRAG_COLS) * warp_stride_y]),
+            leading_dimension,
+            1
+        );
+      }
+    }
+  }
+
+  template <typename U, int warp_stride_x, int warp_stride_y>
   METAL_FUNC void store_checked(
       device U* destination,
       const int leading_dimension,
@@ -494,6 +515,24 @@ struct BlockMMA {
     output_matrix += simdgroup_row * leading_dim_d + simdgroup_col;
 
     accumulator_tile.template store<U, WARPS_M, WARPS_N>(
+        output_matrix,
+        leading_dim_d
+    );
+  }
+
+  METAL_FUNC void store_result_to_threadgroup(
+      threadgroup U* output_matrix,
+      const int leading_dim_d
+  ) {
+    PRAGMA_UNROLL
+    for (short i = 0; i < decltype(accumulator_tile)::ELEMENTS_PER_TILE; i++) {
+      accumulator_tile.elements()[i] =
+          Epilogue::apply(accumulator_tile.elements()[i]);
+    }
+
+    output_matrix += simdgroup_row * leading_dim_d + simdgroup_col;
+
+    accumulator_tile.template store_to_threadgroup<U, WARPS_M, WARPS_N>(
         output_matrix,
         leading_dim_d
     );

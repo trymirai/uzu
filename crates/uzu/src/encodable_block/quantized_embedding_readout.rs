@@ -13,9 +13,12 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Buffer, CommandBuffer, Context,
-        kernel::quant_matmul::{
-            QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-            QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+        kernel::{
+            quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+                QuantizedMatmulType,
+            },
+            quant_matmul_v2::QuantizedMatmulKernelSwitchable,
         },
     },
     config::QuantizationMode,
@@ -70,7 +73,7 @@ pub enum QuantizedEmbeddingReadoutError<B: Backend> {
 }
 
 pub struct QuantizedEmbeddingReadout<B: Backend> {
-    kernel: QuantizedMatmulKernelEncodable<B>,
+    kernel: QuantizedMatmulKernelSwitchable<B>,
     weights_buffer: Rc<RefCell<B::Buffer>>,
     scales_buffer: Rc<RefCell<B::Buffer>>,
     biases_buffer: Rc<RefCell<B::Buffer>>,
@@ -203,7 +206,7 @@ impl<B: Backend> QuantizedEmbeddingReadout<B> {
             },
         };
 
-        let kernel = QuantizedMatmulKernelEncodable::new(
+        let kernel = QuantizedMatmulKernelSwitchable::new(
             context,
             QuantizedMatmulConfiguration {
                 data_type,
