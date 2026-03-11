@@ -9,10 +9,11 @@ from matmul_bench.models import BenchmarkRun, PerfResult
 
 DISPATCH_STYLES: dict[str, dict] = {
     "GemmMpp": dict(color="#4285F4", marker="o", linestyle="-"),
-    "Gemm": dict(color="#9E9E9E", marker="v", linestyle="--"),
+    "GemvMpp": dict(color="#FBBC04", marker="s", linestyle="-"),
     "Gemv": dict(color="#34A853", marker="^", linestyle="--"),
+    "Gemm": dict(color="#9E9E9E", marker="v", linestyle="--"),
     "SplitK": dict(color="#EA4335", marker="D", linestyle="--"),
-    "MixedTypesSimpleGemm": dict(color="#FF6D01", marker="s", linestyle="--"),
+    "MixedTypesSimpleGemm": dict(color="#FF6D01", marker="p", linestyle="--"),
 }
 
 DEFAULT_STYLE = dict(color="#757575", marker="x", linestyle="-.")
@@ -138,6 +139,6 @@ def _draw_panel(
 
     ax.set_xscale("log", base=2)
     ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
-    ax.xaxis.set_major_locator(ticker.FixedLocator([1, 2, 4, 8, 16, 32, 64, 128]))
+    ax.xaxis.set_major_locator(ticker.FixedLocator([1, 2, 4, 8, 16, 32, 64, 128, 256, 512]))
     ax.set_ylim(bottom=0)
     ax.legend(fontsize=7, loc="upper left")

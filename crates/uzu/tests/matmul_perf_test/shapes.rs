@@ -1,6 +1,6 @@
 use super::common::matmul::TestShape;
 
-const BATCH_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256];
+const BATCH_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 
 const MODEL_DIMS: &[(usize, usize)] = &[
     (896, 896),
