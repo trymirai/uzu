@@ -13,79 +13,83 @@ namespace steel {
 template <typename T>
 struct BlockLoader {
   // Tile params
-  const short BROWS;
-  const short dst_ld;
-  const short vec_size;
-  const short TROWS;
+  const short BLOCK_ROWS;
+  const short destination_leading_dimension;
+  const short vector_size;
+  const short THREAD_ROWS;
 
-  // Leading dimension for src
-  const int src_ld;
+  // Leading dimension for source
+  const int source_leading_dimension;
   const int tile_stride;
 
   // Thread location indices
-  const short bi;
-  const short bj;
+  const short block_row;
+  const short block_col;
 
   // threadgroup and device memory
-  threadgroup T* dst;
-  const device T* src;
+  threadgroup T* destination;
+  const device T* source;
 
   /* Constructor */
   METAL_FUNC BlockLoader(
-      const device T* src_,
-      const int src_ld_,
-      threadgroup T* dst_,
+      const device T* source_,
+      const int source_leading_dimension_,
+      threadgroup T* destination_,
       ushort simd_group_id,
       ushort simd_lane_id,
-      short BROWS_,
-      short BCOLS_,
-      short dst_ld_,
+      short BLOCK_ROWS_,
+      short BLOCK_COLS_,
+      short destination_leading_dimension_,
       short reduction_dim,
-      short tgp_size
+      short threadgroup_size
   )
-      : BROWS(BROWS_), dst_ld(dst_ld_), vec_size((BCOLS_ * BROWS_) / tgp_size),
-        TROWS(tgp_size / (BCOLS_ / ((BCOLS_ * BROWS_) / tgp_size))),
-        src_ld(src_ld_), tile_stride(reduction_dim ? BCOLS_ : BROWS_ * src_ld_),
-        bi(short(simd_group_id * 32 + simd_lane_id) /
-           short(BCOLS_ / ((BCOLS_ * BROWS_) / tgp_size))),
-        bj(short((BCOLS_ * BROWS_) / tgp_size) *
+      : BLOCK_ROWS(BLOCK_ROWS_), destination_leading_dimension(destination_leading_dimension_),
+        vector_size((BLOCK_COLS_ * BLOCK_ROWS_) / threadgroup_size),
+        THREAD_ROWS(threadgroup_size / (BLOCK_COLS_ / ((BLOCK_COLS_ * BLOCK_ROWS_) / threadgroup_size))),
+        source_leading_dimension(source_leading_dimension_),
+        tile_stride(reduction_dim ? BLOCK_COLS_ : BLOCK_ROWS_ * source_leading_dimension_),
+        block_row(short(simd_group_id * 32 + simd_lane_id) /
+           short(BLOCK_COLS_ / ((BLOCK_COLS_ * BLOCK_ROWS_) / threadgroup_size))),
+        block_col(short((BLOCK_COLS_ * BLOCK_ROWS_) / threadgroup_size) *
            (short(simd_group_id * 32 + simd_lane_id) %
-            short(BCOLS_ / ((BCOLS_ * BROWS_) / tgp_size)))),
-        dst(dst_ + bi * dst_ld_ + bj), src(src_ + bi * src_ld_ + bj) {}
+            short(BLOCK_COLS_ / ((BLOCK_COLS_ * BLOCK_ROWS_) / threadgroup_size)))),
+        destination(destination_ + block_row * destination_leading_dimension_ + block_col),
+        source(source_ + block_row * source_leading_dimension_ + block_col) {}
 
   /* Load from device memory into threadgroup memory - without bound checking */
-  METAL_FUNC void load_unsafe() const {
-    for (short i = 0; i < BROWS; i += TROWS) {
-      for (short j = 0; j < vec_size; j++) {
-        dst[i * dst_ld + j] = src[i * src_ld + j];
+  METAL_FUNC void load_unchecked() const {
+    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      for (short j = 0; j < vector_size; j++) {
+        destination[i * destination_leading_dimension + j] =
+            source[i * source_leading_dimension + j];
       }
     }
   }
 
   /* Load from device memory into threadgroup memory - with bound checking */
-  METAL_FUNC void load_safe(short2 src_tile_dim) const {
-    src_tile_dim = src_tile_dim - short2(bj, bi);
+  METAL_FUNC void load_checked(short2 source_tile_dimensions) const {
+    source_tile_dimensions = source_tile_dimensions - short2(block_col, block_row);
 
-    if (src_tile_dim.x <= 0 || src_tile_dim.y <= 0) {
-      for (short i = 0; i < BROWS; i += TROWS) {
-        for (short j = 0; j < vec_size; j++) {
-          dst[i * dst_ld + j] = T(0);
+    if (source_tile_dimensions.x <= 0 || source_tile_dimensions.y <= 0) {
+      for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+        for (short j = 0; j < vector_size; j++) {
+          destination[i * destination_leading_dimension + j] = T(0);
         }
       }
       return;
     }
 
-    for (short i = 0; i < BROWS; i += TROWS) {
-      for (short j = 0; j < vec_size; j++) {
-        bool valid = (i < src_tile_dim.y) && (j < src_tile_dim.x);
-        T val = src[(valid ? i * src_ld + j : 0)];
-        dst[i * dst_ld + j] = valid ? val : T(0);
+    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      for (short j = 0; j < vector_size; j++) {
+        bool valid = (i < source_tile_dimensions.y) && (j < source_tile_dimensions.x);
+        T val = source[(valid ? i * source_leading_dimension + j : 0)];
+        destination[i * destination_leading_dimension + j] = valid ? val : T(0);
       }
     }
   }
 
   /* Iteration helper */
-  METAL_FUNC void next() { src += tile_stride; }
+  METAL_FUNC void next() { source += tile_stride; }
 };
 
 } // namespace steel

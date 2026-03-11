@@ -86,9 +86,9 @@ impl DispatchDescriptor {
 
         let input_dimension = arguments.input_dim;
         let matrix_leading_dim = if matrix_is_rhs {
-            arguments.ldb
+            arguments.leading_dim_b
         } else {
-            arguments.lda
+            arguments.leading_dim_a
         };
 
         let batch_shape = [if arguments.batch_count > 1 {
@@ -97,11 +97,11 @@ impl DispatchDescriptor {
             1
         }];
 
-        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.lda as i64);
+        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.leading_dim_a as i64);
         let elements_per_matrix_b = if arguments.transpose_b {
-            (arguments.output_dim as i64) * (arguments.ldb as i64)
+            (arguments.output_dim as i64) * (arguments.leading_dim_b as i64)
         } else {
-            (arguments.input_dim as i64) * (arguments.ldb as i64)
+            (arguments.input_dim as i64) * (arguments.leading_dim_b as i64)
         };
 
         let vector_batch_stride = [if matrix_is_rhs {
@@ -117,7 +117,7 @@ impl DispatchDescriptor {
         }];
 
         let bias_batch_stride = [if arguments.batch_count > 1 {
-            (output_dimension as i64) * (arguments.ldd as i64)
+            (output_dimension as i64) * (arguments.leading_dim_d as i64)
         } else {
             0
         }];

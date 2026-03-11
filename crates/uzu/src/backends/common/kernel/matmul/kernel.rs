@@ -148,7 +148,7 @@ impl<B: Backend> MatmulKernel<B> {
         if arguments.batch_count <= 1 {
             return;
         }
-        if arguments.lda == arguments.input_dim && arguments.transpose_b {
+        if arguments.leading_dim_a == arguments.input_dim && arguments.transpose_b {
             arguments.batch *= arguments.batch_count;
             arguments.batch_count = 1;
         }

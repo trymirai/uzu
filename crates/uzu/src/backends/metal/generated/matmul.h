@@ -19,9 +19,9 @@ typedef struct {
   int32_t M;
   int32_t N;
   int32_t K;
-  int32_t lda;
-  int32_t ldb;
-  int32_t ldd;
+  int32_t leading_dim_a;
+  int32_t leading_dim_b;
+  int32_t leading_dim_d;
   int32_t tiles_n;
   int32_t tiles_m;
   int64_t batch_stride_a;

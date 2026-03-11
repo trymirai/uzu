@@ -10,9 +10,9 @@ struct GEMMParams {
   const int N;
   const int K;
 
-  const int lda;
-  const int ldb;
-  const int ldd;
+  const int leading_dim_a;
+  const int leading_dim_b;
+  const int leading_dim_d;
 
   const int tiles_n;
   const int tiles_m;

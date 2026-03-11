@@ -22,115 +22,116 @@ using namespace uzu::matmul;
 
 template <
     typename T,
-    short BM,
-    short BN,
-    short BK,
-    short WM,
-    short WN>
+    short BLOCK_M,
+    short BLOCK_N,
+    short BLOCK_K,
+    short WARPS_M,
+    short WARPS_N>
 METAL_FUNC void gemm_mpp_impl(
-    const device T* a,
-    const device T* b,
-    device T* d,
+    const device T* left_matrix,
+    const device T* right_matrix,
+    device T* output_matrix,
     const constant GEMMParams* params,
     const bool align_m,
     const bool align_n,
     const bool align_k,
-    threadgroup T* a_shared,
-    threadgroup T* b_shared,
+    threadgroup T* left_shared,
+    threadgroup T* right_shared,
     uint simd_group_id,
     uint simd_lane_id,
-    uint3 tid
+    uint3 threadgroup_position
 ) {
-  using AccumType = float;
+  using AccumulatorType = float;
 
   constexpr short SUBTILE_ROWS = 16;
   constexpr short SUBTILE_COLS = 32;
   constexpr short MATMUL_K_STEP = 16;
-  constexpr short SM = BM / WM;
-  constexpr short SN = BN / WN;
-  constexpr short TM = SM / SUBTILE_ROWS;
-  constexpr short TN = SN / SUBTILE_COLS;
-  constexpr short TGP_SIZE = WM * WN * 32;
+  constexpr short SIMDGROUP_M = BLOCK_M / WARPS_M;
+  constexpr short SIMDGROUP_N = BLOCK_N / WARPS_N;
+  constexpr short TILES_M = SIMDGROUP_M / SUBTILE_ROWS;
+  constexpr short TILES_N = SIMDGROUP_N / SUBTILE_COLS;
+  constexpr short THREADGROUP_SIZE = WARPS_M * WARPS_N * 32;
 
   constexpr short PREFETCH_K = short(PREFETCH_K_SIZE);
-  constexpr short TG_LD = PREFETCH_K + short(16 / sizeof(T));
+  constexpr short THREADGROUP_LD = PREFETCH_K + short(16 / sizeof(T));
   constexpr short INNER_K_STEPS = PREFETCH_K / MATMUL_K_STEP;
 
-  const int tid_y = ((tid.y) << params->swizzle_log) +
-                    ((tid.x) & ((1 << params->swizzle_log) - 1));
-  const int tid_x = (tid.x) >> params->swizzle_log;
+  const int swizzle_size = 1 << params->swizzle_log;
+  const int tid_y = ((threadgroup_position.y) * swizzle_size) +
+                    ((threadgroup_position.x) % swizzle_size);
+  const int tid_x = (threadgroup_position.x) / swizzle_size;
 
   if (params->tiles_n <= tid_x || params->tiles_m <= tid_y) {
     return;
   }
 
-  a += params->batch_stride_a * tid.z;
-  b += params->batch_stride_b * tid.z;
-  d += params->batch_stride_d * tid.z;
+  left_matrix += params->batch_stride_a * threadgroup_position.z;
+  right_matrix += params->batch_stride_b * threadgroup_position.z;
+  output_matrix += params->batch_stride_d * threadgroup_position.z;
 
   threadgroup_barrier(mem_flags::mem_none);
 
-  const int c_row = tid_y * BM;
-  const int c_col = tid_x * BN;
-  const size_t c_row_long = size_t(c_row);
-  const size_t c_col_long = size_t(c_col);
+  const int block_row_start = tid_y * BLOCK_M;
+  const int block_col_start = tid_x * BLOCK_N;
+  const size_t block_row_start_long = size_t(block_row_start);
+  const size_t block_col_start_long = size_t(block_col_start);
 
-  const device T* a_block = a + c_row_long * params->lda;
-  const device T* b_block = b + c_col_long * params->ldb;
+  const device T* left_block_ptr = left_matrix + block_row_start_long * params->leading_dim_a;
+  const device T* right_block_ptr = right_matrix + block_col_start_long * params->leading_dim_b;
 
-  const short tm = SM * (simd_group_id / WN);
-  const short tn = SN * (simd_group_id % WN);
+  const short tile_row_offset = SIMDGROUP_M * (simd_group_id / WARPS_N);
+  const short tile_col_offset = SIMDGROUP_N * (simd_group_id % WARPS_N);
 
-  device T* d_out = d + c_row_long * params->ldd + c_col_long + tm * params->ldd + tn;
+  device T* output_ptr = output_matrix + block_row_start_long * params->leading_dim_d + block_col_start_long + tile_row_offset * params->leading_dim_d + tile_col_offset;
 
-  const int sgp_sm_int =
-      align_m ? int(SM) : min(int(SM), params->M - (c_row + tm));
-  const short sgp_sm = short(sgp_sm_int);
+  const int simdgroup_limit_m_int =
+      align_m ? int(SIMDGROUP_M) : min(int(SIMDGROUP_M), params->M - (block_row_start + tile_row_offset));
+  const short simdgroup_limit_m = short(simdgroup_limit_m_int);
 
-  const int sgp_sn_int =
-      align_n ? int(SN) : min(int(SN), params->N - (c_col + tn));
-  const short sgp_sn = short(sgp_sn_int);
+  const int simdgroup_limit_n_int =
+      align_n ? int(SIMDGROUP_N) : min(int(SIMDGROUP_N), params->N - (block_col_start + tile_col_offset));
+  const short simdgroup_limit_n = short(simdgroup_limit_n_int);
 
-  const bool is_unaligned_sm = align_m ? false : (sgp_sm != SM);
-  const bool is_unaligned_sn = align_n ? false : (sgp_sn != SN);
+  const bool is_unaligned_m = align_m ? false : (simdgroup_limit_m != SIMDGROUP_M);
+  const bool is_unaligned_n = align_n ? false : (simdgroup_limit_n != SIMDGROUP_N);
 
   // --- Fallback: direct device reads when staging gives no benefit ---
   if constexpr (PREFETCH_K <= MATMUL_K_STEP) {
-    const device T* a_sg = a_block + tm * params->lda;
-    const device T* b_sg = b_block + tn * params->ldb;
+    const device T* left_simdgroup_ptr = left_block_ptr + tile_row_offset * params->leading_dim_a;
+    const device T* right_simdgroup_ptr = right_block_ptr + tile_col_offset * params->leading_dim_b;
 
-    UZU_PRAGMA_UNROLL
-    for (short mm = 0; mm < TM; mm++) {
-      UZU_PRAGMA_UNROLL
-      for (short nn = 0; nn < TN; nn++) {
-        const short m_off = mm * SUBTILE_ROWS;
-        const short n_off = nn * SUBTILE_COLS;
+    PRAGMA_UNROLL
+    for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+      PRAGMA_UNROLL
+      for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
+        const short row_offset = tile_m * SUBTILE_ROWS;
+        const short col_offset = tile_n * SUBTILE_COLS;
 
-        const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - m_off)) : SUBTILE_ROWS;
-        const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - n_off)) : SUBTILE_COLS;
+        const short m_limit = is_unaligned_m ? short(max(0, int(simdgroup_limit_m) - row_offset)) : SUBTILE_ROWS;
+        const short n_limit = is_unaligned_n ? short(max(0, int(simdgroup_limit_n) - col_offset)) : SUBTILE_COLS;
         if (m_limit <= 0 || n_limit <= 0) continue;
 
-        const device T* a_sub = a_sg + m_off * params->lda;
-        const device T* b_sub = b_sg + n_off * params->ldb;
-        device T* d_sub = d_out + m_off * params->ldd + n_off;
+        const device T* left_subtile_ptr = left_simdgroup_ptr + row_offset * params->leading_dim_a;
+        const device T* right_subtile_ptr = right_simdgroup_ptr + col_offset * params->leading_dim_b;
+        device T* output_subtile_ptr = output_ptr + row_offset * params->leading_dim_d + col_offset;
 
-        const bool subtile_aligned_m = !is_unaligned_sm || (m_limit == SUBTILE_ROWS);
-        const bool subtile_aligned_n = !is_unaligned_sn || (n_limit == SUBTILE_COLS);
+        const bool subtile_aligned_m = !is_unaligned_m || (m_limit == SUBTILE_ROWS);
+        const bool subtile_aligned_n = !is_unaligned_n || (n_limit == SUBTILE_COLS);
 
         if (subtile_aligned_m && subtile_aligned_n && align_k) {
-          cooperative_tensor_gemm<SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP, AccumType, T, T, T,
+          cooperative_tensor_gemm<SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP, AccumulatorType, T, T, T,
                                  false, true, true, true, true>(
-              a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
+              left_subtile_ptr, params->leading_dim_a, right_subtile_ptr, params->leading_dim_b, output_subtile_ptr, params->leading_dim_d,
               params->K, m_limit, n_limit);
         } else if (subtile_aligned_m && subtile_aligned_n) {
-          cooperative_tensor_gemm<SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP, AccumType, T, T, T,
+          cooperative_tensor_gemm<SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP, AccumulatorType, T, T, T,
                                  false, true, true, true, false>(
-              a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
+              left_subtile_ptr, params->leading_dim_a, right_subtile_ptr, params->leading_dim_b, output_subtile_ptr, params->leading_dim_d,
               params->K, m_limit, n_limit);
         } else {
-          cooperative_tensor_gemm<SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP, AccumType, T, T, T,
+          cooperative_tensor_gemm<SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP, AccumulatorType, T, T, T,
                                  false, true, false, false, false>(
-              a_sub, params->lda, b_sub, params->ldb, d_sub, params->ldd,
+              left_subtile_ptr, params->leading_dim_a, right_subtile_ptr, params->leading_dim_b, output_subtile_ptr, params->leading_dim_d,
               params->K, m_limit, n_limit);
         }
       }
@@ -140,10 +141,10 @@ METAL_FUNC void gemm_mpp_impl(
 
   // --- Staged path: threadgroup memory prefetch ---
 
-  BlockLoader<T, BM, PREFETCH_K, TG_LD, 1, TGP_SIZE> loader_a(
-      a_block, params->lda, a_shared, ushort(simd_group_id), ushort(simd_lane_id));
-  BlockLoader<T, BN, PREFETCH_K, TG_LD, 1, TGP_SIZE> loader_b(
-      b_block, params->ldb, b_shared, ushort(simd_group_id), ushort(simd_lane_id));
+  BlockLoader<T, BLOCK_M, PREFETCH_K, THREADGROUP_LD, 1, THREADGROUP_SIZE> loader_a(
+      left_block_ptr, params->leading_dim_a, left_shared, ushort(simd_group_id), ushort(simd_lane_id));
+  BlockLoader<T, BLOCK_N, PREFETCH_K, THREADGROUP_LD, 1, THREADGROUP_SIZE> loader_b(
+      right_block_ptr, params->leading_dim_b, right_shared, ushort(simd_group_id), ushort(simd_lane_id));
 
   constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
       SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP,
@@ -152,10 +153,10 @@ METAL_FUNC void gemm_mpp_impl(
 
   mpp::tensor_ops::matmul2d<matmul_descriptor, metal::execution_simdgroup> matmul_operation;
 
-  auto left_tensor = matmul_operation.template get_left_input_cooperative_tensor<T, T, AccumType>();
-  auto right_tensor = matmul_operation.template get_right_input_cooperative_tensor<T, T, AccumType>();
+  auto left_tensor = matmul_operation.template get_left_input_cooperative_tensor<T, T, AccumulatorType>();
+  auto right_tensor = matmul_operation.template get_right_input_cooperative_tensor<T, T, AccumulatorType>();
   auto accumulator_tensor = matmul_operation.template get_destination_cooperative_tensor<
-      decltype(left_tensor), decltype(right_tensor), AccumType>();
+      decltype(left_tensor), decltype(right_tensor), AccumulatorType>();
 
   const short left_capacity = left_tensor.get_capacity();
   const short right_capacity = right_tensor.get_capacity();
@@ -166,21 +167,21 @@ METAL_FUNC void gemm_mpp_impl(
   short output_col[16], output_row[16];
   bool output_valid[16];
 
-  UZU_PRAGMA_UNROLL
+  PRAGMA_UNROLL
   for (short i = 0; i < left_capacity; i++) {
     auto coord = left_tensor.get_multidimensional_index(i);
     left_col[i] = coord[0];
     left_row[i] = coord[1];
   }
 
-  UZU_PRAGMA_UNROLL
+  PRAGMA_UNROLL
   for (short i = 0; i < right_capacity; i++) {
     auto coord = right_tensor.get_multidimensional_index(i);
     right_col[i] = coord[0];
     right_row[i] = coord[1];
   }
 
-  UZU_PRAGMA_UNROLL
+  PRAGMA_UNROLL
   for (short i = 0; i < accumulator_capacity; i++) {
     auto coord = accumulator_tensor.get_multidimensional_index(i);
     output_col[i] = coord[0];
@@ -188,80 +189,80 @@ METAL_FUNC void gemm_mpp_impl(
     output_valid[i] = accumulator_tensor.is_valid_element(i);
   }
 
-  AccumType accum_storage[TM * TN][16];
-  int all_left_tg_base[TM * TN][16];
-  int all_right_tg_base[TM * TN][16];
+  AccumulatorType accum_storage[TILES_M * TILES_N][16];
+  int all_left_tg_base[TILES_M * TILES_N][16];
+  int all_right_tg_base[TILES_M * TILES_N][16];
 
-  UZU_PRAGMA_UNROLL
-  for (short mm = 0; mm < TM; mm++) {
-    UZU_PRAGMA_UNROLL
-    for (short nn = 0; nn < TN; nn++) {
-      const short subtile_index = mm * TN + nn;
-      const short a_m_base = tm + mm * SUBTILE_ROWS;
-      const short b_n_base = tn + nn * SUBTILE_COLS;
+  PRAGMA_UNROLL
+  for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+    PRAGMA_UNROLL
+    for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
+      const short subtile_index = tile_m * TILES_N + tile_n;
+      const short a_m_base = tile_row_offset + tile_m * SUBTILE_ROWS;
+      const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
 
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short i = 0; i < left_capacity; i++)
-        all_left_tg_base[subtile_index][i] = (a_m_base + left_row[i]) * TG_LD + left_col[i];
+        all_left_tg_base[subtile_index][i] = (a_m_base + left_row[i]) * THREADGROUP_LD + left_col[i];
 
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short i = 0; i < right_capacity; i++)
-        all_right_tg_base[subtile_index][i] = (b_n_base + right_row[i]) * TG_LD + right_col[i];
+        all_right_tg_base[subtile_index][i] = (b_n_base + right_row[i]) * THREADGROUP_LD + right_col[i];
 
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short i = 0; i < 16; i++)
-        accum_storage[subtile_index][i] = AccumType(0);
+        accum_storage[subtile_index][i] = AccumulatorType(0);
     }
   }
 
   const int full_prefetch_iterations = params->K / PREFETCH_K;
   const int k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
 
-  const short actual_bm = align_m ? BM : short(min(int(BM), params->M - c_row));
-  const short actual_bn = align_n ? BN : short(min(int(BN), params->N - c_col));
+  const short actual_bm = align_m ? BLOCK_M : short(min(int(BLOCK_M), params->M - block_row_start));
+  const short actual_bn = align_n ? BLOCK_N : short(min(int(BLOCK_N), params->N - block_col_start));
 
   // --- Main K loop ---
   for (int outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (align_m && align_n) {
-      loader_a.load_unsafe();
-      loader_b.load_unsafe();
+      loader_a.load_unchecked();
+      loader_b.load_unchecked();
     } else {
-      loader_a.load_safe(short2(PREFETCH_K, actual_bm));
-      loader_b.load_safe(short2(PREFETCH_K, actual_bn));
+      loader_a.load_checked(short2(PREFETCH_K, actual_bm));
+      loader_b.load_checked(short2(PREFETCH_K, actual_bn));
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    UZU_PRAGMA_UNROLL
-    for (short mm = 0; mm < TM; mm++) {
-      UZU_PRAGMA_UNROLL
-      for (short nn = 0; nn < TN; nn++) {
-        const short subtile_index = mm * TN + nn;
+    PRAGMA_UNROLL
+    for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+      PRAGMA_UNROLL
+      for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
+        const short subtile_index = tile_m * TILES_N + tile_n;
 
-        const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - mm * SUBTILE_ROWS)) : SUBTILE_ROWS;
-        const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - nn * SUBTILE_COLS)) : SUBTILE_COLS;
+        const short m_limit = is_unaligned_m ? short(max(0, int(simdgroup_limit_m) - tile_m * SUBTILE_ROWS)) : SUBTILE_ROWS;
+        const short n_limit = is_unaligned_n ? short(max(0, int(simdgroup_limit_n) - tile_n * SUBTILE_COLS)) : SUBTILE_COLS;
         if (m_limit <= 0 || n_limit <= 0) continue;
 
-        UZU_PRAGMA_UNROLL
+        PRAGMA_UNROLL
         for (short i = 0; i < accumulator_capacity; i++)
           accumulator_tensor[i] = accum_storage[subtile_index][i];
 
-        UZU_PRAGMA_UNROLL
+        PRAGMA_UNROLL
         for (short k_step = 0; k_step < INNER_K_STEPS; k_step++) {
           const short k_offset = k_step * MATMUL_K_STEP;
 
-          UZU_PRAGMA_UNROLL
+          PRAGMA_UNROLL
           for (short i = 0; i < left_capacity; i++)
-            left_tensor[i] = a_shared[all_left_tg_base[subtile_index][i] + k_offset];
+            left_tensor[i] = left_shared[all_left_tg_base[subtile_index][i] + k_offset];
 
-          UZU_PRAGMA_UNROLL
+          PRAGMA_UNROLL
           for (short i = 0; i < right_capacity; i++)
-            right_tensor[i] = b_shared[all_right_tg_base[subtile_index][i] + k_offset];
+            right_tensor[i] = right_shared[all_right_tg_base[subtile_index][i] + k_offset];
 
           matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
         }
 
-        UZU_PRAGMA_UNROLL
+        PRAGMA_UNROLL
         for (short i = 0; i < accumulator_capacity; i++)
           accum_storage[subtile_index][i] = accumulator_tensor[i];
       }
@@ -274,41 +275,41 @@ METAL_FUNC void gemm_mpp_impl(
   // --- K remainder ---
   if (k_remainder > 0) {
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    loader_a.load_safe(short2(k_remainder, actual_bm));
-    loader_b.load_safe(short2(k_remainder, actual_bn));
+    loader_a.load_checked(short2(k_remainder, actual_bm));
+    loader_b.load_checked(short2(k_remainder, actual_bn));
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     const short remainder_steps = short((k_remainder + MATMUL_K_STEP - 1) / MATMUL_K_STEP);
 
-    UZU_PRAGMA_UNROLL
-    for (short mm = 0; mm < TM; mm++) {
-      UZU_PRAGMA_UNROLL
-      for (short nn = 0; nn < TN; nn++) {
-        const short subtile_index = mm * TN + nn;
+    PRAGMA_UNROLL
+    for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+      PRAGMA_UNROLL
+      for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
+        const short subtile_index = tile_m * TILES_N + tile_n;
 
-        const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - mm * SUBTILE_ROWS)) : SUBTILE_ROWS;
-        const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - nn * SUBTILE_COLS)) : SUBTILE_COLS;
+        const short m_limit = is_unaligned_m ? short(max(0, int(simdgroup_limit_m) - tile_m * SUBTILE_ROWS)) : SUBTILE_ROWS;
+        const short n_limit = is_unaligned_n ? short(max(0, int(simdgroup_limit_n) - tile_n * SUBTILE_COLS)) : SUBTILE_COLS;
         if (m_limit <= 0 || n_limit <= 0) continue;
 
-        UZU_PRAGMA_UNROLL
+        PRAGMA_UNROLL
         for (short i = 0; i < accumulator_capacity; i++)
           accumulator_tensor[i] = accum_storage[subtile_index][i];
 
         for (short k_step = 0; k_step < remainder_steps; k_step++) {
           const short k_offset = k_step * MATMUL_K_STEP;
 
-          UZU_PRAGMA_UNROLL
+          PRAGMA_UNROLL
           for (short i = 0; i < left_capacity; i++)
-            left_tensor[i] = a_shared[all_left_tg_base[subtile_index][i] + k_offset];
+            left_tensor[i] = left_shared[all_left_tg_base[subtile_index][i] + k_offset];
 
-          UZU_PRAGMA_UNROLL
+          PRAGMA_UNROLL
           for (short i = 0; i < right_capacity; i++)
-            right_tensor[i] = b_shared[all_right_tg_base[subtile_index][i] + k_offset];
+            right_tensor[i] = right_shared[all_right_tg_base[subtile_index][i] + k_offset];
 
           matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
         }
 
-        UZU_PRAGMA_UNROLL
+        PRAGMA_UNROLL
         for (short i = 0; i < accumulator_capacity; i++)
           accum_storage[subtile_index][i] = accumulator_tensor[i];
       }
@@ -316,34 +317,34 @@ METAL_FUNC void gemm_mpp_impl(
   }
 
   // --- Store results ---
-  UZU_PRAGMA_UNROLL
-  for (short mm = 0; mm < TM; mm++) {
-    UZU_PRAGMA_UNROLL
-    for (short nn = 0; nn < TN; nn++) {
-      const short m_off = mm * SUBTILE_ROWS;
-      const short n_off = nn * SUBTILE_COLS;
+  PRAGMA_UNROLL
+  for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+    PRAGMA_UNROLL
+    for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
+      const short row_offset = tile_m * SUBTILE_ROWS;
+      const short col_offset = tile_n * SUBTILE_COLS;
 
-      const short m_limit = is_unaligned_sm ? short(max(0, int(sgp_sm) - m_off)) : SUBTILE_ROWS;
-      const short n_limit = is_unaligned_sn ? short(max(0, int(sgp_sn) - n_off)) : SUBTILE_COLS;
+      const short m_limit = is_unaligned_m ? short(max(0, int(simdgroup_limit_m) - row_offset)) : SUBTILE_ROWS;
+      const short n_limit = is_unaligned_n ? short(max(0, int(simdgroup_limit_n) - col_offset)) : SUBTILE_COLS;
       if (m_limit <= 0 || n_limit <= 0) continue;
 
-      device T* d_sub = d_out + m_off * params->ldd + n_off;
+      device T* output_subtile_ptr = output_ptr + row_offset * params->leading_dim_d + col_offset;
 
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short i = 0; i < accumulator_capacity; i++)
-        accumulator_tensor[i] = accum_storage[mm * TN + nn][i];
+        accumulator_tensor[i] = accum_storage[tile_m * TILES_N + tile_n][i];
 
-      const bool subtile_aligned_m = !is_unaligned_sm || (m_limit == SUBTILE_ROWS);
-      const bool subtile_aligned_n = !is_unaligned_sn || (n_limit == SUBTILE_COLS);
+      const bool subtile_aligned_m = !is_unaligned_m || (m_limit == SUBTILE_ROWS);
+      const bool subtile_aligned_n = !is_unaligned_n || (n_limit == SUBTILE_COLS);
 
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short i = 0; i < accumulator_capacity; i++) {
         if (subtile_aligned_m && subtile_aligned_n) {
           if (output_valid[i])
-            d_sub[output_row[i] * params->ldd + output_col[i]] = T(accumulator_tensor[i]);
+            output_subtile_ptr[output_row[i] * params->leading_dim_d + output_col[i]] = T(accumulator_tensor[i]);
         } else {
           if (output_valid[i] && output_row[i] < m_limit && output_col[i] < n_limit)
-            d_sub[output_row[i] * params->ldd + output_col[i]] = T(accumulator_tensor[i]);
+            output_subtile_ptr[output_row[i] * params->leading_dim_d + output_col[i]] = T(accumulator_tensor[i]);
         }
       }
     }
@@ -357,15 +358,15 @@ METAL_FUNC void gemm_mpp_impl(
 template <typename T>
 VARIANTS(T, half, bfloat)
 KERNEL(MatmulGemmMpp)(
-    const device T* a,
-    const device T* b,
-    device T* d,
+    const device T* left_matrix,
+    const device T* right_matrix,
+    device T* output_matrix,
     const constant uzu::matmul::GEMMParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const constant uint& group_count_z,
-    threadgroup T a_shared[THREADGROUP_TILE_SIZE],
-    threadgroup T b_shared[THREADGROUP_TILE_SIZE],
+    threadgroup T left_shared[THREADGROUP_TILE_SIZE],
+    threadgroup T right_shared[THREADGROUP_TILE_SIZE],
     const uint block_rows SPECIALIZE,
     const uint block_cols SPECIALIZE,
     const uint block_depth SPECIALIZE,
@@ -390,16 +391,16 @@ KERNEL(MatmulGemmMpp)(
   if (block_rows == 128 && block_cols == 128 && block_depth == 512 &&
       warps_per_row == 4 && warps_per_col == 4) {
     gemm_mpp_impl<T, 128, 128, 512, 4, 4>(
-        a, b, d, params,
+        left_matrix, right_matrix, output_matrix, params,
         align_m, align_n, align_k,
-        a_shared, b_shared,
+        left_shared, right_shared,
         simd.group_idx, simd.lane_idx,
         uint3(group_x, group_y, group_z));
   } else {
     gemm_mpp_impl<T, 64, 64, 256, 2, 2>(
-        a, b, d, params,
+        left_matrix, right_matrix, output_matrix, params,
         align_m, align_n, align_k,
-        a_shared, b_shared,
+        left_shared, right_shared,
         simd.group_idx, simd.lane_idx,
         uint3(group_x, group_y, group_z));
   }

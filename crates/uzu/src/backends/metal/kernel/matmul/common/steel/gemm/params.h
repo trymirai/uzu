@@ -13,9 +13,9 @@ struct GEMMParams {
   const int N;
   const int K;
 
-  const int lda;
-  const int ldb;
-  const int ldd;
+  const int leading_dim_a;
+  const int leading_dim_b;
+  const int leading_dim_d;
 
   const int tiles_n;
   const int tiles_m;
@@ -30,14 +30,14 @@ struct GEMMParams {
   const int batch_ndim;
 };
 
-struct GEMMSpiltKParams {
+struct GEMMSplitKParams {
   const int M;
   const int N;
   const int K;
 
-  const int lda;
-  const int ldb;
-  const int ldc;
+  const int leading_dim_a;
+  const int leading_dim_b;
+  const int leading_dim_c;
 
   const int tiles_n;
   const int tiles_m;

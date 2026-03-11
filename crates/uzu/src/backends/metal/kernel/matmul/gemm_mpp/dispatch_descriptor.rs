@@ -34,21 +34,21 @@ impl DispatchDescriptor {
         let tm_swizzled = (tiles_m + tile_swizzle - 1) / tile_swizzle;
         let tn_swizzled = tiles_n * tile_swizzle;
 
-        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.lda as i64);
+        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.leading_dim_a as i64);
         let elements_per_matrix_b = if arguments.transpose_b {
-            (arguments.output_dim as i64) * (arguments.ldb as i64)
+            (arguments.output_dim as i64) * (arguments.leading_dim_b as i64)
         } else {
-            (arguments.input_dim as i64) * (arguments.ldb as i64)
+            (arguments.input_dim as i64) * (arguments.leading_dim_b as i64)
         };
-        let elements_per_matrix_d = (arguments.batch as i64) * (arguments.ldd as i64);
+        let elements_per_matrix_d = (arguments.batch as i64) * (arguments.leading_dim_d as i64);
 
         let params = GEMMParams {
             M: m,
             N: n,
             K: k,
-            lda: arguments.lda,
-            ldb: arguments.ldb,
-            ldd: arguments.ldd,
+            leading_dim_a: arguments.leading_dim_a,
+            leading_dim_b: arguments.leading_dim_b,
+            leading_dim_d: arguments.leading_dim_d,
             tiles_n,
             tiles_m,
             batch_stride_a: elements_per_matrix_a,

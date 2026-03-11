@@ -4,8 +4,8 @@
 #include <metal_simdgroup_matrix>
 #include <metal_stdlib>
 
-#define UZU_MTL_CONST static constant constexpr
-#define UZU_PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
+#define MTL_CONST static constant constexpr
+#define PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
 #define SIMD_SIZE 32
 
 using namespace metal;
@@ -15,63 +15,63 @@ namespace matmul {
 
 // Pointer element type extraction
 template <typename T>
-struct pointer_element_t_impl {
+struct PointerElementImpl {
   using type = T;
 };
 template <typename T>
-struct pointer_element_t_impl<device T*> {
+struct PointerElementImpl<device T*> {
   using type = T;
 };
 template <typename T>
-struct pointer_element_t_impl<const device T*> {
+struct PointerElementImpl<const device T*> {
   using type = T;
 };
 template <typename T>
-struct pointer_element_t_impl<threadgroup T*> {
+struct PointerElementImpl<threadgroup T*> {
   using type = T;
 };
 template <typename T>
-using pointer_element_t = typename pointer_element_t_impl<T>::type;
+using pointer_element_t = typename PointerElementImpl<T>::type;
 
 // Accumulator type helper
 template <typename T>
 struct AccumHelper {
-  typedef float accum_type;
+  typedef float AccumType;
 };
 
 // Transform operations for epilogue
 // Note: apply(x) is static for default store_result usage
 // apply(x, c) is non-static for epilogue operations with C matrix
-template <typename OutT, typename InT>
+template <typename OutputType, typename InputType>
 struct TransformNone {
   TransformNone(float = 1.0f, float = 0.0f) {}
 
-  static METAL_FUNC OutT apply(InT x) { return static_cast<OutT>(x); }
-  METAL_FUNC OutT apply(InT x, OutT) const { return static_cast<OutT>(x); }
+  static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
+  METAL_FUNC OutputType apply(InputType x, OutputType) const { return static_cast<OutputType>(x); }
 };
 
-template <typename OutT, typename InT>
+template <typename OutputType, typename InputType>
 struct TransformAdd {
   TransformAdd(float = 1.0f, float = 1.0f) {}
 
-  static METAL_FUNC OutT apply(InT x) { return static_cast<OutT>(x); }
-  METAL_FUNC OutT apply(InT x, OutT c) const {
-    return static_cast<OutT>(x) + c;
+  static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
+  METAL_FUNC OutputType apply(InputType x, OutputType c) const {
+    return static_cast<OutputType>(x) + c;
   }
 };
 
-template <typename OutT, typename InT>
+template <typename OutputType, typename InputType>
 struct TransformAxpby {
   const float alpha;
   const float beta;
 
   TransformAxpby(float alpha_, float beta_) : alpha(alpha_), beta(beta_) {}
 
-  static METAL_FUNC OutT apply(InT x) { return static_cast<OutT>(x); }
+  static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
 
-  METAL_FUNC OutT apply(InT x, OutT c) const {
-    return static_cast<OutT>(
-        x * static_cast<InT>(alpha) + (static_cast<OutT>(beta) * c)
+  METAL_FUNC OutputType apply(InputType x, OutputType c) const {
+    return static_cast<OutputType>(
+        x * static_cast<InputType>(alpha) + (static_cast<OutputType>(beta) * c)
     );
   }
 };

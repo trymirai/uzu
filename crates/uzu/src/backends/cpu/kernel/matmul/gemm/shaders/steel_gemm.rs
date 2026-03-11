@@ -7,9 +7,9 @@ use crate::ArrayElement;
 #[kernel(MatmulGemm)]
 #[variants(T, f32, f16, bf16)]
 pub fn matmul_gemm<T: ArrayElement + Float>(
-    #[allow(unused)] a: *const T,
-    #[allow(unused)] b: *const T,
-    #[allow(unused)] d: *mut T,
+    #[allow(unused)] left_matrix: *const T,
+    #[allow(unused)] right_matrix: *const T,
+    #[allow(unused)] output_matrix: *mut T,
     #[allow(unused)] params: &[crate::backends::common::gpu_types::matmul::GEMMParams],
     #[allow(unused)] group_count_x: u32,
     #[allow(unused)] group_count_y: u32,
