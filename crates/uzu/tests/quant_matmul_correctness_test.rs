@@ -30,12 +30,19 @@ struct QuantConfig {
 }
 
 impl std::fmt::Display for QuantConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         let qt = match self.quant_type {
             QuantizedMatmulType::ZeroPoint => "ZP",
             QuantizedMatmulType::Mlx => "Mlx",
         };
-        let tr = if self.weights_transposed { "T" } else { "N" };
+        let tr = if self.weights_transposed {
+            "T"
+        } else {
+            "N"
+        };
         write!(f, "{qt}/{}-bit/{tr}", self.bits)
     }
 }
@@ -48,7 +55,10 @@ struct TestShape {
 }
 
 impl std::fmt::Display for TestShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         write!(f, "{}x{}x{}", self.batch, self.input_dim, self.output_dim)
     }
 }
@@ -63,11 +73,22 @@ struct TestResult {
     total_outputs: usize,
 }
 
-fn quant_dispatch_path(batch: usize, output_dim: usize) -> &'static str {
-    if batch < 32 || output_dim == 1 { "MatrixVector" } else { "MatrixMatrix" }
+fn quant_dispatch_path(
+    batch: usize,
+    output_dim: usize,
+) -> &'static str {
+    if batch < 32 || output_dim == 1 {
+        "MatrixVector"
+    } else {
+        "MatrixMatrix"
+    }
 }
 
-fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]) {
+fn write_json_results<T: Serialize>(
+    test_name: &str,
+    device: &str,
+    results: &[T],
+) {
     if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
         let path = std::path::Path::new(&dir);
         std::fs::create_dir_all(path).expect("create results dir");
@@ -84,7 +105,11 @@ fn test_configs() -> Vec<QuantConfig> {
     for &quant_type in &[QuantizedMatmulType::ZeroPoint, QuantizedMatmulType::Mlx] {
         for &bits in &[4usize, 8] {
             for &weights_transposed in &[true, false] {
-                configs.push(QuantConfig { quant_type, bits, weights_transposed });
+                configs.push(QuantConfig {
+                    quant_type,
+                    bits,
+                    weights_transposed,
+                });
             }
         }
     }
@@ -97,52 +122,100 @@ fn test_shapes() -> Vec<TestShape> {
     for &batch in &[512, 1024, 2048] {
         for &output_dim in &[512, 1024, 2048] {
             for &input_dim in &[1, 2, 4, 8, 16, 32, 64] {
-                shapes.push(TestShape { batch, input_dim, output_dim });
+                shapes.push(TestShape {
+                    batch,
+                    input_dim,
+                    output_dim,
+                });
             }
         }
     }
 
     let model_dims: &[(usize, usize)] = &[
-        (896, 896), (896, 4864), (4864, 896),
-        (1024, 1024), (1024, 4096), (4096, 1024),
-        (1152, 1152), (1152, 6912), (6912, 1152),
-        (1536, 1536), (1536, 8960), (8960, 1536),
-        (2048, 2048), (2048, 8192), (8192, 2048),
-        (2560, 2560), (2560, 10240), (10240, 2560),
-        (3072, 3072), (3072, 8192), (8192, 3072),
-        (3584, 3584), (3584, 18944), (18944, 3584),
-        (4096, 4096), (4096, 14336), (14336, 4096),
-        (5120, 5120), (5120, 17408), (17408, 5120),
+        (896, 896),
+        (896, 4864),
+        (4864, 896),
+        (1024, 1024),
+        (1024, 4096),
+        (4096, 1024),
+        (1152, 1152),
+        (1152, 6912),
+        (6912, 1152),
+        (1536, 1536),
+        (1536, 8960),
+        (8960, 1536),
+        (2048, 2048),
+        (2048, 8192),
+        (8192, 2048),
+        (2560, 2560),
+        (2560, 10240),
+        (10240, 2560),
+        (3072, 3072),
+        (3072, 8192),
+        (8192, 3072),
+        (3584, 3584),
+        (3584, 18944),
+        (18944, 3584),
+        (4096, 4096),
+        (4096, 14336),
+        (14336, 4096),
+        (5120, 5120),
+        (5120, 17408),
+        (17408, 5120),
     ];
     for &(input_dim, output_dim) in model_dims {
         for &batch in &[1, 128] {
-            shapes.push(TestShape { batch, input_dim, output_dim });
+            shapes.push(TestShape {
+                batch,
+                input_dim,
+                output_dim,
+            });
         }
     }
 
     shapes
 }
 
-fn shape_valid_for_config(shape: &TestShape, config: &QuantConfig) -> bool {
-    let grouped_dim = if config.weights_transposed { shape.input_dim } else { shape.output_dim };
+fn shape_valid_for_config(
+    shape: &TestShape,
+    config: &QuantConfig,
+) -> bool {
+    let grouped_dim = if config.weights_transposed {
+        shape.input_dim
+    } else {
+        shape.output_dim
+    };
     grouped_dim >= GROUP_SIZE
 }
 
 // --- weight generation ---
 
-fn create_test_weights(output_dim: usize, input_dim: usize, weights_transposed: bool, bits: usize) -> Vec<u8> {
+fn create_test_weights(
+    output_dim: usize,
+    input_dim: usize,
+    weights_transposed: bool,
+    bits: usize,
+) -> Vec<u8> {
     let mut weights = Vec::with_capacity(output_dim * input_dim);
     if weights_transposed {
         for row in 0..output_dim {
             for _col in 0..input_dim {
-                let v = if bits == 4 { ((row + 1) & 0x0F) as u8 } else { ((row + 1) & 0xFF) as u8 };
+                let v = if bits == 4 {
+                    ((row + 1) & 0x0F) as u8
+                } else {
+                    ((row + 1) & 0xFF) as u8
+                };
                 weights.push(v);
             }
         }
     } else {
         for _row in 0..input_dim {
             for col in 0..output_dim {
-                let v = if bits == 4 { ((col + 1) & 0x0F) as u8 } else { (col & 0xFF) as u8 };
+                let v = if bits == 4 {
+                    ((col + 1) & 0x0F) as u8
+                } else {
+                    (col & 0xFF) as u8
+                };
                 weights.push(v);
             }
         }
@@ -166,11 +239,21 @@ fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
 
 // --- quantization params generation ---
 
-fn get_zp_value(zero_points: &[u8], stride: usize, row_idx: usize, group_idx: usize, bits: usize) -> f32 {
+fn get_zp_value(
+    zero_points: &[u8],
+    stride: usize,
+    row_idx: usize,
+    group_idx: usize,
+    bits: usize,
+) -> f32 {
     if bits == 4 {
         let byte_index = row_idx * stride + (group_idx >> 1);
         let byte = zero_points.get(byte_index).copied().unwrap_or(0);
-        if (group_idx & 1) == 0 { (byte & 0x0F) as f32 } else { ((byte >> 4) & 0x0F) as f32 }
+        if (group_idx & 1) == 0 {
+            (byte & 0x0F) as f32
+        } else {
+            ((byte >> 4) & 0x0F) as f32
+        }
     } else {
         zero_points.get(row_idx * stride + group_idx).copied().unwrap_or(0) as f32
     }
@@ -183,19 +266,30 @@ struct QuantParams {
     zero_points_stride: usize,
 }
 
-fn generate_quant_params(config: &QuantConfig, shape: &TestShape) -> QuantParams {
+fn generate_quant_params(
+    config: &QuantConfig,
+    shape: &TestShape,
+) -> QuantParams {
     let num_groups = if !config.weights_transposed {
         (shape.output_dim + GROUP_SIZE - 1) / GROUP_SIZE
     } else {
         (shape.input_dim + GROUP_SIZE - 1) / GROUP_SIZE
     };
-    let primary_dim = if !config.weights_transposed { shape.input_dim } else { shape.output_dim };
+    let primary_dim = if !config.weights_transposed {
+        shape.input_dim
+    } else {
+        shape.output_dim
+    };
 
     let len = primary_dim * num_groups;
     let scales = vec![1.0f32; len];
     let mut biases = vec![0.0f32; len];
 
-    let zp_stride = if config.bits == 4 { ((num_groups + 1) / 2).max(1) } else { num_groups };
+    let zp_stride = if config.bits == 4 {
+        ((num_groups + 1) / 2).max(1)
+    } else {
+        num_groups
+    };
     let zp_len = if !config.weights_transposed {
         shape.input_dim * zp_stride
     } else {
@@ -209,7 +303,11 @@ fn generate_quant_params(config: &QuantConfig, shape: &TestShape) -> QuantParams
                 for g in 0..num_groups {
                     let k_eff = k / GROUP_SIZE;
                     let base_val = ((k_eff * 5 + g * 7) & 0xFF) as u8;
-                    let zp_val_u8 = if config.bits == 4 { base_val & 0x0F } else { base_val };
+                    let zp_val_u8 = if config.bits == 4 {
+                        base_val & 0x0F
+                    } else {
+                        base_val
+                    };
                     if config.bits == 4 {
                         let byte_index = k * zp_stride + (g >> 1);
                         if (g & 1) == 0 {
@@ -220,7 +318,11 @@ fn generate_quant_params(config: &QuantConfig, shape: &TestShape) -> QuantParams
                     } else {
                         zero_points[k * zp_stride + g] = zp_val_u8;
                     }
-                    let zp_val = if config.bits == 4 { (zp_val_u8 & 0x0F) as f32 } else { zp_val_u8 as f32 };
+                    let zp_val = if config.bits == 4 {
+                        (zp_val_u8 & 0x0F) as f32
+                    } else {
+                        zp_val_u8 as f32
+                    };
                     biases[k * num_groups + g] = -scales[k * num_groups + g] * zp_val;
                 }
             }
@@ -228,7 +330,11 @@ fn generate_quant_params(config: &QuantConfig, shape: &TestShape) -> QuantParams
             for j in 0..shape.output_dim {
                 for g in 0..num_groups {
                     let base_val = j + 3 * g;
-                    let zp_val: u8 = if config.bits == 4 { (base_val as u8) & 0x0F } else { base_val as u8 };
+                    let zp_val: u8 = if config.bits == 4 {
+                        (base_val as u8) & 0x0F
+                    } else {
+                        base_val as u8
+                    };
                     if config.bits == 4 {
                         let byte_index = j * zp_stride + (g >> 1);
                         if (g & 1) == 0 {
@@ -262,12 +368,20 @@ fn generate_quant_params(config: &QuantConfig, shape: &TestShape) -> QuantParams
         }
     }
 
-    QuantParams { scales_f32: scales, biases_f32: biases, zero_points, zero_points_stride: zp_stride }
+    QuantParams {
+        scales_f32: scales,
+        biases_f32: biases,
+        zero_points,
+        zero_points_stride: zp_stride,
+    }
 }
 
 // --- CPU reference ---
 
-fn get_4bit_value(data: &[u8], index: usize) -> f32 {
+fn get_4bit_value(
+    data: &[u8],
+    index: usize,
+) -> f32 {
     let word_idx = index / 4;
     let word_offset = index % 4;
     let byte_idx = word_idx * 2;
@@ -300,11 +414,16 @@ fn cpu_reference(
                 let group_idx = j / GROUP_SIZE;
                 for l in 0..shape.input_dim {
                     let weight_idx = l * shape.output_dim + j;
-                    let val_q = if config.bits == 4 { get_4bit_value(b_quant, weight_idx) } else { b_quant[weight_idx] as f32 };
+                    let val_q = if config.bits == 4 {
+                        get_4bit_value(b_quant, weight_idx)
+                    } else {
+                        b_quant[weight_idx] as f32
+                    };
                     let val_a = x_f32[i * shape.input_dim + l];
                     let scale = params.scales_f32[l * num_groups + group_idx];
                     let bias = if config.quant_type == QuantizedMatmulType::ZeroPoint {
-                        let zp = get_zp_value(&params.zero_points, params.zero_points_stride, l, group_idx, config.bits);
+                        let zp =
+                            get_zp_value(&params.zero_points, params.zero_points_stride, l, group_idx, config.bits);
                         -scale * zp
                     } else {
                         params.biases_f32[l * num_groups + group_idx]
@@ -326,7 +445,11 @@ fn cpu_reference(
                     let mut group_sum = 0.0f32;
                     for l in l_start..l_end {
                         let weight_idx = j * shape.input_dim + l;
-                        let val_q = if config.bits == 4 { get_4bit_value(b_quant, weight_idx) } else { b_quant[weight_idx] as f32 };
+                        let val_q = if config.bits == 4 {
+                            get_4bit_value(b_quant, weight_idx)
+                        } else {
+                            b_quant[weight_idx] as f32
+                        };
                         let val_a = x_f32[i * shape.input_dim + l];
                         group_acc += val_a * val_q;
                         group_sum += val_a;
@@ -357,12 +480,15 @@ fn run_quant_matmul_case(
     shape: &TestShape,
 ) -> TestResult {
     let weights_quant = create_test_weights(shape.output_dim, shape.input_dim, config.weights_transposed, config.bits);
-    let weights_packed = if config.bits == 4 { pack_u4_weights(&weights_quant) } else { weights_quant.clone() };
+    let weights_packed = if config.bits == 4 {
+        pack_u4_weights(&weights_quant)
+    } else {
+        weights_quant.clone()
+    };
     let params = generate_quant_params(config, shape);
 
-    let x_f32: Vec<f32> = (0..shape.batch * shape.input_dim)
-        .map(|i| (i % shape.input_dim + 1) as f32 / shape.input_dim as f32)
-        .collect();
+    let x_f32: Vec<f32> =
+        (0..shape.batch * shape.input_dim).map(|i| (i % shape.input_dim + 1) as f32 / shape.input_dim as f32).collect();
 
     let w_buf = ctx
         .device
@@ -457,7 +583,11 @@ fn print_results_table(results: &[TestResult]) {
             r.config.clone(),
             r.shape.clone(),
             r.dispatch_path.clone(),
-            if r.passed { "PASS".into() } else { "FAIL".into() },
+            if r.passed {
+                "PASS".into()
+            } else {
+                "FAIL".into()
+            },
             format!("{}/{}", r.mismatch_count, r.total_outputs),
         ]);
     }
@@ -502,7 +632,10 @@ fn quant_matmul_correctness() {
     if !failures.is_empty() {
         eprintln!("\n{} / {} cases failed:", failures.len(), results.len());
         for f in &failures {
-            eprintln!("  {} {} [{}] mismatches={}/{}", f.config, f.shape, f.dispatch_path, f.mismatch_count, f.total_outputs);
+            eprintln!(
+                "  {} {} [{}] mismatches={}/{}",
+                f.config, f.shape, f.dispatch_path, f.mismatch_count, f.total_outputs
+            );
         }
         panic!("{} quant matmul correctness cases failed", failures.len());
     }

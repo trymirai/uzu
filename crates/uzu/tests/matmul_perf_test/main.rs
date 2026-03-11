@@ -1,22 +1,26 @@
 #![cfg(target_os = "macos")]
 
+mod bench;
 #[path = "../common/mod.rs"]
 mod common;
-mod bench;
 mod error;
 mod output;
 mod shapes;
 
+use common::matmul::{DtypeCombo, TestShape, make_arguments, test_combos, try_all_descriptors};
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::{MTLDeviceExt, MTLResourceOptions};
-use uzu::backends::{common::Context, metal::MetalContext};
-
-use common::matmul::{make_arguments, test_combos, try_all_descriptors, DtypeCombo, TestShape};
 use output::print_results_table;
 use shapes::test_shapes;
 use uzu::{
     DataType,
-    backends::common::kernel::matmul::{MatmulDispatchDescriptor, gemm_mpp},
+    backends::{
+        common::{
+            Context,
+            kernel::matmul::{MatmulDispatchDescriptor, gemm_mpp},
+        },
+        metal::MetalContext,
+    },
 };
 
 #[test]
@@ -79,14 +83,46 @@ fn matmul_perf() {
 
 fn mpp_perf_shapes() -> Vec<TestShape> {
     vec![
-        TestShape { batch: 128, input_dim: 128, output_dim: 128 },
-        TestShape { batch: 256, input_dim: 256, output_dim: 256 },
-        TestShape { batch: 128, input_dim: 896, output_dim: 896 },
-        TestShape { batch: 64, input_dim: 896, output_dim: 4864 },
-        TestShape { batch: 1, input_dim: 4096, output_dim: 4096 },
-        TestShape { batch: 64, input_dim: 2048, output_dim: 8192 },
-        TestShape { batch: 100, input_dim: 128, output_dim: 200 },
-        TestShape { batch: 128, input_dim: 17, output_dim: 128 },
+        TestShape {
+            batch: 128,
+            input_dim: 128,
+            output_dim: 128,
+        },
+        TestShape {
+            batch: 256,
+            input_dim: 256,
+            output_dim: 256,
+        },
+        TestShape {
+            batch: 128,
+            input_dim: 896,
+            output_dim: 896,
+        },
+        TestShape {
+            batch: 64,
+            input_dim: 896,
+            output_dim: 4864,
+        },
+        TestShape {
+            batch: 1,
+            input_dim: 4096,
+            output_dim: 4096,
+        },
+        TestShape {
+            batch: 64,
+            input_dim: 2048,
+            output_dim: 8192,
+        },
+        TestShape {
+            batch: 100,
+            input_dim: 128,
+            output_dim: 200,
+        },
+        TestShape {
+            batch: 128,
+            input_dim: 17,
+            output_dim: 128,
+        },
     ]
 }
 
@@ -95,9 +131,11 @@ fn mpp_perf_shapes() -> Vec<TestShape> {
 fn matmul_mpp_perf() {
     let context = MetalContext::new().expect("Metal context required");
 
-    let combos = vec![
-        DtypeCombo { a_dtype: DataType::F16, b_dtype: DataType::F16, output_dtype: DataType::F16 },
-    ];
+    let combos = vec![DtypeCombo {
+        a_dtype: DataType::F16,
+        b_dtype: DataType::F16,
+        output_dtype: DataType::F16,
+    }];
     let shapes = mpp_perf_shapes();
 
     eprintln!("MPP matmul perf: {} combos x {} shapes", combos.len(), shapes.len());

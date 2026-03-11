@@ -27,14 +27,7 @@ pub fn print_results_table(results: &[PerfResult]) {
         } else {
             ("-".into(), "-".into(), format!("ERR: {}", r.error.as_deref().unwrap_or("?")))
         };
-        table.add_row(vec![
-            r.combo.clone(),
-            r.shape.clone(),
-            r.dispatch_path.clone(),
-            gflops_str,
-            ms_str,
-            status_str,
-        ]);
+        table.add_row(vec![r.combo.clone(), r.shape.clone(), r.dispatch_path.clone(), gflops_str, ms_str, status_str]);
     }
 
     for col in [3, 4] {

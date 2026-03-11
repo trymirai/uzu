@@ -7,9 +7,11 @@ use uzu::backends::{
     metal::{Metal, MetalContext},
 };
 
-use super::common::matmul::{DtypeCombo, TestShape, make_arguments};
-use super::output::TestResult;
-use super::reference::{generate_typed_data, ndarray_reference, output_to_f64, tolerance_for};
+use super::{
+    common::matmul::{DtypeCombo, TestShape, make_arguments},
+    output::TestResult,
+    reference::{generate_typed_data, ndarray_reference, output_to_f64, tolerance_for},
+};
 
 pub fn run_correctness_case(
     context: &MetalContext,

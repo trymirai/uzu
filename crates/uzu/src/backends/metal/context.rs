@@ -1,9 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    env,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
 
 use metal::{
     MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
@@ -154,8 +149,7 @@ pub struct DeviceArchitecture {
 impl DeviceArchitecture {
     pub fn from_device(device: &ProtocolObject<dyn MTLDevice>) -> Self {
         let architecture_name = gpu_architecture_name(device).unwrap_or_default();
-        let gpu_architecture =
-            GpuArchitecture::parse(&architecture_name).unwrap_or_else(GpuArchitecture::unknown);
+        let gpu_architecture = GpuArchitecture::parse(&architecture_name).unwrap_or_else(GpuArchitecture::unknown);
 
         Self {
             generation: gpu_architecture.generation,

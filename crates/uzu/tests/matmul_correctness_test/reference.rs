@@ -6,35 +6,39 @@ use uzu::DataType;
 
 use super::common::matmul::{DtypeCombo, TestShape};
 
-pub fn generate_typed_data(dtype: DataType, count: usize, modulus: usize, offset: i64) -> Vec<u8> {
+pub fn generate_typed_data(
+    dtype: DataType,
+    count: usize,
+    modulus: usize,
+    offset: i64,
+) -> Vec<u8> {
     match dtype {
         DataType::I8 => {
             let data: Vec<i8> = (0..count).map(|i| ((i % modulus) as i8).wrapping_add(offset as i8)).collect();
             bytemuck::cast_slice(&data).to_vec()
         },
         DataType::BF16 => {
-            let data: Vec<bf16> = (0..count)
-                .map(|i| bf16::from_f32(((i % modulus) as f32) * 0.01 + offset as f32 * 0.01))
-                .collect();
+            let data: Vec<bf16> =
+                (0..count).map(|i| bf16::from_f32(((i % modulus) as f32) * 0.01 + offset as f32 * 0.01)).collect();
             bytemuck::cast_slice(&data).to_vec()
         },
         DataType::F16 => {
-            let data: Vec<f16> = (0..count)
-                .map(|i| f16::from_f32(((i % modulus) as f32) * 0.01 + offset as f32 * 0.01))
-                .collect();
+            let data: Vec<f16> =
+                (0..count).map(|i| f16::from_f32(((i % modulus) as f32) * 0.01 + offset as f32 * 0.01)).collect();
             bytemuck::cast_slice(&data).to_vec()
         },
         DataType::F32 => {
-            let data: Vec<f32> = (0..count)
-                .map(|i| ((i % modulus) as f32) * 0.01 + offset as f32 * 0.01)
-                .collect();
+            let data: Vec<f32> = (0..count).map(|i| ((i % modulus) as f32) * 0.01 + offset as f32 * 0.01).collect();
             bytemuck::cast_slice(&data).to_vec()
         },
         other => panic!("Unsupported dtype for data generation: {other:?}"),
     }
 }
 
-fn bytes_to_f64(dtype: DataType, bytes: &[u8]) -> Vec<f64> {
+fn bytes_to_f64(
+    dtype: DataType,
+    bytes: &[u8],
+) -> Vec<f64> {
     match dtype {
         DataType::I8 => bytemuck::cast_slice::<u8, i8>(bytes).iter().map(|&x| x as f64).collect(),
         DataType::BF16 => bytemuck::cast_slice::<u8, bf16>(bytes).iter().map(|x| x.to_f64()).collect(),
@@ -44,7 +48,11 @@ fn bytes_to_f64(dtype: DataType, bytes: &[u8]) -> Vec<f64> {
     }
 }
 
-pub fn output_to_f64(output_dtype: DataType, buffer: &ProtocolObject<dyn MTLBuffer>, count: usize) -> Vec<f64> {
+pub fn output_to_f64(
+    output_dtype: DataType,
+    buffer: &ProtocolObject<dyn MTLBuffer>,
+    count: usize,
+) -> Vec<f64> {
     unsafe {
         let pointer = buffer.contents().as_ptr();
         match output_dtype {
@@ -69,7 +77,12 @@ pub fn output_to_f64(output_dtype: DataType, buffer: &ProtocolObject<dyn MTLBuff
     }
 }
 
-pub fn ndarray_reference(combo: &DtypeCombo, a_bytes: &[u8], b_bytes: &[u8], shape: &TestShape) -> Vec<f64> {
+pub fn ndarray_reference(
+    combo: &DtypeCombo,
+    a_bytes: &[u8],
+    b_bytes: &[u8],
+    shape: &TestShape,
+) -> Vec<f64> {
     let a_f64 = bytes_to_f64(combo.a_dtype, a_bytes);
     let b_f64 = bytes_to_f64(combo.b_dtype, b_bytes);
 
@@ -86,12 +99,13 @@ pub fn ndarray_reference(combo: &DtypeCombo, a_bytes: &[u8], b_bytes: &[u8], sha
     }
 }
 
-pub fn tolerance_for(combo: &DtypeCombo, shape: &TestShape) -> f64 {
+pub fn tolerance_for(
+    combo: &DtypeCombo,
+    shape: &TestShape,
+) -> f64 {
     match (combo.a_dtype, combo.b_dtype, combo.output_dtype) {
         (DataType::I8, DataType::I8, DataType::I32) => 0.0,
-        (DataType::I8, DataType::BF16, DataType::BF16) => {
-            0.05 * (shape.input_dim as f64 / 1024.0).sqrt()
-        },
+        (DataType::I8, DataType::BF16, DataType::BF16) => 0.05 * (shape.input_dim as f64 / 1024.0).sqrt(),
         (DataType::BF16, DataType::BF16, DataType::BF16) => {
             let base = 0.01 * (shape.input_dim as f64 / 1024.0).sqrt();
             base * (1.0 + (shape.batch as f64).ln() / std::f64::consts::LN_2 * 0.02)

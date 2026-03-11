@@ -33,7 +33,10 @@ struct QuantConfig {
 }
 
 impl std::fmt::Display for QuantConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         let qt = match self.quant_type {
             QuantizedMatmulType::ZeroPoint => "ZP",
             QuantizedMatmulType::Mlx => "Mlx",
@@ -50,7 +53,10 @@ struct TestShape {
 }
 
 impl std::fmt::Display for TestShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         write!(f, "{}x{}x{}", self.batch, self.input_dim, self.output_dim)
     }
 }
@@ -67,11 +73,22 @@ struct PerfResult {
     error: Option<String>,
 }
 
-fn quant_dispatch_path(batch: usize, output_dim: usize) -> &'static str {
-    if batch < 32 || output_dim == 1 { "MatrixVector" } else { "MatrixMatrix" }
+fn quant_dispatch_path(
+    batch: usize,
+    output_dim: usize,
+) -> &'static str {
+    if batch < 32 || output_dim == 1 {
+        "MatrixVector"
+    } else {
+        "MatrixMatrix"
+    }
 }
 
-fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]) {
+fn write_json_results<T: Serialize>(
+    test_name: &str,
+    device: &str,
+    results: &[T],
+) {
     if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
         let path = std::path::Path::new(&dir);
         std::fs::create_dir_all(path).expect("create results dir");
@@ -85,10 +102,26 @@ fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]
 
 fn test_configs() -> Vec<QuantConfig> {
     vec![
-        QuantConfig { quant_type: QuantizedMatmulType::Mlx, bits: 4, data_type: DataType::BF16 },
-        QuantConfig { quant_type: QuantizedMatmulType::Mlx, bits: 8, data_type: DataType::BF16 },
-        QuantConfig { quant_type: QuantizedMatmulType::ZeroPoint, bits: 4, data_type: DataType::F16 },
-        QuantConfig { quant_type: QuantizedMatmulType::ZeroPoint, bits: 8, data_type: DataType::F16 },
+        QuantConfig {
+            quant_type: QuantizedMatmulType::Mlx,
+            bits: 4,
+            data_type: DataType::BF16,
+        },
+        QuantConfig {
+            quant_type: QuantizedMatmulType::Mlx,
+            bits: 8,
+            data_type: DataType::BF16,
+        },
+        QuantConfig {
+            quant_type: QuantizedMatmulType::ZeroPoint,
+            bits: 4,
+            data_type: DataType::F16,
+        },
+        QuantConfig {
+            quant_type: QuantizedMatmulType::ZeroPoint,
+            bits: 8,
+            data_type: DataType::F16,
+        },
     ]
 }
 
@@ -98,26 +131,54 @@ fn test_shapes() -> Vec<TestShape> {
     for &batch in &[512, 1024, 2048] {
         for &output_dim in &[512, 1024, 2048] {
             for &input_dim in &[1, 2, 4, 8, 16, 32, 64] {
-                shapes.push(TestShape { batch, input_dim, output_dim });
+                shapes.push(TestShape {
+                    batch,
+                    input_dim,
+                    output_dim,
+                });
             }
         }
     }
 
     let model_dims: &[(usize, usize)] = &[
-        (896, 896), (896, 4864), (4864, 896),
-        (1024, 1024), (1024, 4096), (4096, 1024),
-        (1152, 1152), (1152, 6912), (6912, 1152),
-        (1536, 1536), (1536, 8960), (8960, 1536),
-        (2048, 2048), (2048, 8192), (8192, 2048),
-        (2560, 2560), (2560, 10240), (10240, 2560),
-        (3072, 3072), (3072, 8192), (8192, 3072),
-        (3584, 3584), (3584, 18944), (18944, 3584),
-        (4096, 4096), (4096, 14336), (14336, 4096),
-        (5120, 5120), (5120, 17408), (17408, 5120),
+        (896, 896),
+        (896, 4864),
+        (4864, 896),
+        (1024, 1024),
+        (1024, 4096),
+        (4096, 1024),
+        (1152, 1152),
+        (1152, 6912),
+        (6912, 1152),
+        (1536, 1536),
+        (1536, 8960),
+        (8960, 1536),
+        (2048, 2048),
+        (2048, 8192),
+        (8192, 2048),
+        (2560, 2560),
+        (2560, 10240),
+        (10240, 2560),
+        (3072, 3072),
+        (3072, 8192),
+        (8192, 3072),
+        (3584, 3584),
+        (3584, 18944),
+        (18944, 3584),
+        (4096, 4096),
+        (4096, 14336),
+        (14336, 4096),
+        (5120, 5120),
+        (5120, 17408),
+        (17408, 5120),
     ];
     for &(input_dim, output_dim) in model_dims {
         for &batch in &[1, 128] {
-            shapes.push(TestShape { batch, input_dim, output_dim });
+            shapes.push(TestShape {
+                batch,
+                input_dim,
+                output_dim,
+            });
         }
     }
 
@@ -128,7 +189,10 @@ fn shape_valid_for_config(shape: &TestShape) -> bool {
     shape.input_dim >= GROUP_SIZE
 }
 
-fn fill_buffer_random(buf: &objc2::runtime::ProtocolObject<dyn MTLBuffer>, byte_count: usize) {
+fn fill_buffer_random(
+    buf: &objc2::runtime::ProtocolObject<dyn MTLBuffer>,
+    byte_count: usize,
+) {
     let ptr = buf.contents().as_ptr() as *mut u8;
     let slice = unsafe { std::slice::from_raw_parts_mut(ptr, byte_count) };
     for (i, byte) in slice.iter_mut().enumerate() {
@@ -174,7 +238,11 @@ fn benchmark_single(
     };
 
     let weight_elem_count = shape.output_dim * shape.input_dim;
-    let w_bytes = if config.bits == 4 { (weight_elem_count + 3) / 4 * 2 } else { weight_elem_count };
+    let w_bytes = if config.bits == 4 {
+        (weight_elem_count + 3) / 4 * 2
+    } else {
+        weight_elem_count
+    };
     let num_groups = (shape.input_dim + GROUP_SIZE - 1) / GROUP_SIZE;
     let scales_count = shape.output_dim * num_groups;
     let biases_count = scales_count;
@@ -184,26 +252,24 @@ fn benchmark_single(
     let s_bytes = scales_count * config.data_type.size_in_bytes();
     let b_bytes = match config.quant_type {
         QuantizedMatmulType::ZeroPoint => {
-            let zp_stride = if config.bits == 4 { ((num_groups + 1) / 2).max(1) } else { num_groups };
+            let zp_stride = if config.bits == 4 {
+                ((num_groups + 1) / 2).max(1)
+            } else {
+                num_groups
+            };
             shape.output_dim * zp_stride
         },
         QuantizedMatmulType::Mlx => biases_count * config.data_type.size_in_bytes(),
     };
 
-    let alloc = |size| {
-        ctx.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or("buffer alloc failed")
-    };
+    let alloc =
+        |size| ctx.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or("buffer alloc failed");
 
-    let (w_buf, x_buf, y_buf, s_buf, b_buf) = match (
-        alloc(w_bytes),
-        alloc(x_bytes),
-        alloc(y_bytes),
-        alloc(s_bytes),
-        alloc(b_bytes),
-    ) {
-        (Ok(w), Ok(x), Ok(y), Ok(s), Ok(b)) => (w, x, y, s, b),
-        _ => return error_result("buffer alloc failed".into()),
-    };
+    let (w_buf, x_buf, y_buf, s_buf, b_buf) =
+        match (alloc(w_bytes), alloc(x_bytes), alloc(y_bytes), alloc(s_bytes), alloc(b_bytes)) {
+            (Ok(w), Ok(x), Ok(y), Ok(s), Ok(b)) => (w, x, y, s, b),
+            _ => return error_result("buffer alloc failed".into()),
+        };
 
     fill_buffer_random(&w_buf, w_bytes);
     fill_buffer_random(&x_buf, x_bytes);
@@ -289,14 +355,7 @@ fn print_results_table(results: &[PerfResult]) {
         } else {
             ("-".into(), "-".into(), format!("ERR: {}", r.error.as_deref().unwrap_or("?")))
         };
-        table.add_row(vec![
-            r.config.clone(),
-            r.shape.clone(),
-            r.dispatch_path.clone(),
-            gflops_str,
-            ms_str,
-            status_str,
-        ]);
+        table.add_row(vec![r.config.clone(), r.shape.clone(), r.dispatch_path.clone(), gflops_str, ms_str, status_str]);
     }
 
     for col in [3, 4] {
@@ -316,10 +375,8 @@ fn quant_matmul_perf() {
     let configs = test_configs();
     let shapes = test_shapes();
 
-    let valid_cases: Vec<_> = configs
-        .iter()
-        .flat_map(|c| shapes.iter().filter(|s| shape_valid_for_config(s)).map(move |s| (c, s)))
-        .collect();
+    let valid_cases: Vec<_> =
+        configs.iter().flat_map(|c| shapes.iter().filter(|s| shape_valid_for_config(s)).map(move |s| (c, s))).collect();
 
     let total = valid_cases.len();
     eprintln!(

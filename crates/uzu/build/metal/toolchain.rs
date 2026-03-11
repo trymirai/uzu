@@ -166,8 +166,7 @@ impl MetalToolchain {
         let depfile_path = NamedTempFile::new().context("cannot create temporary file")?;
 
         let mut cmd = self.xcrun();
-        cmd.arg("metal")
-            .args(["-x", "metal"]);
+        cmd.arg("metal").args(["-x", "metal"]);
 
         self.add_std_args(&mut cmd, &metal_std);
         cmd.args(self.extra_options.as_ref());
@@ -234,13 +233,10 @@ impl MetalToolchain {
     ) -> anyhow::Result<Option<Box<str>>> {
         let metal_std = MetalStd::for_source(source.as_ref());
         let mut cmd = self.xcrun();
-        cmd.arg("metal")
-            .arg("-c")
-            .args(["-x", "metal"]);
+        cmd.arg("metal").arg("-c").args(["-x", "metal"]);
 
         self.add_std_args(&mut cmd, &metal_std);
-        cmd.args(self.extra_options.as_ref())
-            .args(self.opt_flags.as_ref());
+        cmd.args(self.extra_options.as_ref()).args(self.opt_flags.as_ref());
 
         self.add_include_dirs(&mut cmd);
 

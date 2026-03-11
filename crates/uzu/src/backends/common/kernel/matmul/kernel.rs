@@ -1,8 +1,8 @@
 use std::ops::DerefMut;
 
 use super::{
-    MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm_mpp::GemmMppKernel,
-    gemv::GemvKernel, matmul_arguments::MatmulArguments,
+    MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm_mpp::GemmMppKernel, gemv::GemvKernel,
+    matmul_arguments::MatmulArguments,
 };
 use crate::{
     DataType,
@@ -16,8 +16,7 @@ fn is_valid_dtype_combo(
 ) -> bool {
     matches!(
         (a, b, out),
-        (DataType::F16, DataType::F16, DataType::F16)
-            | (DataType::BF16, DataType::BF16, DataType::BF16)
+        (DataType::F16, DataType::F16, DataType::F16) | (DataType::BF16, DataType::BF16, DataType::BF16)
     )
 }
 
@@ -73,10 +72,7 @@ impl<B: Backend> MatmulKernel<B> {
 
     fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, MatmulError<B>> {
         if self.gemm_mpp.is_none() {
-            self.gemm_mpp = Some(
-                GemmMppKernel::<B>::new(self.output_dtype)
-                    .map_err(MatmulError::BackendError)?,
-            );
+            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.output_dtype).map_err(MatmulError::BackendError)?);
         }
         Ok(self.gemm_mpp.as_mut().unwrap())
     }

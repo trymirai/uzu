@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::PathBuf,
-};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;

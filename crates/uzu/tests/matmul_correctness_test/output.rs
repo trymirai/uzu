@@ -24,7 +24,11 @@ pub fn print_results_table(results: &[TestResult]) {
             result.combo.clone(),
             result.shape.clone(),
             result.dispatch_path.clone(),
-            if result.passed { "PASS".into() } else { "FAIL".into() },
+            if result.passed {
+                "PASS".into()
+            } else {
+                "FAIL".into()
+            },
             format!("{:.6}", result.max_diff),
             format!("{:.6}", result.tolerance),
         ]);

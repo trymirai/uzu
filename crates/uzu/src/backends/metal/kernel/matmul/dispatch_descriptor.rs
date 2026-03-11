@@ -53,9 +53,7 @@ pub fn choose_dispatch_descriptor(
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
 
-    Ok(MatmulDispatchDescriptor::GemmMpp(
-        gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?,
-    ))
+    Ok(MatmulDispatchDescriptor::GemmMpp(gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?))
 }
 
 #[cfg(test)]
@@ -81,10 +79,7 @@ mod tests {
         ];
 
         for ((device_generation, device_class), expected_gemv_max_batch) in cases {
-            assert_eq!(
-                default_gemv_max_batch(device_generation, device_class),
-                expected_gemv_max_batch,
-            );
+            assert_eq!(default_gemv_max_batch(device_generation, device_class), expected_gemv_max_batch,);
         }
     }
 }

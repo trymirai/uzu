@@ -14,9 +14,8 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Context,
-            CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-            CommandBufferInitial, CommandBufferPending,
+            CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+            CommandBufferPending, Context,
             kernel::matmul::{MatmulDispatchDescriptor, MatmulKernel, gemm_mpp},
         },
         metal::{Metal, MetalContext},
@@ -82,17 +81,49 @@ fn test_shapes() -> Vec<TestShape> {
 fn mpp_test_shapes() -> Vec<TestShape> {
     vec![
         // Small aligned
-        TestShape { batch: 64, input_dim: 64, output_dim: 64 },
-        TestShape { batch: 128, input_dim: 128, output_dim: 128 },
-        TestShape { batch: 256, input_dim: 256, output_dim: 256 },
+        TestShape {
+            batch: 64,
+            input_dim: 64,
+            output_dim: 64,
+        },
+        TestShape {
+            batch: 128,
+            input_dim: 128,
+            output_dim: 128,
+        },
+        TestShape {
+            batch: 256,
+            input_dim: 256,
+            output_dim: 256,
+        },
         // Unaligned K
-        TestShape { batch: 128, input_dim: 1, output_dim: 128 },
-        TestShape { batch: 128, input_dim: 17, output_dim: 128 },
+        TestShape {
+            batch: 128,
+            input_dim: 1,
+            output_dim: 128,
+        },
+        TestShape {
+            batch: 128,
+            input_dim: 17,
+            output_dim: 128,
+        },
         // Unaligned M/N
-        TestShape { batch: 100, input_dim: 128, output_dim: 200 },
+        TestShape {
+            batch: 100,
+            input_dim: 128,
+            output_dim: 200,
+        },
         // Model-like
-        TestShape { batch: 1, input_dim: 896, output_dim: 896 },
-        TestShape { batch: 128, input_dim: 896, output_dim: 896 },
+        TestShape {
+            batch: 1,
+            input_dim: 896,
+            output_dim: 896,
+        },
+        TestShape {
+            batch: 128,
+            input_dim: 896,
+            output_dim: 896,
+        },
     ]
 }
 
@@ -201,7 +232,11 @@ fn matmul_mpp_correctness() {
             let result = run_correctness_case(&context, &combo, shape, "GemmMpp", &dispatch_descriptor);
             eprintln!(
                 "  {} max_diff={:.6} tol={:.6}",
-                if result.passed { "PASS" } else { "FAIL" },
+                if result.passed {
+                    "PASS"
+                } else {
+                    "FAIL"
+                },
                 result.max_diff,
                 result.tolerance,
             );
@@ -234,7 +269,11 @@ fn mpp_layout_probe() {
 
     // Use a shape where M >= 16, N >= 32 (SM=16, SN=32 subtile size)
     // and K doesn't matter (probe mode ignores it)
-    let shape = TestShape { batch: 128, input_dim: 128, output_dim: 128 };
+    let shape = TestShape {
+        batch: 128,
+        input_dim: 128,
+        output_dim: 128,
+    };
     let combo = DtypeCombo {
         a_dtype: DataType::F16,
         b_dtype: DataType::F16,
@@ -266,8 +305,8 @@ fn mpp_layout_probe() {
     }
 
     let arguments = make_arguments(&a_buffer, &b_buffer, &mut d_buffer, &shape);
-    let mut descriptor = gemm_mpp::DispatchDescriptor::new(combo.output_dtype, &arguments)
-        .expect("MPP dispatch descriptor");
+    let mut descriptor =
+        gemm_mpp::DispatchDescriptor::new(combo.output_dtype, &arguments).expect("MPP dispatch descriptor");
 
     // Set K = -999 to trigger probe mode
     descriptor.params.K = -999;
@@ -275,23 +314,14 @@ fn mpp_layout_probe() {
     let dispatch_descriptor = MatmulDispatchDescriptor::GemmMpp(descriptor);
 
     // Dispatch the kernel
-    let mut kernel = MatmulKernel::<Metal>::new_mixed(combo.a_dtype, combo.b_dtype, combo.output_dtype)
-        .expect("create kernel");
+    let mut kernel =
+        MatmulKernel::<Metal>::new_mixed(combo.a_dtype, combo.b_dtype, combo.output_dtype).expect("create kernel");
     let arguments = make_arguments(&a_buffer, &b_buffer, &mut d_buffer, &shape);
-    let mut command_buffer = context
-        .create_command_buffer()
-        .expect("create command buffer")
-        .start_encoding();
+    let mut command_buffer = context.create_command_buffer().expect("create command buffer").start_encoding();
 
-    kernel
-        .encode_with_descriptor(&context, arguments, &dispatch_descriptor, &mut command_buffer)
-        .expect("encode");
+    kernel.encode_with_descriptor(&context, arguments, &dispatch_descriptor, &mut command_buffer).expect("encode");
 
-    command_buffer
-        .end_encoding()
-        .submit()
-        .wait_until_completed()
-        .expect("wait");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("wait");
 
     // Read probe data from output buffer
     let probe_data: &[i32] = unsafe {
@@ -380,7 +410,9 @@ fn mpp_layout_probe() {
                         break;
                     }
                 }
-                if match_j >= 0 { break; }
+                if match_j >= 0 {
+                    break;
+                }
             }
             eprintln!("  ct_c[{}] (col={}, row={}) -> frag_elem[{}]", i, ct_col, ct_row, match_j);
         }

@@ -13,7 +13,13 @@ pub enum BenchError {
     #[error("buffer allocation failed")]
     BufferAllocation,
     #[error("warmup iteration {iteration}: {source}")]
-    Warmup { iteration: usize, source: Box<BenchError> },
+    Warmup {
+        iteration: usize,
+        source: Box<BenchError>,
+    },
     #[error("benchmark iteration {iteration}: {source}")]
-    Benchmark { iteration: usize, source: Box<BenchError> },
+    Benchmark {
+        iteration: usize,
+        source: Box<BenchError>,
+    },
 }

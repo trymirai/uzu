@@ -117,7 +117,11 @@ fn force_gemv_descriptor(
     }
 
     let matrix_is_rhs = n != 1;
-    let transpose_matrix = if matrix_is_rhs { !arguments.transpose_b } else { false };
+    let transpose_matrix = if matrix_is_rhs {
+        !arguments.transpose_b
+    } else {
+        false
+    };
 
     let output_source = if arguments.bias.is_some() {
         GemvOutputSource::Bias
@@ -130,7 +134,11 @@ fn force_gemv_descriptor(
         GemvOutputSource::Bias => (true, 1.0f32, 1.0f32, 1),
     };
 
-    let output_dimension = if matrix_is_rhs { arguments.output_dim } else { arguments.batch };
+    let output_dimension = if matrix_is_rhs {
+        arguments.output_dim
+    } else {
+        arguments.batch
+    };
 
     let specialization = GemvSpecialization::select(
         transpose_matrix,
@@ -140,9 +148,17 @@ fn force_gemv_descriptor(
     );
 
     let input_dimension = arguments.input_dim;
-    let matrix_leading_dim = if matrix_is_rhs { arguments.leading_dim_b } else { arguments.leading_dim_a };
+    let matrix_leading_dim = if matrix_is_rhs {
+        arguments.leading_dim_b
+    } else {
+        arguments.leading_dim_a
+    };
 
-    let batch_shape = [if arguments.batch_count > 1 { arguments.batch_count } else { 1 }];
+    let batch_shape = [if arguments.batch_count > 1 {
+        arguments.batch_count
+    } else {
+        1
+    }];
 
     let elements_per_matrix_a = (arguments.batch as i64) * (arguments.leading_dim_a as i64);
     let elements_per_matrix_b = if arguments.transpose_b {
@@ -151,10 +167,21 @@ fn force_gemv_descriptor(
         (arguments.input_dim as i64) * (arguments.leading_dim_b as i64)
     };
 
-    let vector_batch_stride = [if matrix_is_rhs { elements_per_matrix_a } else { elements_per_matrix_b }];
-    let matrix_batch_stride = [if matrix_is_rhs { elements_per_matrix_b } else { elements_per_matrix_a }];
-    let bias_batch_stride =
-        [if arguments.batch_count > 1 { (output_dimension as i64) * (arguments.leading_dim_d as i64) } else { 0 }];
+    let vector_batch_stride = [if matrix_is_rhs {
+        elements_per_matrix_a
+    } else {
+        elements_per_matrix_b
+    }];
+    let matrix_batch_stride = [if matrix_is_rhs {
+        elements_per_matrix_b
+    } else {
+        elements_per_matrix_a
+    }];
+    let bias_batch_stride = [if arguments.batch_count > 1 {
+        (output_dimension as i64) * (arguments.leading_dim_d as i64)
+    } else {
+        0
+    }];
 
     Some(GemvDescriptor {
         specialization,
@@ -164,7 +191,11 @@ fn force_gemv_descriptor(
         output_dimension,
         matrix_leading_dim,
         alpha,
-        beta: if arguments.bias.is_some() { 1.0 } else { 0.0 },
+        beta: if arguments.bias.is_some() {
+            1.0
+        } else {
+            0.0
+        },
         batch_shape,
         vector_batch_stride,
         matrix_batch_stride,
@@ -197,7 +228,11 @@ pub fn make_arguments<'a>(
     }
 }
 
-pub fn write_json_results<T: Serialize>(test_name: &str, device: &str, results: &[T]) {
+pub fn write_json_results<T: Serialize>(
+    test_name: &str,
+    device: &str,
+    results: &[T],
+) {
     if let Ok(dir) = std::env::var("UZU_TEST_RESULTS_DIR") {
         let path = std::path::Path::new(&dir);
         std::fs::create_dir_all(path).expect("create results dir");
