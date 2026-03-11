@@ -4,11 +4,11 @@ use num_traits::Float;
 
 use crate::ArrayElement;
 
-#[kernel(QuantizedMatmulQvm)]
+#[kernel(QuantizedMatmulGemv)]
 #[variants(T, f32, f16, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qvm<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
+pub fn quantized_matmul_gemv_v2<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
     #[allow(unused)] w: *const u32,
     #[allow(unused)] scales: *const T,
     #[allow(unused)]

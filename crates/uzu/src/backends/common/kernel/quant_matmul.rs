@@ -5,8 +5,9 @@ use crate::{
     backends::common::{
         Backend, CommandBuffer, Kernels,
         kernel::{
-            QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
-            QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
+            QuantizedMatmulGemmKernel, QuantizedMatmulGemmTransposed64x64Kernel,
+            QuantizedMatmulGemmTransposedKernel, QuantizedMatmulGemvFastKernel,
+            QuantizedMatmulGemvKernel, QuantizedMatmulVectorMatrixKernel,
         },
     },
     config::QuantizationMode,
@@ -75,12 +76,12 @@ pub struct QuantizedMatmulKernelEncodable<B: Backend> {
 }
 
 enum EncodableVariant<B: Backend> {
-    Qmv(<B::Kernels as Kernels>::QuantizedMatmulQmvKernel),
-    QmvFast(<B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel),
-    Qvm(<B::Kernels as Kernels>::QuantizedMatmulQvmKernel),
-    Qmm(<B::Kernels as Kernels>::QuantizedMatmulQmmKernel),
-    QmmTransposed(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel),
-    QmmTransposed64x64(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel),
+    Gemv(<B::Kernels as Kernels>::QuantizedMatmulGemvKernel),
+    GemvFast(<B::Kernels as Kernels>::QuantizedMatmulGemvFastKernel),
+    VectorMatrix(<B::Kernels as Kernels>::QuantizedMatmulVectorMatrixKernel),
+    Gemm(<B::Kernels as Kernels>::QuantizedMatmulGemmKernel),
+    GemmTransposed(<B::Kernels as Kernels>::QuantizedMatmulGemmTransposedKernel),
+    GemmTransposed64x64(<B::Kernels as Kernels>::QuantizedMatmulGemmTransposed64x64Kernel),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,18 +92,18 @@ enum KernelKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MatrixVectorFamily {
-    Qmv,
-    QmvFast,
-    Qvm,
+    Gemv,
+    GemvFast,
+    VectorMatrix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MatrixMatrixFamily {
-    QmmAlignedK,
-    QmmUnalignedK,
-    QmmTransposedAlignedN,
-    QmmTransposedUnalignedN,
-    QmmTransposed64x64,
+    GemmAlignedK,
+    GemmUnalignedK,
+    GemmTransposedAlignedN,
+    GemmTransposedUnalignedN,
+    GemmTransposed64x64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,15 +177,19 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             RuntimeVariant::MatrixMatrix => self.matrix_matrix_key,
         };
 
-        let kernel = self.kernels.get(&key).ok_or(QuantizedMatmulError::MissingKernel(kernel_key_name(key)))?;
+        let kernel = self
+            .kernels
+            .get(&key)
+            .ok_or(QuantizedMatmulError::MissingKernel(kernel_key_name(key)))?;
         let k = to_i32("input_dim", arguments.input_dim)?;
         let n = to_i32("output_dim", arguments.output_dim)?;
         let m = to_i32("batch", arguments.batch)?;
-        let (zero_points, biases) = quant_buffers::<B>(arguments.zero_points_or_biases_buffer, self.quantization_type);
+        let (zero_points, biases) =
+            quant_buffers::<B>(arguments.zero_points_or_biases_buffer, self.quantization_type);
         let a_with_offset = (arguments.a_buffer, arguments.a_offset);
 
         match kernel {
-            EncodableVariant::Qmv(kernel) => {
+            EncodableVariant::Gemv(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
                     arguments.scales_buffer,
@@ -197,8 +202,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     m,
                     encoder,
                 );
-            },
-            EncodableVariant::QmvFast(kernel) => {
+            }
+            EncodableVariant::GemvFast(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
                     arguments.scales_buffer,
@@ -211,8 +216,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     m,
                     encoder,
                 );
-            },
-            EncodableVariant::Qvm(kernel) => {
+            }
+            EncodableVariant::VectorMatrix(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
                     arguments.scales_buffer,
@@ -225,8 +230,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     m,
                     encoder,
                 );
-            },
-            EncodableVariant::Qmm(kernel) => {
+            }
+            EncodableVariant::Gemm(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
                     arguments.scales_buffer,
@@ -239,8 +244,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     m,
                     encoder,
                 );
-            },
-            EncodableVariant::QmmTransposed(kernel) => {
+            }
+            EncodableVariant::GemmTransposed(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
                     arguments.scales_buffer,
@@ -253,8 +258,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     m,
                     encoder,
                 );
-            },
-            EncodableVariant::QmmTransposed64x64(kernel) => {
+            }
+            EncodableVariant::GemmTransposed64x64(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
                     arguments.scales_buffer,
@@ -267,16 +272,13 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     m,
                     encoder,
                 );
-            },
+            }
         }
 
         Ok(())
     }
 
-    fn select_runtime_variant(
-        &self,
-        batch: usize,
-    ) -> RuntimeVariant {
+    fn select_runtime_variant(&self, batch: usize) -> RuntimeVariant {
         if batch < 32 || self.output_dim == 1 {
             RuntimeVariant::MatrixVector
         } else {
@@ -298,8 +300,8 @@ fn create_matrix_vector_kernel<B: Backend>(
     let use_zero_points = !use_mlx_quant;
 
     let kernel = match family {
-        MatrixVectorFamily::Qmv => EncodableVariant::Qmv(
-            <B::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+        MatrixVectorFamily::Gemv => EncodableVariant::Gemv(
+            <B::Kernels as Kernels>::QuantizedMatmulGemvKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -309,8 +311,8 @@ fn create_matrix_vector_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
-        MatrixVectorFamily::QmvFast => EncodableVariant::QmvFast(
-            <B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        MatrixVectorFamily::GemvFast => EncodableVariant::GemvFast(
+            <B::Kernels as Kernels>::QuantizedMatmulGemvFastKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -320,8 +322,8 @@ fn create_matrix_vector_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
-        MatrixVectorFamily::Qvm => EncodableVariant::Qvm(
-            <B::Kernels as Kernels>::QuantizedMatmulQvmKernel::new(
+        MatrixVectorFamily::VectorMatrix => EncodableVariant::VectorMatrix(
+            <B::Kernels as Kernels>::QuantizedMatmulVectorMatrixKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -349,8 +351,8 @@ fn create_matrix_matrix_kernel<B: Backend>(
     let use_zero_points = !use_mlx_quant;
 
     let kernel = match family {
-        MatrixMatrixFamily::QmmAlignedK => EncodableVariant::Qmm(
-            <B::Kernels as Kernels>::QuantizedMatmulQmmKernel::new(
+        MatrixMatrixFamily::GemmAlignedK => EncodableVariant::Gemm(
+            <B::Kernels as Kernels>::QuantizedMatmulGemmKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -361,8 +363,8 @@ fn create_matrix_matrix_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
-        MatrixMatrixFamily::QmmUnalignedK => EncodableVariant::Qmm(
-            <B::Kernels as Kernels>::QuantizedMatmulQmmKernel::new(
+        MatrixMatrixFamily::GemmUnalignedK => EncodableVariant::Gemm(
+            <B::Kernels as Kernels>::QuantizedMatmulGemmKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -373,8 +375,8 @@ fn create_matrix_matrix_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
-        MatrixMatrixFamily::QmmTransposedAlignedN => EncodableVariant::QmmTransposed(
-            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+        MatrixMatrixFamily::GemmTransposedAlignedN => EncodableVariant::GemmTransposed(
+            <B::Kernels as Kernels>::QuantizedMatmulGemmTransposedKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -385,8 +387,8 @@ fn create_matrix_matrix_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
-        MatrixMatrixFamily::QmmTransposedUnalignedN => EncodableVariant::QmmTransposed(
-            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+        MatrixMatrixFamily::GemmTransposedUnalignedN => EncodableVariant::GemmTransposed(
+            <B::Kernels as Kernels>::QuantizedMatmulGemmTransposedKernel::new(
                 context,
                 data_type,
                 group_size,
@@ -397,8 +399,8 @@ fn create_matrix_matrix_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
-        MatrixMatrixFamily::QmmTransposed64x64 => EncodableVariant::QmmTransposed64x64(
-            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel::new(
+        MatrixMatrixFamily::GemmTransposed64x64 => EncodableVariant::GemmTransposed64x64(
+            <B::Kernels as Kernels>::QuantizedMatmulGemmTransposed64x64Kernel::new(
                 context,
                 data_type,
                 group_size,
@@ -414,29 +416,38 @@ fn create_matrix_matrix_kernel<B: Backend>(
 }
 
 fn validate_configuration<B: Backend>(
-    configuration: &QuantizedMatmulConfiguration
+    configuration: &QuantizedMatmulConfiguration,
 ) -> Result<(), QuantizedMatmulError<B>> {
-    if !matches!(configuration.data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-        return Err(QuantizedMatmulError::UnsupportedDataType(configuration.data_type));
+    if !matches!(
+        configuration.data_type,
+        DataType::F16 | DataType::BF16 | DataType::F32
+    ) {
+        return Err(QuantizedMatmulError::UnsupportedDataType(
+            configuration.data_type,
+        ));
     }
 
     if !matches!(configuration.group_size, 32 | 64 | 128) {
-        return Err(QuantizedMatmulError::UnsupportedGroupSize(configuration.group_size));
+        return Err(QuantizedMatmulError::UnsupportedGroupSize(
+            configuration.group_size,
+        ));
     }
 
     let _ = quant_bits(configuration.mode)?;
     Ok(())
 }
 
-fn select_matrix_vector_family(configuration: &QuantizedMatmulConfiguration) -> MatrixVectorFamily {
+fn select_matrix_vector_family(
+    configuration: &QuantizedMatmulConfiguration,
+) -> MatrixVectorFamily {
     if configuration.weights_transposed {
         if configuration.output_dim % 8 == 0 && configuration.input_dim % 512 == 0 {
-            MatrixVectorFamily::QmvFast
+            MatrixVectorFamily::GemvFast
         } else {
-            MatrixVectorFamily::Qmv
+            MatrixVectorFamily::Gemv
         }
     } else {
-        MatrixVectorFamily::Qvm
+        MatrixVectorFamily::VectorMatrix
     }
 }
 
@@ -451,16 +462,16 @@ fn select_matrix_matrix_family(
             && matches!(configuration.group_size, 64 | 128)
             && matches!(bits, 4 | 8);
         if use_64x64 {
-            MatrixMatrixFamily::QmmTransposed64x64
+            MatrixMatrixFamily::GemmTransposed64x64
         } else if aligned_n {
-            MatrixMatrixFamily::QmmTransposedAlignedN
+            MatrixMatrixFamily::GemmTransposedAlignedN
         } else {
-            MatrixMatrixFamily::QmmTransposedUnalignedN
+            MatrixMatrixFamily::GemmTransposedUnalignedN
         }
     } else if configuration.input_dim % 32 == 0 {
-        MatrixMatrixFamily::QmmAlignedK
+        MatrixMatrixFamily::GemmAlignedK
     } else {
-        MatrixMatrixFamily::QmmUnalignedK
+        MatrixMatrixFamily::GemmUnalignedK
     }
 }
 
@@ -480,10 +491,7 @@ fn to_i32<B: Backend>(
     name: &'static str,
     value: usize,
 ) -> Result<i32, QuantizedMatmulError<B>> {
-    i32::try_from(value).map_err(|_| QuantizedMatmulError::ValueOutOfRange {
-        name,
-        value,
-    })
+    i32::try_from(value).map_err(|_| QuantizedMatmulError::ValueOutOfRange { name, value })
 }
 
 fn quant_buffers<'a, B: Backend>(
@@ -498,15 +506,21 @@ fn quant_buffers<'a, B: Backend>(
 
 fn kernel_key_name(key: KernelKey) -> &'static str {
     match key {
-        KernelKey::MatrixVector(MatrixVectorFamily::Qmv) => "matrix_vector_qmv",
-        KernelKey::MatrixVector(MatrixVectorFamily::QmvFast) => "matrix_vector_qmv_fast",
-        KernelKey::MatrixVector(MatrixVectorFamily::Qvm) => "matrix_vector_qvm",
-        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmAlignedK) => "matrix_matrix_qmm_aligned_k",
-        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmUnalignedK) => "matrix_matrix_qmm_unaligned_k",
-        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedAlignedN) => "matrix_matrix_qmm_transposed_aligned_n",
-        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedUnalignedN) => {
-            "matrix_matrix_qmm_transposed_unaligned_n"
-        },
-        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposed64x64) => "matrix_matrix_qmm_transposed_64x64",
+        KernelKey::MatrixVector(MatrixVectorFamily::Gemv) => "matrix_vector_gemv",
+        KernelKey::MatrixVector(MatrixVectorFamily::GemvFast) => "matrix_vector_gemv_fast",
+        KernelKey::MatrixVector(MatrixVectorFamily::VectorMatrix) => "matrix_vector_vector_matrix",
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::GemmAlignedK) => "matrix_matrix_gemm_aligned_k",
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::GemmUnalignedK) => {
+            "matrix_matrix_gemm_unaligned_k"
+        }
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::GemmTransposedAlignedN) => {
+            "matrix_matrix_gemm_transposed_aligned_n"
+        }
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::GemmTransposedUnalignedN) => {
+            "matrix_matrix_gemm_transposed_unaligned_n"
+        }
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::GemmTransposed64x64) => {
+            "matrix_matrix_gemm_transposed_64x64"
+        }
     }
 }

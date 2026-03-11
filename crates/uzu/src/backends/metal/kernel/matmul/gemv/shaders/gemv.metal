@@ -117,8 +117,9 @@ KERNEL(MatmulGemv)(
       output_block_row_offset;
 
   // Exit simdgroup if rows out of bound
-  if (output_row_start >= output_dimension)
+  if (output_row_start >= output_dimension) {
     return;
+  }
 
   // Adjust tail simdgroup to ensure in bound reads
   output_row_start = output_row_start + int(thread_out_rows) <= output_dimension

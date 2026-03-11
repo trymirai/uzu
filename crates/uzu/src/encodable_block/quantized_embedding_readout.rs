@@ -13,9 +13,11 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Buffer, CommandBuffer, Context,
-        kernel::quant_matmul::{
-            QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-            QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+        kernel::{
+            quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+            },
         },
     },
     config::QuantizationMode,

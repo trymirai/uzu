@@ -1,14 +1,14 @@
 use dsl::kernel;
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::ArrayElement;
 
-#[kernel(QuantizedMatmulQmvFast)]
-#[variants(T, f32, f16, bf16)]
-#[variants(GROUP_SIZE, 32, 64, 128)]
+#[kernel(QuantizedMatmulGemmTransposed64x64)]
+#[variants(T, bf16)]
+#[variants(GROUP_SIZE, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
+pub fn quantized_matmul_gemm_transposed_64x64_v2<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
     #[allow(unused)] w: *const u32,
     #[allow(unused)] scales: *const T,
     #[allow(unused)]

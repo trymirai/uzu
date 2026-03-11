@@ -12,9 +12,16 @@ pub struct Specialization {
     pub align_n: bool,
     pub align_k: bool,
     pub use_native_fragment_layout: bool,
+    pub subtile_rows: u32,
+    pub subtile_cols: u32,
+    pub matmul_k_step: u32,
 }
 
 impl Specialization {
+    pub const SUBTILE_ROWS: u32 = 16;
+    pub const SUBTILE_COLS: u32 = 32;
+    pub const MATMUL_K_STEP: u32 = 16;
+
     pub fn precompile_configs(_data_type: DataType) -> &'static [Self] {
         &[
             Self {
@@ -28,6 +35,9 @@ impl Specialization {
                 align_n: true,
                 align_k: true,
                 use_native_fragment_layout: false,
+                subtile_rows: Self::SUBTILE_ROWS,
+                subtile_cols: Self::SUBTILE_COLS,
+                matmul_k_step: Self::MATMUL_K_STEP,
             },
             Self {
                 block_rows: 64,
@@ -40,6 +50,9 @@ impl Specialization {
                 align_n: true,
                 align_k: true,
                 use_native_fragment_layout: false,
+                subtile_rows: Self::SUBTILE_ROWS,
+                subtile_cols: Self::SUBTILE_COLS,
+                matmul_k_step: Self::MATMUL_K_STEP,
             },
             Self {
                 block_rows: 64,
@@ -52,6 +65,9 @@ impl Specialization {
                 align_n: false,
                 align_k: true,
                 use_native_fragment_layout: false,
+                subtile_rows: Self::SUBTILE_ROWS,
+                subtile_cols: Self::SUBTILE_COLS,
+                matmul_k_step: Self::MATMUL_K_STEP,
             },
             Self {
                 block_rows: 64,
@@ -64,6 +80,9 @@ impl Specialization {
                 align_n: false,
                 align_k: true,
                 use_native_fragment_layout: false,
+                subtile_rows: Self::SUBTILE_ROWS,
+                subtile_cols: Self::SUBTILE_COLS,
+                matmul_k_step: Self::MATMUL_K_STEP,
             },
             Self {
                 block_rows: 128,
@@ -76,6 +95,9 @@ impl Specialization {
                 align_n: true,
                 align_k: true,
                 use_native_fragment_layout: false,
+                subtile_rows: Self::SUBTILE_ROWS,
+                subtile_cols: Self::SUBTILE_COLS,
+                matmul_k_step: Self::MATMUL_K_STEP,
             },
             Self {
                 block_rows: 128,
@@ -88,6 +110,9 @@ impl Specialization {
                 align_n: true,
                 align_k: true,
                 use_native_fragment_layout: false,
+                subtile_rows: Self::SUBTILE_ROWS,
+                subtile_cols: Self::SUBTILE_COLS,
+                matmul_k_step: Self::MATMUL_K_STEP,
             },
         ]
     }

@@ -38,6 +38,15 @@ pub fn matmul_gemm_mpp<T>(
     #[allow(unused)]
     #[specialize]
     use_native_fragment_layout: bool,
+    #[allow(unused)]
+    #[specialize]
+    subtile_rows: u32,
+    #[allow(unused)]
+    #[specialize]
+    subtile_cols: u32,
+    #[allow(unused)]
+    #[specialize]
+    matmul_k_step: u32,
 ) {
     todo!()
 }

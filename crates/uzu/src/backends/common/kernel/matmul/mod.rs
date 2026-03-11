@@ -1,6 +1,5 @@
 mod dispatch_descriptor;
 mod full_precision;
-pub mod gemm;
 pub mod gemm_mpp;
 pub mod gemv;
 mod grid_size;

@@ -4,11 +4,11 @@ use num_traits::Float;
 
 use crate::ArrayElement;
 
-#[kernel(QuantizedMatmulQmmTransposed)]
+#[kernel(QuantizedMatmulGemm)]
 #[variants(T, f32, f16, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qmm_transposed<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
+pub fn quantized_matmul_gemm_v2<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
     #[allow(unused)] w: *const u32,
     #[allow(unused)] scales: *const T,
     #[allow(unused)]
@@ -30,7 +30,7 @@ pub fn quantized_matmul_qmm_transposed<T: ArrayElement + Float, const GROUP_SIZE
     use_mlx_quant: bool,
     #[allow(unused)]
     #[specialize]
-    aligned_n: bool,
+    aligned_k: bool,
 ) {
     todo!()
 }

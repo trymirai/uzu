@@ -9,21 +9,8 @@ use crate::{
     backends::common::{Backend, CommandBuffer, Kernels, kernel::TensorAddBiasKernel},
 };
 
-fn is_valid_dtype_combo(
-    a: DataType,
-    b: DataType,
-    out: DataType,
-) -> bool {
-    matches!(
-        (a, b, out),
-        (DataType::F16, DataType::F16, DataType::F16) | (DataType::BF16, DataType::BF16, DataType::BF16)
-    )
-}
-
 pub struct MatmulKernel<B: Backend> {
-    pub(crate) a_dtype: DataType,
-    pub(crate) b_dtype: DataType,
-    pub(crate) output_dtype: DataType,
+    pub(crate) data_type: DataType,
     gemv: Option<GemvKernel<B>>,
     gemm_mpp: Option<GemmMppKernel<B>>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
@@ -31,22 +18,12 @@ pub struct MatmulKernel<B: Backend> {
 
 impl<B: Backend> MatmulKernel<B> {
     pub fn new(data_type: DataType) -> Result<Self, MatmulError<B>> {
-        Self::new_mixed(data_type, data_type, data_type)
-    }
-
-    pub fn new_mixed(
-        a_dtype: DataType,
-        b_dtype: DataType,
-        output_dtype: DataType,
-    ) -> Result<Self, MatmulError<B>> {
-        if !is_valid_dtype_combo(a_dtype, b_dtype, output_dtype) {
-            return Err(MatmulError::UnsupportedDataType(output_dtype));
+        if !matches!(data_type, DataType::F16 | DataType::BF16) {
+            return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
         Ok(Self {
-            a_dtype,
-            b_dtype,
-            output_dtype,
+            data_type,
             gemv: None,
             gemm_mpp: None,
             bias_add: None,
@@ -65,35 +42,16 @@ impl<B: Backend> MatmulKernel<B> {
 
     fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, MatmulError<B>> {
         if self.gemv.is_none() {
-            self.gemv = Some(GemvKernel::<B>::new(self.output_dtype)?);
+            self.gemv = Some(GemvKernel::<B>::new(self.data_type)?);
         }
         Ok(self.gemv.as_mut().unwrap())
     }
 
     fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, MatmulError<B>> {
         if self.gemm_mpp.is_none() {
-            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.output_dtype).map_err(MatmulError::BackendError)?);
+            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.data_type).map_err(MatmulError::BackendError)?);
         }
         Ok(self.gemm_mpp.as_mut().unwrap())
-    }
-
-    fn encode_dispatch_descriptor(
-        &mut self,
-        context: &B::Context,
-        arguments: &mut MatmulArguments<B>,
-        dispatch_descriptor: &MatmulDispatchDescriptor,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), MatmulError<B>> {
-        match dispatch_descriptor {
-            MatmulDispatchDescriptor::Gemv(d) => {
-                let gemv = self.get_or_create_gemv()?;
-                gemv.encode(context, arguments, d, command_buffer)
-            },
-            MatmulDispatchDescriptor::GemmMpp(d) => {
-                let gemm_mpp = self.get_or_create_gemm_mpp()?;
-                gemm_mpp.encode(context, arguments, d, command_buffer)
-            },
-        }
     }
 
     pub fn encode_with_descriptor(
@@ -103,7 +61,16 @@ impl<B: Backend> MatmulKernel<B> {
         dispatch_descriptor: &MatmulDispatchDescriptor,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
-        self.encode_dispatch_descriptor(context, &mut arguments, dispatch_descriptor, command_buffer)?;
+        match dispatch_descriptor {
+            MatmulDispatchDescriptor::Gemv(d) => {
+                let gemv = self.get_or_create_gemv()?;
+                gemv.encode(context, &mut arguments, d, command_buffer)?;
+            }
+            MatmulDispatchDescriptor::GemmMpp(d) => {
+                let gemm_mpp = self.get_or_create_gemm_mpp()?;
+                gemm_mpp.encode(context, &mut arguments, d, command_buffer)?;
+            }
+        }
 
         if let Some(bias) = arguments.bias {
             if !dispatch_descriptor.bias_is_fused() {
@@ -131,7 +98,7 @@ impl<B: Backend> MatmulKernel<B> {
 
         if self.bias_add.is_none() {
             self.bias_add = Some(
-                <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.output_dtype, true)
+                <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, self.data_type, true)
                     .map_err(MatmulError::BackendError)?,
             );
         }
