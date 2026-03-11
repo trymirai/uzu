@@ -6,6 +6,7 @@ use std::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
+    forward_pass::prefix_cache::PrefixCacheConfig,
     prelude::{SamplingSeed, SpeculatorConfig},
     session::{
         Session,
@@ -60,6 +61,7 @@ pub fn load_session(
     prefill_step_size: Option<usize>,
     seed: Option<u64>,
     speculator: Option<String>,
+    no_prefix_cache: bool,
 ) -> Session {
     let style_bold = Style::new().bold();
 
@@ -99,6 +101,10 @@ pub fn load_session(
                 }
             },
             None => SpeculatorConfig::default(),
+        })
+        .with_prefix_cache_config(PrefixCacheConfig {
+            enabled: !no_prefix_cache,
+            ..PrefixCacheConfig::default()
         });
     let session = Session::new(model_path_buf, decoding_config).expect("Failed to create session");
 

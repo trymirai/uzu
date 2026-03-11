@@ -26,6 +26,9 @@ enum Commands {
         message: Option<String>,
         #[arg(long, short)]
         no_thinking: bool,
+        /// Disable prefix caching
+        #[arg(long)]
+        no_prefix_cache: bool,
     },
     /// Start a server with the specified model path
     Serve {
@@ -56,8 +59,9 @@ fn main() {
             speculator,
             message,
             no_thinking,
+            no_prefix_cache,
         }) => {
-            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking);
+            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking, no_prefix_cache);
         },
         Some(Commands::Serve {
             model_path,
