@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
-#include "../quant_matmul/mma.h"
+#include "mma.h"
 #include "moe_commons.h"
 
 // ------------------------ helpers ------------------------

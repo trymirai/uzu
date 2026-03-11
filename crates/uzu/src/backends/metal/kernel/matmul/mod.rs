@@ -1,5 +1,4 @@
 mod dispatch_descriptor;
-mod gemm;
 mod gemm_mpp;
 pub use dispatch_descriptor::choose_dispatch_descriptor;
 
@@ -55,9 +54,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
 
         let descriptor = dispatch_descriptor::choose_dispatch_descriptor(
             context,
-            self.a_dtype,
-            self.b_dtype,
-            self.output_dtype,
+            self.data_type,
             &matmul_arguments,
         )
         .expect("Failed to create dispatch descriptor for full precision matmul");

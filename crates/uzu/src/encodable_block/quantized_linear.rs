@@ -15,9 +15,8 @@ use crate::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulType,
+                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
             },
-            quant_matmul_v2::QuantizedMatmulKernelSwitchable,
         },
     },
     config::QuantizationConfig,
@@ -87,7 +86,7 @@ pub enum QuantizedLinearError<B: Backend> {
 }
 
 pub struct QuantizedLinear<B: Backend> {
-    kernel: QuantizedMatmulKernelSwitchable<B>,
+    kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
     biases_buffer: Option<Rc<RefCell<B::Buffer>>>,
     weights_buffer: Rc<RefCell<B::Buffer>>,
@@ -215,7 +214,7 @@ impl<B: Backend> QuantizedLinear<B> {
             Err(_) => (None, None),
         };
 
-        let kernel = QuantizedMatmulKernelSwitchable::new(
+        let kernel = QuantizedMatmulKernelEncodable::new(
             context,
             QuantizedMatmulConfiguration {
                 data_type: kernel_data_type,

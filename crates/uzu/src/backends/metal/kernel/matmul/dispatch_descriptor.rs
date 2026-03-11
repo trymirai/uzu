@@ -42,18 +42,16 @@ fn gemv_max_batch(context: &MetalContext) -> i32 {
 
 pub fn choose_dispatch_descriptor(
     context: &MetalContext,
-    _a_dtype: DataType,
-    _b_dtype: DataType,
-    output_dtype: DataType,
+    data_type: DataType,
     arguments: &MatmulArguments<Metal>,
 ) -> Result<MatmulDispatchDescriptor, MatmulError<Metal>> {
     let gemv_max_batch = gemv_max_batch(context);
 
-    if let Some(descriptor) = gemv::DispatchDescriptor::try_new::<Metal>(output_dtype, arguments, gemv_max_batch)? {
+    if let Some(descriptor) = gemv::DispatchDescriptor::try_new::<Metal>(data_type, arguments, gemv_max_batch)? {
         return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
     }
 
-    Ok(MatmulDispatchDescriptor::GemmMpp(gemm_mpp::DispatchDescriptor::new(output_dtype, arguments)?))
+    Ok(MatmulDispatchDescriptor::GemmMpp(gemm_mpp::DispatchDescriptor::new(data_type, arguments)?))
 }
 
 #[cfg(test)]

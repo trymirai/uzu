@@ -11,7 +11,6 @@ mod mlp;
 mod moe;
 mod pooling;
 mod quant_matmul;
-mod quant_matmul_v2;
 mod rms_norm;
 mod rope;
 mod sampling;

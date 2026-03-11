@@ -70,6 +70,9 @@ impl DispatchDescriptor {
             align_n: (n % block_cols) == 0,
             align_k: (k % block_depth) == 0,
             use_native_fragment_layout: false,
+            subtile_rows: Specialization::SUBTILE_ROWS,
+            subtile_cols: Specialization::SUBTILE_COLS,
+            matmul_k_step: Specialization::MATMUL_K_STEP,
         };
 
         let threadgroups = GridSize {

@@ -51,6 +51,9 @@ impl<B: Backend> GemmMppKernel<B> {
                 config.align_n,
                 config.align_k,
                 config.use_native_fragment_layout,
+                config.subtile_rows,
+                config.subtile_cols,
+                config.matmul_k_step,
             )
             .map_err(MatmulError::BackendError)?;
             self.pipelines.insert(config, pipeline);

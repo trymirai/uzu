@@ -28,3 +28,4 @@
 
 tools/gpu_trace/*.json
 results
+tools/quick_chat
