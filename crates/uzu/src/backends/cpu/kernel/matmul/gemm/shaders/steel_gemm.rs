@@ -52,15 +52,15 @@ pub fn matmul_gemm<T: ArrayElement + Float>(
 
             for row in 0..p.M as usize {
                 for col in 0..p.N as usize {
-                    let mut acc = T::zero();
+                    let mut acc: f32 = 0.0;
                     for i in 0..p.K as usize {
                         // A[row, i]: row-major with leading dimension lda
                         let a_val = *a_batch.add(row * lda + i);
                         // B[col, i]: B is transposed, so B is [N, K] row-major with leading dimension ldb
                         let b_val = *b_batch.add(col * ldb + i);
-                        acc = acc + a_val * b_val;
+                        acc = acc + a_val.to_f32().unwrap() * b_val.to_f32().unwrap();
                     }
-                    *d_batch.add(row * ldd + col) = acc;
+                    *d_batch.add(row * ldd + col) = T::from(acc).unwrap();
                 }
             }
         }
