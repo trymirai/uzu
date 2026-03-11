@@ -2,6 +2,7 @@
 pub struct PrefillResult {
     pub tokens: Vec<u64>,
     pub forwardpass_durations: Vec<f64>,
+    pub prefix_cache_restored_tokens: usize,
 }
 
 #[derive(Debug, Clone)]

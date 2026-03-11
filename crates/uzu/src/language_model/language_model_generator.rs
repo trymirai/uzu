@@ -180,6 +180,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             return Ok(PrefillResult {
                 tokens: Vec::new(),
                 forwardpass_durations: vec![],
+                prefix_cache_restored_tokens: skip_tokens,
             });
         }
 
@@ -387,6 +388,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             return Ok(PrefillResult {
                 tokens: Vec::new(),
                 forwardpass_durations: run_times,
+                prefix_cache_restored_tokens: skip_tokens,
             });
         }
         let sampled_tokens = self.read_sampling_output(&mut final_state)?;
@@ -409,6 +411,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         Ok(PrefillResult {
             tokens: accepted_tokens,
             forwardpass_durations: run_times,
+            prefix_cache_restored_tokens: skip_tokens,
         })
     }
 
