@@ -21,10 +21,12 @@ use crate::{
         CommandBufferPending, Context,
         kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
+    config::DecoderLayerType,
     encodable_block::EncodingParameters,
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
+        prefix_cache::{PrefixCacheConfig, PrefixCacheKey, PrefixCacheStore},
         state::ForwardPassState,
     },
     session::{
@@ -70,6 +72,7 @@ pub struct LanguageModelGenerator<B: Backend> {
     pre_encoded_task: Option<(TaskEncodingKey, <B::CommandBuffer as CommandBuffer>::Executable)>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager<B>,
+    prefix_cache: PrefixCacheStore<B>,
 }
 
 pub trait LanguageModelGeneratorTrait {
@@ -128,6 +131,9 @@ pub trait LanguageModelGeneratorTrait {
         &mut self,
         context: &dyn Any,
     );
+
+    fn clear_prefix_cache(&mut self);
+    fn prefix_cache_stats(&self) -> Option<(u64, u64)>;
 }
 
 impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
@@ -141,9 +147,57 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     ) -> Result<PrefillResult, Error> {
         assert!(!tokens.is_empty());
 
+        // --- PREFIX CACHE LOOKUP ---
+        let mut skip_tokens = 0usize;
+        if self.prefix_cache.is_enabled() && prefix_offset == 0 {
+            let candidate_tokens: Vec<u64> = self.tokens.iter().chain(tokens.iter()).copied().collect();
+            let key = PrefixCacheKey::from_tokens(&candidate_tokens);
+
+            if let Some((entry_hash, match_len)) = self.prefix_cache.find_longest_match(&key) {
+                if let Some(entry) = self.prefix_cache.get(&entry_hash) {
+                    let restore_len = match_len.min(entry.prefix_len);
+
+                    PrefixCacheStore::restore_to_cache(
+                        entry,
+                        &mut self.context.cache_layers.borrow_mut(),
+                        restore_len,
+                    );
+
+                    skip_tokens = restore_len;
+                    self.registered_prefix_len = restore_len;
+                }
+            }
+        }
+
         self.tokens.extend(tokens.clone());
 
-        let tokens_length = tokens.len();
+        // Work with only the tokens that still need prefilling.
+        let effective_tokens: Vec<u64> = tokens[skip_tokens..].to_vec();
+        let effective_prefix_offset = prefix_offset + skip_tokens;
+
+        if effective_tokens.is_empty() && !sample_suffix {
+            self.sync_prefix();
+            return Ok(PrefillResult {
+                tokens: Vec::new(),
+                forwardpass_durations: vec![],
+            });
+        }
+
+        // If all prompt tokens were restored, we still need the last token for suffix sampling.
+        let tokens_for_prefill = if effective_tokens.is_empty() && sample_suffix {
+            // Use the last restored token as the suffix root.
+            vec![tokens[tokens.len() - 1]]
+        } else {
+            effective_tokens
+        };
+        let prefill_prefix_offset = if tokens_for_prefill.len() < tokens[skip_tokens..].len() + 1 {
+            // All prompt tokens restored; suffix root is at the end of the restored prefix.
+            effective_prefix_offset.saturating_sub(1)
+        } else {
+            effective_prefix_offset
+        };
+
+        let tokens_length = tokens_for_prefill.len();
 
         let prefill_step_size = self.decoding_config.prefill_step_size.resolve(&self.context.model_config);
         let prefill_steps = tokens_length.div_ceil(prefill_step_size);
@@ -157,7 +211,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             prefill_size - tokens_length
         };
         let suffix_root = TrieNode::from_speculator(
-            &tokens,
+            &tokens_for_prefill,
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
@@ -168,11 +222,19 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let has_grammar = compiled_grammar.is_some();
 
-        let token_ids =
-            tokens.iter().copied().take(tokens_length - 1).chain(flat_trie.token_ids()).chunks(prefill_step_size);
+        let token_ids = tokens_for_prefill
+            .iter()
+            .copied()
+            .take(tokens_length - 1)
+            .chain(flat_trie.token_ids())
+            .chunks(prefill_step_size);
 
-        let token_positions = (prefix_offset..prefix_offset + tokens_length - 1)
-            .chain(flat_trie.token_positions().map(|trie_position| prefix_offset + tokens_length - 1 + trie_position))
+        let token_positions = (prefill_prefix_offset..prefill_prefix_offset + tokens_length - 1)
+            .chain(
+                flat_trie
+                    .token_positions()
+                    .map(|trie_position| prefill_prefix_offset + tokens_length - 1 + trie_position),
+            )
             .chunks(prefill_step_size);
 
         let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
@@ -271,7 +333,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
             if tokens_processed_this_step > 0 {
                 let mut positions_for_step: Vec<usize> =
-                    (tokens_start_index..step_end_token_index).map(|idx| idx + prefix_offset).collect();
+                    (tokens_start_index..step_end_token_index).map(|idx| idx + prefill_prefix_offset).collect();
                 if step == prefill_steps - 1 && sample_suffix {
                     // Exclude the last token because it belongs to the suffix for sampling.
                     positions_for_step.pop();
@@ -293,6 +355,30 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
             last_state = Some(state);
             run_times.push(run_time);
+        }
+
+        // --- PREFIX CACHE SNAPSHOT (on miss only) ---
+        if self.prefix_cache.is_enabled() && prefix_offset == 0 && skip_tokens == 0 {
+            let cache_layers = self.context.cache_layers.borrow();
+            let prefix_len = cache_layers
+                .data
+                .iter()
+                .find_map(|l| l.as_transformer().map(|kv| kv.prefix_segment_length()))
+                .unwrap_or(0);
+            if prefix_len >= self.prefix_cache.config().min_prefix_len {
+                let snap_tokens = &self.tokens[..self.tokens.len()];
+                let key = PrefixCacheKey::from_tokens(snap_tokens);
+                let access = self.prefix_cache.next_access_counter();
+                let entry = PrefixCacheStore::snapshot_from_cache(
+                    self.context.context.as_ref(),
+                    &cache_layers,
+                    snap_tokens,
+                    key,
+                    access,
+                );
+                drop(cache_layers);
+                self.prefix_cache.insert(entry);
+            }
         }
 
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
@@ -719,6 +805,15 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         self.tokens = ctx.tokens.clone();
     }
+
+    fn clear_prefix_cache(&mut self) {
+        self.prefix_cache = PrefixCacheStore::new(self.prefix_cache.config().clone());
+    }
+
+    fn prefix_cache_stats(&self) -> Option<(u64, u64)> {
+        let s = self.prefix_cache.stats();
+        Some((s.hits, s.misses))
+    }
 }
 
 impl<B: Backend> LanguageModelGenerator<B> {
@@ -732,6 +827,21 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let prefill_step_size = decoding_config.prefill_step_size.resolve(&context.model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
 
+        let has_non_transformer = context
+            .model_shape
+            .layer_types()
+            .iter()
+            .any(|t| !matches!(t, DecoderLayerType::Transformer));
+        let prefix_cache_config = if has_non_transformer {
+            PrefixCacheConfig {
+                enabled: false,
+                ..decoding_config.prefix_cache_config.clone()
+            }
+        } else {
+            decoding_config.prefix_cache_config.clone()
+        };
+        let prefix_cache = PrefixCacheStore::new(prefix_cache_config);
+
         let mut generator = Self {
             decoding_config,
             tokens: Vec::new(),
@@ -739,6 +849,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             pre_encoded_task: None,
             registered_prefix_len: 0,
             gpu_capture,
+            prefix_cache,
         };
 
         //Warmup

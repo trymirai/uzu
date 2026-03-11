@@ -200,6 +200,7 @@ impl<B: Backend> TraceValidator<B> {
                 SamplingSeed::default(),
                 AsyncBatchSize::default(),
                 false,
+                crate::forward_pass::prefix_cache::PrefixCacheConfig { enabled: false, ..Default::default() },
             );
             let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
             let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
