@@ -80,7 +80,7 @@ pub fn test_combos() -> Vec<DtypeCombo> {
 }
 
 pub fn try_all_descriptors(
-    context: &MetalContext,
+    _context: &MetalContext,
     combo: &DtypeCombo,
     arguments: &MatmulArguments<Metal>,
 ) -> Vec<(&'static str, MatmulDispatchDescriptor)> {

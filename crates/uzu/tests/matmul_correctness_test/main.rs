@@ -14,7 +14,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
             CommandBufferPending, Context,
             kernel::matmul::{MatmulDispatchDescriptor, MatmulKernel, gemm_mpp},
         },
