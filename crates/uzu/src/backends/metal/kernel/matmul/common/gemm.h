@@ -2,7 +2,7 @@
 
 #include "loader.h"
 #include "mma.h"
-#include "mpp_gemm_utilities.h"
+#include "params.h"
 
 using namespace metal;
 
