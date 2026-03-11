@@ -1,12 +1,11 @@
 #[macro_use]
 #[path = "../common/mod.rs"]
 mod common;
+mod attention;
 mod matmul;
 mod sampling;
 
 mod activation_mul_test;
-mod attention_single_pass_test;
-mod attention_update_kv_cache_test;
 mod full_precision_embedding_test;
 mod qk_norm_test;
 mod rms_norm_test;
