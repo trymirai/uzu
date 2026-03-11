@@ -287,12 +287,12 @@ struct QuantizedBlockLoaderMlx {
   );
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  UZU_MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
-  UZU_MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
-  UZU_MTL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
-  UZU_MTL_CONST short n_reads =
+  MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
+  MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
+  MTL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
+  MTL_CONST short n_reads =
       (BCOLS_PACKED * BROWS < tgp_size) ? 1 : (BCOLS_PACKED * BROWS) / tgp_size;
-  UZU_MTL_CONST short group_steps = group_size / BCOLS;
+  MTL_CONST short group_steps = group_size / BCOLS;
 
   const int src_ld;
   const int tile_stride;
@@ -422,12 +422,12 @@ struct QuantizedBlockLoaderZp {
   );
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  UZU_MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
-  UZU_MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
-  UZU_MTL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
-  UZU_MTL_CONST short n_reads =
+  MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
+  MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
+  MTL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
+  MTL_CONST short n_reads =
       (BCOLS_PACKED * BROWS < tgp_size) ? 1 : (BCOLS_PACKED * BROWS) / tgp_size;
-  UZU_MTL_CONST short group_steps = group_size / BCOLS;
+  MTL_CONST short group_steps = group_size / BCOLS;
 
   const int src_ld;
   const int groups_per_row;
