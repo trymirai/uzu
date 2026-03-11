@@ -2,23 +2,23 @@
 
 use std::ops::{Deref, DerefMut};
 
+use super::{super::linear::Linear, Mlp};
 use crate::{
     backends::common::{Backend, CommandBuffer, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
-    encodable_block::{EncodableBlock, EncodingParameters},
     forward_pass::state::{ArrayId, ForwardPassState},
 };
 
-pub struct MlpBlock<B: Backend> {
-    up: Box<dyn EncodableBlock<B>>,
+pub struct DenseMlp<B: Backend> {
+    up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
-    down: Box<dyn EncodableBlock<B>>,
+    down: Box<dyn Linear<B>>,
 }
 
-impl<B: Backend> MlpBlock<B> {
+impl<B: Backend> DenseMlp<B> {
     pub fn new(
-        up: Box<dyn EncodableBlock<B>>,
+        up: Box<dyn Linear<B>>,
         gate: MlpGateActMulEncodable<B>,
-        down: Box<dyn EncodableBlock<B>>,
+        down: Box<dyn Linear<B>>,
     ) -> Self {
         Self {
             up,
@@ -28,15 +28,14 @@ impl<B: Backend> MlpBlock<B> {
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
+impl<B: Backend> Mlp<B> for DenseMlp<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        params: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         // Up
-        self.up.encode(state, params, command_buffer)?;
+        self.up.encode(state, command_buffer)?;
 
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
@@ -56,7 +55,7 @@ impl<B: Backend> EncodableBlock<B> for MlpBlock<B> {
         drop(hidden);
 
         // Down
-        self.down.encode(state, params, command_buffer)?;
+        self.down.encode(state, command_buffer)?;
         Ok(())
     }
 }

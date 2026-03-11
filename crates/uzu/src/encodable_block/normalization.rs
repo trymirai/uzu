@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use super::{EncodableBlock, EncodingParameters, LayerNorm, LayerNormError, RMSNorm, RMSNormError};
+use super::{LayerNorm, LayerNormError, RMSNorm, RMSNormError};
 use crate::{
     DataType,
     backends::common::{Backend, CommandBuffer},
@@ -56,18 +56,15 @@ impl<B: Backend> Normalization<B> {
             )?))
         }
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for Normalization<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         match self {
-            Self::LayerNorm(layer_norm) => layer_norm.encode(state, parameters, command_buffer),
-            Self::RMSNorm(rms_norm) => rms_norm.encode(state, parameters, command_buffer),
+            Self::LayerNorm(layer_norm) => layer_norm.encode(state, command_buffer),
+            Self::RMSNorm(rms_norm) => rms_norm.encode(state, command_buffer),
         }
     }
 }

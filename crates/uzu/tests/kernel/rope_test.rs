@@ -120,7 +120,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
 
     let (expected_queries, expected_keys) = get_output::<T, Cpu>(input);
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let (queries, keys) = get_output::<T, B>(input);
         let msg = format!("Rope queries test failed with backend={}", std::any::type_name::<B>(),);
         assert_eq_float::<T>(&expected_queries, &queries, eps, &msg);

@@ -174,7 +174,7 @@ fn test_internal<
         1e-5
     };
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let output = get_output::<B, InputT, ScaleT, OutputT, AccumT>(input);
         let msg = format!(
             "QKNorm kernel test failed with backend={}, head_offset={}, head_count={}, full_layer={}",
@@ -227,7 +227,7 @@ fn test_addressing<
     let k_start = num_q_heads * head_dim;
     let qkv_len = input.qkv.len();
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let output = get_output::<B, InputT, ScaleT, OutputT, AccumT>(&input);
 
         // Q heads should be modified (different from input)

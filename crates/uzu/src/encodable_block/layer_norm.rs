@@ -8,7 +8,6 @@ use std::{
 
 use thiserror::Error;
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -25,7 +24,7 @@ pub enum LayerNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError),
+    ParameterError(ParameterLoaderError<B>),
 }
 
 pub struct LayerNorm<B: Backend> {
@@ -45,7 +44,7 @@ impl<B: Backend> LayerNorm<B> {
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, LayerNormError<B>> {
-        let scales = parameter_tree.leaf("scales").map_err(LayerNormError::ParameterError)?;
+        let scales = parameter_tree.leaf_array("scales").map_err(LayerNormError::ParameterError)?;
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
@@ -68,13 +67,10 @@ impl<B: Backend> LayerNorm<B> {
             scales_buffer: scales.buffer(),
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for LayerNorm<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);

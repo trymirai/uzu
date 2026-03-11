@@ -222,7 +222,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         1e-6
     };
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let (key_cache_out, value_cache_out) = get_output::<T, B>(input);
         let backend_name = std::any::type_name::<B>();
         assert_eq_float::<T>(
