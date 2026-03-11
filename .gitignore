@@ -27,4 +27,5 @@
 /external
 
 tools/gpu_trace/*.json
+tools/quick_chat
 results
