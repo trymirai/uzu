@@ -137,7 +137,7 @@ void quantized_gemm_implementation(
   using mma_t =
       BlockMMA<T, T, BM, BN, BK, WM, WN, false, false, BK_padded, BN_padded>;
   using input_loader_t =
-      BlockLoader<T, BM, BK, BK_padded, 1, WM * WN * 32, 1, 4>;
+      BlockLoader<T, BM, BK, BK_padded, 1, WM * WN * 32>;
 
   auto weight_bytes = (const device uint8_t*)w;
 

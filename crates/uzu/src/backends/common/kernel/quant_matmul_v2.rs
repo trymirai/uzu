@@ -15,7 +15,7 @@ use crate::{
 
 use super::quant_matmul::{
     QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-    QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+    QuantizedMatmulType,
 };
 
 pub struct QuantizedMatmulKernelEncodableV2<B: Backend> {
@@ -455,40 +455,7 @@ fn quant_buffers<'a, B: Backend>(
     }
 }
 
-pub fn use_v2() -> bool {
-    std::env::var("UZU_QUANT_MATMUL_V2")
-        .map(|value| value == "1")
-        .unwrap_or(false)
-}
-
-pub enum QuantizedMatmulKernelSwitchable<B: Backend> {
-    V1(QuantizedMatmulKernelEncodable<B>),
-    V2(QuantizedMatmulKernelEncodableV2<B>),
-}
-
-impl<B: Backend> QuantizedMatmulKernelSwitchable<B> {
-    pub fn new(
-        context: &B::Context,
-        configuration: QuantizedMatmulConfiguration,
-    ) -> Result<Self, QuantizedMatmulError<B>> {
-        if use_v2() {
-            QuantizedMatmulKernelEncodableV2::new(context, configuration).map(Self::V2)
-        } else {
-            QuantizedMatmulKernelEncodable::new(context, configuration).map(Self::V1)
-        }
-    }
-
-    pub fn encode(
-        &self,
-        encoder: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        arguments: QuantizedMatmulArguments<B>,
-    ) -> Result<(), QuantizedMatmulError<B>> {
-        match self {
-            Self::V1(kernel) => kernel.encode(encoder, arguments),
-            Self::V2(kernel) => kernel.encode(encoder, arguments),
-        }
-    }
-}
+pub type QuantizedMatmulKernelSwitchable<B> = QuantizedMatmulKernelEncodableV2<B>;
 
 fn kernel_key_name(key: KernelKey) -> &'static str {
     match key {
