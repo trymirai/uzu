@@ -2,6 +2,7 @@ pub mod model_shape;
 
 pub mod cache_layers;
 pub mod kv_cache_layer;
+pub mod prefix_cache;
 pub mod short_conv_layer;
 pub mod ssm_layer;
 
