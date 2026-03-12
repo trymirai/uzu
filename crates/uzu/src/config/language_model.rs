@@ -147,6 +147,14 @@ impl InnerModelConfig {
             MixerConfig::ShortConv(config) => DecoderLayerType::ShortConv {
                 kernel_size: config.kernel_size,
             },
+            MixerConfig::DeltaNet(config) => DecoderLayerType::DeltaNet {
+                conv_dim: config.conv_dim(),
+                kernel_size: config.kernel_size,
+                num_heads: config.num_heads,
+                num_groups: config.num_groups,
+                head_dim: config.head_dim,
+                value_head_dim: config.value_head_dim,
+            },
         }
     }
 }

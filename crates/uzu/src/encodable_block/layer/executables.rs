@@ -52,6 +52,7 @@ impl<B: Backend> LayerExecutables<B> {
                 MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
                 MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
                 MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
+                MixerConfig::DeltaNet(delta_net) => delta_net.in_proj_config.activation_precision().into(),
             };
             let copy_main_to_shortcut = TensorCopy::<B>::new(
                 ctx,
@@ -74,11 +75,23 @@ impl<B: Backend> LayerExecutables<B> {
                 MixerConfig::Attention(attention_config) => {
                     let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
+                    if attention_config.has_gate || attention_config.partial_rope_dim.is_some() {
+                        todo!("Gated attention and partial RoPE kernels not yet implemented");
+                    }
+
+                    let layer_num_heads = attention_config.num_heads.unwrap_or(num_heads);
+                    let layer_num_groups = attention_config.num_groups.unwrap_or(num_groups);
+                    let layer_head_dim = attention_config.head_dim.unwrap_or(head_dim);
+
                     let qkv_projection = <dyn Linear<B>>::new(
                         &attention_config.qkv_projection_config,
                         attention_config.has_qkv_biases,
                         model_dim,
-                        [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
+                        [
+                            layer_num_heads * layer_head_dim,
+                            layer_num_groups * layer_head_dim,
+                            layer_num_groups * layer_head_dim,
+                        ],
                         ctx,
                         &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
                         ArrayId::Main,
@@ -95,9 +108,9 @@ impl<B: Backend> LayerExecutables<B> {
                                 attention_config.key_norm_config.clone(),
                                 ArrayId::QKV,
                                 &decoder_layer_loader.subtree("mixer").unwrap(),
-                                num_heads,
-                                num_groups,
-                                head_dim,
+                                layer_num_heads,
+                                layer_num_groups,
+                                layer_head_dim,
                             ) {
                                 Ok(qk_norm) => Some(qk_norm),
                                 Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
@@ -109,7 +122,7 @@ impl<B: Backend> LayerExecutables<B> {
                     let out_projection = <dyn Linear<B>>::new(
                         &attention_config.out_projection_config,
                         attention_config.has_out_biases,
-                        num_heads * head_dim,
+                        layer_num_heads * layer_head_dim,
                         [model_dim],
                         ctx,
                         &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
@@ -165,6 +178,9 @@ impl<B: Backend> LayerExecutables<B> {
                     MixerExecutables::ShortConv {
                         mixer,
                     }
+                },
+                MixerConfig::DeltaNet(_) => {
+                    todo!("DeltaNet mixer kernel not yet implemented");
                 },
             };
 

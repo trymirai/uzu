@@ -119,6 +119,7 @@ mod tests {
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
+                use_bias: false,
             }),
             pre_mlp_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
@@ -127,6 +128,7 @@ mod tests {
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
+                use_bias: false,
             },
             mixer_config: MixerConfig::Attention(AttentionConfig {
                 qkv_projection_config: LinearConfig::QLoRA {
@@ -161,6 +163,9 @@ mod tests {
                 has_sinks: false,
                 has_qkv_biases: false,
                 has_out_biases: false,
+                has_gate: false,
+                use_rope: true,
+                partial_rope_dim: None,
             }),
             mlp_config: MLPConfig::Dense(mlp::DenseMLPConfig {
                 linear_config: LinearConfig::QLoRA {

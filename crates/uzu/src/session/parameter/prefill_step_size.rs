@@ -1,4 +1,7 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
+use crate::{
+    config::{LanguageModelConfig, MixerConfig},
+    session::parameter::ConfigResolvableValue,
+};
 
 fn env_prefill_step_size_default_override() -> Option<usize> {
     static OVERRIDE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
@@ -45,7 +48,19 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
             .min()
             .unwrap_or(usize::MAX);
 
-        let maximal_value = [model_context_length, minimal_sliding_window_size, default_limit]
+        let has_delta_net = config
+            .model_config
+            .transformer_config
+            .layer_configs
+            .iter()
+            .any(|lc| matches!(lc.mixer_config, MixerConfig::DeltaNet(_)));
+        let delta_net_limit = if has_delta_net {
+            64
+        } else {
+            usize::MAX
+        };
+
+        let maximal_value = [model_context_length, minimal_sliding_window_size, default_limit, delta_net_limit]
             .into_iter()
             .min()
             .unwrap_or(default_limit);

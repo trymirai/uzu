@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    config::{DecoderConfig, DecoderLayerType},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig},
 };
 
 #[derive(Debug)]
@@ -25,6 +25,12 @@ pub struct ModelShape {
     max_mamba_conv_dim: usize,
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
+    max_attention_qkv_dim: usize,
+    max_attention_output_dim: usize,
+    max_attention_num_heads: usize,
+    max_attention_num_groups: usize,
+    max_attention_head_dim: usize,
+    max_attention_rope_dim: usize,
 }
 
 impl ModelShape {
@@ -73,6 +79,52 @@ impl ModelShape {
                 max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
             }
         }
+        let mut max_attention_qkv_dim = 0usize;
+        let mut max_attention_output_dim = 0usize;
+        let mut max_attention_num_heads = 0usize;
+        let mut max_attention_num_groups = 0usize;
+        let mut max_attention_head_dim = 0usize;
+        let mut max_attention_rope_dim = 0usize;
+
+        let all_layer_configs = decoder_config
+            .layer_configs
+            .as_ref()
+            .map(|configs| configs.iter().collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
+
+        for layer_config in &all_layer_configs {
+            if let MixerConfig::Attention(attn) = &layer_config.mixer_config {
+                let nh = attn.num_heads.unwrap_or(decoder_config.num_heads);
+                let ng = attn.num_groups.unwrap_or(decoder_config.num_groups);
+                let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
+                let rope_dim = attn.partial_rope_dim.unwrap_or(hd);
+                let gate_dim = if attn.has_gate {
+                    nh * hd
+                } else {
+                    0
+                };
+                let qkv_dim = (nh + ng + ng) * hd + gate_dim;
+                max_attention_qkv_dim = max_attention_qkv_dim.max(qkv_dim);
+                max_attention_output_dim = max_attention_output_dim.max(nh * hd);
+                max_attention_num_heads = max_attention_num_heads.max(nh);
+                max_attention_num_groups = max_attention_num_groups.max(ng);
+                max_attention_head_dim = max_attention_head_dim.max(hd);
+                max_attention_rope_dim = max_attention_rope_dim.max(rope_dim);
+            }
+        }
+
+        if max_attention_qkv_dim == 0 {
+            let nh = decoder_config.num_heads;
+            let ng = decoder_config.num_groups;
+            let hd = decoder_config.head_dim;
+            max_attention_qkv_dim = (nh + ng + ng) * hd;
+            max_attention_output_dim = nh * hd;
+            max_attention_num_heads = nh;
+            max_attention_num_groups = ng;
+            max_attention_head_dim = hd;
+            max_attention_rope_dim = hd;
+        }
+
         Self {
             activation_type,
             kv_cache_type: activation_type,
@@ -95,6 +147,12 @@ impl ModelShape {
             max_mamba_conv_dim,
             max_mamba_state_dim,
             max_mamba_kernel_size,
+            max_attention_qkv_dim,
+            max_attention_output_dim,
+            max_attention_num_heads,
+            max_attention_num_groups,
+            max_attention_head_dim,
+            max_attention_rope_dim,
         }
     }
 
@@ -166,7 +224,7 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 2] {
-        [suffix_length, (2 * self.num_groups + self.num_heads) * self.head_dim]
+        [suffix_length, self.max_attention_qkv_dim]
     }
 
     pub fn logits_shape(
@@ -180,21 +238,34 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 2] {
-        [suffix_length, self.num_heads * self.head_dim]
+        let max_delta_net_conv_dim = self
+            .layer_types
+            .iter()
+            .filter_map(|lt| match lt {
+                DecoderLayerType::DeltaNet {
+                    conv_dim,
+                    ..
+                } => Some(*conv_dim),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let dim = self.max_attention_output_dim.max(max_delta_net_conv_dim);
+        [suffix_length, dim]
     }
 
     pub fn rotated_queries_shape(
         &self,
         suffix_length: usize,
     ) -> [usize; 3] {
-        [self.num_heads, suffix_length, self.head_dim]
+        [self.max_attention_num_heads, suffix_length, self.max_attention_head_dim]
     }
 
     pub fn rotated_keys_shape(
         &self,
         suffix_length: usize,
     ) -> [usize; 3] {
-        [self.num_groups, suffix_length, self.head_dim]
+        [self.max_attention_num_groups, suffix_length, self.max_attention_head_dim]
     }
 
     pub fn extracted_values_shape(
@@ -486,8 +557,27 @@ impl ModelShape {
                 DecoderLayerType::ShortConv {
                     ..
                 } => Some(self.model_dim * 3),
+                DecoderLayerType::DeltaNet {
+                    num_heads,
+                    num_groups,
+                    head_dim,
+                    value_head_dim,
+                    ..
+                } => {
+                    let key_dim = num_groups * head_dim;
+                    let value_dim = num_heads * value_head_dim;
+                    Some(key_dim + key_dim + value_dim + value_dim + num_heads + num_heads)
+                },
                 _ => None,
             })
             .max()
+    }
+
+    pub fn rope_dim(&self) -> usize {
+        self.max_attention_rope_dim
+    }
+
+    pub fn has_delta_net_layers(&self) -> bool {
+        self.layer_types.iter().any(|layer_type| matches!(layer_type, DecoderLayerType::DeltaNet { .. }))
     }
 }

@@ -27,6 +27,15 @@ pub enum DecoderLayerType {
     ShortConv {
         kernel_size: usize,
     },
+    #[serde(rename = "delta_net")]
+    DeltaNet {
+        conv_dim: usize,
+        kernel_size: usize,
+        num_heads: usize,
+        num_groups: usize,
+        head_dim: usize,
+        value_head_dim: usize,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -205,6 +214,14 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
         MixerConfig::ShortConv(config) => DecoderLayerType::ShortConv {
             kernel_size: config.kernel_size,
         },
+        MixerConfig::DeltaNet(config) => DecoderLayerType::DeltaNet {
+            conv_dim: config.conv_dim(),
+            kernel_size: config.kernel_size,
+            num_heads: config.num_heads,
+            num_groups: config.num_groups,
+            head_dim: config.head_dim,
+            value_head_dim: config.value_head_dim,
+        },
     }
 }
 impl DecoderConfig {
@@ -378,6 +395,7 @@ mod tests {
                     scale_offset: None,
                     upcast_mode: UpcastMode::OnlyNormalization,
                     subtract_mean: false,
+                    use_bias: false,
                 },
                 pre_mlp_norm_config: NormalizationConfig {
                     scale_precision: ConfigDataType::BFloat16,
@@ -386,6 +404,7 @@ mod tests {
                     scale_offset: None,
                     upcast_mode: UpcastMode::OnlyNormalization,
                     subtract_mean: false,
+                    use_bias: false,
                 },
                 mixer_config: MixerConfig::Attention(AttentionConfig {
                     qkv_projection_config: LinearConfig::QLoRA {
@@ -420,6 +439,9 @@ mod tests {
                     has_sinks: false,
                     has_qkv_biases: false,
                     has_out_biases: false,
+                    has_gate: false,
+                    use_rope: true,
+                    partial_rope_dim: None,
                 }),
                 mlp_config: MLPConfig::Dense(DenseMLPConfig {
                     linear_config: LinearConfig::QLoRA {
@@ -451,6 +473,7 @@ mod tests {
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
+                use_bias: false,
             },
             layer_configs: None,
             vocab_size: 128256,

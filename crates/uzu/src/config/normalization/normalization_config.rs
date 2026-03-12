@@ -12,6 +12,8 @@ pub struct NormalizationConfig {
     pub upcast_mode: UpcastMode,
     #[serde(default)]
     pub subtract_mean: bool,
+    #[serde(default)]
+    pub use_bias: bool,
 }
 
 #[cfg(test)]
@@ -39,6 +41,7 @@ mod tests {
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,
             subtract_mean: false,
+            use_bias: false,
         };
 
         let deserialized_config: NormalizationConfig = from_str(config_str).unwrap();
