@@ -15,9 +15,31 @@ fn metadata_with_tts_model_type_parses() {
       "model_type": "tts_model",
       "model_config": {
         "tts_config": {
+          "text_decoder_config": {
+            "type": "StubTextDecoderConfig",
+            "num_codebooks": 2,
+            "codebook_size": 48
+          },
           "audio_decoder_config": {
-            "kind": "nanocodec"
-          }
+            "type": "NanoCodecConfig",
+            "samplerate": 24000,
+            "quantizer_config": {
+              "num_groups": 2,
+              "quantizer_config": {
+                "num_levels": [8, 6]
+              }
+            },
+            "decoder_config": {
+              "activation_config": {
+                "leaky_relu_negative_slope": 0.01
+              }
+            },
+            "base_channels": 32,
+            "up_sample_rates": [2, 2],
+            "resblock_kernel_sizes": [3],
+            "resblock_dilations": [1]
+          },
+          "vocoder_config": {}
         },
         "message_processor_config": {
           "prompt_template": "{% for message in messages %}{{message.content}}{% endfor %}",
@@ -43,7 +65,31 @@ fn tts_model_config_helpers_work() {
     let model_config_json = r#"
     {
       "tts_config": {
-        "kind": "test-tts"
+        "text_decoder_config": {
+          "type": "StubTextDecoderConfig",
+          "num_codebooks": 2,
+          "codebook_size": 48
+        },
+        "audio_decoder_config": {
+          "type": "NanoCodecConfig",
+          "samplerate": 24000,
+          "quantizer_config": {
+            "num_groups": 2,
+            "quantizer_config": {
+              "num_levels": [8, 6]
+            }
+          },
+          "decoder_config": {
+            "activation_config": {
+              "leaky_relu_negative_slope": 0.01
+            }
+          },
+          "base_channels": 32,
+          "up_sample_rates": [2, 2],
+          "resblock_kernel_sizes": [3],
+          "resblock_dilations": [1]
+        },
+        "vocoder_config": {}
       },
       "message_processor_config": {
         "prompt_template": "{{messages[0].content}}"
@@ -68,13 +114,32 @@ fn tts_model_can_build_audio_codec_runtime() {
     let model_config_json = r#"
     {
       "tts_config": {
-        "audio_codec": {
-          "type": "nanocodec_fsq",
-          "sample_rate": 24000,
-          "num_groups": 2,
-          "num_levels_per_group": [8, 6],
-          "output_packing": "codebook_major"
+        "text_decoder_config": {
+          "type": "StubTextDecoderConfig",
+          "num_codebooks": 2,
+          "codebook_size": 48
+        },
+        "audio_decoder_config": {
+          "type": "NanoCodecConfig",
+          "samplerate": 24000,
+          "quantizer_config": {
+            "num_groups": 2,
+            "quantizer_config": {
+              "num_levels": [8, 6]
+            }
+          },
+          "decoder_config": {
+            "activation_config": {
+              "leaky_relu_negative_slope": 0.01
+            }
+          },
+          "base_channels": 32,
+          "up_sample_rates": [2, 2],
+          "resblock_kernel_sizes": [3],
+          "resblock_dilations": [1]
         }
+        ,
+        "vocoder_config": {}
       },
       "message_processor_config": {
         "prompt_template": "{{messages[0].content}}"
@@ -84,6 +149,11 @@ fn tts_model_can_build_audio_codec_runtime() {
 
     let model_config: ModelConfig = serde_json::from_str(model_config_json).expect("model config parse");
     let tts = model_config.as_tts().expect("tts variant");
+    let audio = tts.create_audio_generation_context().expect("audio context");
+    assert_eq!(audio.sample_rate(), 24_000);
+    assert_eq!(audio.num_codebooks(), 2);
+    assert_eq!(audio.codec_cardinality(), 48);
+
     let runtime = tts.create_audio_codec_runtime().expect("audio runtime");
     let config = runtime.config();
 

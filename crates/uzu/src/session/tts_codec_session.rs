@@ -3,7 +3,7 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use crate::{
-    audio::{AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime},
+    audio::{AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime},
     config::{ModelMetadata, ModelType},
     session::types::Error,
 };
@@ -13,7 +13,7 @@ pub struct TtsCodecSession {
     model_path: PathBuf,
     #[allow(dead_code)]
     model_metadata: ModelMetadata,
-    runtime: NanoCodecFsqRuntime,
+    audio: AudioGenerationContext,
 }
 
 impl TtsCodecSession {
@@ -34,21 +34,21 @@ impl TtsCodecSession {
     }
 
     pub fn runtime(&self) -> &NanoCodecFsqRuntime {
-        &self.runtime
+        self.audio.runtime()
     }
 
     pub fn encode(
         &self,
         pcm: &AudioPcmBatch,
     ) -> Result<AudioTokenGrid, Error> {
-        self.runtime.encode(pcm).map_err(Error::from)
+        self.audio.runtime().encode(pcm).map_err(Error::from)
     }
 
     pub fn decode(
         &self,
         tokens: &AudioTokenGrid,
     ) -> Result<AudioPcmBatch, Error> {
-        self.runtime.decode(tokens).map_err(Error::from)
+        self.audio.runtime().decode(tokens).map_err(Error::from)
     }
 
     fn from_model_metadata(
@@ -60,12 +60,12 @@ impl TtsCodecSession {
         }
 
         let tts_config = model_metadata.model_config.as_tts().ok_or(Error::UnableToLoadConfig)?;
-        let runtime = tts_config.create_audio_codec_runtime_with_model_path(&model_path)?;
+        let audio = tts_config.create_audio_generation_context_with_model_path(&model_path)?;
 
         Ok(Self {
             model_path,
             model_metadata,
-            runtime,
+            audio,
         })
     }
 }
@@ -94,13 +94,31 @@ mod tests {
             "model_type": model_type,
             "model_config": {
                 "tts_config": {
-                    "audio_codec": {
-                        "type": "nanocodec_fsq",
-                        "sample_rate": 24000,
-                        "num_groups": 2,
-                        "num_levels_per_group": [8, 6],
-                        "output_packing": "frame_major"
-                    }
+                    "text_decoder_config": {
+                        "type": "StubTextDecoderConfig",
+                        "num_codebooks": 2,
+                        "codebook_size": 48
+                    },
+                    "audio_decoder_config": {
+                        "type": "NanoCodecConfig",
+                        "samplerate": 24000,
+                        "quantizer_config": {
+                            "num_groups": 2,
+                            "quantizer_config": {
+                                "num_levels": [8, 6]
+                            }
+                        },
+                        "decoder_config": {
+                            "activation_config": {
+                                "leaky_relu_negative_slope": 0.01
+                            }
+                        },
+                        "base_channels": 32,
+                        "up_sample_rates": [2, 2],
+                        "resblock_kernel_sizes": [3],
+                        "resblock_dilations": [1]
+                    },
+                    "vocoder_config": {}
                 },
                 "message_processor_config": {
                     "prompt_template": "{{messages[0].content}}"
@@ -120,13 +138,19 @@ mod tests {
     #[test]
     fn tts_codec_session_encodes_and_decodes() {
         let metadata = build_metadata("tts_model");
-        let session = TtsCodecSession::from_model_metadata(PathBuf::from("."), metadata).expect("session");
+        let tts_config = metadata.model_config.as_tts().expect("tts config");
+        let audio = tts_config.create_audio_generation_context().expect("audio context");
+        let session = TtsCodecSession {
+            model_path: PathBuf::from("."),
+            model_metadata: metadata,
+            audio,
+        };
 
         let pcm = make_pcm(session.runtime().config().channels());
         let tokens = session.encode(&pcm).expect("encode");
         let decoded = session.decode(&tokens).expect("decode");
 
-        assert_eq!(tokens.packing(), AudioTokenPacking::FrameMajor);
+        assert_eq!(tokens.packing(), AudioTokenPacking::CodebookMajor);
         assert_eq!(decoded.sample_rate(), session.runtime().config().sample_rate());
         assert_eq!(decoded.channels(), session.runtime().config().channels());
         assert_eq!(decoded.lengths(), pcm.lengths());
@@ -153,7 +177,13 @@ mod tests {
             "model_type": "tts_model",
             "model_config": {
                 "tts_config": {
+                    "text_decoder_config": {
+                        "type": "StubTextDecoderConfig",
+                        "num_codebooks": 13,
+                        "codebook_size": 336
+                    },
                     "audio_decoder_config": {
+                        "type": "NanoCodecConfig",
                         "samplerate": 22050,
                         "quantizer_config": {
                             "num_groups": 13,
@@ -170,7 +200,8 @@ mod tests {
                         "up_sample_rates": [7, 7, 6, 3, 2],
                         "resblock_kernel_sizes": [3, 7, 11],
                         "resblock_dilations": [1, 3, 5]
-                    }
+                    },
+                    "vocoder_config": {}
                 },
                 "message_processor_config": {
                     "prompt_template": "{{messages[0].content}}"

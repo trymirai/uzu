@@ -37,7 +37,10 @@ use crate::{
         },
         metal::Metal,
     },
-    config::{ConfigDataType, EmbeddingConfig, EmbeddingConfigCommon, InnerModelConfig},
+    config::{
+        ConfigDataType, DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
+        EmbeddingConfigCommon, InnerModelConfig, NanoCodecAudioDecoderConfig, TtsAudioDecoderConfig, TtsConfig,
+    },
     encodable_block::{EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope},
     forward_pass::{
         model_shape::ModelShape,
@@ -45,6 +48,15 @@ use crate::{
         state::{ArrayId, ForwardPassState, RopeType, SharedBuffers},
     },
     parameters::{ParameterLoader, read_safetensors_metadata},
+};
+
+mod loaders;
+
+use loaders::{build_nanocodec_decoder_graph_from_lalamo_config, load_audio_runtime_from_tts_config};
+#[cfg(test)]
+use loaders::{
+    SafeTensorReader, convert_lalamo_transpose_weight_oih_to_iog, read_fishaudio_norm_layer, read_matrix_f32,
+    resolve_fishaudio_vocoder_data_type,
 };
 
 type MetalCommandBuffer = <Metal as Backend>::CommandBuffer;
@@ -363,7 +375,7 @@ fn checked_add_usize(
 fn conv1d_estimated_macs(
     batch_size: usize,
     seq_len: usize,
-    layer: &FishAudioConv1dGpuLayer,
+    layer: &StructuredAudioConv1dGpuLayer,
 ) -> AudioResult<usize> {
     let cin_per_group = layer
         .cin
@@ -375,7 +387,7 @@ fn conv1d_estimated_macs(
 fn convtranspose_estimated_macs(
     batch_size: usize,
     seq_len_in: usize,
-    layer: &FishAudioConvTranspose1dGpuLayer,
+    layer: &StructuredAudioConvTranspose1dGpuLayer,
 ) -> AudioResult<usize> {
     let cout_per_group = layer
         .cout
@@ -387,7 +399,7 @@ fn convtranspose_estimated_macs(
 fn residual_unit_estimated_macs(
     batch_size: usize,
     seq_len: usize,
-    unit: &FishAudioResidualUnitGpuLayer,
+    unit: &StructuredAudioResidualUnitGpuLayer,
 ) -> AudioResult<usize> {
     let conv1 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv1)?;
     let conv2 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv2)?;
@@ -1101,60 +1113,34 @@ struct RuntimeConfigJson {
     decoder: Option<NanoCodecDecoderJson>,
 }
 
-fn parse_runtime_config_json(tts_config: &serde_json::Value) -> AudioResult<RuntimeConfigJson> {
+fn build_runtime_config_from_nanocodec_audio_decoder(
+    config: &NanoCodecAudioDecoderConfig,
+) -> AudioResult<RuntimeConfigJson> {
+    Ok(RuntimeConfigJson {
+        r#type: Some("nanocodec_fsq".to_string()),
+        sample_rate: config.samplerate,
+        num_groups: config.quantizer_config.num_groups,
+        num_levels_per_group: config.quantizer_config.quantizer_config.num_levels.clone(),
+        eps: config.quantizer_config.quantizer_config.eps.unwrap_or_else(default_eps),
+        output_packing: RuntimePacking::CodebookMajor,
+        decoder: None,
+    })
+}
+
+fn parse_legacy_runtime_config_json(tts_config: &serde_json::Value) -> AudioResult<RuntimeConfigJson> {
     let candidate = tts_config.get("audio_codec").unwrap_or(tts_config);
     let parsed: RuntimeConfigJson = serde_json::from_value(candidate.clone())
         .map_err(|err| AudioError::Runtime(format!("invalid tts audio codec config: {err}")))?;
 
-    if let Some(ref codec_type) = parsed.r#type {
-        if codec_type != "nanocodec_fsq" {
-            return Err(AudioError::Runtime(format!(
-                "unsupported audio codec type '{codec_type}', expected 'nanocodec_fsq'"
-            )));
-        }
+    if let Some(ref codec_type) = parsed.r#type
+        && codec_type != "nanocodec_fsq"
+    {
+        return Err(AudioError::Runtime(format!(
+            "unsupported audio codec type '{codec_type}', expected 'nanocodec_fsq'"
+        )));
     }
 
     Ok(parsed)
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LalamoTtsConfigJson {
-    audio_decoder_config: LalamoAudioDecoderConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LalamoAudioDecoderConfigJson {
-    samplerate: u32,
-    quantizer_config: LalamoGroupedQuantizerConfigJson,
-    decoder_config: LalamoDecoderConfigJson,
-    base_channels: usize,
-    up_sample_rates: Vec<usize>,
-    resblock_kernel_sizes: Vec<usize>,
-    resblock_dilations: Vec<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LalamoGroupedQuantizerConfigJson {
-    num_groups: usize,
-    quantizer_config: LalamoQuantizerConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LalamoQuantizerConfigJson {
-    num_levels: Vec<i32>,
-    #[serde(default = "default_eps")]
-    eps: f32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LalamoDecoderConfigJson {
-    activation_config: LalamoActivationConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LalamoActivationConfigJson {
-    #[serde(default = "default_negative_slope")]
-    leaky_relu_negative_slope: f32,
 }
 
 fn default_negative_slope() -> f32 {
@@ -1165,57 +1151,12 @@ fn default_decoder_eps() -> f32 {
     1e-9
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioTtsConfigJson {
-    #[serde(default)]
-    activation_precision: Option<ConfigDataType>,
-    audio_decoder_config: FishAudioAudioDecoderConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioAudioDecoderConfigJson {
-    samplerate: u32,
-    n_codebooks: usize,
-    codebook_size: usize,
-    semantic_codebook_size: usize,
-    input_dim: usize,
-    downsample_factor: Vec<usize>,
-    decoder_rates: Vec<usize>,
-    #[serde(default)]
-    precision: Option<ConfigDataType>,
-    quantizer_config: FishAudioQuantizerConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioQuantizerConfigJson {
-    #[serde(default)]
-    precision: Option<ConfigDataType>,
-    post_module_config: crate::config::TransformerConfig,
-    upsampler_config: FishAudioUpsamplerConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioUpsamplerConfigJson {
-    block_configs: Vec<FishAudioUpsamplingBlockConfigJson>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioUpsamplingBlockConfigJson {
-    convnext_config: FishAudioConvNeXtConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioConvNeXtConfigJson {
-    norm_config: FishAudioConvNeXtNormConfigJson,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FishAudioConvNeXtNormConfigJson {
-    epsilon: f32,
-    #[serde(default)]
-    subtract_mean: bool,
-    #[serde(default)]
-    use_bias: bool,
+enum LoadedTtsAudioRuntimeConfig {
+    Standard(NanoCodecAudioDecoderConfig),
+    StructuredDecoder {
+        runtime: RuntimeConfigJson,
+        decoder: StructuredAudioCodecGraph,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1241,14 +1182,14 @@ impl MatrixF32 {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioVectorQuantizer {
+struct StructuredAudioVectorQuantizer {
     codebook: MatrixF32,
     out_proj: MatrixF32,
     out_bias: Vec<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioConv1dLayer {
+struct StructuredAudioConv1dLayer {
     weight: Vec<f32>,
     bias: Vec<f32>,
     cin: usize,
@@ -1259,7 +1200,7 @@ struct FishAudioConv1dLayer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioConvTranspose1dLayer {
+struct StructuredAudioConvTranspose1dLayer {
     weight: Vec<f32>,
     bias: Vec<f32>,
     cin: usize,
@@ -1270,7 +1211,7 @@ struct FishAudioConvTranspose1dLayer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioNormLayer {
+struct StructuredAudioNormLayer {
     scales: Vec<f32>,
     biases: Option<Vec<f32>>,
     epsilon: f32,
@@ -1278,9 +1219,9 @@ struct FishAudioNormLayer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioConvNeXtLayer {
-    depthwise_conv: FishAudioConv1dLayer,
-    norm: FishAudioNormLayer,
+struct StructuredAudioConvNeXtLayer {
+    depthwise_conv: StructuredAudioConv1dLayer,
+    norm: StructuredAudioNormLayer,
     pwconv1: MatrixF32,
     pwconv1_bias: Vec<f32>,
     pwconv2: MatrixF32,
@@ -1288,40 +1229,40 @@ struct FishAudioConvNeXtLayer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioResidualUnitLayer {
+struct StructuredAudioResidualUnitLayer {
     snake1_alpha: Vec<f32>,
-    conv1: FishAudioConv1dLayer,
+    conv1: StructuredAudioConv1dLayer,
     snake2_alpha: Vec<f32>,
-    conv2: FishAudioConv1dLayer,
+    conv2: StructuredAudioConv1dLayer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioDecoderBlockLayer {
+struct StructuredAudioDecoderBlockLayer {
     snake_alpha: Vec<f32>,
-    trans_conv: FishAudioConvTranspose1dLayer,
-    res_unit1: FishAudioResidualUnitLayer,
-    res_unit2: FishAudioResidualUnitLayer,
-    res_unit3: FishAudioResidualUnitLayer,
+    trans_conv: StructuredAudioConvTranspose1dLayer,
+    res_unit1: StructuredAudioResidualUnitLayer,
+    res_unit2: StructuredAudioResidualUnitLayer,
+    res_unit3: StructuredAudioResidualUnitLayer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioDecoderGraph {
-    first_conv: FishAudioConv1dLayer,
-    upsample_blocks: Vec<(FishAudioConvTranspose1dLayer, FishAudioConvNeXtLayer)>,
-    decoder_blocks: Vec<FishAudioDecoderBlockLayer>,
+struct StructuredAudioDecoderGraph {
+    first_conv: StructuredAudioConv1dLayer,
+    upsample_blocks: Vec<(StructuredAudioConvTranspose1dLayer, StructuredAudioConvNeXtLayer)>,
+    decoder_blocks: Vec<StructuredAudioDecoderBlockLayer>,
     final_snake_alpha: Vec<f32>,
-    final_conv: FishAudioConv1dLayer,
+    final_conv: StructuredAudioConv1dLayer,
     upsample_factor: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct FishAudioCodecGraph {
-    semantic_quantizer: FishAudioVectorQuantizer,
-    residual_quantizers: Vec<FishAudioVectorQuantizer>,
+struct StructuredAudioCodecGraph {
+    semantic_quantizer: StructuredAudioVectorQuantizer,
+    residual_quantizers: Vec<StructuredAudioVectorQuantizer>,
     post_module_model_dim: usize,
     post_module_transformer_config: crate::config::TransformerConfig,
     weights_path: String,
-    decoder: FishAudioDecoderGraph,
+    decoder: StructuredAudioDecoderGraph,
     codebook_size: usize,
     semantic_codebook_size: usize,
     input_dim: usize,
@@ -1331,7 +1272,7 @@ struct FishAudioCodecGraph {
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioConv1dGpuLayer {
+struct StructuredAudioConv1dGpuLayer {
     weight: Array<Metal>,
     bias: Array<Metal>,
     cin: usize,
@@ -1342,7 +1283,7 @@ struct FishAudioConv1dGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioConvTranspose1dGpuLayer {
+struct StructuredAudioConvTranspose1dGpuLayer {
     weight: Array<Metal>,
     bias: Array<Metal>,
     cin: usize,
@@ -1353,7 +1294,7 @@ struct FishAudioConvTranspose1dGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioPointwiseConvGpuLayer {
+struct StructuredAudioPointwiseConvGpuLayer {
     weight: Array<Metal>,
     bias: Array<Metal>,
     cin: usize,
@@ -1361,7 +1302,7 @@ struct FishAudioPointwiseConvGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioNormGpuLayer {
+struct StructuredAudioNormGpuLayer {
     scales: Array<Metal>,
     bias: Array<Metal>,
     epsilon: f32,
@@ -1369,40 +1310,40 @@ struct FishAudioNormGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioConvNeXtGpuLayer {
-    depthwise_conv: FishAudioConv1dGpuLayer,
-    norm: FishAudioNormGpuLayer,
-    pwconv1: FishAudioPointwiseConvGpuLayer,
-    pwconv2: FishAudioPointwiseConvGpuLayer,
+struct StructuredAudioConvNeXtGpuLayer {
+    depthwise_conv: StructuredAudioConv1dGpuLayer,
+    norm: StructuredAudioNormGpuLayer,
+    pwconv1: StructuredAudioPointwiseConvGpuLayer,
+    pwconv2: StructuredAudioPointwiseConvGpuLayer,
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioResidualUnitGpuLayer {
+struct StructuredAudioResidualUnitGpuLayer {
     snake1_alpha: Array<Metal>,
-    conv1: FishAudioConv1dGpuLayer,
+    conv1: StructuredAudioConv1dGpuLayer,
     snake2_alpha: Array<Metal>,
-    conv2: FishAudioConv1dGpuLayer,
+    conv2: StructuredAudioConv1dGpuLayer,
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioDecoderBlockGpuLayer {
+struct StructuredAudioDecoderBlockGpuLayer {
     snake_alpha: Array<Metal>,
-    trans_conv: FishAudioConvTranspose1dGpuLayer,
-    res_unit1: FishAudioResidualUnitGpuLayer,
-    res_unit2: FishAudioResidualUnitGpuLayer,
-    res_unit3: FishAudioResidualUnitGpuLayer,
+    trans_conv: StructuredAudioConvTranspose1dGpuLayer,
+    res_unit1: StructuredAudioResidualUnitGpuLayer,
+    res_unit2: StructuredAudioResidualUnitGpuLayer,
+    res_unit3: StructuredAudioResidualUnitGpuLayer,
 }
 
 #[derive(Debug, Clone)]
-struct FishAudioDecoderGpuGraph {
-    first_conv: FishAudioConv1dGpuLayer,
-    upsample_blocks: Vec<(FishAudioConvTranspose1dGpuLayer, FishAudioConvNeXtGpuLayer)>,
-    decoder_blocks: Vec<FishAudioDecoderBlockGpuLayer>,
+struct StructuredAudioDecoderGpuGraph {
+    first_conv: StructuredAudioConv1dGpuLayer,
+    upsample_blocks: Vec<(StructuredAudioConvTranspose1dGpuLayer, StructuredAudioConvNeXtGpuLayer)>,
+    decoder_blocks: Vec<StructuredAudioDecoderBlockGpuLayer>,
     final_snake_alpha: Array<Metal>,
-    final_conv: FishAudioConv1dGpuLayer,
+    final_conv: StructuredAudioConv1dGpuLayer,
 }
 
-struct FishAudioPostModuleRuntime {
+struct StructuredAudioPostModuleRuntime {
     context: Rc<<Metal as Backend>::Context>,
     model_shape: ModelShape,
     scratch_buffers: ScratchBuffers<Metal>,
@@ -1412,7 +1353,7 @@ struct FishAudioPostModuleRuntime {
     max_sequence_length: usize,
 }
 
-struct FishAudioKernelCache {
+struct StructuredAudioKernelCache {
     transpose_nsc_to_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel,
     half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel,
     causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel,
@@ -1442,13 +1383,13 @@ struct FishAudioQuantizerGpuResources {
 }
 
 thread_local! {
-    static FISHAUDIO_POST_MODULE_RUNTIME_CACHE: RefCell<HashMap<String, Rc<FishAudioPostModuleRuntime>>> =
+    static FISHAUDIO_POST_MODULE_RUNTIME_CACHE: RefCell<HashMap<String, Rc<StructuredAudioPostModuleRuntime>>> =
         RefCell::new(HashMap::new());
     static FISHAUDIO_DECODE_CONTEXT_CACHE: RefCell<HashMap<String, Rc<<Metal as Backend>::Context>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<FishAudioKernelCache>>> =
+    static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioKernelCache>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<FishAudioDecoderGpuGraph>>> =
+    static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioDecoderGpuGraph>>> =
         RefCell::new(HashMap::new());
     static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerGpuResources>>> =
         RefCell::new(HashMap::new());
@@ -1460,737 +1401,6 @@ struct SafeTensorEntry {
     shape: Vec<usize>,
     offset: usize,
     size: usize,
-}
-
-#[derive(Debug)]
-struct SafeTensorReader {
-    file: File,
-    entries: HashMap<String, SafeTensorEntry>,
-}
-
-impl SafeTensorReader {
-    fn open(path: &Path) -> AudioResult<Self> {
-        let file = File::open(path).map_err(|err| {
-            AudioError::Runtime(format!("failed to open safetensors file '{}': {err}", path.display()))
-        })?;
-        let (global_offset, metadata) = read_safetensors_metadata(&file).map_err(|err| {
-            AudioError::Runtime(format!("failed to parse safetensors metadata from '{}': {err}", path.display()))
-        })?;
-
-        let mut entries = HashMap::new();
-        for (name, tensor) in metadata.tensors {
-            let (local_begin, local_end) = tensor.data_offsets;
-            let size = local_end
-                .checked_sub(local_begin)
-                .ok_or(AudioError::Runtime("invalid tensor data offsets in safetensors metadata".to_string()))?;
-            let offset = global_offset
-                .checked_add(local_begin)
-                .ok_or(AudioError::Runtime("safetensors tensor offset overflow".to_string()))?;
-
-            entries.insert(
-                name,
-                SafeTensorEntry {
-                    data_type: tensor.dtype.into(),
-                    shape: tensor.shape,
-                    offset,
-                    size,
-                },
-            );
-        }
-
-        Ok(Self {
-            file,
-            entries,
-        })
-    }
-
-    fn read_tensor_f32(
-        &self,
-        key: &str,
-    ) -> AudioResult<(Vec<usize>, Vec<f32>)> {
-        let entry = self
-            .entries
-            .get(key)
-            .ok_or_else(|| AudioError::Runtime(format!("missing tensor '{key}' in model.safetensors")))?;
-
-        let num_elements = checked_product(&entry.shape)?;
-        let expected_size = num_elements
-            .checked_mul(entry.data_type.size_in_bytes())
-            .ok_or(AudioError::Runtime(format!("tensor '{key}' byte-size overflow")))?;
-        if entry.size != expected_size {
-            return Err(AudioError::Runtime(format!(
-                "tensor '{key}' size mismatch: expected {expected_size} bytes from shape {:?} and dtype {:?}, got {}",
-                entry.shape, entry.data_type, entry.size
-            )));
-        }
-
-        let mut bytes = vec![0_u8; entry.size];
-        self.file.read_exact_at(&mut bytes, entry.offset as u64).map_err(|err| {
-            AudioError::Runtime(format!("failed reading tensor '{key}' from model.safetensors: {err}"))
-        })?;
-
-        let values = match entry.data_type {
-            DataType::F32 => decode_f32_bytes(&bytes),
-            DataType::F16 => decode_f16_bytes(&bytes).into_iter().map(f16::to_f32).collect::<Vec<f32>>(),
-            DataType::BF16 => decode_bf16_bytes(&bytes).into_iter().map(bf16::to_f32).collect::<Vec<f32>>(),
-            other => {
-                return Err(AudioError::Runtime(format!(
-                    "unsupported tensor dtype for '{key}': {other:?} (expected F32/F16/BF16)"
-                )));
-            },
-        };
-
-        if values.len() != num_elements {
-            return Err(AudioError::Runtime(format!(
-                "decoded tensor '{key}' element count mismatch: expected {num_elements}, got {}",
-                values.len()
-            )));
-        }
-
-        Ok((entry.shape.clone(), values))
-    }
-}
-
-fn decode_f32_bytes(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4).map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect()
-}
-
-fn decode_f16_bytes(bytes: &[u8]) -> Vec<f16> {
-    bytes.chunks_exact(2).map(|chunk| f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]]))).collect()
-}
-
-fn decode_bf16_bytes(bytes: &[u8]) -> Vec<bf16> {
-    bytes.chunks_exact(2).map(|chunk| bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]]))).collect()
-}
-
-fn read_tensor_1d(
-    reader: &SafeTensorReader,
-    key: &str,
-) -> AudioResult<Vec<f32>> {
-    let (shape, values) = reader.read_tensor_f32(key)?;
-    if shape.len() != 1 {
-        return Err(AudioError::Runtime(format!("expected rank-1 tensor for '{key}', got shape {shape:?}")));
-    }
-    Ok(values)
-}
-
-fn read_tensor_3d(
-    reader: &SafeTensorReader,
-    key: &str,
-) -> AudioResult<Tensor3Json> {
-    let (shape, values) = reader.read_tensor_f32(key)?;
-    if shape.len() != 3 {
-        return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{key}', got shape {shape:?}")));
-    }
-    Ok(Tensor3Json {
-        shape: [shape[0], shape[1], shape[2]],
-        values,
-    })
-}
-
-fn read_causal_conv_1d(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    dilation: usize,
-) -> AudioResult<CausalConv1dJson> {
-    Ok(CausalConv1dJson {
-        weight: read_tensor_3d(reader, &format!("{prefix}.weights"))?,
-        bias: read_tensor_1d(reader, &format!("{prefix}.biases"))?,
-        dilation,
-    })
-}
-
-fn convert_lalamo_transpose_weight_oih_to_iog(
-    weight: &Tensor3Json,
-    in_channels: usize,
-    out_channels: usize,
-    groups: usize,
-) -> AudioResult<Tensor3Json> {
-    let [out_channels_in_weight, in_channels_per_group, kernel_size] = weight.shape;
-    if out_channels_in_weight != out_channels {
-        return Err(AudioError::Runtime(format!(
-            "transpose conv out-channel mismatch: expected {out_channels}, got {out_channels_in_weight}"
-        )));
-    }
-    if groups == 0 || in_channels % groups != 0 || out_channels % groups != 0 {
-        return Err(AudioError::Runtime(format!(
-            "invalid transpose conv grouping: in_channels={in_channels}, out_channels={out_channels}, groups={groups}"
-        )));
-    }
-
-    let expected_in_per_group = in_channels / groups;
-    if in_channels_per_group != expected_in_per_group {
-        return Err(AudioError::Runtime(format!(
-            "transpose conv weight shape mismatch: expected in_per_group={expected_in_per_group}, got {in_channels_per_group}"
-        )));
-    }
-
-    let out_channels_per_group = out_channels / groups;
-    let expected_weight_len = checked_product(&[out_channels, in_channels_per_group, kernel_size])?;
-    if weight.values.len() != expected_weight_len {
-        return Err(AudioError::Runtime(format!(
-            "transpose conv weight value length mismatch: expected {expected_weight_len}, got {}",
-            weight.values.len()
-        )));
-    }
-
-    let converted_len = checked_product(&[in_channels, out_channels_per_group, kernel_size])?;
-    let mut converted = vec![0.0_f32; converted_len];
-
-    for group in 0..groups {
-        let in_base = group * in_channels_per_group;
-        let out_base = group * out_channels_per_group;
-
-        for out_idx in 0..out_channels_per_group {
-            for in_idx in 0..in_channels_per_group {
-                for k in 0..kernel_size {
-                    let src_index = ((out_base + out_idx) * in_channels_per_group + in_idx) * kernel_size + k;
-                    let dst_index = ((in_base + in_idx) * out_channels_per_group + out_idx) * kernel_size + k;
-                    converted[dst_index] = weight.values[src_index];
-                }
-            }
-        }
-    }
-
-    Ok(Tensor3Json {
-        shape: [in_channels, out_channels_per_group, kernel_size],
-        values: converted,
-    })
-}
-
-fn parse_lalamo_tts_config_json(tts_config: &serde_json::Value) -> AudioResult<LalamoTtsConfigJson> {
-    serde_json::from_value(tts_config.clone())
-        .map_err(|err| AudioError::Runtime(format!("invalid Lalamo tts_config for NanoCodec runtime import: {err}")))
-}
-
-fn build_decoder_json_from_lalamo_export(
-    tts_config: &LalamoTtsConfigJson,
-    model_weights_path: &Path,
-) -> AudioResult<NanoCodecDecoderJson> {
-    let cfg = &tts_config.audio_decoder_config;
-    let reader = SafeTensorReader::open(model_weights_path)?;
-
-    let pre_conv = read_causal_conv_1d(&reader, "audio_decoder.decoder.pre_conv", 1)?;
-    let mut stages = Vec::with_capacity(cfg.up_sample_rates.len());
-
-    let mut current_channels = cfg.base_channels;
-    for (stage_index, &stride) in cfg.up_sample_rates.iter().enumerate() {
-        if stride == 0 {
-            return Err(AudioError::Runtime(format!(
-                "invalid upsample stride at stage {stage_index}: stride must be > 0"
-            )));
-        }
-        let out_channels = current_channels
-            .checked_div(2)
-            .ok_or(AudioError::Runtime("decoder channel progression overflow".to_string()))?;
-        if out_channels == 0 {
-            return Err(AudioError::Runtime(format!(
-                "invalid decoder stage {stage_index}: current_channels={current_channels}, expected > 1"
-            )));
-        }
-        let groups = out_channels;
-
-        let activation_alpha =
-            read_tensor_1d(&reader, &format!("audio_decoder.decoder.activations.{stage_index}.snake.alpha"))?;
-
-        let upsample_weight_oih =
-            read_tensor_3d(&reader, &format!("audio_decoder.decoder.upsample_convs.{stage_index}.weights"))?;
-        let upsample_bias =
-            read_tensor_1d(&reader, &format!("audio_decoder.decoder.upsample_convs.{stage_index}.biases"))?;
-        let upsample_weight =
-            convert_lalamo_transpose_weight_oih_to_iog(&upsample_weight_oih, current_channels, out_channels, groups)?;
-        let upsample_conv = CausalConvTranspose1dJson {
-            weight: upsample_weight,
-            bias: upsample_bias,
-            stride,
-            groups,
-        };
-
-        let mut res_blocks = Vec::with_capacity(cfg.resblock_kernel_sizes.len());
-        for (res_block_index, _) in cfg.resblock_kernel_sizes.iter().enumerate() {
-            let mut residuals = Vec::with_capacity(cfg.resblock_dilations.len());
-            for (residual_index, &dilation) in cfg.resblock_dilations.iter().enumerate() {
-                let prefix = format!(
-                    "audio_decoder.decoder.res_layers.{stage_index}.res_blocks.{res_block_index}.res_blocks.{residual_index}"
-                );
-                residuals.push(NanoCodecResidualBlockJson {
-                    input_activation_alpha: read_tensor_1d(&reader, &format!("{prefix}.input_activation.snake.alpha"))?,
-                    input_conv: read_causal_conv_1d(&reader, &format!("{prefix}.input_conv"), dilation)?,
-                    skip_activation_alpha: read_tensor_1d(&reader, &format!("{prefix}.skip_activation.snake.alpha"))?,
-                    skip_conv: read_causal_conv_1d(&reader, &format!("{prefix}.skip_conv"), 1)?,
-                });
-            }
-            res_blocks.push(NanoCodecHiFiGanResBlockJson {
-                res_blocks: residuals,
-            });
-        }
-
-        stages.push(NanoCodecUpsampleStageJson {
-            activation_alpha,
-            upsample_conv,
-            res_layer: Some(NanoCodecHiFiGanResLayerJson {
-                res_blocks,
-            }),
-        });
-
-        current_channels = out_channels;
-    }
-
-    let post_activation_alpha = read_tensor_1d(&reader, "audio_decoder.decoder.post_activation.snake.alpha")?;
-    let post_conv = read_causal_conv_1d(&reader, "audio_decoder.decoder.post_conv", 1)?;
-
-    Ok(NanoCodecDecoderJson {
-        pre_conv,
-        stages,
-        post_activation_alpha,
-        post_conv,
-        negative_slope: cfg.decoder_config.activation_config.leaky_relu_negative_slope,
-        eps: default_decoder_eps(),
-    })
-}
-
-fn parse_fishaudio_tts_config_json(tts_config: &serde_json::Value) -> AudioResult<FishAudioTtsConfigJson> {
-    serde_json::from_value(tts_config.clone()).map_err(|err| {
-        AudioError::Runtime(format!("invalid Lalamo tts_config for FishAudio DAC runtime import: {err}"))
-    })
-}
-
-fn resolve_fishaudio_vocoder_data_type(tts_config: &FishAudioTtsConfigJson) -> AudioResult<DataType> {
-    let mut resolved_precision: Option<ConfigDataType> = None;
-    for (field_name, precision) in [
-        ("tts_config.activation_precision", tts_config.activation_precision),
-        ("tts_config.audio_decoder_config.precision", tts_config.audio_decoder_config.precision),
-        (
-            "tts_config.audio_decoder_config.quantizer_config.precision",
-            tts_config.audio_decoder_config.quantizer_config.precision,
-        ),
-    ] {
-        if let Some(precision) = precision {
-            if let Some(existing) = resolved_precision {
-                if existing != precision {
-                    return Err(AudioError::Runtime(format!(
-                        "conflicting FishAudio precision in Lalamo export: {field_name}={precision:?} conflicts with {existing:?}"
-                    )));
-                }
-            } else {
-                resolved_precision = Some(precision);
-            }
-        }
-    }
-
-    let precision = resolved_precision.ok_or(AudioError::Runtime(
-        "missing FishAudio precision in Lalamo export; expected one of tts_config.activation_precision, \
-tts_config.audio_decoder_config.precision, or tts_config.audio_decoder_config.quantizer_config.precision"
-            .to_string(),
-    ))?;
-    let data_type: DataType = precision.into();
-    if !matches!(data_type, DataType::F32 | DataType::F16 | DataType::BF16) {
-        return Err(AudioError::Runtime(format!(
-            "unsupported FishAudio vocoder precision in Lalamo export: {precision:?} (expected float32/float16/bfloat16)"
-        )));
-    }
-    Ok(data_type)
-}
-
-fn read_matrix_f32(
-    reader: &SafeTensorReader,
-    key: &str,
-    expected_rows: usize,
-    expected_cols: usize,
-) -> AudioResult<MatrixF32> {
-    let (shape, values) = reader.read_tensor_f32(key)?;
-    if shape.len() != 2 {
-        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
-    }
-    if shape[0] != expected_rows || shape[1] != expected_cols {
-        return Err(AudioError::Runtime(format!(
-            "tensor '{key}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {shape:?}"
-        )));
-    }
-    Ok(MatrixF32 {
-        rows: shape[0],
-        cols: shape[1],
-        values,
-    })
-}
-
-fn read_matrix_f32_any(
-    reader: &SafeTensorReader,
-    key: &str,
-) -> AudioResult<MatrixF32> {
-    let (shape, values) = reader.read_tensor_f32(key)?;
-    if shape.len() != 2 {
-        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
-    }
-    Ok(MatrixF32 {
-        rows: shape[0],
-        cols: shape[1],
-        values,
-    })
-}
-
-fn read_fishaudio_vector_quantizer(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    codebook_size: usize,
-    output_dim: usize,
-) -> AudioResult<FishAudioVectorQuantizer> {
-    let codebook_key = format!("{prefix}.codebook.weights");
-    let (shape, values) = reader.read_tensor_f32(&codebook_key)?;
-    if shape.len() != 2 {
-        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{codebook_key}', got shape {shape:?}")));
-    }
-    if shape[0] != codebook_size {
-        return Err(AudioError::Runtime(format!(
-            "codebook rows mismatch for '{codebook_key}': expected {codebook_size}, got {}",
-            shape[0]
-        )));
-    }
-    let code_dim = shape[1];
-    if code_dim == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-
-    let out_proj = read_matrix_f32(reader, &format!("{prefix}.out_proj.weights"), output_dim, code_dim)?;
-    let out_bias = read_tensor_1d(reader, &format!("{prefix}.out_proj.biases"))?;
-    if out_bias.len() != output_dim {
-        return Err(AudioError::Runtime(format!(
-            "out_proj bias shape mismatch for '{prefix}': expected {output_dim}, got {}",
-            out_bias.len()
-        )));
-    }
-
-    Ok(FishAudioVectorQuantizer {
-        codebook: MatrixF32 {
-            rows: shape[0],
-            cols: shape[1],
-            values,
-        },
-        out_proj,
-        out_bias,
-    })
-}
-
-fn read_fishaudio_conv1d_layer(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    dilation: usize,
-    groups: usize,
-) -> AudioResult<FishAudioConv1dLayer> {
-    let weight_key = format!("{prefix}.weights");
-    let bias_key = format!("{prefix}.biases");
-    let (shape, values) = reader.read_tensor_f32(&weight_key)?;
-    if shape.len() != 3 {
-        return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{weight_key}', got shape {shape:?}")));
-    }
-    let bias = read_tensor_1d(reader, &bias_key)?;
-    if bias.len() != shape[0] {
-        return Err(AudioError::Runtime(format!(
-            "bias shape mismatch for '{bias_key}': expected {}, got {}",
-            shape[0],
-            bias.len()
-        )));
-    }
-    if groups == 0 || shape[0] == 0 || shape[1] == 0 || shape[2] == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    if shape[0] % groups != 0 {
-        return Err(AudioError::Runtime(format!(
-            "invalid grouped conv weights for '{weight_key}': out_channels {} not divisible by groups {groups}",
-            shape[0]
-        )));
-    }
-
-    Ok(FishAudioConv1dLayer {
-        weight: values,
-        bias,
-        cin: shape[1].checked_mul(groups).ok_or(AudioError::Runtime("conv input channel overflow".to_string()))?,
-        cout: shape[0],
-        kernel_size: shape[2],
-        dilation,
-        groups,
-    })
-}
-
-fn read_fishaudio_transpose_conv_layer(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    stride: usize,
-    groups: usize,
-) -> AudioResult<FishAudioConvTranspose1dLayer> {
-    if stride == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    let weight_oih = read_tensor_3d(reader, &format!("{prefix}.weights"))?;
-    let bias = read_tensor_1d(reader, &format!("{prefix}.biases"))?;
-    let out_channels = weight_oih.shape[0];
-    if bias.len() != out_channels {
-        return Err(AudioError::Runtime(format!(
-            "transpose conv bias mismatch for '{prefix}.biases': expected {out_channels}, got {}",
-            bias.len()
-        )));
-    }
-    let in_channels = weight_oih.shape[1]
-        .checked_mul(groups)
-        .ok_or(AudioError::Runtime("transpose conv input channel overflow".to_string()))?;
-    let converted = convert_lalamo_transpose_weight_oih_to_iog(&weight_oih, in_channels, out_channels, groups)?;
-    Ok(FishAudioConvTranspose1dLayer {
-        weight: converted.values,
-        bias,
-        cin: in_channels,
-        cout: out_channels,
-        kernel_size: converted.shape[2],
-        stride,
-        groups,
-    })
-}
-
-fn read_fishaudio_residual_unit_layer(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    dilation: usize,
-) -> AudioResult<FishAudioResidualUnitLayer> {
-    Ok(FishAudioResidualUnitLayer {
-        snake1_alpha: read_tensor_1d(reader, &format!("{prefix}.snake1.alpha"))?,
-        conv1: read_fishaudio_conv1d_layer(reader, &format!("{prefix}.conv1"), dilation, 1)?,
-        snake2_alpha: read_tensor_1d(reader, &format!("{prefix}.snake2.alpha"))?,
-        conv2: read_fishaudio_conv1d_layer(reader, &format!("{prefix}.conv2"), 1, 1)?,
-    })
-}
-
-fn read_fishaudio_norm_layer(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    epsilon: f32,
-    subtract_mean: bool,
-    use_bias: bool,
-) -> AudioResult<FishAudioNormLayer> {
-    let scales = read_tensor_1d(reader, &format!("{prefix}.scales"))?;
-    let biases = if use_bias {
-        Some(read_tensor_1d(reader, &format!("{prefix}.biases"))?)
-    } else {
-        None
-    };
-    if let Some(biases) = &biases {
-        if biases.len() != scales.len() {
-            return Err(AudioError::Runtime(format!(
-                "norm scale/bias length mismatch at '{prefix}': {} vs {}",
-                scales.len(),
-                biases.len()
-            )));
-        }
-    }
-    Ok(FishAudioNormLayer {
-        scales,
-        biases,
-        epsilon,
-        subtract_mean,
-    })
-}
-
-fn read_fishaudio_convnext_layer(
-    reader: &SafeTensorReader,
-    prefix: &str,
-    norm_config: &FishAudioConvNeXtNormConfigJson,
-) -> AudioResult<FishAudioConvNeXtLayer> {
-    let depthwise_weight = read_tensor_3d(reader, &format!("{prefix}.dwconv.weights"))?;
-    let depthwise_bias = read_tensor_1d(reader, &format!("{prefix}.dwconv.biases"))?;
-    if depthwise_weight.shape[1] != 1 {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise weight in_channels_per_group must be 1 at {prefix}, got {}",
-            depthwise_weight.shape[1]
-        )));
-    }
-    let depthwise_conv = FishAudioConv1dLayer {
-        weight: depthwise_weight.values,
-        bias: depthwise_bias,
-        cin: depthwise_weight.shape[0],
-        cout: depthwise_weight.shape[0],
-        kernel_size: depthwise_weight.shape[2],
-        dilation: 1,
-        groups: depthwise_weight.shape[0],
-    };
-    if depthwise_conv.bias.len() != depthwise_conv.cout {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise bias mismatch at {prefix}: expected {}, got {}",
-            depthwise_conv.cout,
-            depthwise_conv.bias.len()
-        )));
-    }
-    if depthwise_conv.cout == 0 || depthwise_conv.kernel_size == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    if depthwise_conv.cin != depthwise_conv.cout {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise conv expects cin==cout, got {} vs {} at {prefix}",
-            depthwise_conv.cin, depthwise_conv.cout
-        )));
-    }
-
-    let norm = read_fishaudio_norm_layer(
-        reader,
-        &format!("{prefix}.norm"),
-        norm_config.epsilon,
-        norm_config.subtract_mean,
-        norm_config.use_bias,
-    )?;
-    if norm.scales.len() != depthwise_conv.cout {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt norm channels mismatch at {prefix}: expected {}, got {}",
-            depthwise_conv.cout,
-            norm.scales.len()
-        )));
-    }
-
-    let pwconv1 = read_matrix_f32_any(reader, &format!("{prefix}.pwconv1.weights"))?;
-    let pwconv1_bias = read_tensor_1d(reader, &format!("{prefix}.pwconv1.biases"))?;
-    if pwconv1.cols != depthwise_conv.cout || pwconv1.rows != pwconv1_bias.len() {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt pwconv1 shape mismatch at {prefix}: weight [{}, {}], bias {}",
-            pwconv1.rows,
-            pwconv1.cols,
-            pwconv1_bias.len()
-        )));
-    }
-
-    let pwconv2 = read_matrix_f32(reader, &format!("{prefix}.pwconv2.weights"), depthwise_conv.cout, pwconv1.rows)?;
-    let pwconv2_bias = read_tensor_1d(reader, &format!("{prefix}.pwconv2.biases"))?;
-    if pwconv2_bias.len() != pwconv2.rows {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt pwconv2 bias mismatch at {prefix}: expected {}, got {}",
-            pwconv2.rows,
-            pwconv2_bias.len()
-        )));
-    }
-
-    Ok(FishAudioConvNeXtLayer {
-        depthwise_conv,
-        norm,
-        pwconv1,
-        pwconv1_bias,
-        pwconv2,
-        pwconv2_bias,
-    })
-}
-
-fn build_fishaudio_decoder_graph(
-    reader: &SafeTensorReader,
-    cfg: &FishAudioAudioDecoderConfigJson,
-) -> AudioResult<FishAudioDecoderGraph> {
-    if cfg.decoder_rates.is_empty() {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    if cfg.quantizer_config.upsampler_config.block_configs.len() != cfg.downsample_factor.len() {
-        return Err(AudioError::Runtime(format!(
-            "FishAudio upsampler config mismatch: {} block configs for {} downsample factors",
-            cfg.quantizer_config.upsampler_config.block_configs.len(),
-            cfg.downsample_factor.len()
-        )));
-    }
-
-    let mut upsample_blocks = Vec::with_capacity(cfg.downsample_factor.len());
-    for (index, &stride) in cfg.downsample_factor.iter().rev().enumerate() {
-        let trans_prefix = format!("audio_decoder.quantizer.upsampler.blocks.{index}.trans_conv");
-        let convnext_prefix = format!("audio_decoder.quantizer.upsampler.blocks.{index}.convnext");
-        let trans_conv = read_fishaudio_transpose_conv_layer(reader, &trans_prefix, stride, 1)?;
-        let convnext = read_fishaudio_convnext_layer(
-            reader,
-            &convnext_prefix,
-            &cfg.quantizer_config.upsampler_config.block_configs[index].convnext_config.norm_config,
-        )?;
-        if convnext.depthwise_conv.cin != trans_conv.cout {
-            return Err(AudioError::Runtime(format!(
-                "FishAudio upsampler convnext channel mismatch at block {index}: trans_conv out {} vs convnext in {}",
-                trans_conv.cout, convnext.depthwise_conv.cin
-            )));
-        }
-        upsample_blocks.push((trans_conv, convnext));
-    }
-
-    let first_conv = read_fishaudio_conv1d_layer(reader, "audio_decoder.decoder.first_conv", 1, 1)?;
-    let mut decoder_blocks = Vec::with_capacity(cfg.decoder_rates.len());
-    for (index, &stride) in cfg.decoder_rates.iter().enumerate() {
-        let base = format!("audio_decoder.decoder.decoder_blocks.{index}");
-        decoder_blocks.push(FishAudioDecoderBlockLayer {
-            snake_alpha: read_tensor_1d(reader, &format!("{base}.snake.alpha"))?,
-            trans_conv: read_fishaudio_transpose_conv_layer(reader, &format!("{base}.trans_conv"), stride, 1)?,
-            res_unit1: read_fishaudio_residual_unit_layer(reader, &format!("{base}.res_unit1"), 1)?,
-            res_unit2: read_fishaudio_residual_unit_layer(reader, &format!("{base}.res_unit2"), 3)?,
-            res_unit3: read_fishaudio_residual_unit_layer(reader, &format!("{base}.res_unit3"), 9)?,
-        });
-    }
-
-    let final_snake_alpha = read_tensor_1d(reader, "audio_decoder.decoder.final_snake.alpha")?;
-    let final_conv = read_fishaudio_conv1d_layer(reader, "audio_decoder.decoder.final_conv", 1, 1)?;
-
-    let upsample_factor = cfg
-        .downsample_factor
-        .iter()
-        .chain(cfg.decoder_rates.iter())
-        .try_fold(1usize, |acc, &value| acc.checked_mul(value))
-        .ok_or(AudioError::Runtime("FishAudio decoder upsample factor overflow".to_string()))?;
-
-    Ok(FishAudioDecoderGraph {
-        first_conv,
-        upsample_blocks,
-        decoder_blocks,
-        final_snake_alpha,
-        final_conv,
-        upsample_factor,
-    })
-}
-
-fn build_fishaudio_codec_graph(
-    tts_config: &FishAudioTtsConfigJson,
-    model_weights_path: &Path,
-) -> AudioResult<FishAudioCodecGraph> {
-    let cfg = &tts_config.audio_decoder_config;
-    let reader = SafeTensorReader::open(model_weights_path)?;
-    if cfg.n_codebooks == 0 || cfg.codebook_size <= 1 || cfg.semantic_codebook_size <= 1 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    if cfg.quantizer_config.post_module_config.model_dim != cfg.input_dim {
-        return Err(AudioError::Runtime(format!(
-            "FishAudio post_module model_dim mismatch: expected {}, got {}",
-            cfg.input_dim, cfg.quantizer_config.post_module_config.model_dim
-        )));
-    }
-
-    let semantic_quantizer = read_fishaudio_vector_quantizer(
-        &reader,
-        "audio_decoder.quantizer.semantic_quantizer.quantizers.0",
-        cfg.semantic_codebook_size,
-        cfg.input_dim,
-    )?;
-    let mut residual_quantizers = Vec::with_capacity(cfg.n_codebooks);
-    for index in 0..cfg.n_codebooks {
-        let prefix = format!("audio_decoder.quantizer.quantizer.quantizers.{index}");
-        residual_quantizers.push(read_fishaudio_vector_quantizer(&reader, &prefix, cfg.codebook_size, cfg.input_dim)?);
-    }
-    let decoder = build_fishaudio_decoder_graph(&reader, cfg)?;
-    let total_codebooks =
-        cfg.n_codebooks.checked_add(1).ok_or(AudioError::Runtime("FishAudio codebook count overflow".to_string()))?;
-    let vocoder_data_type = resolve_fishaudio_vocoder_data_type(tts_config)?;
-
-    Ok(FishAudioCodecGraph {
-        semantic_quantizer,
-        residual_quantizers,
-        post_module_model_dim: cfg.quantizer_config.post_module_config.model_dim,
-        post_module_transformer_config: cfg.quantizer_config.post_module_config.clone(),
-        weights_path: model_weights_path.display().to_string(),
-        decoder,
-        codebook_size: cfg.codebook_size,
-        semantic_codebook_size: cfg.semantic_codebook_size,
-        input_dim: cfg.input_dim,
-        total_codebooks,
-        upsample_factor: cfg
-            .downsample_factor
-            .iter()
-            .chain(cfg.decoder_rates.iter())
-            .try_fold(1usize, |acc, &value| acc.checked_mul(value))
-            .ok_or(AudioError::Runtime("FishAudio upsample factor overflow".to_string()))?,
-        vocoder_data_type,
-    })
 }
 
 fn write_i32_slice_to_array(
@@ -2252,9 +1462,9 @@ fn create_alpha_gpu_array(
 fn create_conv1d_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-    layer: &FishAudioConv1dLayer,
+    layer: &StructuredAudioConv1dLayer,
     label_prefix: &str,
-) -> AudioResult<FishAudioConv1dGpuLayer> {
+) -> AudioResult<StructuredAudioConv1dGpuLayer> {
     if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -2263,7 +1473,7 @@ fn create_conv1d_gpu_layer(
     let weight =
         create_data_array(context, data_type, &weight_shape, &layer.weight, &format!("{label_prefix}_weight"))?;
     let bias = create_data_array(context, data_type, &[layer.cout], &layer.bias, &format!("{label_prefix}_bias"))?;
-    Ok(FishAudioConv1dGpuLayer {
+    Ok(StructuredAudioConv1dGpuLayer {
         weight,
         bias,
         cin: layer.cin,
@@ -2277,9 +1487,9 @@ fn create_conv1d_gpu_layer(
 fn create_conv_transpose1d_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-    layer: &FishAudioConvTranspose1dLayer,
+    layer: &StructuredAudioConvTranspose1dLayer,
     label_prefix: &str,
-) -> AudioResult<FishAudioConvTranspose1dGpuLayer> {
+) -> AudioResult<StructuredAudioConvTranspose1dGpuLayer> {
     if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -2307,7 +1517,7 @@ fn create_conv_transpose1d_gpu_layer(
         &format!("{label_prefix}_weight"),
     )?;
     let bias = create_data_array(context, data_type, &[layer.cout], &layer.bias, &format!("{label_prefix}_bias"))?;
-    Ok(FishAudioConvTranspose1dGpuLayer {
+    Ok(StructuredAudioConvTranspose1dGpuLayer {
         weight,
         bias,
         cin: layer.cin,
@@ -2324,7 +1534,7 @@ fn create_pointwise_conv_gpu_layer(
     weight: &MatrixF32,
     bias: &[f32],
     label_prefix: &str,
-) -> AudioResult<FishAudioPointwiseConvGpuLayer> {
+) -> AudioResult<StructuredAudioPointwiseConvGpuLayer> {
     if bias.len() != weight.rows {
         return Err(AudioError::Runtime(format!(
             "pointwise layer '{label_prefix}' bias mismatch: expected {}, got {}",
@@ -2340,7 +1550,7 @@ fn create_pointwise_conv_gpu_layer(
         &format!("{label_prefix}_weight"),
     )?;
     let bias_array = create_data_array(context, data_type, &[weight.rows], bias, &format!("{label_prefix}_bias"))?;
-    Ok(FishAudioPointwiseConvGpuLayer {
+    Ok(StructuredAudioPointwiseConvGpuLayer {
         weight: weight_array,
         bias: bias_array,
         cin: weight.cols,
@@ -2351,10 +1561,10 @@ fn create_pointwise_conv_gpu_layer(
 fn create_norm_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-    layer: &FishAudioNormLayer,
+    layer: &StructuredAudioNormLayer,
     channels: usize,
     label_prefix: &str,
-) -> AudioResult<FishAudioNormGpuLayer> {
+) -> AudioResult<StructuredAudioNormGpuLayer> {
     if layer.scales.len() != channels {
         return Err(AudioError::Runtime(format!(
             "norm layer '{label_prefix}' scale mismatch: expected {channels}, got {}",
@@ -2371,7 +1581,7 @@ fn create_norm_gpu_layer(
         }
         bias.copy_from_slice(bias_values);
     }
-    Ok(FishAudioNormGpuLayer {
+    Ok(StructuredAudioNormGpuLayer {
         scales: create_data_array(context, data_type, &[channels], &layer.scales, &format!("{label_prefix}_scales"))?,
         bias: create_data_array(context, data_type, &[channels], &bias, &format!("{label_prefix}_bias"))?,
         epsilon: layer.epsilon,
@@ -2382,11 +1592,11 @@ fn create_norm_gpu_layer(
 fn create_convnext_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-    layer: &FishAudioConvNeXtLayer,
+    layer: &StructuredAudioConvNeXtLayer,
     label_prefix: &str,
-) -> AudioResult<FishAudioConvNeXtGpuLayer> {
+) -> AudioResult<StructuredAudioConvNeXtGpuLayer> {
     let channels = layer.depthwise_conv.cout;
-    Ok(FishAudioConvNeXtGpuLayer {
+    Ok(StructuredAudioConvNeXtGpuLayer {
         depthwise_conv: create_conv1d_gpu_layer(
             context,
             data_type,
@@ -2414,11 +1624,11 @@ fn create_convnext_gpu_layer(
 fn create_residual_unit_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-    layer: &FishAudioResidualUnitLayer,
+    layer: &StructuredAudioResidualUnitLayer,
     channels: usize,
     label_prefix: &str,
-) -> AudioResult<FishAudioResidualUnitGpuLayer> {
-    Ok(FishAudioResidualUnitGpuLayer {
+) -> AudioResult<StructuredAudioResidualUnitGpuLayer> {
+    Ok(StructuredAudioResidualUnitGpuLayer {
         snake1_alpha: create_alpha_gpu_array(
             context,
             data_type,
@@ -2441,14 +1651,14 @@ fn create_residual_unit_gpu_layer(
 fn fishaudio_kernels(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-) -> AudioResult<Rc<FishAudioKernelCache>> {
+) -> AudioResult<Rc<StructuredAudioKernelCache>> {
     let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(fishaudio_dtype_key(data_type));
     FISHAUDIO_KERNEL_CACHE.with(|cache| {
         if let Some(existing) = cache.borrow().get(&key) {
             return Ok(existing.clone());
         }
 
-        let created = Rc::new(FishAudioKernelCache {
+        let created = Rc::new(StructuredAudioKernelCache {
             transpose_nsc_to_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel::new(
                 context.as_ref(),
                 data_type,
@@ -2598,7 +1808,7 @@ fn causal_conv1d_grouped_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    layer: &FishAudioConv1dGpuLayer,
+    layer: &StructuredAudioConv1dGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -2694,7 +1904,7 @@ fn causal_conv1d_grouped_residual_enqueue(
     command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
     residual: &Array<Metal>,
-    layer: &FishAudioConv1dGpuLayer,
+    layer: &StructuredAudioConv1dGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -2779,7 +1989,7 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    layer: &FishAudioConvTranspose1dGpuLayer,
+    layer: &StructuredAudioConvTranspose1dGpuLayer,
     lengths: &[i32],
     batch_size: usize,
     seq_len_in: usize,
@@ -2867,7 +2077,7 @@ fn conv1d_pointwise_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    layer: &FishAudioPointwiseConvGpuLayer,
+    layer: &StructuredAudioPointwiseConvGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -2942,7 +2152,7 @@ fn norm_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut <Metal as Backend>::CommandBuffer,
     input: &Array<Metal>,
-    norm: &FishAudioNormGpuLayer,
+    norm: &StructuredAudioNormGpuLayer,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -3078,8 +2288,8 @@ fn tanh_enqueue(
     Ok(output)
 }
 
-impl FishAudioCodecGraph {
-    fn conv1d_input_context(layer: &FishAudioConv1dLayer) -> AudioResult<usize> {
+impl StructuredAudioCodecGraph {
+    fn conv1d_input_context(layer: &StructuredAudioConv1dLayer) -> AudioResult<usize> {
         layer
             .kernel_size
             .checked_sub(1)
@@ -3089,7 +2299,7 @@ impl FishAudioCodecGraph {
 
     fn convtranspose_input_context(
         output_context: usize,
-        layer: &FishAudioConvTranspose1dLayer,
+        layer: &StructuredAudioConvTranspose1dLayer,
     ) -> AudioResult<usize> {
         let kernel_minus_one = layer.kernel_size.saturating_sub(1);
         let numerator = output_context
@@ -3100,7 +2310,7 @@ impl FishAudioCodecGraph {
 
     fn residual_unit_input_context(
         output_context: usize,
-        layer: &FishAudioResidualUnitLayer,
+        layer: &StructuredAudioResidualUnitLayer,
     ) -> AudioResult<usize> {
         let conv2 = Self::conv1d_input_context(&layer.conv2)?;
         let conv1 = Self::conv1d_input_context(&layer.conv1)?;
@@ -3112,7 +2322,7 @@ impl FishAudioCodecGraph {
 
     fn convnext_input_context(
         output_context: usize,
-        layer: &FishAudioConvNeXtLayer,
+        layer: &StructuredAudioConvNeXtLayer,
     ) -> AudioResult<usize> {
         output_context
             .checked_add(Self::conv1d_input_context(&layer.depthwise_conv)?)
@@ -3121,7 +2331,7 @@ impl FishAudioCodecGraph {
 
     fn decoder_block_input_context(
         output_context: usize,
-        layer: &FishAudioDecoderBlockLayer,
+        layer: &StructuredAudioDecoderBlockLayer,
     ) -> AudioResult<usize> {
         let after_res3 = Self::residual_unit_input_context(output_context, &layer.res_unit3)?;
         let after_res2 = Self::residual_unit_input_context(after_res3, &layer.res_unit2)?;
@@ -3168,7 +2378,7 @@ impl FishAudioCodecGraph {
     #[cfg(test)]
     fn add_quantized_code_to_latent(
         target: &mut [f32],
-        quantizer: &FishAudioVectorQuantizer,
+        quantizer: &StructuredAudioVectorQuantizer,
         code_index: usize,
     ) -> AudioResult<()> {
         let code_row = quantizer
@@ -3401,7 +2611,7 @@ impl FishAudioCodecGraph {
         values: &mut [f32],
         seq_len: usize,
         channels: usize,
-        norm: &FishAudioNormLayer,
+        norm: &StructuredAudioNormLayer,
     ) -> AudioResult<()> {
         if norm.scales.len() != channels {
             return Err(AudioError::Runtime(format!(
@@ -3514,7 +2724,7 @@ impl FishAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &mut <Metal as Backend>::CommandBuffer,
         input: &Array<Metal>,
-        layer: &FishAudioConvNeXtGpuLayer,
+        layer: &StructuredAudioConvNeXtGpuLayer,
         lengths: &[i32],
         lengths_array: &Array<Metal>,
         batch_size: usize,
@@ -3571,7 +2781,7 @@ impl FishAudioCodecGraph {
         &self,
         context: Rc<<Metal as Backend>::Context>,
         required_sequence_length: usize,
-    ) -> AudioResult<FishAudioPostModuleRuntime> {
+    ) -> AudioResult<StructuredAudioPostModuleRuntime> {
         let inner_model_config = InnerModelConfig {
             embedding_config: EmbeddingConfig::Untied {
                 common: EmbeddingConfigCommon {
@@ -3693,7 +2903,7 @@ impl FishAudioCodecGraph {
         )
         .map_err(|err| AudioError::Runtime(format!("failed to build post_module output_norm: {err}")))?;
 
-        Ok(FishAudioPostModuleRuntime {
+        Ok(StructuredAudioPostModuleRuntime {
             context,
             model_shape,
             scratch_buffers,
@@ -3708,7 +2918,7 @@ impl FishAudioCodecGraph {
         &self,
         context: &Rc<<Metal as Backend>::Context>,
         required_sequence_length: usize,
-    ) -> AudioResult<Rc<FishAudioPostModuleRuntime>> {
+    ) -> AudioResult<Rc<StructuredAudioPostModuleRuntime>> {
         let cache_key = format!("{}::{}", self.weights_path, Rc::as_ptr(context) as usize);
         FISHAUDIO_POST_MODULE_RUNTIME_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
@@ -3887,7 +3097,7 @@ impl FishAudioCodecGraph {
     fn build_vocoder_gpu_graph(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<FishAudioDecoderGpuGraph> {
+    ) -> AudioResult<StructuredAudioDecoderGpuGraph> {
         let data_type = self.vocoder_data_type;
         let first_conv =
             create_conv1d_gpu_layer(context, data_type, &self.decoder.first_conv, "fishaudio_decoder_first_conv")?;
@@ -3955,7 +3165,7 @@ impl FishAudioCodecGraph {
                 channels,
                 &format!("fishaudio_decoder_block_{index}_res3"),
             )?;
-            decoder_blocks.push(FishAudioDecoderBlockGpuLayer {
+            decoder_blocks.push(StructuredAudioDecoderBlockGpuLayer {
                 snake_alpha,
                 trans_conv,
                 res_unit1,
@@ -3964,7 +3174,7 @@ impl FishAudioCodecGraph {
             });
         }
 
-        Ok(FishAudioDecoderGpuGraph {
+        Ok(StructuredAudioDecoderGpuGraph {
             first_conv,
             upsample_blocks,
             decoder_blocks,
@@ -3976,7 +3186,7 @@ impl FishAudioCodecGraph {
     fn vocoder_gpu_graph(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<Rc<FishAudioDecoderGpuGraph>> {
+    ) -> AudioResult<Rc<StructuredAudioDecoderGpuGraph>> {
         let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(fishaudio_dtype_key(self.vocoder_data_type));
         FISHAUDIO_VOCODER_GRAPH_CACHE.with(|cache| {
             if let Some(existing) = cache.borrow().get(&key) {
@@ -3989,7 +3199,7 @@ impl FishAudioCodecGraph {
     }
 
     fn encode_post_module_layers(
-        runtime: &FishAudioPostModuleRuntime,
+        runtime: &StructuredAudioPostModuleRuntime,
         state: &mut ForwardPassState<Metal>,
         command_buffer: &mut <Metal as Backend>::CommandBuffer,
     ) -> AudioResult<()> {
@@ -4250,7 +3460,7 @@ impl FishAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &mut <Metal as Backend>::CommandBuffer,
         input: &Array<Metal>,
-        unit: &FishAudioResidualUnitGpuLayer,
+        unit: &StructuredAudioResidualUnitGpuLayer,
         lengths: &[i32],
         lengths_array: &Array<Metal>,
         batch_size: usize,
@@ -4716,83 +3926,66 @@ pub struct NanoCodecFsqRuntimeConfig {
     eps: f32,
     output_packing: AudioTokenPacking,
     decoder: Option<NanoCodecDecoderGraph>,
-    fishaudio_decoder: Option<FishAudioCodecGraph>,
+    structured_decoder: Option<StructuredAudioCodecGraph>,
 }
 
 impl NanoCodecFsqRuntimeConfig {
+    pub fn from_tts_config(tts_config: &TtsConfig) -> AudioResult<Self> {
+        match &tts_config.audio_decoder_config {
+            TtsAudioDecoderConfig::NanoCodecConfig { config } => {
+                let parsed = build_runtime_config_from_nanocodec_audio_decoder(config)?;
+                Self::from_runtime_config_json(parsed)
+            },
+            TtsAudioDecoderConfig::DescriptAudioCodecConfig { .. } => Err(AudioError::Runtime(
+                "DescriptAudioCodecConfig requires model weights; use from_tts_config_and_model_path".to_string(),
+            )),
+        }
+    }
+
     pub fn from_tts_config_value(tts_config: &serde_json::Value) -> AudioResult<Self> {
-        let parsed = parse_runtime_config_json(tts_config)?;
-        Self::from_runtime_config_json(parsed)
+        match serde_json::from_value::<TtsConfig>(tts_config.clone()) {
+            Ok(parsed) => Self::from_tts_config(&parsed),
+            Err(_) => Self::from_runtime_config_json(parse_legacy_runtime_config_json(tts_config)?),
+        }
+    }
+
+    pub fn from_tts_config_and_model_path(
+        tts_config: &TtsConfig,
+        model_path: &Path,
+    ) -> AudioResult<Self> {
+        match load_audio_runtime_from_tts_config(tts_config, model_path)? {
+            LoadedTtsAudioRuntimeConfig::Standard(config) => {
+                let runtime_config = build_runtime_config_from_nanocodec_audio_decoder(&config)?;
+                let mut runtime = Self::from_runtime_config_json(runtime_config)?;
+                let weights_path = model_path.join("model.safetensors");
+                if !weights_path.is_file() {
+                    return Err(AudioError::Runtime(format!(
+                        "missing exported NanoCodec decoder weights '{}'",
+                        weights_path.display()
+                    )));
+                }
+                runtime.decoder = Some(build_nanocodec_decoder_graph_from_lalamo_config(&config, &weights_path)?);
+                Ok(runtime)
+            },
+            LoadedTtsAudioRuntimeConfig::StructuredDecoder {
+                    runtime: runtime_config,
+                    decoder,
+                } => {
+                    let mut runtime = Self::from_runtime_config_json(runtime_config)?;
+                    runtime.structured_decoder = Some(decoder);
+                    Ok(runtime)
+                }
+        }
     }
 
     pub fn from_tts_config_value_and_model_path(
         tts_config: &serde_json::Value,
         model_path: &Path,
     ) -> AudioResult<Self> {
-        if tts_config.get("audio_codec").is_some() {
-            return Self::from_tts_config_value(tts_config);
+        match serde_json::from_value::<TtsConfig>(tts_config.clone()) {
+            Ok(parsed) => Self::from_tts_config_and_model_path(&parsed, model_path),
+            Err(_) => Self::from_runtime_config_json(parse_legacy_runtime_config_json(tts_config)?),
         }
-
-        if tts_config.get("audio_decoder_config").is_some() {
-            if let Some(decoder_type) = tts_config
-                .get("audio_decoder_config")
-                .and_then(|decoder| decoder.get("type"))
-                .and_then(serde_json::Value::as_str)
-            {
-                if decoder_type == "DescriptAudioCodecConfig" {
-                    let fishaudio_weights = model_path.join("model.safetensors");
-                    if !fishaudio_weights.is_file() {
-                        return Err(AudioError::Runtime(format!(
-                            "missing exported FishAudio decoder weights '{}'",
-                            fishaudio_weights.display()
-                        )));
-                    }
-                    let parsed_fishaudio = parse_fishaudio_tts_config_json(tts_config)?;
-                    let cfg = &parsed_fishaudio.audio_decoder_config;
-                    let total_codebooks = cfg.n_codebooks.checked_add(1).ok_or(AudioError::Runtime(
-                        "FishAudio codebook count overflow while building runtime config".to_string(),
-                    ))?;
-                    let codebook_size_i32 = i32::try_from(cfg.codebook_size).map_err(|_| {
-                        AudioError::Runtime("FishAudio codebook_size exceeds i32 kernel range".to_string())
-                    })?;
-                    if codebook_size_i32 <= 1 {
-                        return Err(AudioError::InvalidTokenCardinality);
-                    }
-
-                    let parsed = RuntimeConfigJson {
-                        r#type: Some("nanocodec_fsq".to_string()),
-                        sample_rate: cfg.samplerate,
-                        num_groups: total_codebooks,
-                        num_levels_per_group: vec![codebook_size_i32],
-                        eps: default_eps(),
-                        output_packing: RuntimePacking::CodebookMajor,
-                        decoder: None,
-                    };
-                    let mut runtime = Self::from_runtime_config_json(parsed)?;
-                    runtime.fishaudio_decoder =
-                        Some(build_fishaudio_codec_graph(&parsed_fishaudio, &fishaudio_weights)?);
-                    return Ok(runtime);
-                }
-            }
-            let parsed_tts = parse_lalamo_tts_config_json(tts_config)?;
-            let cfg = &parsed_tts.audio_decoder_config;
-            let decoder_json =
-                build_decoder_json_from_lalamo_export(&parsed_tts, &model_path.join("model.safetensors"))?;
-
-            let parsed = RuntimeConfigJson {
-                r#type: Some("nanocodec_fsq".to_string()),
-                sample_rate: cfg.samplerate,
-                num_groups: cfg.quantizer_config.num_groups,
-                num_levels_per_group: cfg.quantizer_config.quantizer_config.num_levels.clone(),
-                eps: cfg.quantizer_config.quantizer_config.eps,
-                output_packing: RuntimePacking::CodebookMajor,
-                decoder: Some(decoder_json),
-            };
-
-            return Self::from_runtime_config_json(parsed);
-        }
-
-        Self::from_tts_config_value(tts_config)
     }
 
     fn from_runtime_config_json(parsed: RuntimeConfigJson) -> AudioResult<Self> {
@@ -4864,7 +4057,7 @@ impl NanoCodecFsqRuntimeConfig {
             eps,
             output_packing,
             decoder: None,
-            fishaudio_decoder: None,
+            structured_decoder: None,
         })
     }
 
@@ -4908,8 +4101,8 @@ impl NanoCodecFsqRuntimeConfig {
         self.decoder.as_ref()
     }
 
-    fn fishaudio_decoder(&self) -> Option<&FishAudioCodecGraph> {
-        self.fishaudio_decoder.as_ref()
+    fn structured_decoder(&self) -> Option<&StructuredAudioCodecGraph> {
+        self.structured_decoder.as_ref()
     }
 }
 
@@ -4939,8 +4132,19 @@ impl NanoCodecFsqRuntime {
         }
     }
 
+    pub fn from_tts_config(tts_config: &TtsConfig) -> AudioResult<Self> {
+        Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config(tts_config)?))
+    }
+
     pub fn from_tts_config_value(tts_config: &serde_json::Value) -> AudioResult<Self> {
         Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_value(tts_config)?))
+    }
+
+    pub fn from_tts_config_and_model_path(
+        tts_config: &TtsConfig,
+        model_path: &Path,
+    ) -> AudioResult<Self> {
+        Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_and_model_path(tts_config, model_path)?))
     }
 
     pub fn from_tts_config_value_and_model_path(
@@ -4961,6 +4165,17 @@ impl NanoCodecFsqRuntime {
         ))
     }
 
+    pub fn from_tts_config_and_model_path_with_options(
+        tts_config: &TtsConfig,
+        model_path: &Path,
+        options: NanoCodecFsqRuntimeOptions,
+    ) -> AudioResult<Self> {
+        Ok(Self::new_with_options(
+            NanoCodecFsqRuntimeConfig::from_tts_config_and_model_path(tts_config, model_path)?,
+            options,
+        ))
+    }
+
     pub fn config(&self) -> &NanoCodecFsqRuntimeConfig {
         &self.config
     }
@@ -4976,7 +4191,7 @@ impl NanoCodecFsqRuntime {
     fn validate_fishaudio_token_delta(
         &self,
         tokens: &AudioTokenGrid,
-        fishaudio: &FishAudioCodecGraph,
+        fishaudio: &StructuredAudioCodecGraph,
     ) -> AudioResult<()> {
         let semantic_cardinality = u32::try_from(fishaudio.semantic_codebook_size).map_err(|_| {
             AudioError::Runtime("FishAudio semantic codebook cardinality exceeds u32 range".to_string())
@@ -5007,10 +4222,10 @@ impl NanoCodecFsqRuntime {
         Ok(())
     }
 
-    fn decode_fishaudio_stream_delta(
+    fn decode_structured_stream_delta(
         &self,
         state: &mut AudioDecodeStreamState,
-        fishaudio: &FishAudioCodecGraph,
+        fishaudio: &StructuredAudioCodecGraph,
         input_frames: usize,
     ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
         if state.total_frames() == 0 {
@@ -5106,7 +4321,7 @@ impl NanoCodecFsqRuntime {
                 samples: Vec::new(),
                 channels: if let Some(decoder) = self.config.decoder() {
                     decoder.output_channels()
-                } else if self.config.fishaudio_decoder().is_some() {
+                } else if self.config.structured_decoder().is_some() {
                     1
                 } else {
                     self.config.channels()
@@ -5117,11 +4332,11 @@ impl NanoCodecFsqRuntime {
         }
 
         state.append_delta(new_tokens)?;
-        if let Some(fishaudio) = self.config.fishaudio_decoder() {
+        if let Some(fishaudio) = self.config.structured_decoder() {
             self.validate_fishaudio_token_delta(new_tokens, fishaudio)?;
             return match state.mode {
                 AudioDecodeStreamingMode::IncrementalStateful => {
-                    self.decode_fishaudio_stream_delta(state, fishaudio, new_tokens.frames())
+                    self.decode_structured_stream_delta(state, fishaudio, new_tokens.frames())
                 },
                 AudioDecodeStreamingMode::PrefixFallback => {
                     let full_grid = state.to_full_grid()?;
@@ -5165,7 +4380,7 @@ impl NanoCodecFsqRuntime {
             return Ok(None);
         }
 
-        let Some(fishaudio) = self.config.fishaudio_decoder() else {
+        let Some(fishaudio) = self.config.structured_decoder() else {
             return Ok(None);
         };
         if state.mode != AudioDecodeStreamingMode::IncrementalStateful {
@@ -5250,7 +4465,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         &self,
         pcm: &AudioPcmBatch,
     ) -> AudioResult<AudioTokenGrid> {
-        if self.config.decoder().is_some() || self.config.fishaudio_decoder().is_some() {
+        if self.config.decoder().is_some() || self.config.structured_decoder().is_some() {
             return Err(AudioError::Runtime("encode is not supported when a decoder graph is configured".to_string()));
         }
 
@@ -5381,7 +4596,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         if batch_size == 0 || frames == 0 {
             let channels = if let Some(decoder) = self.config.decoder() {
                 decoder.output_channels()
-            } else if self.config.fishaudio_decoder().is_some() {
+            } else if self.config.structured_decoder().is_some() {
                 1
             } else {
                 self.config.channels()
@@ -5395,7 +4610,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
                             .ok_or(AudioError::Runtime("decoder length scaling overflow".to_string()))
                     })
                     .collect::<AudioResult<Vec<_>>>()?
-            } else if let Some(decoder) = self.config.fishaudio_decoder() {
+            } else if let Some(decoder) = self.config.structured_decoder() {
                 lengths_usize
                     .iter()
                     .map(|&length| {
@@ -5416,7 +4631,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         }
 
         let codebook_major = tokens.to_packing(AudioTokenPacking::CodebookMajor);
-        if let Some(fishaudio) = self.config.fishaudio_decoder() {
+        if let Some(fishaudio) = self.config.structured_decoder() {
             let semantic_cardinality = u32::try_from(fishaudio.semantic_codebook_size).map_err(|_| {
                 AudioError::Runtime("FishAudio semantic codebook cardinality exceeds u32 range".to_string())
             })?;
@@ -5554,25 +4769,26 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        AudioDecodeStreamState, AudioDecodeStreamingMode, FishAudioCodecGraph, FishAudioConv1dLayer,
-        FishAudioConvNeXtLayer, FishAudioConvTranspose1dLayer, FishAudioDecoderBlockLayer, FishAudioDecoderGraph,
-        FishAudioNormLayer, FishAudioResidualUnitLayer, FishAudioVectorQuantizer, MatrixF32, NanoCodecFsqRuntime,
+        AudioDecodeStreamState, AudioDecodeStreamingMode, StructuredAudioCodecGraph, StructuredAudioConv1dLayer,
+        StructuredAudioConvNeXtLayer, StructuredAudioConvTranspose1dLayer, StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph,
+        StructuredAudioNormLayer, StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, MatrixF32, NanoCodecFsqRuntime,
         NanoCodecFsqRuntimeConfig, RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog,
-        pack_pcm_to_padded, parse_fishaudio_tts_config_json, parse_lalamo_tts_config_json, parse_runtime_config_json,
-        read_array_to_f32_vec, resolve_fishaudio_vocoder_data_type, unpack_padded_to_pcm, write_f32_slice_to_array,
+        pack_pcm_to_padded, parse_legacy_runtime_config_json, read_array_to_f32_vec, resolve_fishaudio_vocoder_data_type,
+        unpack_padded_to_pcm, write_f32_slice_to_array,
     };
     use crate::{
         DataType,
         array::ArrayContextExt,
         audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
+        config::TtsConfig,
     };
 
     #[derive(Debug, Clone)]
     struct CpuPostModuleLayer {
-        pre_mixer_norm: FishAudioNormLayer,
+        pre_mixer_norm: StructuredAudioNormLayer,
         qkv_projection: MatrixF32,
         out_projection: MatrixF32,
-        pre_mlp_norm: FishAudioNormLayer,
+        pre_mlp_norm: StructuredAudioNormLayer,
         up_projection: MatrixF32,
         down_projection: MatrixF32,
         num_heads: usize,
@@ -5587,7 +4803,7 @@ mod tests {
         rope_cosines: MatrixF32,
         rope_sines: MatrixF32,
         layers: Vec<CpuPostModuleLayer>,
-        output_norm: FishAudioNormLayer,
+        output_norm: StructuredAudioNormLayer,
         hidden_dim: usize,
     }
 
@@ -5609,7 +4825,7 @@ mod tests {
         }
     }
 
-    fn build_cpu_post_module_for_test(graph: &FishAudioCodecGraph) -> AudioResult<CpuPostModule> {
+    fn build_cpu_post_module_for_test(graph: &StructuredAudioCodecGraph) -> AudioResult<CpuPostModule> {
         let reader = super::SafeTensorReader::open(Path::new(graph.weights_path.as_str()))?;
         let transformer = &graph.post_module_transformer_config;
         let first_layer = transformer
@@ -5747,7 +4963,7 @@ mod tests {
     }
 
     fn apply_post_module_cpu_reference_for_test(
-        graph: &FishAudioCodecGraph,
+        graph: &StructuredAudioCodecGraph,
         post_module: &CpuPostModule,
         latent_nsc: &mut [f32],
         lengths: &[usize],
@@ -5778,7 +4994,7 @@ mod tests {
                 apply_post_module_cpu_layer_for_test(graph, post_module, layer, &mut x, active_len)?;
             }
 
-            FishAudioCodecGraph::apply_norm_sequence(&mut x, active_len, graph.input_dim, &post_module.output_norm)?;
+            StructuredAudioCodecGraph::apply_norm_sequence(&mut x, active_len, graph.input_dim, &post_module.output_norm)?;
             sequence.copy_from_slice(&x);
         }
 
@@ -5786,16 +5002,16 @@ mod tests {
     }
 
     fn apply_post_module_cpu_layer_for_test(
-        graph: &FishAudioCodecGraph,
+        graph: &StructuredAudioCodecGraph,
         post_module: &CpuPostModule,
         layer: &CpuPostModuleLayer,
         x: &mut [f32],
         active_len: usize,
     ) -> AudioResult<()> {
         let mut normed = x.to_vec();
-        FishAudioCodecGraph::apply_norm_sequence(&mut normed, active_len, graph.input_dim, &layer.pre_mixer_norm)?;
+        StructuredAudioCodecGraph::apply_norm_sequence(&mut normed, active_len, graph.input_dim, &layer.pre_mixer_norm)?;
         let qkv =
-            FishAudioCodecGraph::linear_sequence(&normed, active_len, graph.input_dim, &layer.qkv_projection, None)?;
+            StructuredAudioCodecGraph::linear_sequence(&normed, active_len, graph.input_dim, &layer.qkv_projection, None)?;
         let attention_dim = layer
             .num_heads
             .checked_mul(layer.head_dim)
@@ -5885,7 +5101,7 @@ mod tests {
             }
         }
 
-        let attention_projected = FishAudioCodecGraph::linear_sequence(
+        let attention_projected = StructuredAudioCodecGraph::linear_sequence(
             &attention_output,
             active_len,
             attention_dim,
@@ -5897,9 +5113,9 @@ mod tests {
         }
 
         let mut mlp_in = x.to_vec();
-        FishAudioCodecGraph::apply_norm_sequence(&mut mlp_in, active_len, graph.input_dim, &layer.pre_mlp_norm)?;
+        StructuredAudioCodecGraph::apply_norm_sequence(&mut mlp_in, active_len, graph.input_dim, &layer.pre_mlp_norm)?;
         let up =
-            FishAudioCodecGraph::linear_sequence(&mlp_in, active_len, graph.input_dim, &layer.up_projection, None)?;
+            StructuredAudioCodecGraph::linear_sequence(&mlp_in, active_len, graph.input_dim, &layer.up_projection, None)?;
         let mut hidden = vec![0.0_f32; active_len * post_module.hidden_dim];
         for token in 0..active_len {
             let up_row = &up[token * post_module.hidden_dim * 2..(token + 1) * post_module.hidden_dim * 2];
@@ -5911,7 +5127,7 @@ mod tests {
                 hidden_row[dim] = up_val * silu;
             }
         }
-        let mlp_out = FishAudioCodecGraph::linear_sequence(
+        let mlp_out = StructuredAudioCodecGraph::linear_sequence(
             &hidden,
             active_len,
             post_module.hidden_dim,
@@ -5968,7 +5184,7 @@ mod tests {
             }
         });
 
-        let parsed = parse_runtime_config_json(&tts_config).expect("parse runtime json");
+        let parsed = parse_legacy_runtime_config_json(&tts_config).expect("parse runtime json");
         assert_eq!(parsed.sample_rate, 24_000);
         assert_eq!(parsed.num_groups, 2);
         assert_eq!(parsed.num_levels_per_group, vec![8, 6]);
@@ -6043,8 +5259,13 @@ mod tests {
     #[test]
     fn parses_lalamo_tts_config_shape() {
         let tts_config = serde_json::json!({
-            "text_decoder_config": {"type": "StubTextDecoderConfig"},
+            "text_decoder_config": {
+                "type": "StubTextDecoderConfig",
+                "num_codebooks": 13,
+                "codebook_size": 336
+            },
             "audio_decoder_config": {
+                "type": "NanoCodecConfig",
                 "samplerate": 22050,
                 "quantizer_config": {
                     "num_groups": 13,
@@ -6067,26 +5288,62 @@ mod tests {
             "activation_precision": "float32"
         });
 
-        let parsed = parse_lalamo_tts_config_json(&tts_config).expect("parse");
-        assert_eq!(parsed.audio_decoder_config.samplerate, 22050);
-        assert_eq!(parsed.audio_decoder_config.quantizer_config.num_groups, 13);
-        assert_eq!(parsed.audio_decoder_config.quantizer_config.quantizer_config.num_levels, vec![8, 7, 6, 6]);
-        assert_eq!(parsed.audio_decoder_config.up_sample_rates, vec![7, 7, 6, 3, 2]);
+        let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse");
+        let crate::config::TtsAudioDecoderConfig::NanoCodecConfig { config } = parsed.audio_decoder_config else {
+            panic!("expected NanoCodecConfig");
+        };
+        assert_eq!(config.samplerate, 22050);
+        assert_eq!(config.quantizer_config.num_groups, 13);
+        assert_eq!(config.quantizer_config.quantizer_config.num_levels, vec![8, 7, 6, 6]);
+        assert_eq!(config.up_sample_rates, vec![7, 7, 6, 3, 2]);
     }
 
     #[test]
     fn fishaudio_dac_config_requires_model_weights() {
         let tts_config = serde_json::json!({
+            "text_decoder_config": {
+                "type": "StubTextDecoderConfig",
+                "num_codebooks": 10,
+                "codebook_size": 1024
+            },
             "audio_decoder_config": {
                 "type": "DescriptAudioCodecConfig",
+                "precision": "float16",
                 "samplerate": 44100,
+                "encoder_dim": 1024,
+                "encoder_rates": [2, 4, 8, 8],
+                "decoder_dim": 1536,
                 "n_codebooks": 9,
+                "codebook_dim": 8,
                 "codebook_size": 1024,
                 "semantic_codebook_size": 4096,
                 "input_dim": 1024,
                 "downsample_factor": [2, 2],
-                "decoder_rates": [8, 8, 4, 2]
-            }
+                "decoder_rates": [8, 8, 4, 2],
+                "decoder_config": {},
+                "quantizer_config": {
+                    "post_module_config": {
+                        "global_rope_config": null,
+                        "local_rope_config": null,
+                        "layer_configs": [],
+                        "output_norm_config": {
+                            "scale_precision": "float32",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-5,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer",
+                            "subtract_mean": true
+                        },
+                        "model_dim": 1024,
+                        "hidden_dim": 1024,
+                        "context_length": 1
+                    },
+                    "upsampler_config": {
+                        "block_configs": []
+                    }
+                }
+            },
+            "vocoder_config": {}
         });
 
         let error = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, Path::new("."))
@@ -6103,15 +5360,25 @@ mod tests {
     fn fishaudio_vocoder_dtype_uses_lalamo_export_precision() {
         let tts_config = serde_json::json!({
             "activation_precision": "float16",
+            "text_decoder_config": {
+                "type": "StubTextDecoderConfig",
+                "num_codebooks": 10,
+                "codebook_size": 1024
+            },
             "audio_decoder_config": {
                 "type": "DescriptAudioCodecConfig",
                 "samplerate": 44100,
+                "encoder_dim": 1024,
+                "encoder_rates": [2, 4, 8, 8],
+                "decoder_dim": 1536,
                 "n_codebooks": 9,
+                "codebook_dim": 8,
                 "codebook_size": 1024,
                 "semantic_codebook_size": 4096,
                 "input_dim": 1024,
                 "downsample_factor": [2, 2],
                 "decoder_rates": [8, 8, 4, 2],
+                "decoder_config": {},
                 "precision": "float16",
                 "quantizer_config": {
                     "precision": "float16",
@@ -6135,11 +5402,15 @@ mod tests {
                         "block_configs": []
                     }
                 }
-            }
+            },
+            "vocoder_config": {}
         });
 
-        let parsed = parse_fishaudio_tts_config_json(&tts_config).expect("parse fishaudio config");
-        let dtype = resolve_fishaudio_vocoder_data_type(&parsed).expect("resolve dtype");
+        let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
+        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig { config } = &parsed.audio_decoder_config else {
+            panic!("expected DescriptAudioCodecConfig");
+        };
+        let dtype = resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config).expect("resolve dtype");
         assert_eq!(dtype, DataType::F16);
     }
 
@@ -6147,15 +5418,25 @@ mod tests {
     fn fishaudio_vocoder_dtype_rejects_conflicting_export_precision() {
         let tts_config = serde_json::json!({
             "activation_precision": "float32",
+            "text_decoder_config": {
+                "type": "StubTextDecoderConfig",
+                "num_codebooks": 10,
+                "codebook_size": 1024
+            },
             "audio_decoder_config": {
                 "type": "DescriptAudioCodecConfig",
                 "samplerate": 44100,
+                "encoder_dim": 1024,
+                "encoder_rates": [2, 4, 8, 8],
+                "decoder_dim": 1536,
                 "n_codebooks": 9,
+                "codebook_dim": 8,
                 "codebook_size": 1024,
                 "semantic_codebook_size": 4096,
                 "input_dim": 1024,
                 "downsample_factor": [2, 2],
                 "decoder_rates": [8, 8, 4, 2],
+                "decoder_config": {},
                 "precision": "float16",
                 "quantizer_config": {
                     "post_module_config": {
@@ -6178,11 +5459,16 @@ mod tests {
                         "block_configs": []
                     }
                 }
-            }
+            },
+            "vocoder_config": {}
         });
 
-        let parsed = parse_fishaudio_tts_config_json(&tts_config).expect("parse fishaudio config");
-        let error = resolve_fishaudio_vocoder_data_type(&parsed).expect_err("must reject conflicting precision");
+        let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
+        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig { config } = &parsed.audio_decoder_config else {
+            panic!("expected DescriptAudioCodecConfig");
+        };
+        let error =
+            resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config).expect_err("must reject conflicting precision");
         match error {
             AudioError::Runtime(message) => assert!(message.contains("conflicting FishAudio precision")),
             other => panic!("unexpected error type: {other:?}"),
@@ -6192,15 +5478,25 @@ mod tests {
     #[test]
     fn fishaudio_vocoder_dtype_requires_export_precision() {
         let tts_config = serde_json::json!({
+            "text_decoder_config": {
+                "type": "StubTextDecoderConfig",
+                "num_codebooks": 10,
+                "codebook_size": 1024
+            },
             "audio_decoder_config": {
                 "type": "DescriptAudioCodecConfig",
                 "samplerate": 44100,
+                "encoder_dim": 1024,
+                "encoder_rates": [2, 4, 8, 8],
+                "decoder_dim": 1536,
                 "n_codebooks": 9,
+                "codebook_dim": 8,
                 "codebook_size": 1024,
                 "semantic_codebook_size": 4096,
                 "input_dim": 1024,
                 "downsample_factor": [2, 2],
                 "decoder_rates": [8, 8, 4, 2],
+                "decoder_config": {},
                 "quantizer_config": {
                     "post_module_config": {
                         "global_rope_config": null,
@@ -6222,11 +5518,16 @@ mod tests {
                         "block_configs": []
                     }
                 }
-            }
+            },
+            "vocoder_config": {}
         });
 
-        let parsed = parse_fishaudio_tts_config_json(&tts_config).expect("parse fishaudio config");
-        let error = resolve_fishaudio_vocoder_data_type(&parsed).expect_err("must require export precision");
+        let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
+        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig { config } = &parsed.audio_decoder_config else {
+            panic!("expected DescriptAudioCodecConfig");
+        };
+        let error =
+            resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config).expect_err("must require export precision");
         match error {
             AudioError::Runtime(message) => assert!(message.contains("missing FishAudio precision")),
             other => panic!("unexpected error type: {other:?}"),
@@ -6244,7 +5545,7 @@ mod tests {
         )
         .expect("config");
 
-        let one_by_one = FishAudioConv1dLayer {
+        let one_by_one = StructuredAudioConv1dLayer {
             weight: vec![1.0],
             bias: vec![0.0],
             cin: 1,
@@ -6254,8 +5555,8 @@ mod tests {
             groups: 1,
         };
 
-        config.fishaudio_decoder = Some(FishAudioCodecGraph {
-            semantic_quantizer: FishAudioVectorQuantizer {
+        config.structured_decoder = Some(StructuredAudioCodecGraph {
+            semantic_quantizer: StructuredAudioVectorQuantizer {
                 codebook: MatrixF32 {
                     rows: 2,
                     cols: 1,
@@ -6268,7 +5569,7 @@ mod tests {
                 },
                 out_bias: vec![0.0],
             },
-            residual_quantizers: vec![FishAudioVectorQuantizer {
+            residual_quantizers: vec![StructuredAudioVectorQuantizer {
                 codebook: MatrixF32 {
                     rows: 2,
                     cols: 1,
@@ -6300,7 +5601,7 @@ mod tests {
             }))
             .expect("post module transformer config"),
             weights_path: String::new(),
-            decoder: FishAudioDecoderGraph {
+            decoder: StructuredAudioDecoderGraph {
                 first_conv: one_by_one.clone(),
                 upsample_blocks: Vec::new(),
                 decoder_blocks: Vec::new(),
@@ -6336,8 +5637,8 @@ mod tests {
 
     #[test]
     fn fishaudio_quantizer_decode_gpu_matches_cpu_reference_small_graph() {
-        let graph = FishAudioCodecGraph {
-            semantic_quantizer: FishAudioVectorQuantizer {
+        let graph = StructuredAudioCodecGraph {
+            semantic_quantizer: StructuredAudioVectorQuantizer {
                 codebook: MatrixF32 {
                     rows: 4,
                     cols: 3,
@@ -6358,7 +5659,7 @@ mod tests {
                 },
                 out_bias: vec![0.01, -0.02],
             },
-            residual_quantizers: vec![FishAudioVectorQuantizer {
+            residual_quantizers: vec![StructuredAudioVectorQuantizer {
                 codebook: MatrixF32 {
                     rows: 5,
                     cols: 3,
@@ -6399,8 +5700,8 @@ mod tests {
             }))
             .expect("post module transformer config"),
             weights_path: String::new(),
-            decoder: FishAudioDecoderGraph {
-                first_conv: FishAudioConv1dLayer {
+            decoder: StructuredAudioDecoderGraph {
+                first_conv: StructuredAudioConv1dLayer {
                     weight: vec![1.0, 0.0],
                     bias: vec![0.0],
                     cin: 2,
@@ -6412,7 +5713,7 @@ mod tests {
                 upsample_blocks: Vec::new(),
                 decoder_blocks: Vec::new(),
                 final_snake_alpha: vec![1.0],
-                final_conv: FishAudioConv1dLayer {
+                final_conv: StructuredAudioConv1dLayer {
                     weight: vec![1.0],
                     bias: vec![0.0],
                     cin: 1,
@@ -6472,7 +5773,7 @@ mod tests {
             .clone();
         let runtime_config = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, &model_path)
             .expect("runtime config");
-        let fishaudio = runtime_config.fishaudio_decoder().expect("fishaudio decoder");
+        let fishaudio = runtime_config.structured_decoder().expect("structured decoder");
         let cpu_post_module = build_cpu_post_module_for_test(fishaudio).expect("cpu post-module");
 
         let batch_size = 1usize;
@@ -6550,7 +5851,7 @@ mod tests {
             .clone();
         let runtime_config = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, &model_path)
             .expect("runtime config");
-        let fishaudio = runtime_config.fishaudio_decoder().expect("fishaudio decoder");
+        let fishaudio = runtime_config.structured_decoder().expect("structured decoder");
         let cpu_post_module = build_cpu_post_module_for_test(fishaudio).expect("cpu post-module");
 
         let batch_size = 3usize;
@@ -6639,8 +5940,8 @@ mod tests {
 
     #[test]
     fn fishaudio_streaming_context_matches_expected_value() {
-        let convnext = FishAudioConvNeXtLayer {
-            depthwise_conv: FishAudioConv1dLayer {
+        let convnext = StructuredAudioConvNeXtLayer {
+            depthwise_conv: StructuredAudioConv1dLayer {
                 weight: vec![1.0; 6],
                 bias: vec![0.0; 2],
                 cin: 2,
@@ -6649,7 +5950,7 @@ mod tests {
                 dilation: 1,
                 groups: 2,
             },
-            norm: FishAudioNormLayer {
+            norm: StructuredAudioNormLayer {
                 scales: vec![1.0, 1.0],
                 biases: Some(vec![0.0, 0.0]),
                 epsilon: 1e-5,
@@ -6668,9 +5969,9 @@ mod tests {
             },
             pwconv2_bias: vec![0.0, 0.0],
         };
-        let residual_unit = FishAudioResidualUnitLayer {
+        let residual_unit = StructuredAudioResidualUnitLayer {
             snake1_alpha: vec![1.0, 1.0],
-            conv1: FishAudioConv1dLayer {
+            conv1: StructuredAudioConv1dLayer {
                 weight: vec![1.0; 12],
                 bias: vec![0.0, 0.0],
                 cin: 2,
@@ -6680,7 +5981,7 @@ mod tests {
                 groups: 1,
             },
             snake2_alpha: vec![1.0, 1.0],
-            conv2: FishAudioConv1dLayer {
+            conv2: StructuredAudioConv1dLayer {
                 weight: vec![1.0; 12],
                 bias: vec![0.0, 0.0],
                 cin: 2,
@@ -6691,8 +5992,8 @@ mod tests {
             },
         };
 
-        let graph = FishAudioCodecGraph {
-            semantic_quantizer: FishAudioVectorQuantizer {
+        let graph = StructuredAudioCodecGraph {
+            semantic_quantizer: StructuredAudioVectorQuantizer {
                 codebook: MatrixF32 {
                     rows: 2,
                     cols: 2,
@@ -6725,8 +6026,8 @@ mod tests {
             }))
             .expect("post module transformer config"),
             weights_path: String::new(),
-            decoder: FishAudioDecoderGraph {
-                first_conv: FishAudioConv1dLayer {
+            decoder: StructuredAudioDecoderGraph {
+                first_conv: StructuredAudioConv1dLayer {
                     weight: vec![1.0; 8],
                     bias: vec![0.0, 0.0],
                     cin: 2,
@@ -6736,7 +6037,7 @@ mod tests {
                     groups: 1,
                 },
                 upsample_blocks: vec![(
-                    FishAudioConvTranspose1dLayer {
+                    StructuredAudioConvTranspose1dLayer {
                         weight: vec![1.0; 16],
                         bias: vec![0.0, 0.0],
                         cin: 2,
@@ -6747,9 +6048,9 @@ mod tests {
                     },
                     convnext,
                 )],
-                decoder_blocks: vec![FishAudioDecoderBlockLayer {
+                decoder_blocks: vec![StructuredAudioDecoderBlockLayer {
                     snake_alpha: vec![1.0, 1.0],
-                    trans_conv: FishAudioConvTranspose1dLayer {
+                    trans_conv: StructuredAudioConvTranspose1dLayer {
                         weight: vec![1.0; 16],
                         bias: vec![0.0, 0.0],
                         cin: 2,
@@ -6763,7 +6064,7 @@ mod tests {
                     res_unit3: residual_unit,
                 }],
                 final_snake_alpha: vec![1.0, 1.0],
-                final_conv: FishAudioConv1dLayer {
+                final_conv: StructuredAudioConv1dLayer {
                     weight: vec![1.0; 10],
                     bias: vec![0.0],
                     cin: 2,

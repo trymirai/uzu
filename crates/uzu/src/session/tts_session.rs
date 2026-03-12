@@ -14,14 +14,13 @@ use std::{
 use half::{bf16, f16};
 use minijinja::{Environment, context};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use serde::Deserialize;
 use tokenizers::Tokenizer;
 
 use crate::{
     DataType,
     array::{ArrayCell, ArrayContextExt},
     audio::{
-        AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
+        AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode},
     },
     backends::{
@@ -36,7 +35,7 @@ use crate::{
         },
         metal::Metal,
     },
-    config::{InnerModelConfig, LinearConfig, ModelMetadata, ModelType, TtsModelConfig},
+    config::{InnerModelConfig, ModelMetadata, ModelType, TtsModelConfig, TtsTextDecoderConfig},
     encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
@@ -101,7 +100,7 @@ pub struct TtsSession {
     #[allow(dead_code)]
     model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    runtime: Rc<crate::audio::NanoCodecFsqRuntime>,
+    audio: AudioGenerationContext,
     audio_decoder: Box<dyn AudioDecoderBackend>,
     prompt_template: String,
     drop_initial_newline: bool,
@@ -262,12 +261,12 @@ struct FishAudioTextDecoderRuntime {
 }
 
 struct NanoCodecAudioDecoderBackend {
-    runtime: Rc<crate::audio::NanoCodecFsqRuntime>,
+    audio: AudioGenerationContext,
     codec_cardinality: usize,
 }
 
 struct NanoCodecAudioDecoderStream {
-    runtime: Rc<crate::audio::NanoCodecFsqRuntime>,
+    audio: AudioGenerationContext,
     state: Option<AudioDecodeStreamState>,
 }
 
@@ -277,18 +276,18 @@ impl AudioDecoderBackend for NanoCodecAudioDecoderBackend {
     }
 
     fn num_codebooks(&self) -> usize {
-        self.runtime.config().num_groups()
+        self.audio.runtime().config().num_groups()
     }
 
     fn sample_rate(&self) -> u32 {
-        self.runtime.config().sample_rate()
+        self.audio.sample_rate()
     }
 
     fn decode(
         &self,
         tokens: &AudioTokenGrid,
     ) -> Result<AudioPcmBatch, Error> {
-        self.runtime.decode(tokens).map_err(Error::from)
+        self.audio.runtime().decode(tokens).map_err(Error::from)
     }
 
     fn begin_stream(
@@ -299,11 +298,12 @@ impl AudioDecoderBackend for NanoCodecAudioDecoderBackend {
         max_workspace_frames: usize,
     ) -> Result<Box<dyn AudioDecoderStreamBackend>, Error> {
         let state = self
-            .runtime
+            .audio
+            .runtime()
             .begin_decode_stream_with_options(batch_size, codebooks, mode, max_workspace_frames)
             .map_err(Error::from)?;
         Ok(Box::new(NanoCodecAudioDecoderStream {
-            runtime: Rc::clone(&self.runtime),
+            audio: self.audio.clone(),
             state: Some(state),
         }))
     }
@@ -316,8 +316,8 @@ impl AudioDecoderStreamBackend for NanoCodecAudioDecoderStream {
         is_final: bool,
     ) -> Result<AudioPcmBatch, Error> {
         let state = self.state.as_mut().ok_or(Error::GenerateFailed)?;
-        let decoded = self.runtime.decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?;
-        self.runtime.decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)
+        let decoded = self.audio.runtime().decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?;
+        self.audio.runtime().decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)
     }
 
     fn decode_step_pending(
@@ -327,15 +327,15 @@ impl AudioDecoderStreamBackend for NanoCodecAudioDecoderStream {
     ) -> Result<Box<dyn PendingAudioChunkBackend>, Error> {
         let state = self.state.as_mut().ok_or(Error::GenerateFailed)?;
         if let Some(pending) =
-            self.runtime.submit_decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?
+            self.audio.runtime().submit_decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?
         {
             return Ok(Box::new(NanoCodecPendingAudioChunk {
                 inner: Some(pending),
             }));
         }
 
-        let decoded = self.runtime.decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?;
-        let pcm = self.runtime.decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)?;
+        let decoded = self.audio.runtime().decode_stream_step(state, new_tokens, is_final).map_err(Error::from)?;
+        let pcm = self.audio.runtime().decoded_padded_to_pcm_batch(&decoded).map_err(Error::from)?;
         Ok(Box::new(ImmediatePendingAudioChunk {
             pcm: Some(pcm),
             step_stats: Some(state.last_step_stats()),
@@ -348,7 +348,7 @@ impl AudioDecoderStreamBackend for NanoCodecAudioDecoderStream {
 
     fn finish(mut self: Box<Self>) -> Result<(), Error> {
         let state = self.state.take().ok_or(Error::GenerateFailed)?;
-        self.runtime.end_decode_stream(state).map_err(Error::from)
+        self.audio.runtime().end_decode_stream(state).map_err(Error::from)
     }
 }
 
@@ -470,86 +470,6 @@ impl FishAudioSamplingState {
 
     fn uses_repetition_penalty(&self) -> bool {
         matches!(self.method, SamplingMethod::Stochastic { .. }) && (self.repetition_penalty - 1.0).abs() > 1e-6
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct TtsConfigJson {
-    text_decoder_config: TextDecoderConfigJson,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct FishAudioTextDecoderConfigJson {
-    slow_embeddings_config: FishAudioEmbeddingConfigJson,
-    slow_model_config: crate::config::TransformerConfig,
-    slow_readout_config: FishAudioLinearConfigJson,
-    fast_embeddings_config: FishAudioEmbeddingConfigJson,
-    fast_model_config: crate::config::TransformerConfig,
-    fast_readout_config: FishAudioLinearConfigJson,
-    codebook_embeddings_config: FishAudioEmbeddingConfigJson,
-    fast_model_projection_config: Option<FishAudioLinearConfigJson>,
-    semantic_token_begin_id: i64,
-    semantic_token_end_id: i64,
-    im_end_token_id: i64,
-    codebook_size: usize,
-    vocab_size: usize,
-    slow_model_dim: usize,
-    fast_model_dim: usize,
-    num_codebooks: usize,
-    max_seq_len: usize,
-    scale_codebook_embeddings: bool,
-    short_logits_size: usize,
-    repeat_window_size: usize,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum FishAudioLinearConfigJson {
-    Tagged(LinearConfig),
-    UntaggedFullPrecision {
-        #[serde(rename = "precision")]
-        _precision: crate::ConfigDataType,
-    },
-}
-
-impl FishAudioLinearConfigJson {
-    fn is_full_precision(&self) -> bool {
-        matches!(
-            self,
-            FishAudioLinearConfigJson::Tagged(LinearConfig::FullPrecision { .. })
-                | FishAudioLinearConfigJson::UntaggedFullPrecision { .. }
-        )
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum FishAudioEmbeddingConfigJson {
-    Tagged(crate::config::EmbeddingConfig),
-    UntaggedFullPrecision {
-        input_scale: Option<f32>,
-        logit_soft_cap: Option<f32>,
-        precision: crate::ConfigDataType,
-    },
-}
-
-impl FishAudioEmbeddingConfigJson {
-    fn to_embedding_config(&self) -> crate::config::EmbeddingConfig {
-        match self {
-            FishAudioEmbeddingConfigJson::Tagged(config) => config.clone(),
-            FishAudioEmbeddingConfigJson::UntaggedFullPrecision {
-                input_scale,
-                logit_soft_cap,
-                precision,
-            } => crate::config::EmbeddingConfig::Untied {
-                common: crate::config::EmbeddingConfigCommon {
-                    input_scale: *input_scale,
-                    logit_soft_cap: *logit_soft_cap,
-                },
-                precision: *precision,
-            },
-        }
     }
 }
 
@@ -790,19 +710,6 @@ fn next_startup_target_frames(
 ) -> usize {
     let startup_cap_frames = startup_cap_frames.max(1);
     current_target_frames.max(1).saturating_mul(2).min(startup_cap_frames)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-enum TextDecoderConfigJson {
-    StubTextDecoderConfig {
-        num_codebooks: usize,
-        codebook_size: usize,
-    },
-    FishAudioTextDecoderConfig {
-        #[serde(flatten)]
-        config: FishAudioTextDecoderConfigJson,
-    },
 }
 
 struct StreamingTokenAccumulator {
@@ -1107,7 +1014,7 @@ impl TtsSession {
     }
 
     pub fn runtime(&self) -> &crate::audio::NanoCodecFsqRuntime {
-        self.runtime.as_ref()
+        self.audio.runtime()
     }
 
     pub fn last_execution_stats(&self) -> Option<TtsExecutionStats> {
@@ -1581,18 +1488,16 @@ impl TtsSession {
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
 
         let tts_model_config = model_metadata.model_config.as_tts().ok_or(Error::UnableToLoadConfig)?.clone();
-        let runtime = Rc::new(
-            tts_model_config
-                .create_audio_codec_runtime_with_model_path_and_options(&model_path, options.audio_runtime)?,
-        );
-        let text_decoder = parse_text_decoder_runtime(&tts_model_config, runtime.as_ref(), &model_path, &options)?;
-        let audio_decoder = build_audio_decoder_backend(Rc::clone(&runtime))?;
+        let audio =
+            tts_model_config.create_audio_generation_context_with_model_path_and_options(&model_path, options.audio_runtime)?;
+        let text_decoder = parse_text_decoder_runtime(&tts_model_config, &audio, &model_path, &options)?;
+        let audio_decoder = build_audio_decoder_backend(&audio)?;
 
         Ok(Self {
             model_path,
             model_metadata,
             tokenizer,
-            runtime,
+            audio,
             audio_decoder,
             prompt_template: tts_model_config.message_processor_config.prompt_template.clone(),
             drop_initial_newline: tts_model_config.message_processor_config.drop_initial_newline,
@@ -1678,51 +1583,46 @@ impl TtsSession {
 }
 
 fn build_audio_decoder_backend(
-    runtime: Rc<crate::audio::NanoCodecFsqRuntime>
+    audio: &AudioGenerationContext,
 ) -> Result<Box<dyn AudioDecoderBackend>, Error> {
-    let codec_cardinality =
-        usize::try_from(runtime.config().codec_cardinality()).map_err(|_| Error::UnableToLoadConfig)?;
     Ok(Box::new(NanoCodecAudioDecoderBackend {
-        runtime,
-        codec_cardinality,
+        audio: audio.clone(),
+        codec_cardinality: audio.codec_cardinality(),
     }))
 }
 
 fn parse_text_decoder_runtime(
     tts_model_config: &TtsModelConfig,
-    runtime: &crate::audio::NanoCodecFsqRuntime,
+    audio: &AudioGenerationContext,
     model_path: &Path,
     options: &TtsSessionOptions,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
-    let parsed: TtsConfigJson =
-        serde_json::from_value(tts_model_config.tts_config.clone()).map_err(|_| Error::UnableToLoadConfig)?;
-
-    match parsed.text_decoder_config {
-        TextDecoderConfigJson::StubTextDecoderConfig {
+    match &tts_model_config.tts_config.text_decoder_config {
+        TtsTextDecoderConfig::StubTextDecoderConfig {
             num_codebooks,
             codebook_size,
         } => {
-            if num_codebooks == 0 || codebook_size == 0 {
+            if *num_codebooks == 0 || *codebook_size == 0 {
                 return Err(Error::UnableToLoadConfig);
             }
-            if num_codebooks != runtime.config().num_groups() {
+            if *num_codebooks != audio.num_codebooks() {
                 return Err(Error::UnableToLoadConfig);
             }
             let default_seed = load_stub_seed(model_path.join("model.safetensors")).unwrap_or(DEFAULT_STUB_SEED);
             Ok(Box::new(StubTextDecoderRuntime {
-                num_codebooks,
-                codebook_size,
+                num_codebooks: *num_codebooks,
+                codebook_size: *codebook_size,
                 default_seed,
             }))
         },
-        TextDecoderConfigJson::FishAudioTextDecoderConfig {
+        TtsTextDecoderConfig::FishAudioTextDecoderConfig {
             config,
         } => {
             let text_decoder_runtime_config = &options.text_decoder;
             if config.num_codebooks == 0 || config.codebook_size == 0 || config.max_seq_len == 0 {
                 return Err(Error::UnableToLoadConfig);
             }
-            if config.num_codebooks != runtime.config().num_groups() {
+            if config.num_codebooks != audio.num_codebooks() {
                 return Err(Error::UnableToLoadConfig);
             }
             if config.semantic_token_begin_id > config.semantic_token_end_id {
