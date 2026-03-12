@@ -1,0 +1,739 @@
+use super::*;
+
+pub(super) struct FishAudioTextDecoderRuntime {
+    slow_runner: TokenDecoderRunner,
+    fast_runner: Option<TokenDecoderRunner>,
+    gpu_path: FishAudioGpuPath,
+    runtime_config: TextDecoderRuntimeConfig,
+    semantic_token_begin_id: i64,
+    semantic_token_end_id: i64,
+    semantic_cardinality: usize,
+    im_end_token_id: i64,
+    codebook_size: usize,
+    num_codebooks: usize,
+    slow_model_dim: usize,
+    fast_model_dim: usize,
+    max_seq_len: usize,
+    scale_codebook_embeddings: bool,
+    fast_vocab_limit: usize,
+    repeat_window_size: usize,
+    apply_semantic_sampling_mask: bool,
+    semantic_sampling_mask_row: Box<[u32]>,
+    semantic_sampling_mask_without_im_end_row: Box<[u32]>,
+    current_codes_scratch: Vec<u32>,
+    instrumentation: RunnerInstrumentation,
+}
+
+struct FishAudioGpuPath {
+    embedding_rows_sum: <<Metal as Backend>::Kernels as Kernels>::EmbeddingRowsSumKernel,
+    projection: <<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel,
+    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
+    codebook_embeddings: ArrayCell<Metal>,
+    codebook_row_indices: ArrayCell<Metal>,
+    projection_weights: Option<ArrayCell<Metal>>,
+}
+
+impl FishAudioGpuPath {
+    fn new(
+        context: &MetalContext,
+        data_type: DataType,
+        codebook_embeddings: &MatrixF32,
+        fast_model_projection: &Option<MatrixF32>,
+        num_codebooks: usize,
+        codebook_size: usize,
+        slow_model_dim: usize,
+        fast_model_dim: usize,
+    ) -> Result<Self, Error> {
+        if codebook_embeddings.rows != num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?
+            || codebook_embeddings.cols != slow_model_dim
+        {
+            return Err(Error::UnableToLoadConfig);
+        }
+        if let Some(projection) = fast_model_projection
+            && (projection.rows != fast_model_dim || projection.cols != slow_model_dim)
+        {
+            return Err(Error::UnableToLoadConfig);
+        }
+
+        let embedding_rows_sum =
+            <<Metal as Backend>::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
+                .map_err(unable_to_create_context)?;
+        let projection =
+            <<<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(
+                context, data_type,
+            )
+            .map_err(unable_to_create_context)?;
+        let tensor_copy = <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
+            .map_err(unable_to_create_context)?;
+
+        let mut codebook_embeddings_gpu = context.create_array(
+            &[num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?, slow_model_dim],
+            data_type,
+            "tts_codebook_embeddings_gpu",
+        );
+        write_f32_slice_into_array(&mut codebook_embeddings_gpu, &codebook_embeddings.values)?;
+
+        let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
+
+        let projection_weights = if let Some(projection) = fast_model_projection {
+            let mut weights =
+                context.create_array(&[fast_model_dim, slow_model_dim], data_type, "tts_fast_projection_weights");
+            write_f32_slice_into_array(&mut weights, &projection.values)?;
+            Some(RefCell::new(weights))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            embedding_rows_sum,
+            projection,
+            tensor_copy,
+            codebook_embeddings: RefCell::new(codebook_embeddings_gpu),
+            codebook_row_indices: RefCell::new(codebook_row_indices),
+            projection_weights,
+        })
+    }
+}
+
+pub(super) fn build_fishaudio_text_decoder_runtime(
+    config: &crate::config::FishAudioTextDecoderConfig,
+    audio: &AudioGenerationContext,
+    model_path: &Path,
+    runtime_config: &TextDecoderRuntimeConfig,
+) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
+    if config.num_codebooks == 0 || config.codebook_size == 0 || config.max_seq_len == 0 {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if config.num_codebooks != audio.num_codebooks() {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if config.semantic_token_begin_id > config.semantic_token_end_id {
+        return Err(Error::UnableToLoadConfig);
+    }
+    let semantic_cardinality = usize::try_from(config.semantic_token_end_id - config.semantic_token_begin_id + 1)
+        .map_err(|_| Error::UnableToLoadConfig)?;
+    if semantic_cardinality == 0 {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if !config.slow_readout_config.is_full_precision() {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if !config.fast_readout_config.is_full_precision() {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if config.slow_model_config.model_dim != config.slow_model_dim {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if config.fast_model_config.model_dim != config.fast_model_dim {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if config.short_logits_size == 0 {
+        return Err(Error::UnableToLoadConfig);
+    }
+    let semantic_sampling_mask_row = build_semantic_sampling_mask_row(
+        config.vocab_size,
+        config.semantic_token_begin_id,
+        config.semantic_token_end_id,
+        config.im_end_token_id,
+    )?;
+    let mut semantic_sampling_mask_without_im_end_row = semantic_sampling_mask_row.to_vec();
+    clear_token_in_sampling_mask(&mut semantic_sampling_mask_without_im_end_row, config.im_end_token_id)?;
+
+    let slow_transformer_config = config.slow_model_config.clone();
+    let fast_transformer_config = config.fast_model_config.clone();
+
+    let slow_inner_config = InnerModelConfig {
+        embedding_config: config.slow_embeddings_config.to_embedding_config(),
+        transformer_config: slow_transformer_config,
+        vocab_size: config.vocab_size,
+    };
+    let fast_inner_config = InnerModelConfig {
+        embedding_config: config.fast_embeddings_config.to_embedding_config(),
+        transformer_config: fast_transformer_config,
+        vocab_size: config.codebook_size,
+    };
+
+    let slow_decoder_config = Rc::new(slow_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+    let fast_decoder_config = Rc::new(fast_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+    let text_decoder_context = MetalContext::new().map_err(unable_to_create_context)?;
+
+    let slow_runner = TokenDecoderRunner::new_with_context(
+        text_decoder_context.clone(),
+        model_path,
+        slow_decoder_config,
+        "text_decoder.transformer_slow",
+        "text_decoder.embeddings_slow",
+        "text_decoder.readout_slow",
+        runtime_config,
+        config.repeat_window_size,
+    )?;
+
+    let fast_runner = if config.num_codebooks > 1 {
+        Some(TokenDecoderRunner::new_with_context(
+            text_decoder_context.clone(),
+            model_path,
+            fast_decoder_config,
+            "text_decoder.transformer_fast",
+            "text_decoder.embeddings_fast",
+            "text_decoder.readout_fast",
+            runtime_config,
+            config.repeat_window_size,
+        )?)
+    } else {
+        None
+    };
+
+    let weights_path = model_path.join("model.safetensors");
+    let codebook_embeddings = load_matrix_f32(
+        &weights_path,
+        "text_decoder.codebook_embeddings.weights",
+        config.codebook_size.checked_mul(config.num_codebooks).ok_or(Error::UnableToLoadConfig)?,
+        config.slow_model_dim,
+    )?;
+
+    let fast_model_projection = if config.fast_model_projection_config.is_some() {
+        Some(load_matrix_f32(
+            &weights_path,
+            "text_decoder.fast_model_projection.weights",
+            config.fast_model_dim,
+            config.slow_model_dim,
+        )?)
+    } else {
+        None
+    };
+
+    let activation_data_type = slow_runner.single_hidden_capture.borrow().data_type();
+    if let Some(fast_runner_ref) = fast_runner.as_ref() {
+        let fast_data_type = fast_runner_ref.single_override_embedding.borrow().data_type();
+        if fast_data_type != activation_data_type {
+            return Err(Error::UnableToLoadConfig);
+        }
+    }
+    let apply_semantic_sampling_mask = runtime_config
+        .force_semantic_sampling_mask
+        .unwrap_or(!matches!(activation_data_type, DataType::F32));
+
+    let gpu_path = FishAudioGpuPath::new(
+        text_decoder_context.as_ref(),
+        activation_data_type,
+        &codebook_embeddings,
+        &fast_model_projection,
+        config.num_codebooks,
+        config.codebook_size,
+        config.slow_model_dim,
+        config.fast_model_dim,
+    )?;
+
+    Ok(Box::new(FishAudioTextDecoderRuntime {
+        slow_runner,
+        fast_runner,
+        gpu_path,
+        runtime_config: runtime_config.clone(),
+        semantic_token_begin_id: config.semantic_token_begin_id,
+        semantic_token_end_id: config.semantic_token_end_id,
+        semantic_cardinality,
+        im_end_token_id: config.im_end_token_id,
+        codebook_size: config.codebook_size,
+        num_codebooks: config.num_codebooks,
+        slow_model_dim: config.slow_model_dim,
+        fast_model_dim: config.fast_model_dim,
+        max_seq_len: config.max_seq_len,
+        scale_codebook_embeddings: config.scale_codebook_embeddings,
+        fast_vocab_limit: config.short_logits_size.min(config.codebook_size),
+        repeat_window_size: config.repeat_window_size,
+        apply_semantic_sampling_mask,
+        semantic_sampling_mask_row,
+        semantic_sampling_mask_without_im_end_row: semantic_sampling_mask_without_im_end_row.into_boxed_slice(),
+        current_codes_scratch: vec![0_u32; config.num_codebooks],
+        instrumentation: RunnerInstrumentation::default(),
+    }))
+}
+
+impl FishAudioTextDecoderRuntime {
+    fn generate_semantic_tokens(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+    ) -> Result<AudioTokenGrid, Error> {
+        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, max_semantic_frames, None)
+    }
+
+    fn generate_semantic_tokens_with_callback(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
+    ) -> Result<AudioTokenGrid, Error> {
+        self.generate_semantic_tokens_internal(
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+            Some(on_frame),
+        )
+    }
+
+    fn generate_semantic_tokens_internal(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+        mut on_frame: Option<&mut dyn FnMut(&[u32]) -> Result<(), Error>>,
+    ) -> Result<AudioTokenGrid, Error> {
+        if text_tokens.is_empty() {
+            return AudioTokenGrid::new(
+                Vec::new().into_boxed_slice(),
+                1,
+                self.num_codebooks,
+                0,
+                vec![0].into_boxed_slice(),
+                AudioTokenPacking::CodebookMajor,
+            )
+            .map_err(Error::from);
+        }
+        if text_tokens.len() >= self.max_seq_len {
+            return Err(Error::GenerateFailed);
+        }
+
+        let semantic_token_upper_bound = self.semantic_cardinality;
+        let residual_token_upper_bound = self.codebook_size.min(codec_cardinality);
+        if semantic_token_upper_bound == 0 || residual_token_upper_bound == 0 {
+            return Err(Error::UnableToLoadConfig);
+        }
+
+        self.instrumentation = RunnerInstrumentation::default();
+        self.slow_runner.reset();
+        self.slow_runner.clear_instrumentation();
+        if let Some(fast_runner) = self.fast_runner.as_mut() {
+            fast_runner.clear_instrumentation();
+        }
+        let mut sampling = TextSamplingState::from_config(seed, &self.runtime_config.sampling);
+        let semantic_sampling_mask_row = if self.apply_semantic_sampling_mask {
+            Some(self.semantic_sampling_mask_row.clone())
+        } else {
+            None
+        };
+        let semantic_sampling_mask_without_im_end_row = if self.apply_semantic_sampling_mask {
+            Some(self.semantic_sampling_mask_without_im_end_row.clone())
+        } else {
+            None
+        };
+        let initial_sampling_row = if let Some(mask_row) = semantic_sampling_mask_row.as_ref() {
+            if self.runtime_config.min_frames_before_im_end > 0 {
+                semantic_sampling_mask_without_im_end_row.as_deref().ok_or(Error::GenerateFailed)?
+            } else {
+                mask_row.as_ref()
+            }
+        } else {
+            &[]
+        };
+        let prefill_step_size = text_decoder_prefill_step_size(&self.runtime_config, self.max_seq_len);
+        if text_tokens.len() > prefill_step_size {
+            for chunk in text_tokens[..text_tokens.len() - prefill_step_size].chunks(prefill_step_size) {
+                self.slow_runner.prefill_without_sampling(chunk)?;
+            }
+        }
+        let prefill_tail_start = text_tokens.len().saturating_sub(prefill_step_size);
+        let prefill_tail = &text_tokens[prefill_tail_start..];
+        let prefill_mask = if initial_sampling_row.is_empty() {
+            None
+        } else {
+            Some(expand_token_mask_for_sampling_row(initial_sampling_row, prefill_tail.len())?)
+        };
+        let mut current_semantic_token = self.slow_runner.decode_next_token_with_hidden_capture(
+            prefill_tail,
+            EmbeddingInjection::None,
+            &mut sampling,
+            prefill_mask.as_deref(),
+        )?;
+        let post_scale = if self.scale_codebook_embeddings {
+            Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
+        } else {
+            None
+        };
+
+        let mut max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len());
+        max_new_tokens = max_new_tokens.min(max_semantic_frames.max(1));
+        if let Some(limit) = self.runtime_config.max_new_tokens_override {
+            max_new_tokens = max_new_tokens.min(limit);
+        }
+        let mut by_codebook =
+            (0..self.num_codebooks).map(|_| Vec::<u32>::with_capacity(max_new_tokens)).collect::<Vec<_>>();
+        let mut repetition_windows = (0..(self.num_codebooks + 1))
+            .map(|_| Vec::<u32>::with_capacity(self.repeat_window_size))
+            .collect::<Vec<_>>();
+        if self.current_codes_scratch.len() != self.num_codebooks {
+            self.current_codes_scratch = vec![0_u32; self.num_codebooks];
+        }
+
+        if self.num_codebooks > 1 {
+            let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+            if fast_vocab_limit == 0 {
+                return Err(Error::UnableToLoadConfig);
+            }
+            if let Some(fast_runner) = self.fast_runner.as_mut() {
+                fast_runner.prepare_single_token_vocab_mask(fast_vocab_limit)?;
+                fast_runner.prepare_two_token_vocab_mask(fast_vocab_limit)?;
+            }
+        }
+
+        for _step in 0..max_new_tokens {
+            if current_semantic_token as i64 == self.im_end_token_id {
+                break;
+            }
+            let frame_semantic_token = current_semantic_token;
+
+            let first_code = semantic_token_to_code(
+                current_semantic_token,
+                self.semantic_token_begin_id,
+                self.semantic_token_end_id,
+                semantic_token_upper_bound,
+            );
+            by_codebook[0].push(first_code);
+            self.current_codes_scratch[0] = first_code;
+
+            if self.num_codebooks > 1 {
+                let (slow_runner, fast_runner_opt, gpu_path) =
+                    (&mut self.slow_runner, &mut self.fast_runner, &mut self.gpu_path);
+                let slow_hidden_capture = &slow_runner.single_hidden_capture;
+                let slow_model_dim = self.slow_model_dim;
+                let fast_model_dim = self.fast_model_dim;
+                let Some(fast_runner) = fast_runner_opt.as_mut() else {
+                    return Err(Error::GenerateFailed);
+                };
+
+                fast_runner.reset();
+                let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+                let mut pre_projection =
+                    |runner: &TokenDecoderRunner,
+                     _state: &ForwardPassState<Metal>,
+                     command_buffer: &mut MetalCommandBuffer| {
+                        Self::encode_project_slow_hidden_to_fast_on(
+                            runner.context.as_ref(),
+                            gpu_path,
+                            slow_hidden_capture,
+                            &runner.single_override_embedding,
+                            slow_model_dim,
+                            fast_model_dim,
+                            command_buffer,
+                        )
+                    };
+                fast_runner.set_repetition_window(repetition_windows.get(1).map_or(&[], Vec::as_slice))?;
+                let mut fast_token = fast_runner.decode_next_step(
+                    &[0, u64::from(first_code)],
+                    EmbeddingInjection::OverrideFirstRowInternal,
+                    Some(fast_vocab_limit),
+                    &mut sampling,
+                    None,
+                    false,
+                    Some(&mut pre_projection),
+                )?;
+                if self.num_codebooks > 1 {
+                    let clamped =
+                        u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                            .map_err(|_| Error::GenerateFailed)?;
+                    by_codebook[1].push(clamped);
+                    self.current_codes_scratch[1] = clamped;
+                    fast_token = u64::from(clamped);
+                }
+
+                let followup_count = self.num_codebooks.saturating_sub(2);
+                if followup_count > 0 {
+                    let mut record_followup = |relative_index: usize, sampled: u64| -> Result<(), Error> {
+                        let codebook_index = relative_index + 2;
+                        let clamped =
+                            u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                                .map_err(|_| Error::GenerateFailed)?;
+                        by_codebook[codebook_index].push(clamped);
+                        self.current_codes_scratch[codebook_index] = clamped;
+                        Ok(())
+                    };
+                    match self.runtime_config.followup_strategy {
+                        TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
+                            2,
+                            fast_token,
+                            followup_count,
+                            Some(fast_vocab_limit),
+                            &mut sampling,
+                            Some(&repetition_windows),
+                            &mut record_followup,
+                        )?,
+                        TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
+                            fast_token,
+                            followup_count,
+                            Some(fast_vocab_limit),
+                            &mut sampling,
+                            2,
+                            Some(&repetition_windows),
+                            &mut record_followup,
+                        )?,
+                    }
+                }
+            }
+
+            if let Some(callback) = on_frame.as_mut() {
+                callback(&self.current_codes_scratch)?;
+            }
+            let (slow_runner, gpu_path) = (&mut self.slow_runner, &mut self.gpu_path);
+            let current_codes = self.current_codes_scratch.as_slice();
+            let num_codebooks = self.num_codebooks;
+            let codebook_size = self.codebook_size;
+            let slow_model_dim = self.slow_model_dim;
+            let mut pre_codebook_sum =
+                |runner: &TokenDecoderRunner, _state: &ForwardPassState<Metal>, command_buffer: &mut MetalCommandBuffer| {
+                    Self::encode_slow_codebook_sum_from_codes_on(
+                        gpu_path,
+                        &runner.single_override_embedding,
+                        current_codes,
+                        num_codebooks,
+                        codebook_size,
+                        slow_model_dim,
+                        command_buffer,
+                    )
+                };
+            let sampled_frames = by_codebook[0].len();
+            let slow_sampling_mask = if self.apply_semantic_sampling_mask {
+                if sampled_frames < self.runtime_config.min_frames_before_im_end {
+                    semantic_sampling_mask_without_im_end_row.as_deref()
+                } else {
+                    semantic_sampling_mask_row.as_deref()
+                }
+            } else {
+                None
+            };
+            slow_runner.set_repetition_window(&repetition_windows[0])?;
+            current_semantic_token = slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
+                &[current_semantic_token],
+                EmbeddingInjection::AddPreloaded {
+                    post_scale,
+                },
+                &mut sampling,
+                slow_sampling_mask,
+                Some(&mut pre_codebook_sum),
+            )?;
+            push_recent_token(
+                &mut repetition_windows[0],
+                u32::try_from(frame_semantic_token).map_err(|_| Error::GenerateFailed)?,
+                self.repeat_window_size,
+            );
+            for codebook_index in 1..=self.num_codebooks {
+                push_recent_token(
+                    &mut repetition_windows[codebook_index],
+                    self.current_codes_scratch[codebook_index - 1],
+                    self.repeat_window_size,
+                );
+            }
+        }
+
+        self.instrumentation = self.slow_runner.take_instrumentation();
+        if let Some(fast_runner) = self.fast_runner.as_mut() {
+            let fast = fast_runner.take_instrumentation();
+            self.instrumentation.command_buffers_submitted += fast.command_buffers_submitted;
+            self.instrumentation.host_waits += fast.host_waits;
+        }
+
+        let frames = by_codebook.first().map_or(0, Vec::len);
+        let mut tokens = Vec::with_capacity(self.num_codebooks * frames);
+        for codebook_tokens in &by_codebook {
+            if codebook_tokens.len() != frames {
+                return Err(Error::GenerateFailed);
+            }
+            tokens.extend_from_slice(codebook_tokens);
+        }
+
+        AudioTokenGrid::new(
+            tokens.into_boxed_slice(),
+            1,
+            self.num_codebooks,
+            frames,
+            vec![frames].into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )
+        .map_err(Error::from)
+    }
+
+    fn encode_project_slow_hidden_to_fast_on(
+        context: &MetalContext,
+        gpu_path: &mut FishAudioGpuPath,
+        slow_hidden_capture: &ArrayCell<Metal>,
+        output_embedding: &ArrayCell<Metal>,
+        slow_model_dim: usize,
+        fast_model_dim: usize,
+        command_buffer: &mut MetalCommandBuffer,
+    ) -> Result<(), Error> {
+        let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
+
+        if let Some(weights) = gpu_path.projection_weights.as_ref() {
+            let hidden = slow_hidden_capture.borrow();
+            let weights = weights.borrow();
+            let output = output_embedding.borrow();
+            if hidden.shape() != [1, slow_model_dim]
+                || output.shape() != [1, fast_model_dim]
+                || weights.shape() != [fast_model_dim, slow_model_dim]
+            {
+                return Err(Error::GenerateFailed);
+            }
+
+            command_buffer.with_compute_encoder(|encoder| {
+                let hidden_buffer = hidden.buffer();
+                let weights_buffer = weights.buffer();
+                let output_buffer = output.buffer();
+                let hidden_buffer = hidden_buffer.borrow();
+                let weights_buffer = weights_buffer.borrow();
+                let mut output_buffer = output_buffer.borrow_mut();
+                gpu_path.projection.encode(
+                    context,
+                    encoder,
+                    FullPrecisionMatmulArguments {
+                        a: &hidden_buffer,
+                        a_offset: hidden.offset(),
+                        b: &weights_buffer,
+                        output: &mut output_buffer,
+                        bias: None,
+                        batch: 1,
+                        input_dim: slow_model_dim,
+                        output_dim: fast_model_dim,
+                    },
+                );
+            });
+            return Ok(());
+        }
+
+        if slow_model_dim != fast_model_dim {
+            return Err(Error::UnableToLoadConfig);
+        }
+
+        let hidden = slow_hidden_capture.borrow();
+        let output = output_embedding.borrow();
+        if hidden.shape() != [1, slow_model_dim] || output.shape() != [1, fast_model_dim] {
+            return Err(Error::GenerateFailed);
+        }
+        command_buffer.with_compute_encoder(|encoder| {
+            gpu_path.tensor_copy.encode(
+                (hidden.buffer(), hidden.offset()),
+                (output.buffer(), output.offset()),
+                model_dim_u32,
+                encoder,
+            );
+        });
+        Ok(())
+    }
+
+    fn encode_slow_codebook_sum_from_codes_on(
+        gpu_path: &mut FishAudioGpuPath,
+        slow_sum_embedding: &ArrayCell<Metal>,
+        current_codes: &[u32],
+        num_codebooks: usize,
+        codebook_size: usize,
+        slow_model_dim: usize,
+        command_buffer: &mut MetalCommandBuffer,
+    ) -> Result<(), Error> {
+        if current_codes.len() != num_codebooks {
+            return Err(Error::GenerateFailed);
+        }
+        if num_codebooks == 0 {
+            return Err(Error::UnableToLoadConfig);
+        }
+
+        {
+            let mut row_indices = gpu_path.codebook_row_indices.borrow_mut();
+            if row_indices.shape() != [num_codebooks] || row_indices.data_type() != DataType::U64 {
+                return Err(Error::GenerateFailed);
+            }
+            let indices_slice = row_indices.as_slice_mut::<u64>();
+            for (codebook_index, &token) in current_codes.iter().enumerate() {
+                let token = usize::try_from(token).map_err(|_| Error::GenerateFailed)?;
+                if token >= codebook_size {
+                    return Err(Error::GenerateFailed);
+                }
+                let row = codebook_index
+                    .checked_mul(codebook_size)
+                    .and_then(|offset| offset.checked_add(token))
+                    .ok_or(Error::GenerateFailed)?;
+                indices_slice[codebook_index] = u64::try_from(row).map_err(|_| Error::GenerateFailed)?;
+            }
+        }
+
+        let total_vocab = num_codebooks.checked_mul(codebook_size).ok_or(Error::GenerateFailed)?;
+        let total_vocab_u32 = u32::try_from(total_vocab).map_err(|_| Error::GenerateFailed)?;
+        let num_codebooks_u32 = u32::try_from(num_codebooks).map_err(|_| Error::GenerateFailed)?;
+        let slow_model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
+
+        let codebook_row_indices = gpu_path.codebook_row_indices.borrow();
+        let codebook_embeddings = gpu_path.codebook_embeddings.borrow();
+        let slow_sum = slow_sum_embedding.borrow();
+        if codebook_row_indices.shape() != [num_codebooks]
+            || codebook_embeddings.shape() != [total_vocab, slow_model_dim]
+            || slow_sum.shape() != [1, slow_model_dim]
+            || codebook_embeddings.data_type() != slow_sum.data_type()
+        {
+            return Err(Error::GenerateFailed);
+        }
+
+        command_buffer.with_compute_encoder(|encoder| {
+            gpu_path.embedding_rows_sum.encode(
+                (codebook_row_indices.buffer(), codebook_row_indices.offset()),
+                (codebook_embeddings.buffer(), codebook_embeddings.offset()),
+                (slow_sum.buffer(), slow_sum.offset()),
+                num_codebooks_u32,
+                total_vocab_u32,
+                slow_model_dim_u32,
+                encoder,
+            );
+        });
+        Ok(())
+    }
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
+        std::mem::take(&mut self.instrumentation)
+    }
+}
+
+impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
+    fn default_seed(&self) -> u64 {
+        DEFAULT_TTS_RANDOM_SEED
+    }
+
+    fn generate_semantic_tokens(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+    ) -> Result<AudioTokenGrid, Error> {
+        FishAudioTextDecoderRuntime::generate_semantic_tokens(
+            self,
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+        )
+    }
+
+    fn generate_semantic_tokens_with_callback(
+        &mut self,
+        text_tokens: &[u64],
+        codec_cardinality: usize,
+        seed: u64,
+        max_semantic_frames: usize,
+        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
+    ) -> Result<AudioTokenGrid, Error> {
+        FishAudioTextDecoderRuntime::generate_semantic_tokens_with_callback(
+            self,
+            text_tokens,
+            codec_cardinality,
+            seed,
+            max_semantic_frames,
+            on_frame,
+        )
+    }
+
+    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
+        FishAudioTextDecoderRuntime::take_instrumentation(self)
+    }
+}

@@ -118,7 +118,7 @@ fn tts_session_synthesizes_audio_from_text_on_normal_export() {
     let session = TtsSession::new(model_path).expect("tts session");
     let pcm = session.synthesize(Input::Text("hello".to_string())).expect("synthesize");
 
-    assert_eq!(pcm.sample_rate(), session.runtime().config().sample_rate());
+    assert_eq!(pcm.sample_rate(), session.sample_rate());
     assert_eq!(pcm.lengths().len(), 1);
     assert_eq!(pcm.channels(), 1);
     assert!(pcm.lengths()[0] > 0, "expected non-empty waveform for non-empty text");
