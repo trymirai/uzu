@@ -204,7 +204,7 @@ struct GEMMKernel {
 
       // Loop tail
       if (!K_aligned) {
-        int lbk = params->input_dim - params->gemm_k_iterations_aligned * BK;
+        int lbk = params->K - params->gemm_k_iterations_aligned * BK;
         short2 tile_dims_A = transpose_a ? short2(BM, lbk) : short2(lbk, BM);
         short2 tile_dims_B = transpose_b ? short2(lbk, BN) : short2(BN, lbk);
 
@@ -223,10 +223,10 @@ struct GEMMKernel {
     ///////////////////////////////////////////////////////////////////////////
     // MN unaligned loop
     else { // Loop over K - unaligned case
-      short tgp_bm = min(BM, params->batch - c_row);
-      short tgp_bn = min(BN, params->output_dim - c_col);
+      short tgp_bm = min(BM, params->M - c_row);
+      short tgp_bn = min(BN, params->N - c_col);
       short leftover_bk =
-          params->input_dim - params->gemm_k_iterations_aligned * BK;
+          params->K - params->gemm_k_iterations_aligned * BK;
 
       if (tgp_bm == BM && tgp_bn == BN) {
         gemm_loop<true, true, K_aligned>(

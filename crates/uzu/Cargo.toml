@@ -49,6 +49,8 @@ is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
 mpsgraph.workspace = true
+comfy-table.workspace = true
+indicatif.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
@@ -94,3 +96,7 @@ path = "tests/kernel/mod.rs"
 [[test]]
 name = "moe"
 path = "tests/moe/mod.rs"
+
+[[test]]
+name = "matmul_perf_test"
+path = "tests/matmul_perf_test/main.rs"
