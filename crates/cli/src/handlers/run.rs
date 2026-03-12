@@ -56,8 +56,9 @@ pub fn handle_run(
     speculator: Option<String>,
     mut message: Option<String>,
     no_thinking: bool,
+    no_prefix_cache: bool,
 ) {
-    let mut session = load_session(model_path, prefill_step_size, seed, speculator);
+    let mut session = load_session(model_path, prefill_step_size, seed, speculator, no_prefix_cache);
 
     let is_model_running = Arc::new(AtomicBool::new(false));
     let is_model_running_for_ctrlc = is_model_running.clone();

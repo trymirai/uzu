@@ -1,6 +1,9 @@
-use crate::session::{
-    config::SpeculatorConfig,
-    parameter::{AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
+use crate::{
+    forward_pass::prefix_cache::PrefixCacheConfig,
+    session::{
+        config::SpeculatorConfig,
+        parameter::{AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
+    },
 };
 
 #[derive(Clone)]
@@ -12,6 +15,7 @@ pub struct DecodingConfig {
     pub sampling_seed: SamplingSeed,
     pub async_batch_size: AsyncBatchSize,
     pub allow_pre_encode: bool,
+    pub prefix_cache_config: PrefixCacheConfig,
 }
 
 impl DecodingConfig {
@@ -23,6 +27,7 @@ impl DecodingConfig {
         sampling_seed: SamplingSeed,
         async_batch_size: AsyncBatchSize,
         allow_pre_encode: bool,
+        prefix_cache_config: PrefixCacheConfig,
     ) -> Self {
         Self {
             context_mode,
@@ -32,6 +37,7 @@ impl DecodingConfig {
             sampling_seed,
             async_batch_size,
             allow_pre_encode,
+            prefix_cache_config,
         }
     }
 
@@ -50,6 +56,7 @@ impl Default for DecodingConfig {
             sampling_seed: SamplingSeed::default(),
             async_batch_size: AsyncBatchSize::default(),
             allow_pre_encode: true,
+            prefix_cache_config: PrefixCacheConfig::default(),
         }
     }
 }
@@ -121,6 +128,16 @@ impl DecodingConfig {
     ) -> Self {
         Self {
             allow_pre_encode,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_prefix_cache_config(
+        &self,
+        prefix_cache_config: PrefixCacheConfig,
+    ) -> Self {
+        Self {
+            prefix_cache_config,
             ..self.clone()
         }
     }

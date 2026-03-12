@@ -1,13 +1,16 @@
 mod common;
 use std::path::PathBuf;
 
-use uzu::session::{
-    Session,
-    config::{DecodingConfig, RunConfig, SpeculatorConfig},
-    parameter::{
-        AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
+use uzu::{
+    forward_pass::prefix_cache::PrefixCacheConfig,
+    session::{
+        Session,
+        config::{DecodingConfig, RunConfig, SpeculatorConfig},
+        parameter::{
+            AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
+        },
+        types::{Input, Message, Output},
     },
-    types::{Input, Message, Output},
 };
 
 fn build_model_path() -> PathBuf {
@@ -23,6 +26,7 @@ fn build_decoding_config() -> DecodingConfig {
         SamplingSeed::Custom(42),
         AsyncBatchSize::default(),
         true,
+        PrefixCacheConfig::default(),
     )
 }
 
