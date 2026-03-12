@@ -47,6 +47,13 @@ pub enum QuantizationMode {
 }
 
 impl QuantizationMode {
+    pub fn bits(&self) -> usize {
+        match self {
+            QuantizationMode::UInt4 => 4,
+            QuantizationMode::Int8 | QuantizationMode::UInt8 => 8,
+        }
+    }
+
     pub fn packing_divisor(&self) -> usize {
         match self {
             QuantizationMode::UInt4 => 2,

@@ -11,8 +11,8 @@ use crate::{
 
 pub struct MatmulKernel<B: Backend> {
     pub(crate) data_type: DataType,
-    gemv: Option<GemvKernel<B>>,
-    gemm_mpp: Option<GemmMppKernel<B>>,
+    gemv: GemvKernel<B>,
+    gemm_mpp: GemmMppKernel<B>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
@@ -22,10 +22,13 @@ impl<B: Backend> MatmulKernel<B> {
             return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
+        let gemv = GemvKernel::<B>::new(data_type)?;
+        let gemm_mpp = GemmMppKernel::<B>::new(data_type).map_err(MatmulError::BackendError)?;
+
         Ok(Self {
             data_type,
-            gemv: None,
-            gemm_mpp: None,
+            gemv,
+            gemm_mpp,
             bias_add: None,
         })
     }
@@ -34,24 +37,8 @@ impl<B: Backend> MatmulKernel<B> {
         &mut self,
         context: &B::Context,
     ) -> Result<(), MatmulError<B>> {
-        let gemv = self.get_or_create_gemv()?;
-        gemv.precompile(context)?;
-
+        self.gemv.precompile(context)?;
         Ok(())
-    }
-
-    fn get_or_create_gemv(&mut self) -> Result<&mut GemvKernel<B>, MatmulError<B>> {
-        if self.gemv.is_none() {
-            self.gemv = Some(GemvKernel::<B>::new(self.data_type)?);
-        }
-        Ok(self.gemv.as_mut().unwrap())
-    }
-
-    fn get_or_create_gemm_mpp(&mut self) -> Result<&mut GemmMppKernel<B>, MatmulError<B>> {
-        if self.gemm_mpp.is_none() {
-            self.gemm_mpp = Some(GemmMppKernel::<B>::new(self.data_type).map_err(MatmulError::BackendError)?);
-        }
-        Ok(self.gemm_mpp.as_mut().unwrap())
     }
 
     pub fn encode_with_descriptor(
@@ -63,12 +50,10 @@ impl<B: Backend> MatmulKernel<B> {
     ) -> Result<(), MatmulError<B>> {
         match dispatch_descriptor {
             MatmulDispatchDescriptor::Gemv(d) => {
-                let gemv = self.get_or_create_gemv()?;
-                gemv.encode(context, &mut arguments, d, command_buffer)?;
+                self.gemv.encode(context, &mut arguments, d, command_buffer)?;
             }
             MatmulDispatchDescriptor::GemmMpp(d) => {
-                let gemm_mpp = self.get_or_create_gemm_mpp()?;
-                gemm_mpp.encode(context, &mut arguments, d, command_buffer)?;
+                self.gemm_mpp.encode(context, &mut arguments, d, command_buffer)?;
             }
         }
 
@@ -102,7 +87,7 @@ impl<B: Backend> MatmulKernel<B> {
                     .map_err(MatmulError::BackendError)?,
             );
         }
-        let bias_add = self.bias_add.as_ref().unwrap();
+        let bias_add = self.bias_add.as_ref().expect("bias_add initialized above");
         bias_add.encode(None::<&B::Buffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, command_buffer);
         Ok(())
     }
