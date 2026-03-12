@@ -18,7 +18,7 @@ pub struct MatmulKernel<B: Backend> {
 
 impl<B: Backend> MatmulKernel<B> {
     pub fn new(data_type: DataType) -> Result<Self, MatmulError<B>> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16) {
+        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MatmulError::UnsupportedDataType(data_type));
         }
 

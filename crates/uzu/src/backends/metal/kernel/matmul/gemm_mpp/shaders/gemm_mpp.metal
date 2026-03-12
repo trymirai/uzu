@@ -163,7 +163,7 @@ METAL_FUNC void gemm_mpp_impl(
 ///////////////////////////////////////////////////////////////////////////////
 
 template <typename T>
-VARIANTS(T, half, bfloat)
+VARIANTS(T, float, half, bfloat)
 KERNEL(MatmulGemmMpp)(
     const device T* left_matrix,
     const device T* right_matrix,
