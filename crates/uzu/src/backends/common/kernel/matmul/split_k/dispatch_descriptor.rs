@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct DispatchDescriptor {
+pub struct SplitKDispatchDescriptor {
     pub params: SplitKGEMMParams,
     pub partition_count: i32,
     pub output_elements_per_partition: i32,
@@ -18,7 +18,7 @@ pub struct DispatchDescriptor {
     pub accum_total_threads: GridSize,
 }
 
-impl DispatchDescriptor {
+impl SplitKDispatchDescriptor {
     pub fn try_new<B: Backend>(
         data_type: DataType,
         arguments: &MatmulArguments<B>,

@@ -98,7 +98,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         batch_ndim: 1,
     };
 
-    let descriptor = gemm::DispatchDescriptor {
+    let descriptor = gemm::GemmDispatchDescriptor {
         specialization: config,
         params,
         threadgroups: GridSize {

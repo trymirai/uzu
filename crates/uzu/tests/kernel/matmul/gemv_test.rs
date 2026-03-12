@@ -82,7 +82,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         transpose_b: true,
     };
 
-    let descriptor = gemv::DispatchDescriptor::try_new::<B>(T::data_type(), &arguments)
+    let descriptor = gemv::GemvDispatchDescriptor::try_new::<B>(T::data_type(), &arguments)
         .expect("Failed to create descriptor")
         .expect("GEMV not applicable for these dimensions");
 

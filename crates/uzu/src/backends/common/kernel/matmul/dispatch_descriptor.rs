@@ -1,10 +1,11 @@
-use super::{gemm, gemv, split_k};
+use super::{MatmulArguments, MatmulError, gemm, gemv, split_k};
+use crate::{DataType, backends::common::Backend};
 
 #[derive(Debug, Clone)]
 pub enum MatmulDispatchDescriptor {
-    Gemv(gemv::DispatchDescriptor),
-    SplitK(split_k::DispatchDescriptor),
-    Gemm(gemm::DispatchDescriptor),
+    Gemv(gemv::GemvDispatchDescriptor),
+    SplitK(split_k::SplitKDispatchDescriptor),
+    Gemm(gemm::GemmDispatchDescriptor),
 }
 
 impl MatmulDispatchDescriptor {
@@ -14,4 +15,20 @@ impl MatmulDispatchDescriptor {
             MatmulDispatchDescriptor::SplitK(_) | MatmulDispatchDescriptor::Gemm(_) => false,
         }
     }
+}
+
+pub fn choose_matmul_dispatch_descriptor<B: Backend>(
+    context: &B::Context,
+    data_type: DataType,
+    arguments: &MatmulArguments<B>,
+) -> Result<MatmulDispatchDescriptor, MatmulError<B>> {
+    if let Some(descriptor) = gemv::GemvDispatchDescriptor::try_new::<B>(data_type, arguments)? {
+        return Ok(MatmulDispatchDescriptor::Gemv(descriptor));
+    }
+
+    if let Some(descriptor) = split_k::SplitKDispatchDescriptor::try_new::<B>(data_type, arguments)? {
+        return Ok(MatmulDispatchDescriptor::SplitK(descriptor));
+    }
+
+    Ok(MatmulDispatchDescriptor::Gemm(gemm::GemmDispatchDescriptor::try_new::<B>(context, data_type, arguments)?))
 }
