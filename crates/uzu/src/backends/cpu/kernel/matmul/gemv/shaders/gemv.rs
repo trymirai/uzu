@@ -67,7 +67,6 @@ fn matmul_gemv_multi_thread<T: ArrayElement + Float>(
             let batch_vec = input_vector.add(outer_batch * vector_batch_stride[0] as usize);
             let batch_mat = SendPtr(matrix.add(outer_batch * matrix_batch_stride[0] as usize));
             let batch_out = SendPtrMut(output_vector.add(outer_batch * batch_rows * output_dimension));
-
             let batch_src =
                 output_source.map(|src| SendPtr(src.add(outer_batch * output_source_batch_stride[0] as usize)));
 
@@ -137,7 +136,6 @@ fn matmul_gemv_single_thread<T: ArrayElement + Float>(
             let batch_vec = input_vector.add(outer_batch * vector_batch_stride[0] as usize);
             let batch_mat = matrix.add(outer_batch * matrix_batch_stride[0] as usize);
             let batch_out = output_vector.add(outer_batch * batch_rows * output_dimension);
-
             let batch_src = output_source.map(|src| src.add(outer_batch * output_source_batch_stride[0] as usize));
 
             for batch_row in 0..batch_rows {
