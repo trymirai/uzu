@@ -3,6 +3,7 @@ mod common;
 // New integration test for ParameterLoader
 use half::bf16;
 use is_close::is_close;
+use test_tag::tag;
 use uzu::{
     backends::{
         common::{Backend, Context},
@@ -11,6 +12,7 @@ use uzu::{
     parameters::ParameterLoader,
 };
 
+#[tag(heavy)]
 #[test]
 fn test_parameter_loader_basic() {
     let weights_path = crate::common::get_test_weights_path();

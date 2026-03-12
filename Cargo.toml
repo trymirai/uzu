@@ -38,6 +38,7 @@ minijinja = "2.15"
 minijinja-contrib = { version = "2.15", features = ["pycompat"] }
 clap = { version = "4.5", features = ["derive"] }
 rand = "0.10"
+rand_distr = "0.6.0"
 sysinfo = "0.38"
 itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }
@@ -70,6 +71,8 @@ autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
+test-tag = "0.1.6"
+proptest = "1.10.0"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
@@ -77,3 +80,7 @@ opt-level = 3
 
 [profile.release]
 lto = "thin"
+
+# optimize tests
+[profile.test]
+opt-level = 2

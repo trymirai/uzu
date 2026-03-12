@@ -42,6 +42,9 @@ objc2.workspace = true
 objc2-foundation.workspace = true
 
 [dev-dependencies]
+test-tag.workspace = true
+proptest.workspace = true
+rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
