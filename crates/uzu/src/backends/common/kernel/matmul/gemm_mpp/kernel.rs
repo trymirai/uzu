@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::DerefMut};
+use std::{collections::hash_map::Entry, collections::HashMap, ops::DerefMut};
 
 use super::{
     super::{MatmulError, matmul_arguments::MatmulArguments},
@@ -12,14 +12,14 @@ use crate::{
 
 pub struct GemmMppKernel<B: Backend> {
     data_type: DataType,
-    pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemmMppKernel>,
+    kernels: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemmMppKernel>,
 }
 
 impl<B: Backend> GemmMppKernel<B> {
     pub fn new(data_type: DataType) -> Result<Self, B::Error> {
         Ok(Self {
             data_type,
-            pipelines: HashMap::new(),
+            kernels: HashMap::new(),
         })
     }
 
@@ -38,27 +38,29 @@ impl<B: Backend> GemmMppKernel<B> {
         context: &B::Context,
         config: Specialization,
     ) -> Result<&<B::Kernels as Kernels>::MatmulGemmMppKernel, MatmulError<B>> {
-        if !self.pipelines.contains_key(&config) {
-            let pipeline = <B::Kernels as Kernels>::MatmulGemmMppKernel::new(
-                context,
-                self.data_type,
-                config.block_rows as u32,
-                config.block_cols as u32,
-                config.block_depth as u32,
-                config.warps_per_row as u32,
-                config.warps_per_col as u32,
-                config.align_m,
-                config.align_n,
-                config.align_k,
-                config.use_native_fragment_layout,
-                config.subtile_rows,
-                config.subtile_cols,
-                config.matmul_k_step,
-            )
-            .map_err(MatmulError::BackendError)?;
-            self.pipelines.insert(config, pipeline);
+        match self.kernels.entry(config) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = <B::Kernels as Kernels>::MatmulGemmMppKernel::new(
+                    context,
+                    self.data_type,
+                    config.block_rows as u32,
+                    config.block_cols as u32,
+                    config.block_depth as u32,
+                    config.warps_per_row as u32,
+                    config.warps_per_col as u32,
+                    config.align_m,
+                    config.align_n,
+                    config.align_k,
+                    config.use_native_fragment_layout,
+                    config.subtile_rows,
+                    config.subtile_cols,
+                    config.matmul_k_step,
+                )
+                .map_err(MatmulError::BackendError)?;
+                Ok(entry.insert(kernel))
+            }
         }
-        Ok(self.pipelines.get(&config).unwrap())
     }
 
     pub fn encode(
@@ -77,8 +79,8 @@ impl<B: Backend> GemmMppKernel<B> {
         let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z)
             .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.z))?;
 
-        let pipeline = self.get_or_create_kernel(context, config)?;
-        pipeline.encode(
+        let kernel = self.get_or_create_kernel(context, config)?;
+        kernel.encode(
             (arguments.a, arguments.a_offset as usize),
             arguments.b,
             arguments.d.deref_mut(),

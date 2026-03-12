@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::DerefMut};
+use std::{collections::hash_map::Entry, collections::HashMap, ops::DerefMut};
 
 use super::{
     super::matmul_arguments::MatmulArguments,
@@ -15,7 +15,7 @@ use crate::{
 
 pub struct GemvKernel<B: Backend> {
     data_type: DataType,
-    pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemvKernel>,
+    kernels: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemvKernel>,
 }
 
 impl<B: Backend> GemvKernel<B> {
@@ -25,7 +25,7 @@ impl<B: Backend> GemvKernel<B> {
         }
         Ok(Self {
             data_type,
-            pipelines: HashMap::new(),
+            kernels: HashMap::new(),
         })
     }
 
@@ -44,22 +44,24 @@ impl<B: Backend> GemvKernel<B> {
         context: &B::Context,
         config: Specialization,
     ) -> Result<&<B::Kernels as Kernels>::MatmulGemvKernel, MatmulError<B>> {
-        if !self.pipelines.contains_key(&config) {
-            let kernel = <B::Kernels as Kernels>::MatmulGemvKernel::new(
-                context,
-                self.data_type,
-                config.threadgroup_rows,
-                config.threadgroup_cols,
-                config.threads_per_simdgroup_row,
-                config.threads_per_simdgroup_col,
-                config.elements_per_thread_row,
-                config.elements_per_thread_col,
-                config.apply_output_scale_and_accumulate,
-            )
-            .map_err(MatmulError::BackendError)?;
-            self.pipelines.insert(config, kernel);
+        match self.kernels.entry(config) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = <B::Kernels as Kernels>::MatmulGemvKernel::new(
+                    context,
+                    self.data_type,
+                    config.threadgroup_rows,
+                    config.threadgroup_cols,
+                    config.threads_per_simdgroup_row,
+                    config.threads_per_simdgroup_col,
+                    config.elements_per_thread_row,
+                    config.elements_per_thread_col,
+                    config.apply_output_scale_and_accumulate,
+                )
+                .map_err(MatmulError::BackendError)?;
+                Ok(entry.insert(kernel))
+            }
         }
-        Ok(self.pipelines.get(&config).unwrap())
     }
 
     pub fn encode(
@@ -70,7 +72,7 @@ impl<B: Backend> GemvKernel<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;
-        let pipeline = self.get_or_create_kernel(context, config)?;
+        let kernel = self.get_or_create_kernel(context, config)?;
 
         let (matrix, matrix_offset) = if dispatch_descriptor.matrix_is_rhs {
             (arguments.b, 0usize)
@@ -101,7 +103,7 @@ impl<B: Backend> GemvKernel<B> {
         let output_source_batch_stride = [i32::try_from(dispatch_descriptor.bias_batch_stride[0])
             .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.bias_batch_stride[0]))?];
 
-        pipeline.encode(
+        kernel.encode(
             (matrix, matrix_offset),
             (input_vector, input_vector_offset),
             output_source.map(|buffer| (buffer, 0usize)),
