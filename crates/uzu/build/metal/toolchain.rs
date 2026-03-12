@@ -12,6 +12,25 @@ use tokio::{io::AsyncWriteExt, process::Command};
 
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo, validate_raw_kernel};
 
+trait MetalCommandExtension {
+    fn metal_std(&mut self, metal_std: &MetalStd, sdk: &MetalSdk) -> &mut Self;
+    fn include_directories(&mut self, directories: &[PathBuf]) -> &mut Self;
+}
+
+impl MetalCommandExtension for Command {
+    fn metal_std(&mut self, metal_std: &MetalStd, sdk: &MetalSdk) -> &mut Self {
+        self.arg(format!("-std={}", metal_std.to_str()))
+            .arg(format!("-m{}-version-min={}", sdk.os(), metal_std.min_os()))
+    }
+
+    fn include_directories(&mut self, directories: &[PathBuf]) -> &mut Self {
+        for directory in directories {
+            self.arg("-I").arg(directory);
+        }
+        self
+    }
+}
+
 #[derive(Debug)]
 pub enum MetalSdk {
     MacOSX,
@@ -138,24 +157,6 @@ impl MetalToolchain {
         cmd
     }
 
-    fn add_include_dirs(
-        &self,
-        cmd: &mut Command,
-    ) {
-        for dir in self.include_dirs.iter() {
-            cmd.arg("-I").arg(dir);
-        }
-    }
-
-    fn add_std_args(
-        &self,
-        cmd: &mut Command,
-        metal_std: &MetalStd,
-    ) {
-        cmd.arg(format!("-std={}", metal_std.to_str()));
-        cmd.arg(OsString::from(format!("-m{}-version-min={}", self.sdk.os(), metal_std.min_os())));
-    }
-
     pub async fn analyze(
         &self,
         path: impl AsRef<Path>,
@@ -166,14 +167,12 @@ impl MetalToolchain {
         let depfile_path = NamedTempFile::new().context("cannot create temporary file")?;
 
         let mut cmd = self.xcrun();
-        cmd.arg("metal").args(["-x", "metal"]);
-
-        self.add_std_args(&mut cmd, &metal_std);
-        cmd.args(self.extra_options.as_ref());
-
-        self.add_include_dirs(&mut cmd);
-
-        cmd.arg("-DDSL_ANALYZE")
+        cmd.arg("metal")
+            .args(["-x", "metal"])
+            .metal_std(&metal_std, &self.sdk)
+            .args(self.extra_options.as_ref())
+            .include_directories(&self.include_dirs)
+            .arg("-DDSL_ANALYZE")
             .arg(path)
             .arg("-fsyntax-only")
             .args(["-MMD", "-MF"])
@@ -233,14 +232,14 @@ impl MetalToolchain {
     ) -> anyhow::Result<Option<Box<str>>> {
         let metal_std = MetalStd::for_source(source.as_ref());
         let mut cmd = self.xcrun();
-        cmd.arg("metal").arg("-c").args(["-x", "metal"]);
-
-        self.add_std_args(&mut cmd, &metal_std);
-        cmd.args(self.extra_options.as_ref()).args(self.opt_flags.as_ref());
-
-        self.add_include_dirs(&mut cmd);
-
-        cmd.arg("-include")
+        cmd.arg("metal")
+            .arg("-c")
+            .args(["-x", "metal"])
+            .metal_std(&metal_std, &self.sdk)
+            .args(self.extra_options.as_ref())
+            .args(self.opt_flags.as_ref())
+            .include_directories(&self.include_dirs)
+            .arg("-include")
             .arg(source.as_ref())
             .arg("-")
             .arg("-o")
