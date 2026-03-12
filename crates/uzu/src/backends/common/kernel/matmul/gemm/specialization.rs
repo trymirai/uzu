@@ -4,7 +4,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Specialization {
+pub struct GemmSpecialization {
     pub block_rows: i32,
     pub block_cols: i32,
     pub block_depth: i32,
@@ -16,7 +16,7 @@ pub struct Specialization {
     pub align_k: bool,
 }
 
-impl Specialization {
+impl GemmSpecialization {
     pub fn precompile_configs(data_type: DataType) -> &'static [Self] {
         match data_type {
             DataType::BF16 => &[

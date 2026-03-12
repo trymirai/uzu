@@ -2,27 +2,10 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::ArrayElement;
-
-struct SendPtr<T>(*const T);
-unsafe impl<T> Send for SendPtr<T> {}
-unsafe impl<T> Sync for SendPtr<T> {}
-impl<T> Clone for SendPtr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for SendPtr<T> {}
-
-struct SendPtrMut<T>(*mut T);
-unsafe impl<T> Send for SendPtrMut<T> {}
-unsafe impl<T> Sync for SendPtrMut<T> {}
-impl<T> Clone for SendPtrMut<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for SendPtrMut<T> {}
+use crate::{
+    ArrayElement,
+    pointers::{SendPtr, SendPtrMut},
+};
 
 #[inline(always)]
 unsafe fn matmul_gemm_multi_thread_compute_row<T: ArrayElement + Float>(

@@ -1,4 +1,4 @@
-use super::{super::grid_size::GridSize, specialization::Specialization};
+use super::{super::grid_size::GridSize, specialization::GemmSpecialization};
 use crate::{
     DataType,
     backends::common::{
@@ -10,7 +10,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct GemmDispatchDescriptor {
-    pub specialization: Specialization,
+    pub specialization: GemmSpecialization,
     pub params: GEMMParams,
     pub threadgroups: GridSize,
 }
@@ -25,7 +25,7 @@ impl GemmDispatchDescriptor {
             return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
-        let config = Specialization::select::<B>(context, data_type, arguments);
+        let config = GemmSpecialization::select::<B>(context, data_type, arguments);
 
         let m = arguments.batch;
         let n = arguments.output_dim;
