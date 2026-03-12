@@ -49,7 +49,7 @@ fn encode_and_run(
     let completed =
         command_buffer.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
-    completed.gpu_execution_time_ms().ok_or(BenchError::GpuTimestamps)
+    completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1000.0).ok_or(BenchError::GpuTimestamps)
 }
 
 fn run_benchmark(

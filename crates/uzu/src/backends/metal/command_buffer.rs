@@ -229,10 +229,4 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
         }
     }
 
-    fn gpu_execution_time_ms(&self) -> Option<f64> {
-        match (self.command_buffer.gpu_start_time(), self.command_buffer.gpu_end_time()) {
-            (Some(start), Some(end)) => Some((end - start) * 1000.0),
-            _ => None,
-        }
-    }
 }
