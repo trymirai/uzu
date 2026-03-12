@@ -75,8 +75,7 @@ impl<B: Backend> MatmulKernel<B> {
     ) -> Result<(), MatmulError<B>> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
-        let batch_count = arguments.batch_count as usize;
-        let total_len = m * n * batch_count;
+        let total_len = m * n;
         if total_len == 0 {
             return Ok(());
         }
@@ -92,13 +91,4 @@ impl<B: Backend> MatmulKernel<B> {
         Ok(())
     }
 
-    pub fn apply_batch_collapse(arguments: &mut MatmulArguments<B>) {
-        if arguments.batch_count <= 1 {
-            return;
-        }
-        if arguments.leading_dim_a == arguments.input_dim && arguments.transpose_b {
-            arguments.batch *= arguments.batch_count;
-            arguments.batch_count = 1;
-        }
-    }
 }

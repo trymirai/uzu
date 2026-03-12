@@ -92,21 +92,15 @@ fn force_gemv_descriptor(
     if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
         return None;
     }
-    if !arguments.transpose_b {
-        return None;
-    }
 
+    let m = arguments.batch;
     let n = arguments.output_dim;
-    if n == 1 && arguments.batch != 1 {
+
+    if n == 1 && m != 1 {
         return None;
     }
 
     let matrix_is_rhs = n != 1;
-    let transpose_matrix = if matrix_is_rhs {
-        !arguments.transpose_b
-    } else {
-        false
-    };
 
     let output_source = if arguments.bias.is_some() {
         GemvOutputSource::Bias
@@ -114,79 +108,23 @@ fn force_gemv_descriptor(
         GemvOutputSource::None
     };
 
-    let (apply_output_scale_and_accumulate, alpha, _beta, bias_stride) = match output_source {
-        GemvOutputSource::None => (false, 1.0f32, 0.0f32, 0),
-        GemvOutputSource::Bias => (true, 1.0f32, 1.0f32, 1),
-    };
-
-    let output_dimension = if matrix_is_rhs {
-        arguments.output_dim
-    } else {
-        arguments.batch
-    };
+    let apply_output_scale_and_accumulate = matches!(output_source, GemvOutputSource::Bias);
+    let output_dimension = if matrix_is_rhs { n } else { m };
 
     let specialization = GemvSpecialization::select(
-        transpose_matrix,
+        false,
         arguments.input_dim,
         output_dimension,
         apply_output_scale_and_accumulate,
     );
 
-    let input_dimension = arguments.input_dim;
-    let matrix_leading_dim = if matrix_is_rhs {
-        arguments.leading_dim_b
-    } else {
-        arguments.leading_dim_a
-    };
-
-    let batch_shape = [if arguments.batch_count > 1 {
-        arguments.batch_count
-    } else {
-        1
-    }];
-
-    let elements_per_matrix_a = (arguments.batch as i64) * (arguments.leading_dim_a as i64);
-    let elements_per_matrix_b = if arguments.transpose_b {
-        (arguments.output_dim as i64) * (arguments.leading_dim_b as i64)
-    } else {
-        (arguments.input_dim as i64) * (arguments.leading_dim_b as i64)
-    };
-
-    let vector_batch_stride = [if matrix_is_rhs {
-        elements_per_matrix_a
-    } else {
-        elements_per_matrix_b
-    }];
-    let matrix_batch_stride = [if matrix_is_rhs {
-        elements_per_matrix_b
-    } else {
-        elements_per_matrix_a
-    }];
-    let bias_batch_stride = [if arguments.batch_count > 1 {
-        (output_dimension as i64) * (arguments.leading_dim_d as i64)
-    } else {
-        0
-    }];
-
     Some(GemvDescriptor {
         specialization,
         matrix_is_rhs,
         output_source,
-        input_dimension,
+        input_dimension: arguments.input_dim,
         output_dimension,
-        matrix_leading_dim,
-        alpha,
-        beta: if arguments.bias.is_some() {
-            1.0
-        } else {
-            0.0
-        },
-        batch_shape,
-        vector_batch_stride,
-        matrix_batch_stride,
-        bias_batch_stride,
-        bias_stride,
-        batch_rows: arguments.batch,
+        batch_rows: m,
     })
 }
 
@@ -205,11 +143,6 @@ pub fn make_arguments<'a>(
         batch: shape.batch as i32,
         input_dim: shape.input_dim as i32,
         output_dim: shape.output_dim as i32,
-        leading_dim_a: shape.input_dim as i32,
-        leading_dim_b: shape.input_dim as i32,
-        leading_dim_d: shape.output_dim as i32,
-        batch_count: 1,
-        transpose_b: true,
     }
 }
 

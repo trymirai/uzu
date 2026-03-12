@@ -14,10 +14,4 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub input_dim: i32,
     /// N dimension - output_dim (cols of B, cols of D)
     pub output_dim: i32,
-    pub leading_dim_a: i32,
-    pub leading_dim_b: i32,
-    pub leading_dim_d: i32,
-    /// Number of batched matrix multiplications (z-dimension)
-    pub batch_count: i32,
-    pub transpose_b: bool,
 }

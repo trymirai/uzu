@@ -30,8 +30,6 @@ pub enum MatmulError<B: Backend> {
     GemvOutputSourceMismatch,
     #[error("GEMV descriptor requires bias buffer")]
     GemvMissingBias,
-    #[error("GEMV stride overflows i32: {0}")]
-    GemvStrideOverflow(i64),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }

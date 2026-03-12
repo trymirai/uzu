@@ -96,13 +96,6 @@ impl<B: Backend> GemvKernel<B> {
             None
         };
 
-        let vector_batch_stride = [i32::try_from(dispatch_descriptor.vector_batch_stride[0])
-            .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.vector_batch_stride[0]))?];
-        let matrix_batch_stride = [i32::try_from(dispatch_descriptor.matrix_batch_stride[0])
-            .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.matrix_batch_stride[0]))?];
-        let output_source_batch_stride = [i32::try_from(dispatch_descriptor.bias_batch_stride[0])
-            .map_err(|_| MatmulError::<B>::GemvStrideOverflow(dispatch_descriptor.bias_batch_stride[0]))?];
-
         kernel.encode(
             (matrix, matrix_offset),
             (input_vector, input_vector_offset),
@@ -110,14 +103,6 @@ impl<B: Backend> GemvKernel<B> {
             arguments.d.deref_mut(),
             dispatch_descriptor.input_dimension,
             dispatch_descriptor.output_dimension,
-            dispatch_descriptor.matrix_leading_dim,
-            dispatch_descriptor.alpha,
-            dispatch_descriptor.beta,
-            &dispatch_descriptor.batch_shape,
-            &vector_batch_stride,
-            &matrix_batch_stride,
-            &output_source_batch_stride,
-            dispatch_descriptor.bias_stride,
             dispatch_descriptor.batch_rows,
             config.output_rows_per_threadgroup() as i32,
             command_buffer,

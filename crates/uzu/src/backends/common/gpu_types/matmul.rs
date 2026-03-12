@@ -21,8 +21,6 @@ pub struct GEMMParams {
     pub batch_stride_b: i64,
     pub batch_stride_d: i64,
     pub swizzle_log: i32,
-    pub gemm_k_iterations_aligned: i32,
-    pub batch_ndim: i32,
 }
 
 /// Split-K GEMM parameters.

@@ -19,14 +19,6 @@ KERNEL(MatmulGemv)(
     device T* output_vector,
     const constant int& input_dimension,
     const constant int& output_dimension,
-    const constant int& matrix_leading_dimension,
-    const constant float& output_scale,
-    const constant float& output_accumulate_scale,
-    const constant int* batch_shape,
-    const constant int* vector_batch_stride,
-    const constant int* matrix_batch_stride,
-    const constant int* output_source_batch_stride,
-    const constant int& output_source_stride,
     const constant int& batch_rows,
     const constant int& output_rows_per_threadgroup,
     threadgroup float threadgroup_memory[GEMV_MAX_TG_MEMORY],
@@ -39,7 +31,6 @@ KERNEL(MatmulGemv)(
     const bool apply_output_scale_and_accumulate SPECIALIZE,
     const uint threadgroup_index_x GROUPS((output_dimension + output_rows_per_threadgroup - 1) / output_rows_per_threadgroup),
     const uint threadgroup_index_y GROUPS(batch_rows),
-    const uint threadgroup_index_z GROUPS(batch_shape[0]),
     const uint thread_index_x THREADS(32),
     const uint thread_index_y THREADS(16),
     const uint thread_index_z THREADS(1),
@@ -59,27 +50,15 @@ KERNEL(MatmulGemv)(
   const int input_columns_per_threadgroup =
       threads_per_threadgroup_col * thread_out_cols;
 
-  // Batch setup (from run_matmul_gemv_shape)
-  const uint3 threadgroup_position =
-      uint3(threadgroup_index_x, threadgroup_index_y, threadgroup_index_z);
-
-  const int batch_row = static_cast<int>(threadgroup_position.y);
+  const int batch_row = static_cast<int>(threadgroup_index_y);
   if (batch_row >= batch_rows) {
     return;
   }
 
-  // Advance pointers by batch
-  const device T* batch_input_vector =
-      input_vector + threadgroup_position.z * vector_batch_stride[0];
-  const device T* batch_matrix =
-      matrix + threadgroup_position.z * matrix_batch_stride[0];
+  const device T* batch_input_vector = input_vector;
+  const device T* batch_matrix = matrix;
   const device T* batch_output_source = output_source;
-  if (apply_output_scale_and_accumulate) {
-    batch_output_source +=
-        threadgroup_position.z * output_source_batch_stride[0];
-  }
-  device T* batch_output_vector =
-      output_vector + threadgroup_position.z * batch_rows * output_dimension;
+  device T* batch_output_vector = output_vector;
 
   // Thread local accumulation results
   thread float accumulated_values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -113,7 +92,7 @@ KERNEL(MatmulGemv)(
 
   // Block position
   int output_row_start =
-      int(threadgroup_position.x) * int(output_rows_per_threadgroup) +
+      int(threadgroup_index_x) * int(output_rows_per_threadgroup) +
       output_block_row_offset;
 
   // Exit simdgroup if rows out of bound
@@ -128,7 +107,7 @@ KERNEL(MatmulGemv)(
 
   // Advance matrix
   const device T* thread_matrix =
-      batch_matrix + output_row_start * matrix_leading_dimension;
+      batch_matrix + output_row_start * input_dimension;
 
   const uniform<int> input_block_stride =
       make_uniform(int(input_columns_per_threadgroup));
@@ -176,7 +155,7 @@ KERNEL(MatmulGemv)(
             vector_coefficients[input_col_offset];
       }
 
-      matrix_row_offset += matrix_leading_dimension;
+      matrix_row_offset += input_dimension;
     }
 
     input_block_col_offset += input_columns_per_threadgroup;
@@ -223,7 +202,7 @@ KERNEL(MatmulGemv)(
         for (uint input_col_offset = 0; input_col_offset < thread_out_cols;
              input_col_offset++) {
           matrix_values[input_col_offset] = thread_matrix
-              [output_row_offset * matrix_leading_dimension +
+              [output_row_offset * input_dimension +
                input_block_col_offset + input_col_offset];
         }
       } else {
@@ -234,7 +213,7 @@ KERNEL(MatmulGemv)(
               input_block_col_offset + int(input_col_offset) <
                       input_vector_length
                   ? thread_matrix
-                        [output_row_offset * matrix_leading_dimension +
+                        [output_row_offset * input_dimension +
                          input_block_col_offset + input_col_offset]
                   : T(0);
         }
@@ -314,12 +293,8 @@ KERNEL(MatmulGemv)(
          output_row_offset++) {
       if (apply_output_scale_and_accumulate) {
         output_row_values[output_row_start + output_row_offset] =
-            static_cast<T>(output_scale) *
-                static_cast<T>(accumulated_values[output_row_offset]) +
-            static_cast<T>(output_accumulate_scale) *
-                batch_output_source
-                    [(output_row_start + output_row_offset) *
-                     output_source_stride];
+            static_cast<T>(accumulated_values[output_row_offset]) +
+            batch_output_source[output_row_start + output_row_offset];
       } else {
         output_row_values[output_row_start + output_row_offset] =
             static_cast<T>(accumulated_values[output_row_offset]);

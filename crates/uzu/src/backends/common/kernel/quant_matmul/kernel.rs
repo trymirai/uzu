@@ -20,7 +20,6 @@ pub struct QuantizedMatmulKernelEncodable<B: Backend> {
     kernels: HashMap<KernelKey, EncodableVariant<B>>,
     matrix_vector_key: KernelKey,
     matrix_matrix_key: KernelKey,
-    output_dim: usize,
     quantization_type: QuantizedMatmulType,
 }
 
@@ -68,7 +67,6 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             kernels,
             matrix_vector_key,
             matrix_matrix_key,
-            output_dim: configuration.output_dim,
             quantization_type: configuration.quantization_type,
         })
     }
@@ -85,7 +83,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             });
         }
 
-        let key = match self.select_runtime_variant(arguments.batch) {
+        let key = match self.select_runtime_variant(arguments.batch, arguments.output_dim) {
             RuntimeVariant::MatrixVector => self.matrix_vector_key,
             RuntimeVariant::MatrixMatrix => self.matrix_matrix_key,
         };
@@ -150,8 +148,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         Ok(())
     }
 
-    fn select_runtime_variant(&self, batch: usize) -> RuntimeVariant {
-        if batch < 32 || self.output_dim == 1 {
+    fn select_runtime_variant(&self, batch: usize, output_dim: usize) -> RuntimeVariant {
+        if batch < 32 || output_dim == 1 {
             RuntimeVariant::MatrixVector
         } else {
             RuntimeVariant::MatrixMatrix

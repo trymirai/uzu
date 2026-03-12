@@ -20,9 +20,6 @@ struct GEMMParams {
   const int64_t batch_stride_d;
 
   const int swizzle_log;
-  const int gemm_k_iterations_aligned;
-
-  const int batch_ndim;
 };
 
 } // namespace matmul

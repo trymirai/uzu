@@ -34,7 +34,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
         encoder: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
         arguments: FullPrecisionMatmulArguments<Metal>,
     ) {
-        let mut matmul_arguments = MatmulArguments {
+        let matmul_arguments = MatmulArguments {
             a: arguments.a,
             a_offset: arguments.a_offset as u64,
             b: arguments.b,
@@ -43,14 +43,7 @@ impl FullPrecisionMatmulKernelTrait for MatmulKernel<Metal> {
             batch: arguments.batch as i32,
             input_dim: arguments.input_dim as i32,
             output_dim: arguments.output_dim as i32,
-            leading_dim_a: arguments.input_dim as i32,
-            leading_dim_b: arguments.input_dim as i32,
-            leading_dim_d: arguments.output_dim as i32,
-            batch_count: 1,
-            transpose_b: true,
         };
-
-        MatmulKernel::<Metal>::apply_batch_collapse(&mut matmul_arguments);
 
         let descriptor = dispatch_descriptor::choose_dispatch_descriptor(
             context,

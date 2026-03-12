@@ -34,29 +34,23 @@ impl DispatchDescriptor {
         let tm_swizzled = (tiles_m + tile_swizzle - 1) / tile_swizzle;
         let tn_swizzled = tiles_n * tile_swizzle;
 
-        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.leading_dim_a as i64);
-        let elements_per_matrix_b = if arguments.transpose_b {
-            (arguments.output_dim as i64) * (arguments.leading_dim_b as i64)
-        } else {
-            (arguments.input_dim as i64) * (arguments.leading_dim_b as i64)
-        };
-        let elements_per_matrix_d = (arguments.batch as i64) * (arguments.leading_dim_d as i64);
+        let elements_per_matrix_a = (m as i64) * (k as i64);
+        let elements_per_matrix_b = (n as i64) * (k as i64);
+        let elements_per_matrix_d = (m as i64) * (n as i64);
 
         let params = GEMMParams {
             M: m,
             N: n,
             K: k,
-            leading_dim_a: arguments.leading_dim_a,
-            leading_dim_b: arguments.leading_dim_b,
-            leading_dim_d: arguments.leading_dim_d,
+            leading_dim_a: k,
+            leading_dim_b: k,
+            leading_dim_d: n,
             tiles_n,
             tiles_m,
             batch_stride_a: elements_per_matrix_a,
             batch_stride_b: elements_per_matrix_b,
             batch_stride_d: elements_per_matrix_d,
             swizzle_log,
-            gemm_k_iterations_aligned: k / block_depth,
-            batch_ndim: 1,
         };
 
         let config = Specialization {
@@ -78,7 +72,7 @@ impl DispatchDescriptor {
         let threadgroups = GridSize {
             x: tn_swizzled as usize,
             y: tm_swizzled as usize,
-            z: arguments.batch_count as usize,
+            z: 1,
         };
 
         Ok(Self {
