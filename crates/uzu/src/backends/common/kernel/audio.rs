@@ -96,13 +96,6 @@ pub struct AudioAddArguments<'a, B: Backend> {
     pub n: usize,
 }
 
-pub struct AudioScaleArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub output: &'a B::Buffer,
-    pub n: usize,
-    pub scale: f32,
-}
-
 pub struct AudioClampArguments<'a, B: Backend> {
     pub input: &'a B::Buffer,
     pub output: &'a B::Buffer,
@@ -151,12 +144,6 @@ pub trait AudioKernelRuntime<B: Backend> {
         &self,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioAddArguments<'_, B>,
-    ) -> Result<(), B::Error>;
-
-    fn encode_scale(
-        &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        arguments: AudioScaleArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_clamp(

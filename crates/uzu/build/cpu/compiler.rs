@@ -371,29 +371,26 @@ impl CpuCompiler {
                 let argument_ident = &argument.name;
                 match &argument.ty {
                     FunctionArgumentType::Buffer(access) => {
-                        let with_parts_fn = match access {
-                            KernelBufferAccess::Read => quote! { with_parts },
-                            KernelBufferAccess::ReadWrite => quote! { with_parts_mut },
-                        };
-
-                        let pointer_expr = match access {
-                            KernelBufferAccess::Read => quote! { __dsl_buffer.as_ptr() },
-                            KernelBufferAccess::ReadWrite => quote! { __dsl_buffer.as_mut_ptr() },
+                        let as_ptr_fn = match access {
+                            KernelBufferAccess::Read => quote! { as_ptr },
+                            KernelBufferAccess::ReadWrite => quote! { as_mut_ptr },
                         };
 
                         if argument.conditional.is_some() {
                             Some(quote! {
-                                let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| {
-                                    __dsl_buffer_impl.#with_parts_fn(|__dsl_buffer, __dsl_offset| unsafe {
-                                        #pointer_expr.byte_add(__dsl_offset)
-                                    })
+                                let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
+                                    let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
+
+                                    __dsl_buffer.#as_ptr_fn().byte_add(__dsl_offset)
                                 });
                             })
                         } else {
                             Some(quote! {
-                                let #argument_ident = #argument_ident.#with_parts_fn(|__dsl_buffer, __dsl_offset| unsafe {
-                                    #pointer_expr.byte_add(__dsl_offset)
-                                });
+                                let #argument_ident = unsafe {
+                                    let (__dsl_buffer, __dsl_offset) = #argument_ident.into_parts();
+
+                                    __dsl_buffer.#as_ptr_fn().byte_add(__dsl_offset)
+                                };
                             })
                         }
                     },

@@ -30,17 +30,6 @@ pub fn audio_add<T: ArrayElement + Float>(
     todo!()
 }
 
-#[kernel(AudioScale)]
-#[variants(T, f32, f16, bf16)]
-pub fn audio_scale<T: ArrayElement + Float>(
-    #[allow(unused)] input: *const T,
-    #[allow(unused)] output: *mut T,
-    #[allow(unused)] n: i32,
-    #[allow(unused)] scale: f32,
-) {
-    todo!()
-}
-
 #[kernel(AudioCausalConv1d)]
 #[variants(T, f32, f16, bf16)]
 pub fn audio_causal_conv1d<T: ArrayElement + Float>(

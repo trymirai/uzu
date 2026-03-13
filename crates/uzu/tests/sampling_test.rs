@@ -1,7 +1,8 @@
 mod common;
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use rand::{RngExt, seq::SliceRandom};
+use rand::seq::SliceRandom;
+// for Vec::shuffle
 use uzu::{
     DataType,
     backends::{
@@ -9,14 +10,13 @@ use uzu::{
             Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
             CommandBufferPending, Context, Kernels,
             kernel::{
-                GumbelKernel, MinPKernel, TemperatureKernel, TopKKernel, TopPKernel,
+                MinPKernel, TemperatureKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
             },
         },
         metal::Metal,
     },
-    language_model::gumbel::{gumbel_float, revidx},
-    session::parameter::{SamplingMethod, SamplingProcessingOrder},
+    session::parameter::SamplingMethod,
 };
 
 // Constant seed for reproducible test results
@@ -117,363 +117,6 @@ fn test_argmax_sampling() {
     test_argmax_sampling_with_strategy(ArgmaxStrategy::SinglePass);
 }
 
-fn test_topp_sampling_from_prob_exact_match(
-    batch_size: usize,
-    k: usize,
-    vocab_size: usize,
-) {
-    use std::collections::HashSet;
-
-    use rand::{SeedableRng, rngs::StdRng};
-
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            eprintln!("Skipping topP exact match test: {}", e);
-            return;
-        },
-    };
-
-    // Calculate top_p threshold
-    let p = (k as f32) * 0.1;
-
-    // Create kernel
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32, batch_size, vocab_size)
-        .expect("Failed to create sampling kernel");
-
-    // Build probability table
-    let low_prob = (1.0 - p) / (vocab_size - k) as f32;
-    let mut probs = vec![low_prob; batch_size * vocab_size];
-    let mut high_prob_token_sets: Vec<HashSet<usize>> = Vec::with_capacity(batch_size);
-
-    // Use std::sample equivalent (Fisher-Yates shuffle + take first k)
-    let mut rng = StdRng::seed_from_u64(42); // Deterministic for reproducibility
-    let mut all_token_ids: Vec<usize> = (0..vocab_size).collect();
-
-    for b in 0..batch_size {
-        // Equivalent to std::sample - shuffle and take first k
-        all_token_ids.shuffle(&mut rng);
-        let high_prob_tokens: HashSet<usize> = all_token_ids[..k].iter().cloned().collect();
-
-        // Set selected tokens to high probability
-        for &token_id in &high_prob_tokens {
-            probs[b * vocab_size + token_id] = 0.1;
-        }
-        high_prob_token_sets.push(high_prob_tokens);
-    }
-
-    // Convert to logits more carefully to avoid -∞
-    let logits: Vec<f32> = probs
-        .iter()
-        .map(|&prob| {
-            if prob <= 0.0 {
-                -50.0 // Very negative but finite value instead of -∞
-            } else {
-                prob.ln()
-            }
-        })
-        .collect();
-
-    // GPU buffers
-    let mut output_buf = context
-        .device
-        .new_buffer(batch_size * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    // Counter for samples
-    let num_samples = 1000;
-    let mut counter = vec![0i32; batch_size * vocab_size];
-
-    // Draw samples
-    for draw in 0..num_samples {
-        // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buf = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
-
-        let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
-        let seeds_buf = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
-
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-        kernel
-            .encode(
-                &mut logits_buf,
-                Some(&seeds_buf),
-                0,
-                None,
-                0,
-                &mut output_buf,
-                SamplingMethod::Stochastic {
-                    temperature: None,
-                    top_k: None,
-                    top_p: Some(p),
-                    min_p: None,
-                    repetition_penalty: None,
-                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
-                },
-                batch_size,
-                vocab_size,
-                &mut command_buffer,
-            )
-            .expect("encode");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-        let ptr = output_buf.contents().as_ptr() as *const u32;
-        let sampled_ids = unsafe { std::slice::from_raw_parts(ptr, batch_size) };
-
-        for (i, &sampled_id) in sampled_ids.iter().enumerate() {
-            assert!((sampled_id as usize) < vocab_size, "Sampled token out of range");
-            counter[i * vocab_size + sampled_id as usize] += 1;
-        }
-    }
-
-    for i in 0..batch_size {
-        for j in 0..vocab_size {
-            if counter[i * vocab_size + j] > 0 {
-                assert!(
-                    high_prob_token_sets[i].contains(&j),
-                    "high_prob_token_sets[{}] does not contain {} (appeared {} times)",
-                    i,
-                    j,
-                    counter[i * vocab_size + j]
-                );
-            }
-        }
-    }
-
-    println!("batch_size: {}, p: {:.1}, vocab_size: {}, accuracy test passed.", batch_size, p, vocab_size);
-}
-
-#[test]
-fn test_topp_sampling_match_small() {
-    test_topp_sampling_from_prob_exact_match(8, 10, 1024);
-}
-
-#[test]
-fn test_topp_sampling_match_large() {
-    test_topp_sampling_from_prob_exact_match(32, 50, 4096);
-}
-
-#[test]
-fn test_topp_sampling_statistical_large() {
-    use rand::{RngExt, SeedableRng, rngs::StdRng};
-
-    // ===== 1. Create Metal context =====
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping large statistical test: {}", e);
-            return;
-        },
-    };
-
-    // ===== 2. Problem sizes =====
-    const BATCH: usize = 32;
-    const VOCAB: usize = 4096;
-    const NUM_DRAWS: usize = 10_000;
-    const TOP_P: f32 = 0.9;
-    const TOLERANCE_KL: f32 = 0.05;
-
-    // ===== 3. Build kernel =====
-    let kernel =
-        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB).expect("Failed to create sampling kernel");
-
-    // ===== 4. Generate reproducible random logits =====
-    let mut rng = StdRng::seed_from_u64(42);
-    let mut logits = vec![0.0f32; BATCH * VOCAB];
-    for x in logits.iter_mut() {
-        // Uniform[-6, 6]  (broad range avoids numerical under/overflow)
-        *x = rng.random_range(-6.0f32..6.0f32);
-    }
-
-    // ===== 5. Build Top‑p renormalised target distribution per row =====
-    let mut probs = vec![0.0f32; BATCH * VOCAB];
-    for b in 0..BATCH {
-        let row_logits = &logits[b * VOCAB..(b + 1) * VOCAB];
-        let dist = cpu_reference_top_p(row_logits, TOP_P);
-        probs[b * VOCAB..(b + 1) * VOCAB].copy_from_slice(&dist);
-    }
-
-    // ===== 6. Allocate output & counters =====
-    let mut output_buf = context
-        .device
-        .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-    let mut counters = vec![0u32; BATCH * VOCAB];
-
-    // ===== 8. Draw NUM_DRAWS samples =====
-    for draw in 0..NUM_DRAWS {
-        // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buf = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
-
-        let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; BATCH];
-        let seeds_buf = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
-
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-
-        kernel
-            .encode(
-                &mut logits_buf,
-                Some(&seeds_buf),
-                0,
-                None,
-                0,
-                &mut output_buf,
-                SamplingMethod::Stochastic {
-                    temperature: None,
-                    top_k: None,
-                    top_p: Some(TOP_P),
-                    min_p: None,
-                    repetition_penalty: None,
-                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
-                },
-                BATCH,
-                VOCAB,
-                &mut command_buffer,
-            )
-            .expect("encode");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-        let ptr = output_buf.contents().as_ptr() as *const u32;
-        let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
-        for (b, &tok) in sample_ids.iter().enumerate() {
-            counters[b * VOCAB + tok as usize] += 1;
-        }
-    }
-
-    // ===== 9. Compute KL divergence per row =====
-    for b in 0..BATCH {
-        let mut kl = 0.0_f32;
-        for j in 0..VOCAB {
-            let expected = probs[b * VOCAB + j];
-            if expected < 1e-12 {
-                continue;
-            } // ignore tiny
-            let observed = (counters[b * VOCAB + j] as f32) / (NUM_DRAWS as f32);
-            if observed > 0.0 {
-                kl += observed * (observed.ln() - expected.ln());
-            }
-        }
-        assert!(kl < TOLERANCE_KL, "Row {} KL {:.4} exceeded tolerance {:.3}", b, kl, TOLERANCE_KL);
-    }
-
-    println!("✓ Large statistical Top‑p test passed (KL < {:.3})", TOLERANCE_KL);
-}
-
-#[test]
-fn perf_topp_128k_vocab() {
-    use std::time::Instant;
-
-    use rand::{RngExt, SeedableRng, rngs::StdRng};
-
-    // ---- Metal context ----
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping perf test: {}", e);
-            return;
-        },
-    };
-
-    // ---- Problem sizes ----
-    const BATCH: usize = 8;
-    const VOCAB: usize = 128000; // 128K
-    const TOP_P: f32 = 0.9;
-
-    // ---- Kernel ----
-    let kernel =
-        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB).expect("Failed to create sampling kernel");
-
-    // ---- Build random logits ----
-    let mut rng = StdRng::seed_from_u64(123);
-    let mut logits = vec![0.0f32; BATCH * VOCAB];
-    for x in logits.iter_mut() {
-        *x = rng.random_range(-6.0f32..6.0f32);
-    }
-
-    let mut logits_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-    let seeds_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut output_buf = context
-        .device
-        .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    // ---- Launch once and time ----
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-
-    kernel
-        .encode(
-            &mut logits_buf,
-            Some(&seeds_buf),
-            0,
-            None,
-            0,
-            &mut output_buf,
-            SamplingMethod::Stochastic {
-                temperature: None,
-                top_k: None,
-                top_p: Some(TOP_P),
-                min_p: None,
-                repetition_penalty: None,
-                processing_order: SamplingProcessingOrder::TemperatureThenFilters,
-            },
-            BATCH,
-            VOCAB,
-            &mut command_buffer,
-        )
-        .expect("encode");
-
-    // Time both host-side and GPU execution
-    let host_timer = Instant::now();
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-    let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
-
-    // Get actual GPU execution time
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
-
-    match gpu_elapsed_ms {
-        Some(gpu_time) => {
-            println!(
-                "Top‑p sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, gpu_time, host_elapsed_ms
-            );
-        },
-        None => {
-            println!(
-                "Top‑p sampling perf (batch={}, vocab={}): Host-side={:.2} ms (GPU timing unavailable)",
-                BATCH, VOCAB, host_elapsed_ms
-            );
-        },
-    }
-
-    // Ensure the kernel produced *some* output (sanity).
-    let ptr = output_buf.contents().as_ptr() as *const u32;
-    let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
-    for &tok in sample_ids {
-        assert!((tok as usize) < VOCAB, "Sampled id out of range");
-    }
-}
 #[allow(dead_code)]
 fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use std::time::Instant;
@@ -653,8 +296,6 @@ fn test_categorical_sampling() {
                     top_k: None,
                     top_p: None,
                     min_p: None,
-                    repetition_penalty: None,
-                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 batch_size,
                 vocab_size,
@@ -792,8 +433,6 @@ fn test_categorical_sampling_statistical() {
                     top_k: None,
                     top_p: None,
                     min_p: None,
-                    repetition_penalty: None,
-                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 BATCH,
                 VOCAB,
@@ -895,8 +534,6 @@ fn perf_categorical_128k_vocab() {
                 top_k: None,
                 top_p: None,
                 min_p: None,
-                repetition_penalty: None,
-                processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
             BATCH,
             VOCAB,
@@ -1132,8 +769,6 @@ fn test_minp_sampling_exact_match(
                     top_k: None,
                     top_p: None,
                     min_p: Some(min_p),
-                    repetition_penalty: None,
-                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 batch_size,
                 vocab_size,

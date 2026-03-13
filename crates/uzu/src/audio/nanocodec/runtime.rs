@@ -26,7 +26,8 @@ use crate::{
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     backends::{
         common::{
-            Backend, Context, CopyEncoder, Kernels,
+            Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferInitial, CommandBufferPending, Context, CopyEncoder, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
                 AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
@@ -59,7 +60,9 @@ use loaders::{
 };
 use loaders::{build_nanocodec_decoder_graph_from_lalamo_config, load_audio_runtime_from_tts_config};
 
-type MetalCommandBuffer = <Metal as Backend>::CommandBuffer;
+type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
+type MetalPendingCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Pending;
+type MetalCompletedCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Completed;
 
 fn checked_product(values: &[usize]) -> AudioResult<usize> {
     values
@@ -185,7 +188,7 @@ struct SubmittedDecodedPaddedAudio {
     channels: usize,
     frames: usize,
     lengths: Vec<usize>,
-    final_command_buffer: Option<MetalCommandBuffer>,
+    final_command_buffer: Option<MetalPendingCommandBuffer>,
     final_command_label: Option<String>,
     final_cpu_encode_ms: f64,
     decode_profile: Option<AudioDecodeProfile>,
@@ -198,9 +201,9 @@ impl SubmittedDecodedPaddedAudio {
     }
 
     fn resolve(mut self) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
-        if let Some(command_buffer) = self.final_command_buffer.as_ref() {
+        if let Some(command_buffer) = self.final_command_buffer.take() {
             let wait_start = self.decode_profile.is_some().then(Instant::now);
-            command_buffer.wait_until_completed().map_err(|err| {
+            let command_buffer = command_buffer.wait_until_completed().map_err(|err| {
                 AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
             })?;
             let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
@@ -325,7 +328,7 @@ impl Drop for AudioCaptureGuard {
 fn push_audio_command_buffer_profile(
     profile: &mut Option<AudioDecodeProfile>,
     label: impl Into<String>,
-    command_buffer: &MetalCommandBuffer,
+    command_buffer: &MetalCompletedCommandBuffer,
     cpu_encode_ms: f64,
     cpu_wait_ms: f64,
     estimated_macs: Option<usize>,
@@ -449,7 +452,7 @@ fn array_batch_view(
     if active_frames > frames {
         return Err(AudioError::Runtime("array batch view active_frames exceeds frames".to_string()));
     }
-    Ok(unsafe { Array::from_parts(array.buffer_rc(), batch_offset, &[active_frames, channels], array.data_type()) })
+    Ok(unsafe { Array::from_parts(array.buffer(), batch_offset, &[active_frames, channels], array.data_type()) })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1693,7 +1696,7 @@ fn fishaudio_kernels(
 
 fn transpose_nsc_to_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     batch_size: usize,
     seq_len: usize,
@@ -1713,10 +1716,14 @@ fn transpose_nsc_to_ncs_enqueue(
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
     command_buffer.with_compute_encoder(|compute_encoder| {
         kernels.transpose_nsc_to_ncs.encode(
-            input.buffer(),
-            output.buffer(),
+            &*input_buffer,
+            &mut *output_buffer,
             seq_len_i32,
             channels_i32,
             batch_i32,
@@ -1728,7 +1735,7 @@ fn transpose_nsc_to_ncs_enqueue(
 
 fn snake1d_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     alpha: &Array<Metal>,
     batch_size: usize,
@@ -1763,11 +1770,17 @@ fn snake1d_enqueue(
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let alpha_buffer = alpha.buffer();
+    let alpha_buffer = alpha_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
     command_buffer.with_compute_encoder(|compute_encoder| {
         kernels.half_snake.encode(
-            input.buffer(),
-            alpha.buffer(),
-            output.buffer(),
+            &*input_buffer,
+            &*alpha_buffer,
+            &mut *output_buffer,
             channels_i32,
             seq_len_i32,
             channels_i32,
@@ -1783,7 +1796,7 @@ fn snake1d_enqueue(
 
 fn causal_conv1d_grouped_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     layer: &StructuredAudioConv1dGpuLayer,
     lengths: &[i32],
@@ -1836,13 +1849,23 @@ fn causal_conv1d_grouped_enqueue(
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
     let kernels = fishaudio_kernels(context, data_type)?;
     if layer.groups == 1 {
+        let input_buffer = input.buffer();
+        let input_buffer = input_buffer.borrow();
+        let weight_buffer = layer.weight.buffer();
+        let weight_buffer = weight_buffer.borrow();
+        let bias_buffer = layer.bias.buffer();
+        let bias_buffer = bias_buffer.borrow();
+        let output_buffer = output.buffer();
+        let mut output_buffer = output_buffer.borrow_mut();
+        let lengths_buffer = lengths_array.buffer();
+        let lengths_buffer = lengths_buffer.borrow();
         command_buffer.with_compute_encoder(|compute_encoder| {
             kernels.causal_conv1d.encode(
-                input.buffer(),
-                layer.weight.buffer(),
-                layer.bias.buffer(),
-                output.buffer(),
-                lengths_array.buffer(),
+                &*input_buffer,
+                &*weight_buffer,
+                &*bias_buffer,
+                &mut *output_buffer,
+                &*lengths_buffer,
                 cin_i32,
                 cout_i32,
                 seq_len_i32,
@@ -1854,13 +1877,23 @@ fn causal_conv1d_grouped_enqueue(
         });
     } else {
         let groups_i32 = usize_to_i32(layer.groups, "groups")?;
+        let input_buffer = input.buffer();
+        let input_buffer = input_buffer.borrow();
+        let weight_buffer = layer.weight.buffer();
+        let weight_buffer = weight_buffer.borrow();
+        let bias_buffer = layer.bias.buffer();
+        let bias_buffer = bias_buffer.borrow();
+        let output_buffer = output.buffer();
+        let mut output_buffer = output_buffer.borrow_mut();
+        let lengths_buffer = lengths_array.buffer();
+        let lengths_buffer = lengths_buffer.borrow();
         command_buffer.with_compute_encoder(|compute_encoder| {
             kernels.causal_conv1d_grouped.encode(
-                input.buffer(),
-                layer.weight.buffer(),
-                layer.bias.buffer(),
-                output.buffer(),
-                lengths_array.buffer(),
+                &*input_buffer,
+                &*weight_buffer,
+                &*bias_buffer,
+                &mut *output_buffer,
+                &*lengths_buffer,
                 cin_i32,
                 cout_i32,
                 seq_len_i32,
@@ -1878,7 +1911,7 @@ fn causal_conv1d_grouped_enqueue(
 
 fn causal_conv1d_grouped_residual_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     residual: &Array<Metal>,
     layer: &StructuredAudioConv1dGpuLayer,
@@ -1940,14 +1973,26 @@ fn causal_conv1d_grouped_residual_enqueue(
     let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_causal_conv1d_output");
     let kernels = fishaudio_kernels(context, data_type)?;
 
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let residual_buffer = residual.buffer();
+    let residual_buffer = residual_buffer.borrow();
+    let weight_buffer = layer.weight.buffer();
+    let weight_buffer = weight_buffer.borrow();
+    let bias_buffer = layer.bias.buffer();
+    let bias_buffer = bias_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
+    let lengths_buffer = lengths_array.buffer();
+    let lengths_buffer = lengths_buffer.borrow();
     command_buffer.with_compute_encoder(|compute_encoder| {
         kernels.causal_conv1d_grouped_residual.encode(
-            input.buffer(),
-            residual.buffer(),
-            layer.weight.buffer(),
-            layer.bias.buffer(),
-            output.buffer(),
-            lengths_array.buffer(),
+            &*input_buffer,
+            &*residual_buffer,
+            &*weight_buffer,
+            &*bias_buffer,
+            &mut *output_buffer,
+            &*lengths_buffer,
             cin_i32,
             cout_i32,
             seq_len_i32,
@@ -1964,7 +2009,7 @@ fn causal_conv1d_grouped_residual_enqueue(
 
 fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     layer: &StructuredAudioConvTranspose1dGpuLayer,
     lengths: &[i32],
@@ -2027,13 +2072,23 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
     let input_layout_i32 = input_layout.as_i32();
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
 
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let weight_buffer = layer.weight.buffer();
+    let weight_buffer = weight_buffer.borrow();
+    let bias_buffer = layer.bias.buffer();
+    let bias_buffer = bias_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
+    let lengths_buffer = lengths_array.buffer();
+    let lengths_buffer = lengths_buffer.borrow();
     command_buffer.with_compute_encoder(|compute_encoder| {
         kernels.causal_conv_transpose1d_causal_pad.encode(
-            input.buffer(),
-            layer.weight.buffer(),
-            layer.bias.buffer(),
-            output.buffer(),
-            lengths_array.buffer(),
+            &*input_buffer,
+            &*weight_buffer,
+            &*bias_buffer,
+            &mut *output_buffer,
+            &*lengths_buffer,
             cin_i32,
             cout_i32,
             seq_in_i32,
@@ -2052,7 +2107,7 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
 
 fn conv1d_pointwise_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     layer: &StructuredAudioPointwiseConvGpuLayer,
     lengths: &[i32],
@@ -2101,13 +2156,23 @@ fn conv1d_pointwise_ncs_enqueue(
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let weight_buffer = layer.weight.buffer();
+    let weight_buffer = weight_buffer.borrow();
+    let bias_buffer = layer.bias.buffer();
+    let bias_buffer = bias_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
+    let lengths_buffer = lengths_array.buffer();
+    let lengths_buffer = lengths_buffer.borrow();
     command_buffer.with_compute_encoder(|compute_encoder| {
         kernels.conv1d.encode(
-            input.buffer(),
-            layer.weight.buffer(),
-            layer.bias.buffer(),
-            output.buffer(),
-            lengths_array.buffer(),
+            &*input_buffer,
+            &*weight_buffer,
+            &*bias_buffer,
+            &mut *output_buffer,
+            &*lengths_buffer,
             cin_i32,
             cout_i32,
             seq_len_i32,
@@ -2127,7 +2192,7 @@ fn conv1d_pointwise_ncs_enqueue(
 
 fn norm_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     norm: &StructuredAudioNormGpuLayer,
     lengths: &[i32],
@@ -2178,13 +2243,23 @@ fn norm_ncs_enqueue(
     } else {
         0
     };
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let scales_buffer = norm.scales.buffer();
+    let scales_buffer = scales_buffer.borrow();
+    let bias_buffer = norm.bias.buffer();
+    let bias_buffer = bias_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
+    let lengths_buffer = lengths_array.buffer();
+    let lengths_buffer = lengths_buffer.borrow();
     command_buffer.with_compute_encoder(|compute_encoder| {
         kernels.norm_ncs.encode(
-            input.buffer(),
-            norm.scales.buffer(),
-            norm.bias.buffer(),
-            output.buffer(),
-            lengths_array.buffer(),
+            &*input_buffer,
+            &*scales_buffer,
+            &*bias_buffer,
+            &mut *output_buffer,
+            &*lengths_buffer,
             channels_i32,
             seq_len_i32,
             norm.epsilon,
@@ -2199,7 +2274,7 @@ fn norm_ncs_enqueue(
 
 fn gelu_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
     let data_type = input.data_type();
@@ -2208,15 +2283,19 @@ fn gelu_enqueue(
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels.activation.encode(Some(input.buffer()), output.buffer(), n_u32, gelu_id, compute_encoder);
+        kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, gelu_id, compute_encoder);
     });
     Ok(output)
 }
 
 fn add_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     a: &Array<Metal>,
     b: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
@@ -2238,15 +2317,21 @@ fn add_enqueue(
     let kernels = fishaudio_kernels(context, data_type)?;
     let output = context.create_array(a.shape(), data_type, "fishaudio_add_out");
     let n_i32 = usize_to_i32(a.num_elements(), "n")?;
+    let a_buffer = a.buffer();
+    let a_buffer = a_buffer.borrow();
+    let b_buffer = b.buffer();
+    let b_buffer = b_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels.add.encode(a.buffer(), b.buffer(), output.buffer(), n_i32, compute_encoder);
+        kernels.add.encode(&*a_buffer, &*b_buffer, &mut *output_buffer, n_i32, compute_encoder);
     });
     Ok(output)
 }
 
 fn tanh_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut <Metal as Backend>::CommandBuffer,
+    command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
     let data_type = input.data_type();
@@ -2255,8 +2340,12 @@ fn tanh_enqueue(
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
     let tanh_id = 2_u32;
+    let input_buffer = input.buffer();
+    let input_buffer = input_buffer.borrow();
+    let output_buffer = output.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels.activation.encode(Some(input.buffer()), output.buffer(), n_u32, tanh_id, compute_encoder);
+        kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, tanh_id, compute_encoder);
     });
     Ok(output)
 }
@@ -2522,18 +2611,37 @@ impl StructuredAudioCodecGraph {
         let encode_start = profile.is_some().then(Instant::now);
         let mut command_buffer = context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create quantizer command buffer: {err}")))?;
+            .map_err(|err| AudioError::Runtime(format!("failed to create quantizer command buffer: {err}")))?
+            .start_encoding();
+        let tokens_buffer = tokens_array.buffer();
+        let tokens_buffer = tokens_buffer.borrow();
+        let lengths_buffer = lengths_array.buffer();
+        let lengths_buffer = lengths_buffer.borrow();
+        let semantic_codebook_buffer = quantizer_resources.semantic_codebook.buffer();
+        let semantic_codebook_buffer = semantic_codebook_buffer.borrow();
+        let semantic_out_proj_buffer = quantizer_resources.semantic_out_proj.buffer();
+        let semantic_out_proj_buffer = semantic_out_proj_buffer.borrow();
+        let semantic_out_bias_buffer = quantizer_resources.semantic_out_bias.buffer();
+        let semantic_out_bias_buffer = semantic_out_bias_buffer.borrow();
+        let residual_codebooks_buffer = quantizer_resources.residual_codebooks.buffer();
+        let residual_codebooks_buffer = residual_codebooks_buffer.borrow();
+        let residual_out_proj_buffer = quantizer_resources.residual_out_proj.buffer();
+        let residual_out_proj_buffer = residual_out_proj_buffer.borrow();
+        let residual_out_bias_buffer = quantizer_resources.residual_out_bias.buffer();
+        let residual_out_bias_buffer = residual_out_bias_buffer.borrow();
+        let output_buffer = output.buffer();
+        let mut output_buffer = output_buffer.borrow_mut();
         command_buffer.with_compute_encoder(|compute_encoder| {
             quantizer_resources.kernel.encode(
-                tokens_array.buffer(),
-                lengths_array.buffer(),
-                quantizer_resources.semantic_codebook.buffer(),
-                quantizer_resources.semantic_out_proj.buffer(),
-                quantizer_resources.semantic_out_bias.buffer(),
-                quantizer_resources.residual_codebooks.buffer(),
-                quantizer_resources.residual_out_proj.buffer(),
-                quantizer_resources.residual_out_bias.buffer(),
-                output.buffer(),
+                &*tokens_buffer,
+                &*lengths_buffer,
+                &*semantic_codebook_buffer,
+                &*semantic_out_proj_buffer,
+                &*semantic_out_bias_buffer,
+                &*residual_codebooks_buffer,
+                &*residual_out_proj_buffer,
+                &*residual_out_bias_buffer,
+                &mut *output_buffer,
                 batch_i32,
                 codebooks_i32,
                 frames_i32,
@@ -2546,9 +2654,9 @@ impl StructuredAudioCodecGraph {
             );
         });
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        command_buffer.submit();
+        let command_buffer = command_buffer.end_encoding().submit();
         let wait_start = profile.is_some().then(Instant::now);
-        command_buffer
+        let command_buffer = command_buffer
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for quantizer command buffer: {err}")))?;
         let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
@@ -2695,7 +2803,7 @@ impl StructuredAudioCodecGraph {
     fn apply_convnext_ncs_enqueued(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
-        command_buffer: &mut <Metal as Backend>::CommandBuffer,
+        command_buffer: &mut MetalCommandBuffer,
         input: &Array<Metal>,
         layer: &StructuredAudioConvNeXtGpuLayer,
         lengths: &[i32],
@@ -3174,7 +3282,7 @@ impl StructuredAudioCodecGraph {
     fn encode_post_module_layers(
         runtime: &StructuredAudioPostModuleRuntime,
         state: &mut ForwardPassState<Metal>,
-        command_buffer: &mut <Metal as Backend>::CommandBuffer,
+        command_buffer: &mut MetalCommandBuffer,
     ) -> AudioResult<()> {
         let encoding_parameters = EncodingParameters::new();
         for layer in runtime.layers.iter() {
@@ -3253,7 +3361,8 @@ impl StructuredAudioCodecGraph {
         let mut command_buffer = runtime
             .context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?;
+            .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?
+            .start_encoding();
         command_buffer.with_copy_encoder(|copy_encoder| {
             let latent_buffer = latent_nsc.buffer();
             let main_output_buffer = main_output.buffer();
@@ -3263,9 +3372,9 @@ impl StructuredAudioCodecGraph {
         });
         Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        command_buffer.submit();
+        let command_buffer = command_buffer.end_encoding().submit();
         let wait_start = profile.is_some().then(Instant::now);
-        command_buffer
+        let command_buffer = command_buffer
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}")))?;
         let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
@@ -3367,9 +3476,11 @@ impl StructuredAudioCodecGraph {
 
             for &batch_index in &batch_indices {
                 let encode_start = profile.is_some().then(Instant::now);
-                let mut command_buffer = runtime.context.create_command_buffer().map_err(|err| {
-                    AudioError::Runtime(format!("failed to create post_module command buffer: {err}"))
-                })?;
+                let mut command_buffer = runtime
+                    .context
+                    .create_command_buffer()
+                    .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?
+                    .start_encoding();
                 if !copied_output_prefix {
                     command_buffer.with_copy_encoder(|copy_encoder| {
                         let latent_buffer = latent_nsc.buffer();
@@ -3410,9 +3521,9 @@ impl StructuredAudioCodecGraph {
                     );
                 });
                 let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-                command_buffer.submit();
+                let command_buffer = command_buffer.end_encoding().submit();
                 let wait_start = profile.is_some().then(Instant::now);
-                command_buffer.wait_until_completed().map_err(|err| {
+                let command_buffer = command_buffer.wait_until_completed().map_err(|err| {
                     AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}"))
                 })?;
                 let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
@@ -3431,7 +3542,7 @@ impl StructuredAudioCodecGraph {
     fn run_residual_unit_enqueued(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
-        command_buffer: &mut <Metal as Backend>::CommandBuffer,
+        command_buffer: &mut MetalCommandBuffer,
         input: &Array<Metal>,
         unit: &StructuredAudioResidualUnitGpuLayer,
         lengths: &[i32],
@@ -3552,7 +3663,8 @@ impl StructuredAudioCodecGraph {
         let vocoder_graph = self.vocoder_gpu_graph(&context)?;
         let mut command_buffer = context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?;
+            .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?
+            .start_encoding();
         let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
         let chunked_command_buffers = runtime_options.chunked_command_buffers;
         let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
@@ -3566,25 +3678,26 @@ impl StructuredAudioCodecGraph {
             }
             let cpu_encode_ms =
                 command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-            command_buffer.submit();
+            let next_command_buffer = context
+                .create_command_buffer()
+                .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?
+                .start_encoding();
+            let submitted = std::mem::replace(command_buffer, next_command_buffer).end_encoding().submit();
             if decode_profile.is_some() {
                 let wait_start = Instant::now();
-                command_buffer.wait_until_completed().map_err(|err| {
+                let completed = submitted.wait_until_completed().map_err(|err| {
                     AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
                 })?;
                 let cpu_wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
                 push_audio_command_buffer_profile(
                     &mut decode_profile,
                     label,
-                    command_buffer,
+                    &completed,
                     cpu_encode_ms,
                     cpu_wait_ms,
                     estimated_macs,
                 );
             }
-            *command_buffer = context.create_command_buffer().map_err(|err| {
-                AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}"))
-            })?;
             command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
             Ok(())
         };
@@ -3855,8 +3968,7 @@ impl StructuredAudioCodecGraph {
         let final_cpu_encode_ms =
             command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         let final_command_label = Some("decoder_final".to_string());
-        command_buffer.submit();
-        let final_command_buffer = Some(command_buffer.clone());
+        let final_command_buffer = Some(command_buffer.end_encoding().submit());
         let out_lengths = lengths_i32
             .into_iter()
             .map(|length| {
@@ -4499,30 +4611,39 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
 
         let mut command_buffer = context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?;
+            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
+            .start_encoding();
 
         let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
         let codebook_dim_i32 = usize_to_i32(self.config.codebook_dim_per_group(), "codebook_dim_per_group")?;
         let batch_size_i32 = usize_to_i32(batch_size, "batch_size")?;
+        {
+            let input_buffer = input.buffer();
+            let input_buffer = input_buffer.borrow();
+            let tokens_buffer = tokens.buffer();
+            let mut tokens_buffer = tokens_buffer.borrow_mut();
+            let lengths_buffer = lengths.buffer();
+            let lengths_buffer = lengths_buffer.borrow();
 
-        command_buffer.with_compute_encoder(|compute_encoder| {
-            kernel.encode(
-                input.buffer(),
-                tokens.buffer(),
-                lengths.buffer(),
-                num_groups_i32,
-                frames_i32,
-                codebook_dim_i32,
-                self.config.num_levels_per_group(),
-                self.config.dim_base_index(),
-                self.config.eps(),
-                batch_size_i32,
-                compute_encoder,
-            );
-        });
+            command_buffer.with_compute_encoder(|compute_encoder| {
+                kernel.encode(
+                    &*input_buffer,
+                    &mut *tokens_buffer,
+                    &*lengths_buffer,
+                    num_groups_i32,
+                    frames_i32,
+                    codebook_dim_i32,
+                    self.config.num_levels_per_group(),
+                    self.config.dim_base_index(),
+                    self.config.eps(),
+                    batch_size_i32,
+                    compute_encoder,
+                );
+            });
+        }
 
-        command_buffer.submit();
+        let command_buffer = command_buffer.end_encoding().submit();
         command_buffer
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
@@ -4698,28 +4819,37 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
 
         let mut command_buffer = context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?;
+            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
+            .start_encoding();
 
         let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
         let codebook_dim_i32 = usize_to_i32(self.config.codebook_dim_per_group(), "codebook_dim_per_group")?;
         let batch_size_i32 = usize_to_i32(batch_size, "batch_size")?;
+        {
+            let tokens_buffer = tokens_array.buffer();
+            let tokens_buffer = tokens_buffer.borrow();
+            let output_buffer = output.buffer();
+            let mut output_buffer = output_buffer.borrow_mut();
+            let lengths_buffer = lengths_array.buffer();
+            let lengths_buffer = lengths_buffer.borrow();
 
-        command_buffer.with_compute_encoder(|compute_encoder| {
-            kernel.encode(
-                tokens_array.buffer(),
-                output.buffer(),
-                lengths_array.buffer(),
-                num_groups_i32,
-                frames_i32,
-                codebook_dim_i32,
-                self.config.num_levels_per_group(),
-                batch_size_i32,
-                compute_encoder,
-            );
-        });
+            command_buffer.with_compute_encoder(|compute_encoder| {
+                kernel.encode(
+                    &*tokens_buffer,
+                    &mut *output_buffer,
+                    &*lengths_buffer,
+                    num_groups_i32,
+                    frames_i32,
+                    codebook_dim_i32,
+                    self.config.num_levels_per_group(),
+                    batch_size_i32,
+                    compute_encoder,
+                );
+            });
+        }
 
-        command_buffer.submit();
+        let command_buffer = command_buffer.end_encoding().submit();
         command_buffer
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;

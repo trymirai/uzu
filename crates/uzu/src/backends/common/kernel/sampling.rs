@@ -172,15 +172,30 @@ impl<B: Backend> SamplingKernel<B> {
             );
         }
 
-        if let SamplingMethod::Stochastic {
-            temperature,
-            top_k,
-            top_p,
-            min_p,
-            repetition_penalty: _,
-            processing_order,
-        } = sampling_method
-        {
+        let stochastic_config = match sampling_method {
+            SamplingMethod::Greedy => None,
+            SamplingMethod::Stochastic {
+                temperature,
+                top_k,
+                top_p,
+                min_p,
+            } => Some((
+                temperature,
+                top_k,
+                top_p,
+                min_p,
+                SamplingProcessingOrder::TemperatureThenFilters,
+            )),
+            SamplingMethod::AdvancedStochastic {
+                temperature,
+                top_k,
+                top_p,
+                min_p,
+                processing_order,
+            } => Some((temperature, top_k, top_p, min_p, processing_order)),
+        };
+
+        if let Some((temperature, top_k, top_p, min_p, processing_order)) = stochastic_config {
             match processing_order {
                 SamplingProcessingOrder::TemperatureThenFilters => {
                     if let Some(temperature) = temperature {

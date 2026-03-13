@@ -7,10 +7,11 @@ use metal::{
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{
-    Metal, command_buffer::MetalCommandBuffer, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions,
+use super::{Metal, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions};
+use crate::backends::{
+    common::{Context, DeviceClass as CommonDeviceClass, DeviceType},
+    metal::command_buffer::MetalCommandBufferInitial,
 };
-use crate::backends::common::{Context, DeviceClass as CommonDeviceClass, DeviceType};
 
 /// Apple GPU architecture generation.
 /// Based on Apple GPU family naming convention (e.g., "applegpu_g13p").
@@ -208,8 +209,10 @@ impl Context for MetalContext {
         self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer)
     }
 
-    fn create_command_buffer(&self) -> Result<MetalCommandBuffer, MetalError> {
-        Ok(MetalCommandBuffer::new(self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?))
+    fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
+        Ok(MetalCommandBufferInitial::new(
+            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
+        ))
     }
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {

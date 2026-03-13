@@ -686,9 +686,13 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::GenerateFailed);
         }
         command_buffer.with_compute_encoder(|encoder| {
+            let hidden_buffer = hidden.buffer();
+            let hidden_buffer = hidden_buffer.borrow();
+            let output_buffer = output.buffer();
+            let mut output_buffer = output_buffer.borrow_mut();
             gpu_path.tensor_copy.encode(
-                (hidden.buffer(), hidden.offset()),
-                (output.buffer(), output.offset()),
+                (&*hidden_buffer, hidden.offset()),
+                (&mut *output_buffer, output.offset()),
                 model_dim_u32,
                 encoder,
             );
@@ -748,10 +752,16 @@ impl FishAudioTextDecoderRuntime {
         }
 
         command_buffer.with_compute_encoder(|encoder| {
+            let codebook_row_indices_buffer = codebook_row_indices.buffer();
+            let codebook_row_indices_buffer = codebook_row_indices_buffer.borrow();
+            let codebook_embeddings_buffer = codebook_embeddings.buffer();
+            let codebook_embeddings_buffer = codebook_embeddings_buffer.borrow();
+            let slow_sum_buffer = slow_sum.buffer();
+            let mut slow_sum_buffer = slow_sum_buffer.borrow_mut();
             gpu_path.embedding_rows_sum.encode(
-                (codebook_row_indices.buffer(), codebook_row_indices.offset()),
-                (codebook_embeddings.buffer(), codebook_embeddings.offset()),
-                (slow_sum.buffer(), slow_sum.offset()),
+                (&*codebook_row_indices_buffer, codebook_row_indices.offset()),
+                (&*codebook_embeddings_buffer, codebook_embeddings.offset()),
+                (&mut *slow_sum_buffer, slow_sum.offset()),
                 num_codebooks_u32,
                 total_vocab_u32,
                 slow_model_dim_u32,
