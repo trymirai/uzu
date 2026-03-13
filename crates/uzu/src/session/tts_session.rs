@@ -39,7 +39,7 @@ use crate::{
         },
         metal::Metal,
     },
-    config::{InnerModelConfig, ModelMetadata, ModelType, TtsModelConfig, TtsTextDecoderConfig},
+    config::{InnerModelConfig, ModelMetadata},
     encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
@@ -58,7 +58,7 @@ use crate::{
     },
 };
 
-use backend_factory::{build_audio_decoder_backend, build_text_decoder_backend};
+use backend_factory::load_tts_runtime;
 
 const DEFAULT_STUB_SPEAKER_ID: &str = "speaker:0";
 const DEFAULT_STUB_STYLE: &str = "interleave";
@@ -1296,31 +1296,23 @@ impl TtsSession {
         model_metadata: ModelMetadata,
         options: TtsSessionOptions,
     ) -> Result<Self, Error> {
-        if model_metadata.model_type != ModelType::TtsModel {
-            return Err(Error::UnableToLoadConfig);
-        }
-
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
             return Err(Error::UnableToLoadTokenizer);
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
 
-        let tts_model_config = model_metadata.model_config.as_tts().ok_or(Error::UnableToLoadConfig)?.clone();
-        let audio =
-            tts_model_config.create_audio_generation_context_with_model_path_and_options(&model_path, options.audio_runtime)?;
-        let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, &model_path, &options)?;
-        let audio_decoder = build_audio_decoder_backend(&audio)?;
+        let loaded_runtime = load_tts_runtime(&model_path, &model_metadata, &options)?;
 
         Ok(Self {
             model_path,
             model_metadata,
             tokenizer,
-            audio,
-            audio_decoder,
-            prompt_template: tts_model_config.message_processor_config.prompt_template.clone(),
-            drop_initial_newline: tts_model_config.message_processor_config.drop_initial_newline,
-            text_decoder: RefCell::new(text_decoder),
+            audio: loaded_runtime.audio,
+            audio_decoder: loaded_runtime.audio_decoder,
+            prompt_template: loaded_runtime.prompt_template,
+            drop_initial_newline: loaded_runtime.drop_initial_newline,
+            text_decoder: RefCell::new(loaded_runtime.text_decoder),
             last_execution_stats: RefCell::new(None),
         })
     }
