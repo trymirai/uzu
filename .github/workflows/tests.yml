@@ -70,6 +70,7 @@ jobs:
         with:
           metal: true
           test_model: true
+          nextest: true
 
       - name: Build crates
         run: |
@@ -77,4 +78,4 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo test ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo nextest run --profile=ci ${{ matrix.tracing && '--features tracing' || '' }}

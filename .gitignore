@@ -1,6 +1,7 @@
 *.pdb
 **/mutants.out*/
 *.DS_Store
+*.proptest-regressions
 .idea/
 
 # Metal traces

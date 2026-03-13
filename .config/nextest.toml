@@ -1,0 +1,9 @@
+[profile.default]
+slow-timeout = { period = "20s" } # TODO: there should be no slow tests `, terminate-after = 1`
+
+[[profile.default.overrides]]
+filter = 'test(/::heavy::/)'
+threads-required = "num-test-threads"
+
+[profile.ci]
+fail-fast = false
