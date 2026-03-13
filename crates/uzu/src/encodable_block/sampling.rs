@@ -2,7 +2,6 @@
 
 use std::ops::{Deref, DerefMut};
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -42,13 +41,10 @@ impl<B: Backend> Sampling<B> {
             kernel,
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for Sampling<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");

@@ -14,7 +14,7 @@ pub use command_buffer::{
     CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
     CommandBufferPending,
 };
-pub use context::{Context, DeviceClass};
 pub use copy_encoder::CopyEncoder;
+pub use context::{Context, DeviceClass, DeviceType};
 pub use event::Event;
 pub use kernel::Kernels;

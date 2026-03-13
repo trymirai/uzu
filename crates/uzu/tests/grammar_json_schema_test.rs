@@ -6,6 +6,7 @@ mod common;
 use common::{RepeatSpeculator, get_test_model_path};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_tag::tag;
 use uzu::session::{
     Session,
     config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
@@ -89,11 +90,13 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     }
 }
 
+#[tag(heavy)]
 #[test]
 fn test_grammar_json_schema() {
     test_grammar(SpeculatorConfig::default());
 }
 
+#[tag(heavy)]
 #[test]
 fn test_grammar_json_schema_with_speculator() {
     test_grammar(SpeculatorConfig {

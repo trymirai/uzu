@@ -11,7 +11,7 @@ use uzu::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::AttentionSinglePassKernel,
+            Context, kernel::attention::AttentionGemmArguments,
         },
         cpu::Cpu,
     },
@@ -24,56 +24,52 @@ struct Input<T: ArrayElement + Float> {
     keys: Box<[T]>,
     values: Box<[T]>,
     mask: Option<Box<[T]>>,
-    num_heads: u32,
-    gqa_factor: u32,
-    sequence_length: u32,
-    suffix_length: u32,
-    head_dim: u32,
+    num_heads: usize,
+    num_kv_heads: usize,
+    sequence_length: usize,
+    suffix_length: usize,
+    head_dim: usize,
     scale: f32,
     do_causal: bool,
-    has_mask: bool,
 }
 
-fn get_input<T: ArrayElement + Float>(
-    num_heads: u32,
-    num_kv_heads: u32,
-    sequence_length: u32,
-    suffix_length: u32,
-    head_dim: u32,
+fn get_test_data<T: ArrayElement + Float>(
+    num_heads: usize,
+    num_kv_heads: usize,
+    sequence_length: usize,
+    suffix_length: usize,
+    head_dim: usize,
     do_causal: bool,
     with_mask: bool,
-) -> Input<T> {
-    let gqa_factor = num_heads / num_kv_heads;
-
-    // queries: [num_heads * suffix_length, head_dim]
-    let q_size = (num_heads * suffix_length * head_dim) as usize;
+) -> (Input<T>, Vec<T>) {
+    // queries: [num_heads, suffix_length, head_dim] (contiguous, row-major)
+    let q_size = num_heads * suffix_length * head_dim;
     let mut queries = vec![T::zero(); q_size];
     for i in 0..q_size {
         queries[i] = T::from((i as f32 * 0.13 + 0.5).sin() * 0.5).unwrap();
     }
 
     // keys: [num_kv_heads, sequence_length, head_dim]
-    let k_size = (num_kv_heads * sequence_length * head_dim) as usize;
+    let k_size = num_kv_heads * sequence_length * head_dim;
     let mut keys = vec![T::zero(); k_size];
     for i in 0..k_size {
         keys[i] = T::from((i as f32 * 0.07 + 1.0).cos() * 0.5).unwrap();
     }
 
     // values: [num_kv_heads, sequence_length, head_dim]
-    let v_size = (num_kv_heads * sequence_length * head_dim) as usize;
+    let v_size = num_kv_heads * sequence_length * head_dim;
     let mut values = vec![T::zero(); v_size];
     for i in 0..v_size {
         values[i] = T::from((i as f32 * 0.11 + 2.0).sin() * 0.5).unwrap();
     }
 
-    // mask: [sequence_length * suffix_length] (broadcast over heads with stride 0)
+    // mask: [suffix_length, sequence_length] (broadcast over heads)
     let mask = if with_mask {
-        let m_size = (suffix_length * sequence_length) as usize;
+        let m_size = suffix_length * sequence_length;
         let mut m = vec![T::zero(); m_size];
         for q in 0..suffix_length {
             for k in 0..sequence_length {
-                let idx = (q * sequence_length + k) as usize;
-                // Create a sliding window mask: allow only nearby keys
+                let idx = q * sequence_length + k;
                 let diff = (k as i32) - (sequence_length as i32 - suffix_length as i32 + q as i32);
                 if diff.abs() > 3 {
                     m[idx] = T::from(-1e9f32).unwrap();
@@ -87,76 +83,77 @@ fn get_input<T: ArrayElement + Float>(
 
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    Input {
+    let input = Input {
         queries: queries.into_boxed_slice(),
         keys: keys.into_boxed_slice(),
         values: values.into_boxed_slice(),
         mask,
         num_heads,
-        gqa_factor,
+        num_kv_heads,
         sequence_length,
         suffix_length,
         head_dim,
         scale,
         do_causal,
-        has_mask: with_mask,
-    }
+    };
+
+    let expected = get_output::<T, Cpu>(&input);
+    (input, expected)
 }
 
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let float_mask = input.has_mask;
-    let kernel = <<B as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
-        &context,
-        T::data_type(),
-        input.head_dim,
-        float_mask,
-        input.has_mask,
-        false,
-        input.do_causal,
-    )
-    .expect("Failed to create AttentionSinglePassKernel");
+    let block = uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
 
     let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
     let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");
     let values_array = context.create_array_from(&[input.values.len()], &input.values, "");
 
-    let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
+    let output_size = input.suffix_length * input.num_heads * input.head_dim;
     let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
 
     let mask_array = input.mask.as_ref().map(|m| context.create_array_from(&[m.len()], m, ""));
-    let mask_buf_rc = mask_array.as_ref().map(|a| a.buffer());
-    let mask_buf_borrow = mask_buf_rc.as_ref().map(|rc| rc.borrow());
-    let mask_buffer: Option<&B::Buffer> = mask_buf_borrow.as_ref().map(|b| b.deref());
 
-    let mask_kv_seq_stride: Option<u32> = input.has_mask.then_some(1);
-    let mask_q_seq_stride: Option<u32> = input.has_mask.then_some(input.sequence_length);
-    let mask_head_stride: Option<u32> = input.has_mask.then_some(0);
+    let segment_prefix_length = input.sequence_length - input.suffix_length;
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(
-        queries_array.buffer().borrow().deref(),
-        keys_array.buffer().borrow().deref(),
-        values_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
-        input.gqa_factor,
-        input.sequence_length,
-        input.sequence_length * input.head_dim,
-        input.head_dim,
-        input.sequence_length * input.head_dim,
-        input.head_dim,
-        input.scale,
-        mask_buffer,
-        mask_kv_seq_stride,
-        mask_q_seq_stride,
-        mask_head_stride,
-        None::<&B::Buffer>,
-        input.num_heads,
-        input.suffix_length,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    {
+        let q_buf_rc = queries_array.buffer();
+        let q_buf = q_buf_rc.borrow();
+        let k_buf_rc = keys_array.buffer();
+        let k_buf = k_buf_rc.borrow();
+        let v_buf_rc = values_array.buffer();
+        let v_buf = v_buf_rc.borrow();
+        let o_buf_rc = output_array.buffer();
+        let mut o_buf = o_buf_rc.borrow_mut();
+
+        let mask_buf_rc = mask_array.as_ref().map(|a| a.buffer());
+        let mask_buf_borrow = mask_buf_rc.as_ref().map(|rc| rc.borrow());
+        let mask_buffer: Option<&B::Buffer> = mask_buf_borrow.as_ref().map(|b| b.deref());
+
+        let args = AttentionGemmArguments::<B> {
+            queries_buffer: q_buf.deref(),
+            keys_buffer: k_buf.deref(),
+            values_buffer: v_buf.deref(),
+            output_buffer: o_buf.deref_mut(),
+            mask_buffer,
+            sinks_buffer: None,
+            num_heads: input.num_heads,
+            num_groups: input.num_kv_heads,
+            suffix_length: input.suffix_length,
+            sequence_length: input.sequence_length,
+            segment_prefix_length,
+            max_sequence_length: input.sequence_length,
+            head_dim: input.head_dim,
+            is_causal: input.do_causal,
+            scale: input.scale,
+        };
+
+        let mut command_buffer =
+            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        block.encode(&context, &mut command_buffer, args).expect("Failed to encode AttentionGemm");
+        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    }
 
     output_array.as_slice().to_vec()
 }
@@ -171,17 +168,18 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         1e-5
     };
 
-    for_each_backend!(|B| {
+    for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(input);
         let msg = format!(
-            "AttentionSinglePass failed (backend={}, heads={}, seq={}, suffix={}, head_dim={}, causal={}, mask={})",
+            "AttentionGemm failed (backend={}, heads={}, kv_heads={}, seq={}, suffix={}, head_dim={}, causal={}, mask={})",
             std::any::type_name::<B>(),
             input.num_heads,
+            input.num_kv_heads,
             input.sequence_length,
             input.suffix_length,
             input.head_dim,
             input.do_causal,
-            input.has_mask,
+            input.mask.is_some(),
         );
         assert_eq_float::<T>(expected, &output, eps, &msg);
     });
@@ -189,54 +187,55 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     // Non-causal, no mask, single token
-    let input = get_input::<T>(4, 4, 8, 1, 64, false, false);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 1, 64, false, false);
     test_internal(&input, &expected);
 
     // Non-causal, no mask, multiple tokens
-    let input = get_input::<T>(4, 4, 8, 4, 64, false, false);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, false, false);
     test_internal(&input, &expected);
 }
 
 fn test_causal<T: ArrayElement + Float + Debug + Display>() {
     // Causal, single token decode
-    let input = get_input::<T>(4, 4, 16, 1, 64, true, false);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(4, 4, 16, 1, 64, true, false);
     test_internal(&input, &expected);
 
     // Causal, multi-token prefill
-    let input = get_input::<T>(4, 4, 8, 4, 64, true, false);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, true, false);
     test_internal(&input, &expected);
 }
 
 fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
     // GQA: 8 query heads, 2 kv heads
-    let input = get_input::<T>(8, 2, 8, 1, 64, false, false);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(8, 2, 8, 1, 64, false, false);
     test_internal(&input, &expected);
 
     // GQA causal
-    let input = get_input::<T>(8, 2, 8, 4, 64, true, false);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(8, 2, 8, 4, 64, true, false);
     test_internal(&input, &expected);
 }
 
 fn test_mask<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_input::<T>(4, 4, 8, 4, 64, false, true);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, false, true);
     test_internal(&input, &expected);
 
     // Causal + mask
-    let input = get_input::<T>(4, 4, 8, 4, 64, true, true);
-    let expected = get_output::<T, Cpu>(&input);
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, true, true);
     test_internal(&input, &expected);
 }
 
-fn test_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_input::<T>(4, 4, 8, 2, 128, true, false);
-    let expected = get_output::<T, Cpu>(&input);
+fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 2, head_dim, true, false);
+    test_internal(&input, &expected);
+}
+
+fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
+    // suffix_length not aligned to BQ=32
+    let (input, expected) = get_test_data::<T>(4, 4, 40, 7, 64, true, false);
+    test_internal(&input, &expected);
+
+    // sequence_length not aligned to BK
+    let (input, expected) = get_test_data::<T>(4, 4, 13, 4, 64, false, false);
     test_internal(&input, &expected);
 }
 
@@ -307,15 +306,31 @@ fn test_mask_bf16() {
 // Head dim 128
 #[test]
 fn test_head_dim_128_f32() {
-    test_head_dim_128::<f32>();
+    test_head_dim::<f32>(128);
 }
 
 #[test]
 fn test_head_dim_128_f16() {
-    test_head_dim_128::<f16>();
+    test_head_dim::<f16>(128);
 }
 
 #[test]
 fn test_head_dim_128_bf16() {
-    test_head_dim_128::<bf16>();
+    test_head_dim::<bf16>(128);
+}
+
+// Unaligned tests
+#[test]
+fn test_unaligned_f32() {
+    test_unaligned::<f32>();
+}
+
+#[test]
+fn test_unaligned_f16() {
+    test_unaligned::<f16>();
+}
+
+#[test]
+fn test_unaligned_bf16() {
+    test_unaligned::<bf16>();
 }

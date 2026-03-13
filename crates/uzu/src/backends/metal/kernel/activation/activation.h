@@ -10,7 +10,7 @@ enum ActivationType : uint {
 template <typename T>
 inline T silu(T x) {
   float xf = float(x);
-  float yf = xf / (1.0f + exp(-xf));
+  float yf = xf / (1.0f + metal::exp(-xf));
   return T(yf);
 }
 
@@ -27,7 +27,7 @@ inline T gelu_approx(T x) {
 template <typename T>
 inline T tanh_activation(T x) {
   float xf = float(x);
-  return T(tanh(xf));
+  return T(metal::tanh(xf));
 }
 
 template <typename T>

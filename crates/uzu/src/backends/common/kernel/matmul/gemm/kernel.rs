@@ -1,7 +1,8 @@
 use std::{collections::HashMap, ops::DerefMut};
 
 use super::{
-    super::matmul_arguments::MatmulArguments, dispatch_descriptor::DispatchDescriptor, specialization::Specialization,
+    super::matmul_arguments::MatmulArguments, dispatch_descriptor::GemmDispatchDescriptor,
+    specialization::GemmSpecialization,
 };
 use crate::{
     DataType,
@@ -13,7 +14,7 @@ use crate::{
 
 pub struct GemmKernel<B: Backend> {
     data_type: DataType,
-    pipelines: HashMap<Specialization, <B::Kernels as Kernels>::MatmulGemmKernel>,
+    pipelines: HashMap<GemmSpecialization, <B::Kernels as Kernels>::MatmulGemmKernel>,
 }
 
 impl<B: Backend> GemmKernel<B> {
@@ -31,7 +32,7 @@ impl<B: Backend> GemmKernel<B> {
         &mut self,
         context: &B::Context,
     ) -> Result<(), MatmulError<B>> {
-        for &config in Specialization::precompile_configs(self.data_type) {
+        for &config in GemmSpecialization::precompile_configs(self.data_type) {
             self.get_or_create_kernel(context, config)?;
         }
         Ok(())
@@ -40,7 +41,7 @@ impl<B: Backend> GemmKernel<B> {
     fn get_or_create_kernel(
         &mut self,
         context: &B::Context,
-        config: Specialization,
+        config: GemmSpecialization,
     ) -> Result<&<B::Kernels as Kernels>::MatmulGemmKernel, MatmulError<B>> {
         if !self.pipelines.contains_key(&config) {
             let kernel = <B::Kernels as Kernels>::MatmulGemmKernel::new(
@@ -65,7 +66,7 @@ impl<B: Backend> GemmKernel<B> {
         &mut self,
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
-        dispatch_descriptor: &DispatchDescriptor,
+        dispatch_descriptor: &GemmDispatchDescriptor,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;

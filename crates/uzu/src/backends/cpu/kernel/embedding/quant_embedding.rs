@@ -15,9 +15,13 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
     #[allow(unused)] batch_size: u32,
     #[allow(unused)] vocab_size: u32,
     #[allow(unused)] model_dim: u32,
-    #[allow(unused)] group_size: u32,
     #[allow(unused)] input_scale: f32,
-    #[allow(unused)] quant_mode: u32,
+    #[allow(unused)]
+    #[specialize]
+    group_size: u32,
+    #[allow(unused)]
+    #[specialize]
+    quant_mode: u32,
 ) {
     todo!()
 }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::DerefMut};
 
 use super::{
     super::matmul_arguments::MatmulArguments,
-    dispatch_descriptor::{DispatchDescriptor, OutputSource},
+    dispatch_descriptor::{GemvDispatchDescriptor, OutputSource},
     specialization::Specialization,
 };
 use crate::{
@@ -66,7 +66,7 @@ impl<B: Backend> GemvKernel<B> {
         &mut self,
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
-        dispatch_descriptor: &DispatchDescriptor,
+        dispatch_descriptor: &GemvDispatchDescriptor,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         let config = dispatch_descriptor.specialization;

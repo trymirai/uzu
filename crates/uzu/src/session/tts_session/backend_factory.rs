@@ -20,10 +20,18 @@ pub(super) fn load_tts_runtime(
     options: &TtsSessionOptions,
 ) -> Result<LoadedTtsRuntime, Error> {
     if model_metadata.model_type != ModelType::TtsModel {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "expected model_type={:?}, got {:?}",
+            ModelType::TtsModel,
+            model_metadata.model_type
+        )));
     }
 
-    let tts_model_config = model_metadata.model_config.as_tts().ok_or(Error::UnableToLoadConfig)?.clone();
+    let tts_model_config = model_metadata
+        .model_config
+        .as_tts()
+        .ok_or_else(|| Error::InvalidTtsModelConfig("missing TTS model config".to_string()))?
+        .clone();
     let audio = tts_model_config
         .create_audio_generation_context_with_model_path_and_options(model_path, options.audio_runtime)?;
     let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, model_path, options)?;
@@ -46,17 +54,25 @@ fn validate_stub_text_decoder_contract(
     audio_semantic_codec_cardinality: Option<usize>,
 ) -> Result<(), Error> {
     if num_codebooks == 0 || codebook_size == 0 {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "stub decoder requires positive num_codebooks and codebook_size, got num_codebooks={num_codebooks}, codebook_size={codebook_size}"
+        )));
     }
     if num_codebooks != audio_num_codebooks {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "stub decoder num_codebooks={num_codebooks} does not match audio num_codebooks={audio_num_codebooks}"
+        )));
     }
     if codebook_size != audio_codec_cardinality {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "stub decoder codebook_size={codebook_size} does not match audio codec_cardinality={audio_codec_cardinality}"
+        )));
     }
     if let Some(semantic_codec_cardinality) = audio_semantic_codec_cardinality {
         if semantic_codec_cardinality != audio_codec_cardinality {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidTtsModelConfig(format!(
+                "stub decoder requires uniform semantic/residual codec cardinality, got semantic_codec_cardinality={semantic_codec_cardinality}, residual_codec_cardinality={audio_codec_cardinality}"
+            )));
         }
     }
     Ok(())
@@ -110,6 +126,6 @@ mod tests {
     #[test]
     fn stub_decoder_contract_rejects_heterogeneous_semantic_codebook() {
         let result = validate_stub_text_decoder_contract(4, 1024, 4, 1024, Some(512));
-        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
+        assert!(matches!(result, Err(Error::InvalidTtsModelConfig(_))));
     }
 }

@@ -41,7 +41,7 @@ use crate::{
         metal::Metal,
     },
     config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
-    encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
+    encodable_block::{Decoder, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -1392,7 +1392,7 @@ impl TokenDecoderRunner {
                 let mut command_buffer = self.command_buffer.borrow_mut();
                 self.executables
                     .embed
-                    .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
+                    .encode_lookup(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 for layer in self.executables.layers.iter() {
                     layer
@@ -1401,11 +1401,11 @@ impl TokenDecoderRunner {
                 }
                 self.executables
                     .norm
-                    .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
+                    .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 self.executables
-                    .readout
-                    .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
+                    .embed
+                    .encode_readout(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
             let count =
@@ -1423,7 +1423,7 @@ impl TokenDecoderRunner {
             {
                 let mut command_buffer = self.command_buffer.borrow_mut();
                 self.sampler
-                    .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
+                    .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
 
@@ -1707,7 +1707,7 @@ impl TokenDecoderRunner {
                 let mut command_buffer = self.command_buffer.borrow_mut();
                 self.executables
                     .embed
-                    .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
+                    .encode_lookup(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 if let Some(pre_encode) = pre_injection_encode.as_mut() {
                     pre_encode(self, &state, command_buffer.deref_mut())?;
@@ -1734,15 +1734,15 @@ impl TokenDecoderRunner {
             }
             self.executables
                 .norm
-                .encode(&mut state, &encoding_parameters, self.command_buffer.borrow_mut().deref_mut())
+                .encode(&mut state, self.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             self.executables
-                .readout
-                .encode(&mut state, &encoding_parameters, self.command_buffer.borrow_mut().deref_mut())
+                .embed
+                .encode_readout(&mut state, self.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             self.encode_repetition_penalty_if_needed(sampling)?;
             self.sampler
-                .encode(&mut state, &encoding_parameters, self.command_buffer.borrow_mut().deref_mut())
+                .encode(&mut state, self.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             self.cache_layers.borrow_mut().update_after_acceptance(
                 accepted_suffix_indices,

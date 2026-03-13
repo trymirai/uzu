@@ -8,7 +8,6 @@ use std::{
 
 use thiserror::Error;
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -25,7 +24,7 @@ pub enum QKNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError),
+    ParameterError(ParameterLoaderError<B>),
 }
 
 pub struct QKNorm<B: Backend> {
@@ -60,7 +59,7 @@ impl<B: Backend> QKNorm<B> {
 
         // Setup query normalization if configured
         if let Some(ref q_config) = query_config {
-            let scales = parameter_tree.leaf("query_norm.scales").map_err(QKNormError::ParameterError)?;
+            let scales = parameter_tree.leaf_array("query_norm.scales").map_err(QKNormError::ParameterError)?;
 
             let accumulation_data_type: DataType = q_config.accumulation_precision.into();
             let scale_data_type: DataType = q_config.scale_precision.into();
@@ -85,7 +84,7 @@ impl<B: Backend> QKNorm<B> {
 
         // Setup key normalization if configured
         if let Some(ref k_config) = key_config {
-            let scales = parameter_tree.leaf("key_norm.scales").map_err(QKNormError::ParameterError)?;
+            let scales = parameter_tree.leaf_array("key_norm.scales").map_err(QKNormError::ParameterError)?;
 
             let accumulation_data_type: DataType = k_config.accumulation_precision.into();
             let scale_data_type: DataType = k_config.scale_precision.into();
@@ -121,13 +120,10 @@ impl<B: Backend> QKNorm<B> {
             head_dim,
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for QKNorm<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);

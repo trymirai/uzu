@@ -23,14 +23,6 @@ pub enum EmbeddingConfig {
         common: EmbeddingConfigCommon,
         precision: ConfigDataType,
     },
-    #[serde(rename = "QuantizedTiedEmbeddingConfig")]
-    QuantizedTied {
-        #[serde(flatten)]
-        common: EmbeddingConfigCommon,
-        embedding_quantization_mode: QuantizationMode,
-        activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
-    },
     #[serde(rename = "MLXQuantizedTiedEmbeddingConfig")]
     MLXQuantizedTied {
         #[serde(flatten)]
@@ -71,10 +63,6 @@ impl EmbeddingConfig {
                 common,
                 ..
             } => common,
-            EmbeddingConfig::QuantizedTied {
-                common,
-                ..
-            } => common,
             EmbeddingConfig::MLXQuantizedTied {
                 common,
                 ..
@@ -99,30 +87,6 @@ mod tests {
 
     #[test]
     fn test_embedding_config() {
-        let config_str = r#"
-            {
-                "type": "QuantizedTiedEmbeddingConfig",
-                "input_scale": null,
-                "logit_soft_cap": null,
-                "embedding_quantization_mode": "int8",
-                "activation_quantization_mode": "int8",
-                "activation_precision": "bfloat16"
-            }
-        "#;
-
-        let ground_truth_config = EmbeddingConfig::QuantizedTied {
-            common: EmbeddingConfigCommon {
-                input_scale: None,
-                logit_soft_cap: None,
-            },
-            embedding_quantization_mode: QuantizationMode::Int8,
-            activation_quantization_mode: Some(QuantizationMode::Int8),
-            activation_precision: ConfigDataType::BFloat16,
-        };
-
-        let deserialized_config: EmbeddingConfig = from_str(config_str).unwrap();
-        assert_eq!(deserialized_config, ground_truth_config);
-
         let semi_config_str = r#"
             {
                 "type": "MLXSemiQuantizedUntiedEmbeddingConfig",

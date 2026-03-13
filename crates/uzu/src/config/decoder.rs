@@ -244,9 +244,10 @@ mod tests {
         let config_str = r#"
             {
                 "embedding_config": {
-                    "type": "QuantizedTiedEmbeddingConfig",
+                    "type": "MLXQuantizedTiedEmbeddingConfig",
                     "input_scale": null,
                     "logit_soft_cap": null,
+                    "group_size": 128,
                     "embedding_quantization_mode": "int8",
                     "activation_quantization_mode": "int8",
                     "activation_precision": "bfloat16"
@@ -347,11 +348,12 @@ mod tests {
         "#;
 
         let ground_truth_config = DecoderConfig {
-            embedding_config: EmbeddingConfig::QuantizedTied {
+            embedding_config: EmbeddingConfig::MLXQuantizedTied {
                 common: EmbeddingConfigCommon {
                     input_scale: None,
                     logit_soft_cap: None,
                 },
+                group_size: 128,
                 embedding_quantization_mode: QuantizationMode::Int8,
                 activation_quantization_mode: Some(QuantizationMode::Int8),
                 activation_precision: ConfigDataType::BFloat16,

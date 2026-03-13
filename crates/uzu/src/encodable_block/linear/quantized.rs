@@ -6,7 +6,7 @@ use std::{
 
 use thiserror::Error;
 
-use super::{EncodableBlock, EncodingParameters};
+use super::Linear;
 use crate::{
     DataType,
     backends::common::{
@@ -31,7 +31,7 @@ pub enum QuantizedLinearError<B: Backend> {
     #[error("QuantizedMatmul error: {0}")]
     QuantizedMatmulError(#[source] QuantizedMatmulError<B>),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError),
+    ParameterError(ParameterLoaderError<B>),
     #[error("Unsupported data type for quantized kernel: {0:?}")]
     UnsupportedDataType(DataType),
     #[error("Expected weights of type {expected:?}, got {got:?}")]
@@ -114,7 +114,7 @@ impl<B: Backend> QuantizedLinear<B> {
             return Err(QuantizedLinearError::UnsupportedDataType(kernel_data_type));
         }
 
-        let weights = parameter_tree.leaf("weights").map_err(QuantizedLinearError::ParameterError)?;
+        let weights = parameter_tree.leaf_array("weights").map_err(QuantizedLinearError::ParameterError)?;
         let packing_divisor = config.weight_quantization_mode.packing_divisor();
         let storage_type = config.weight_quantization_mode.storage_type();
         if weights.data_type() != storage_type {
@@ -124,7 +124,7 @@ impl<B: Backend> QuantizedLinear<B> {
             });
         }
 
-        let scales = parameter_tree.leaf("scales").map_err(QuantizedLinearError::ParameterError)?;
+        let scales = parameter_tree.leaf_array("scales").map_err(QuantizedLinearError::ParameterError)?;
         if scales.data_type() != kernel_data_type {
             return Err(QuantizedLinearError::InvalidScalesDataType {
                 expected: kernel_data_type,
@@ -137,7 +137,7 @@ impl<B: Backend> QuantizedLinear<B> {
         let scales_shape = scales.shape().to_vec();
         let weights_transposed = weights_shape[0] == output_dim;
 
-        let (quantization_type, zero_points_or_biases_buffer) = match parameter_tree.leaf("deq_biases") {
+        let (quantization_type, zero_points_or_biases_buffer) = match parameter_tree.leaf_array("deq_biases") {
             Ok(deq_biases) => {
                 let deq_biases_shape = deq_biases.shape().to_vec();
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
@@ -162,7 +162,8 @@ impl<B: Backend> QuantizedLinear<B> {
                 (QuantizedMatmulType::Mlx, deq_biases.buffer())
             },
             Err(_) => {
-                let zero_points = parameter_tree.leaf("zero_points").map_err(QuantizedLinearError::ParameterError)?;
+                let zero_points =
+                    parameter_tree.leaf_array("zero_points").map_err(QuantizedLinearError::ParameterError)?;
                 let zero_points_shape = zero_points.shape().to_vec();
                 let expected_zero_points_entries = (k_g + packing_divisor - 1) / packing_divisor;
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
@@ -189,7 +190,7 @@ impl<B: Backend> QuantizedLinear<B> {
             },
         };
 
-        let (bias_add_kernel, biases_buffer) = match parameter_tree.leaf("biases") {
+        let (bias_add_kernel, biases_buffer) = match parameter_tree.leaf_array("biases") {
             Ok(biases) => {
                 let bias_shape = biases.shape().to_vec();
                 if bias_shape != [output_dim] {
@@ -244,11 +245,10 @@ impl<B: Backend> QuantizedLinear<B> {
     }
 }
 
-impl<B: Backend> EncodableBlock<B> for QuantizedLinear<B> {
+impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

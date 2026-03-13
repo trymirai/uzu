@@ -1,5 +1,5 @@
 mod loader;
-pub use loader::{ParameterLoader, ParameterLoaderError, ParameterTree, resolve_subtree};
+pub use loader::{ParameterLeaf, ParameterLoader, ParameterLoaderError, ParameterTree, resolve_subtree};
 mod safetensors_metadata;
 
 // Re-export the safetensors header reader so other modules (e.g. decoder

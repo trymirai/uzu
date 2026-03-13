@@ -7,7 +7,7 @@ mod kernel;
 mod matmul_arguments;
 pub mod split_k;
 
-pub use dispatch_descriptor::MatmulDispatchDescriptor;
+pub use dispatch_descriptor::{MatmulDispatchDescriptor, choose_matmul_dispatch_descriptor};
 pub use full_precision::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel};
 pub use grid_size::GridSize;
 pub use kernel::MatmulKernel;

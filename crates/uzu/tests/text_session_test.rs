@@ -1,6 +1,7 @@
 mod common;
 use std::path::PathBuf;
 
+use test_tag::tag;
 use uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig},
@@ -21,11 +22,13 @@ fn build_default_text() -> String {
     return text;
 }
 
+#[tag(heavy)]
 #[test]
 fn test_text_session_base() {
     run(build_default_text(), build_decoding_config(), 128);
 }
 
+#[tag(heavy)]
 #[test]
 fn test_text_session_scenario() {
     let system_prompt = String::from("You are a helpful assistant.");
@@ -33,6 +36,7 @@ fn test_text_session_scenario() {
     run_scenario(Some(system_prompt), user_prompts);
 }
 
+#[tag(heavy)]
 #[test]
 fn test_text_session_stability() {
     let mut session = Session::new(build_model_path(), build_decoding_config()).unwrap();

@@ -41,7 +41,7 @@ use crate::{
         ConfigDataType, DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
         EmbeddingConfigCommon, InnerModelConfig, NanoCodecAudioDecoderConfig, TtsAudioDecoderConfig, TtsConfig,
     },
-    encodable_block::{EncodableBlock, EncodingParameters, LayerExecutables, RMSNorm, Rope},
+    encodable_block::{EncodingParameters, LayerExecutables, RMSNorm, Rope},
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
@@ -2808,10 +2808,10 @@ impl StructuredAudioCodecGraph {
         let attention_data_type =
             attention_data_type.ok_or(AudioError::Runtime("post_module has no attention layers".to_string()))?;
 
-        let create_rope_block = |rope_type: RopeType| -> AudioResult<Rc<Box<dyn EncodableBlock<Metal>>>> {
+        let create_rope_block = |rope_type: RopeType| -> AudioResult<Rc<Rope<Metal>>> {
             let rope = Rope::<Metal>::new(context.as_ref(), attention_data_type, rope_type)
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize post_module rope block: {err}")))?;
-            Ok(Rc::new(Box::new(rope)))
+            Ok(Rc::new(rope))
         };
         let global_rope =
             decoder_config.global_rope_config.as_ref().map(|_| create_rope_block(RopeType::Global)).transpose()?;
@@ -3184,7 +3184,7 @@ impl StructuredAudioCodecGraph {
         }
         runtime
             .output_norm
-            .encode(state, &encoding_parameters, command_buffer)
+            .encode(state, command_buffer)
             .map_err(|err| AudioError::Runtime(format!("post_module output norm encode failed: {err}")))?;
         Ok(())
     }

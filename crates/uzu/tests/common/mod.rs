@@ -5,6 +5,7 @@ use std::{collections::HashMap, path::PathBuf};
 use uzu::{VERSION, speculators::speculator::Speculator};
 
 pub mod assert;
+pub mod proptest;
 
 pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
@@ -88,6 +89,17 @@ macro_rules! for_each_backend {
             type $B = uzu::backends::cpu::Cpu;
             $body
         }
+        #[cfg(feature = "metal")]
+        {
+            type $B = uzu::backends::metal::Metal;
+            $body
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! for_each_non_cpu_backend {
+    (|$B:ident| $body:expr) => {{
         #[cfg(feature = "metal")]
         {
             type $B = uzu::backends::metal::Metal;

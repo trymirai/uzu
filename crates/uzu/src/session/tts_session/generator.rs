@@ -32,7 +32,7 @@ impl TtsSession {
         seed: u64,
         config: &TtsRunConfig,
     ) -> Result<AudioPcmBatch, Error> {
-        config.validate().map_err(|_| Error::GenerateFailed)?;
+        config.validate().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
 
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self
@@ -63,7 +63,7 @@ impl TtsSession {
                 self.audio_decoder.decode(&semantic_tokens)?
             },
             crate::session::config::TtsNonStreamingMode::ChunkedIfNeeded => {
-                config.validate_stream_decode().map_err(|_| Error::GenerateFailed)?;
+                config.validate_stream_decode().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
                 let total_frames = semantic_tokens.frames();
                 let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
                 if total_frames < chunked_threshold {
@@ -157,7 +157,7 @@ impl TtsSession {
         seed: u64,
         config: &TtsRunConfig,
     ) -> Result<AudioTokenGrid, Error> {
-        config.validate().map_err(|_| Error::GenerateFailed)?;
+        config.validate().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self
             .tokenizer
@@ -226,7 +226,7 @@ impl TtsSession {
             on_chunk(&pcm);
             return Ok(pcm);
         }
-        config.validate_stream_decode().map_err(|_| Error::GenerateFailed)?;
+        config.validate_stream_decode().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
 
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self

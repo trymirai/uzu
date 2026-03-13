@@ -12,6 +12,12 @@ pub enum Error {
     UnableToCreateCommandBuffer(Box<dyn std::error::Error>),
     #[error("Unable to load model configuration")]
     UnableToLoadConfig,
+    #[error("Invalid TTS model config: {0}")]
+    InvalidTtsModelConfig(String),
+    #[error("Invalid TTS run config: {0}")]
+    InvalidTtsRunConfig(String),
+    #[error("Invalid TTS prompt config: {0}")]
+    InvalidTtsPromptConfig(String),
     #[error("Unable to load model weights")]
     UnableToLoadWeights,
     #[error("Unable to load tokenizer")]

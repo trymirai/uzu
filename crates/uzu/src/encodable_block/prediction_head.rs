@@ -4,25 +4,25 @@
 use crate::forward_pass::state::ArrayId;
 use crate::{
     backends::common::{Backend, CommandBuffer},
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::{Activation, Normalization, linear::Linear},
     forward_pass::state::ForwardPassState,
 };
 
 pub struct ClassifierPredictionHead<B: Backend> {
-    dense: Box<dyn EncodableBlock<B>>,
-    activation: Box<dyn EncodableBlock<B>>,
-    norm: Box<dyn EncodableBlock<B>>,
-    readout: Box<dyn EncodableBlock<B>>,
+    dense: Box<dyn Linear<B>>,
+    activation: Activation<B>,
+    norm: Normalization<B>,
+    readout: Box<dyn Linear<B>>,
     #[allow(dead_code)]
     num_labels: usize,
 }
 
 impl<B: Backend> ClassifierPredictionHead<B> {
     pub fn new(
-        dense: Box<dyn EncodableBlock<B>>,
-        activation: Box<dyn EncodableBlock<B>>,
-        norm: Box<dyn EncodableBlock<B>>,
-        readout: Box<dyn EncodableBlock<B>>,
+        dense: Box<dyn Linear<B>>,
+        activation: Activation<B>,
+        norm: Normalization<B>,
+        readout: Box<dyn Linear<B>>,
         num_labels: usize,
     ) -> Self {
         Self {
@@ -33,19 +33,16 @@ impl<B: Backend> ClassifierPredictionHead<B> {
             num_labels,
         }
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for ClassifierPredictionHead<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.dense.encode(state, parameters, command_buffer)?;
-        self.activation.encode(state, parameters, command_buffer)?;
-        self.norm.encode(state, parameters, command_buffer)?;
-        self.readout.encode(state, parameters, command_buffer)?;
+        self.dense.encode(state, command_buffer)?;
+        self.activation.encode(state, command_buffer)?;
+        self.norm.encode(state, command_buffer)?;
+        self.readout.encode(state, command_buffer)?;
 
         #[cfg(feature = "tracing")]
         {

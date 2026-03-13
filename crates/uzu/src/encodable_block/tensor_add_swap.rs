@@ -2,7 +2,6 @@
 
 use std::ops::DerefMut;
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -29,13 +28,10 @@ impl<B: Backend> TensorAddSwap<B> {
             argument_arrays,
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for TensorAddSwap<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&self.argument_arrays);

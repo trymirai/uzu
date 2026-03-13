@@ -2,7 +2,6 @@
 
 use std::ops::DerefMut;
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -37,13 +36,10 @@ impl<B: Backend> Activation<B> {
             output_array_id,
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for Activation<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);

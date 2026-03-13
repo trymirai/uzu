@@ -24,7 +24,7 @@ use crate::{
     },
     classifier::Classifier,
     config::ModelMetadata,
-    encodable_block::{EncodableBlock, EncodingParameters, Sampling},
+    encodable_block::{EncodingParameters, Sampling},
     forward_pass::{
         cache_layers::CacheLayers,
         scratch_buffers::ScratchBuffers,
@@ -297,7 +297,7 @@ impl<B: Backend> TraceValidator<B> {
         for index in transformer_layers {
             let arrays = state.arrays(&[ArrayId::Keys(index), ArrayId::Values(index)]);
 
-            if let Ok(expected) = traces_view.leaf(&format!("updated_kv_cache.{}.keys", index)) {
+            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 let keys = arrays[0].borrow();
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
@@ -305,7 +305,7 @@ impl<B: Backend> TraceValidator<B> {
                 });
             }
 
-            if let Ok(expected) = traces_view.leaf(&format!("updated_kv_cache.{}.values", index)) {
+            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
                 let values = arrays[1].borrow();
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
@@ -329,7 +329,7 @@ impl<B: Backend> TraceValidator<B> {
                 format!("updated_state.{}.conv_state", index),
                 format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
             ] {
-                if let Ok(expected) = traces_view.leaf(&path) {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
                         metrics: Self::validate_array(
@@ -346,7 +346,7 @@ impl<B: Backend> TraceValidator<B> {
                 format!("updated_state.{}.ssm_state", index),
                 format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
             ] {
-                if let Ok(expected) = traces_view.leaf(&path) {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
                         metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
@@ -356,7 +356,7 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         // LLM-specific: Token comparison
-        let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf("logits") {
+        let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
             let produced_tokens = Self::get_tokens_from_logits(&*traces.borrow().logits.borrow());
             expected_tokens
@@ -396,8 +396,8 @@ impl<B: Backend> TraceValidator<B> {
             ParameterLoader::new(&traces_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
 
-        let has_token_ids = traces_view.leaf("activation_trace.token_ids").is_ok();
-        let has_token_positions = traces_view.leaf("activation_trace.token_positions").is_ok();
+        let has_token_ids = traces_view.leaf_array("activation_trace.token_ids").is_ok();
+        let has_token_positions = traces_view.leaf_array("activation_trace.token_positions").is_ok();
 
         if !has_token_ids || !has_token_positions {
             return Ok(Self::handle_missing_tokens(&traces_view));
@@ -428,7 +428,7 @@ impl<B: Backend> TraceValidator<B> {
     }
 
     fn handle_missing_tokens(traces_view: &ParameterTree<B::Context>) -> TracerValidationResults {
-        if let Ok(expected_logits) = traces_view.leaf("logits") {
+        if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let reference_shape = expected_logits.shape().to_vec();
             let metrics = TracerValidationMetrics {
                 atol: 0.0,
@@ -479,7 +479,7 @@ impl<B: Backend> TraceValidator<B> {
         let mut results = Vec::new();
 
         let validate = |path: &str, array: &Ref<Array<B>>| -> Option<TracerValidationResult> {
-            if traces_view.leaf(path).is_ok() {
+            if traces_view.leaf_array(path).is_ok() {
                 Some(TracerValidationResult {
                     name: path.to_string(),
                     metrics: Self::validate_array_with_name(data_type, traces_view, path, array),
@@ -549,7 +549,7 @@ impl<B: Backend> TraceValidator<B> {
 
         // Embedding norm (classifier-specific)
         if let Some(embedding_norm) = &traces.borrow().embedding_norm {
-            if traces_view.leaf("activation_trace.embedding_norm").is_ok() {
+            if traces_view.leaf_array("activation_trace.embedding_norm").is_ok() {
                 results.push(TracerValidationResult {
                     name: "activation_trace.embedding_norm".to_string(),
                     metrics: Self::validate_array_with_name(
@@ -564,7 +564,7 @@ impl<B: Backend> TraceValidator<B> {
 
         // Output pooling (classifier-specific)
         if let Some(output_pooling) = &traces.borrow().output_pooling {
-            if traces_view.leaf("activation_trace.output_pooling").is_ok() {
+            if traces_view.leaf_array("activation_trace.output_pooling").is_ok() {
                 results.push(TracerValidationResult {
                     name: "activation_trace.output_pooling".to_string(),
                     metrics: Self::validate_array_with_name(
@@ -604,7 +604,7 @@ impl<B: Backend> TraceValidator<B> {
         expected_array_path: &str,
         produced_array: &Ref<Array<B>>,
     ) -> TracerValidationMetrics {
-        let expected_array = traces_view.leaf(expected_array_path).unwrap();
+        let expected_array = traces_view.leaf_array(expected_array_path).unwrap();
         Self::validate_array(data_type, &expected_array, produced_array, None)
     }
 
@@ -783,7 +783,7 @@ impl<B: Backend> TraceValidator<B> {
         traces_view: &ParameterTree<B::Context>,
         name: &str,
     ) -> Vec<TargetPrecision> {
-        let array = traces_view.leaf(name).unwrap();
+        let array = traces_view.leaf_array(name).unwrap();
         let slice = array.as_slice::<SourcePrecision>();
         slice.iter().map(|x| NumCast::from(*x).unwrap()).collect()
     }

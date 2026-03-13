@@ -109,22 +109,36 @@ fn validate_fishaudio_decoder_contract(
     audio_semantic_cardinality: usize,
 ) -> Result<usize, Error> {
     if num_codebooks == 0 || codebook_size == 0 || max_seq_len == 0 {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "FishAudio decoder requires positive num_codebooks, codebook_size, and max_seq_len, got num_codebooks={num_codebooks}, codebook_size={codebook_size}, max_seq_len={max_seq_len}"
+        )));
     }
     if num_codebooks != audio_num_codebooks {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "FishAudio decoder num_codebooks={num_codebooks} does not match audio num_codebooks={audio_num_codebooks}"
+        )));
     }
     if audio_codec_cardinality == 0 || audio_codec_cardinality > codebook_size {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "FishAudio decoder codebook_size={codebook_size} must be at least audio residual codec cardinality={audio_codec_cardinality}"
+        )));
     }
     if semantic_token_begin_id > semantic_token_end_id {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "FishAudio semantic token range is invalid: begin={semantic_token_begin_id}, end={semantic_token_end_id}"
+        )));
     }
 
     let semantic_cardinality =
-        usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| Error::UnableToLoadConfig)?;
+        usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| {
+            Error::InvalidTtsModelConfig(format!(
+                "FishAudio semantic token range overflow: begin={semantic_token_begin_id}, end={semantic_token_end_id}"
+            ))
+        })?;
     if semantic_cardinality == 0 || semantic_cardinality != audio_semantic_cardinality {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "FishAudio semantic codec cardinality={semantic_cardinality} does not match audio semantic codec cardinality={audio_semantic_cardinality}"
+        )));
     }
 
     Ok(semantic_cardinality)
@@ -142,7 +156,9 @@ pub(super) fn validate_fishaudio_message_processor_config(config: &TtsMessagePro
 
     for field in referenced_fields {
         if !builtin_fields.contains(field.as_str()) && !config.default_message_fields.contains_key(field.as_str()) {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidTtsPromptConfig(format!(
+                "FishAudio prompt template references message.{field}, but default_message_fields does not provide it"
+            )));
         }
     }
 
@@ -802,13 +818,13 @@ mod tests {
     #[test]
     fn fishaudio_decoder_contract_rejects_residual_cardinality_mismatch() {
         let result = validate_fishaudio_decoder_contract(2, 47, 256, 10, 25, 2, 48, 16);
-        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
+        assert!(matches!(result, Err(Error::InvalidTtsModelConfig(_))));
     }
 
     #[test]
     fn fishaudio_decoder_contract_rejects_semantic_cardinality_mismatch() {
         let result = validate_fishaudio_decoder_contract(2, 48, 256, 10, 25, 2, 48, 15);
-        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
+        assert!(matches!(result, Err(Error::InvalidTtsModelConfig(_))));
     }
 
     #[test]
@@ -837,7 +853,7 @@ mod tests {
             assistant_role_name: String::from("assistant"),
             default_message_fields: Default::default(),
         });
-        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
+        assert!(matches!(result, Err(Error::InvalidTtsPromptConfig(_))));
     }
 
     #[test]

@@ -1,9 +1,9 @@
+use std::{cell::Cell, time::Duration};
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
     MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
-use std::cell::Cell;
 
 use super::Metal;
 use crate::backends::{
@@ -246,5 +246,12 @@ impl CommandBufferCompleted for MetalCommandBuffer {
 
     fn gpu_execution_time_ms(&self) -> Option<f64> {
         Self::gpu_execution_time_ms(self)
+    }
+
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        match (self.command_buffer.gpu_start_time(), self.command_buffer.gpu_end_time()) {
+            (Some(start), Some(end)) => Some(Duration::from_secs_f64(end - start)),
+            _ => None,
+        }
     }
 }

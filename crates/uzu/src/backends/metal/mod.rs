@@ -9,4 +9,3 @@ mod kernel;
 mod metal_extensions;
 
 pub use backend::Metal;
-pub use kernel::matmul::choose_dispatch_descriptor;

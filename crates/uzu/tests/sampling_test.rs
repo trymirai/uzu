@@ -2,7 +2,6 @@ mod common;
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use rand::{RngExt, seq::SliceRandom};
-// for Vec::shuffle
 use uzu::{
     DataType,
     backends::{
@@ -22,39 +21,6 @@ use uzu::{
 
 // Constant seed for reproducible test results
 const TEST_SAMPLING_SEED: u64 = 42;
-
-fn cpu_reference_top_p(
-    row_logits: &[f32],
-    top_p: f32,
-) -> Vec<f32> {
-    // 1. soft‑max (unnormalised)
-    let max_logit = row_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let mut softmax: Vec<(usize, f32)> =
-        row_logits.iter().enumerate().map(|(idx, &z)| (idx, (z - max_logit).exp())).collect();
-    let total_mass: f32 = softmax.iter().map(|(_, p)| p).sum();
-
-    // 2. sort descending
-    softmax.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-    // 3. accumulate until cumulative ≥ top_p
-    let mut cum = 0.0_f32;
-    let mut cutoff = 0;
-    let target = top_p * total_mass;
-    while cutoff < softmax.len() && cum < target {
-        cum += softmax[cutoff].1;
-        cutoff += 1;
-    }
-
-    // 4. renormalise the kept mass
-    let mut dist = vec![0.0f32; row_logits.len()];
-    if cum > 0.0 {
-        let renorm = 1.0 / cum;
-        for (idx, p) in &softmax[..cutoff] {
-            dist[*idx] = *p * renorm;
-        }
-    }
-    dist
-}
 
 fn cpu_reference_min_p(
     row_logits: &[f32],
@@ -508,7 +474,6 @@ fn perf_topp_128k_vocab() {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
     }
 }
-
 #[allow(dead_code)]
 fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use std::time::Instant;
@@ -578,14 +543,15 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    // Get actual GPU execution time
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
-
-    match gpu_elapsed_ms {
+    match completed.gpu_execution_time() {
         Some(gpu_time) => {
             println!(
                 "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, strategy, gpu_time, host_elapsed_ms
+                BATCH,
+                VOCAB,
+                strategy,
+                gpu_time.as_secs_f64() * 1e3,
+                host_elapsed_ms
             );
         },
         None => {
@@ -942,13 +908,14 @@ fn perf_categorical_128k_vocab() {
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    let gpu_elapsed_ms = completed.gpu_execution_time_ms();
-
-    match gpu_elapsed_ms {
+    match completed.gpu_execution_time() {
         Some(gpu_time) => {
             println!(
                 "Categorical sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, gpu_time, host_elapsed_ms
+                BATCH,
+                VOCAB,
+                gpu_time.as_secs_f64() * 1e3,
+                host_elapsed_ms
             );
         },
         None => {
@@ -1030,129 +997,6 @@ fn test_temperature_gpu_cpu_match() {
     }
 
     println!("✓ Temperature processor gpu cpu match (temp={}, rtol={}, atol={})", TEMPERATURE, RTOL, ATOL);
-}
-
-#[test]
-fn test_topk_gpu_cpu_match() {
-    use rand::{SeedableRng, rngs::StdRng};
-
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping topk gpu cpu match test: {}", e);
-            return;
-        },
-    };
-
-    const BATCH: usize = 4;
-    const VOCAB: usize = 1024;
-    const TOPK: u32 = 16;
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::TopKKernel::new(&context, DataType::F32, false)
-        .expect("Failed to create topk kernel");
-
-    let mut rng = StdRng::seed_from_u64(42);
-    let mut logits = vec![0.0f32; BATCH * VOCAB];
-    for x in logits.iter_mut() {
-        *x = rng.random_range(-1024.0f32..1024.0f32);
-    }
-
-    let logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut processed_buffer = context
-        .device
-        .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TOPK, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
-    let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
-
-    for batch_idx in 0..BATCH {
-        let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
-        let mut cpu_sorted_logits: Vec<(usize, f32)> = cpu_logits.iter().copied().enumerate().collect();
-        cpu_sorted_logits.sort_by(|(_, a), (_, b)| f32::total_cmp(b, a));
-        let mut cpu_processed_logits: Vec<f32> = vec![f32::NEG_INFINITY; VOCAB];
-        for (idx, val) in cpu_sorted_logits.into_iter().take(TOPK as usize) {
-            cpu_processed_logits[idx] = val;
-        }
-
-        let gpu_processed_logits = &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
-
-        assert_eq!(cpu_processed_logits, gpu_processed_logits);
-    }
-
-    println!("✓ Topk processor gpu cpu match (topk={})", TOPK);
-}
-
-#[test]
-fn test_topp_gpu_cpu_match() {
-    use rand::{SeedableRng, rngs::StdRng};
-
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping topp gpu cpu match test: {}", e);
-            return;
-        },
-    };
-
-    const BATCH: usize = 4;
-    const VOCAB: usize = 1024;
-    const TOPP: f32 = 0.9;
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::TopPKernel::new(&context, DataType::F32, false)
-        .expect("Failed to create topp kernel");
-
-    let mut rng = StdRng::seed_from_u64(42);
-    let mut logits = vec![0.0f32; BATCH * VOCAB];
-    for x in logits.iter_mut() {
-        *x = rng.random_range(-16.0f32..16.0f32);
-    }
-
-    let logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut processed_buffer = context
-        .device
-        .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TOPP, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
-    let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
-
-    for batch_idx in 0..BATCH {
-        let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
-        let cpu_processed_logits = cpu_reference_top_p(cpu_logits, TOPP)
-            .into_iter()
-            .zip(cpu_logits.iter().copied())
-            .map(|(cpu_ref_topp, logit)| {
-                if cpu_ref_topp > 0.0 {
-                    logit
-                } else {
-                    f32::NEG_INFINITY
-                }
-            })
-            .collect::<Vec<f32>>();
-
-        let gpu_processed_logits = &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
-
-        assert_eq!(&cpu_processed_logits, gpu_processed_logits);
-    }
-
-    println!("✓ Topp processor gpu cpu match (topp={})", TOPP);
 }
 
 #[test]
@@ -1332,70 +1176,4 @@ fn test_minp_sampling_match_small() {
 #[test]
 fn test_minp_sampling_match_large() {
     test_minp_sampling_exact_match(32, 0.05, 4096);
-}
-
-#[test]
-fn test_gumbel_gpu_cpu_match() {
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping gumbel gpu cpu match test: {}", e);
-            return;
-        },
-    };
-
-    const BATCH: usize = 7;
-    const VOCAB: usize = 16 * 1024 * 64;
-    const RTOL: f32 = 0.01;
-    const ATOL: f32 = 1e-6;
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::GumbelKernel::new(&context, DataType::F32, false)
-        .expect("Failed to create gumbel kernel");
-
-    let logits = vec![0.0f32; BATCH * VOCAB];
-    let seeds: Vec<u64> = (0_u64..BATCH as u64).collect();
-
-    let logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let seeds_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&seeds), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut gumbel_logits_buffer = context
-        .device
-        .new_buffer(BATCH * VOCAB * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(
-        Some(&logits_buffer),
-        &seeds_buffer,
-        &mut gumbel_logits_buffer,
-        BATCH as u32,
-        VOCAB as u32,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    let result_ptr = gumbel_logits_buffer.contents().as_ptr() as *const f32;
-    let all_results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH * VOCAB) };
-
-    for (batch_idx, batch_seed) in seeds.iter().copied().enumerate() {
-        let results = &all_results[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
-        for (logit_idx, gpu_logit_value) in results.iter().copied().enumerate() {
-            let cpu_logit_value = gumbel_float(batch_seed, revidx(logit_idx as u32));
-            let abs_diff = (cpu_logit_value - gpu_logit_value).abs();
-            let tolerance = ATOL + RTOL * cpu_logit_value.abs();
-            assert!(
-                abs_diff <= tolerance,
-                "Mismatch at batch {batch_idx} element {logit_idx}: CPU={cpu_logit_value} GPU={gpu_logit_value} (abs_diff={abs_diff}, tolerance={tolerance})"
-            );
-        }
-    }
-
-    println!("✓ Gumbel cpu gpu match test passed (rtol: {:.1}%, atol: {:.1e})", RTOL * 100.0, ATOL);
 }

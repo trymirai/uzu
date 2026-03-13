@@ -21,7 +21,7 @@ use crate::{
         CommandBufferPending, Context,
         kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
-    encodable_block::{EncodableBlock, EncodingParameters},
+    encodable_block::EncodingParameters,
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
@@ -253,13 +253,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 is_prefilling: !should_sample_after_step,
             };
 
-            let (state, run_time) = self.run_model(
-                task,
-                false,
-                self.allow_pre_encode(),
-                sampling_method,
-                self.should_fill_attention_bias(),
-            )?;
+            let (state, run_time) =
+                self.run_model(task, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
 
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
@@ -390,7 +385,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         let (mut state, run_time) =
-            self.run_model(task, false, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
+            self.run_model(task, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
 
         let sampled_tokens = self.read_sampling_output(&mut state)?;
 
@@ -536,7 +531,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         // Encode sampling
         self.context
             .gpu_sampler
-            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
+            .encode(&mut state, &mut command_buffer)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -729,53 +724,20 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let gpu_capture = GpuCaptureManager::new();
 
         let context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
-        let prefill_step_size = decoding_config.prefill_step_size.resolve(&context.model_config);
-        let generate_suffix_length = decoding_config.generate_suffix_length();
 
-        let mut generator = Self {
+        Ok(Self {
             decoding_config,
             tokens: Vec::new(),
             context,
             pre_encoded_task: None,
             registered_prefix_len: 0,
             gpu_capture,
-        };
-
-        //Warmup
-        generator.warmup(prefill_step_size)?;
-        generator.warmup(generate_suffix_length)?;
-
-        Ok(generator)
-    }
-
-    fn warmup(
-        &mut self,
-        suffix_length: usize,
-    ) -> Result<(), Error> {
-        let token_ids: Vec<u64> = vec![0; suffix_length];
-        let token_positions: Vec<usize> = (0..suffix_length).collect();
-        let token_seeds: Vec<u64> = vec![0; suffix_length];
-
-        let task = Task {
-            token_ids: &token_ids,
-            token_positions: &token_positions,
-            token_bitmask: None,
-            token_seeds: &token_seeds,
-            expected_number_of_new_tokens: suffix_length,
-            active_suffix_length: suffix_length,
-            sampling_start: 0,
-            sampling_length: suffix_length,
-            is_prefilling: false,
-        };
-
-        self.run_model(task, true, false, SamplingMethod::default(), false)?;
-        Ok(())
+        })
     }
 
     fn run_model(
         &mut self,
         task: Task,
-        warmup: bool,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
@@ -821,7 +783,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 is_prefilling: task.is_prefilling,
             };
 
-            let is_first_decode = !warmup && task.token_ids.len() == 1;
+            let is_first_decode = task.token_ids.len() == 1;
             let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
 
             if should_capture {
@@ -829,7 +791,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 self.pre_encoded_task = None;
             }
 
-            let sample = !warmup && !task.is_prefilling;
+            let sample = !task.is_prefilling;
 
             let executable = if let Some((pre_encoded_key, pre_encoded_executable)) = self.pre_encoded_task.take()
                 && pre_encoded_key == encoding_key
@@ -885,7 +847,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         if sample {
             self.context
                 .gpu_sampler
-                .encode(state, parameters, &mut command_buffer)
+                .encode(state, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
 

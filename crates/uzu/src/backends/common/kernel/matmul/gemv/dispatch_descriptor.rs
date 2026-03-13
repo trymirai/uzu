@@ -23,7 +23,7 @@ pub enum OutputSource {
 }
 
 #[derive(Debug, Clone)]
-pub struct DispatchDescriptor {
+pub struct GemvDispatchDescriptor {
     pub specialization: Specialization,
     pub matrix_is_rhs: bool,
     pub output_source: OutputSource,
@@ -40,7 +40,7 @@ pub struct DispatchDescriptor {
     pub batch_rows: i32,
 }
 
-impl DispatchDescriptor {
+impl GemvDispatchDescriptor {
     pub fn try_new<B: Backend>(
         data_type: DataType,
         arguments: &MatmulArguments<B>,

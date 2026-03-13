@@ -2,7 +2,6 @@
 
 use std::ops::{Deref, DerefMut};
 
-use super::{EncodableBlock, EncodingParameters};
 use crate::{
     DataType,
     backends::common::{
@@ -28,13 +27,10 @@ impl<B: Backend> Rope<B> {
             rope_type,
         })
     }
-}
 
-impl<B: Backend> EncodableBlock<B> for Rope<B> {
-    fn encode(
+    pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {

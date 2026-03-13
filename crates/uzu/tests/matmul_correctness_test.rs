@@ -10,9 +10,9 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            kernel::matmul::{MatmulArguments, MatmulKernel},
+            kernel::matmul::{MatmulArguments, MatmulKernel, choose_matmul_dispatch_descriptor},
         },
-        metal::{Metal, choose_dispatch_descriptor},
+        metal::Metal,
     },
 };
 
@@ -63,7 +63,8 @@ fn run_metal_matmul(
         transpose_b,
     };
     MatmulKernel::<Metal>::apply_batch_collapse(&mut arguments);
-    let descriptor = choose_dispatch_descriptor(ctx, DataType::BF16, &arguments).expect("dispatch descriptor");
+    let descriptor =
+        choose_matmul_dispatch_descriptor::<Metal>(ctx, DataType::BF16, &arguments).expect("dispatch descriptor");
     kernel.encode_with_descriptor(ctx, arguments, &descriptor, &mut command_buffer).expect("encode");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
