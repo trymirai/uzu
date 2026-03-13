@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use thiserror::Error;
 
 use crate::{
@@ -34,6 +36,7 @@ pub struct TrieNode {
 #[derive(Debug)]
 pub struct FlatTrie<'a> {
     tokens: Box<[(&'a TrieNode, usize)]>,
+    indices: HashMap<*const TrieNode, usize>,
 }
 
 impl TrieNode {
@@ -96,7 +99,10 @@ impl TrieNode {
         assert!(prefix.len() >= 1, "need seed node");
 
         let prefix_length = prefix.len();
-        let mut speculated_suffix = prefix.to_vec();
+
+        // Prime the speculator for this trie build. Stateless speculators ignore
+        // this; PARD runs its forward pass here and caches all n_pard+1 distributions.
+        speculator.prepare(prefix);
 
         let mut length = 1;
         let mut height = 0;
@@ -105,7 +111,8 @@ impl TrieNode {
 
         let mut cur_node = &mut root;
         let mut cur_node_width = 0;
-        let mut cur_node_speculator_weights = speculator.speculate(&speculated_suffix);
+        let mut trunk_prefix = prefix.to_vec();
+        let mut cur_node_speculator_weights = speculator.speculate(&trunk_prefix);
 
         let mut next_node = None;
 
@@ -144,7 +151,6 @@ impl TrieNode {
                 }
             } else if let Some(next_node_token) = next_node.take() {
                 // Out of speculated tokens for this node, move onto the likeliest next node
-                speculated_suffix.push(next_node_token);
                 if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                     if compiled_grammar.accept_token(next_node_token).is_err() {
                         break;
@@ -153,7 +159,8 @@ impl TrieNode {
                 height += 1;
                 cur_node = cur_node.get_mut(next_node_token).unwrap();
                 cur_node_width = 0;
-                cur_node_speculator_weights = speculator.speculate(&speculated_suffix);
+                trunk_prefix.push(next_node_token);
+                cur_node_speculator_weights = speculator.speculate(&trunk_prefix);
                 continue;
             } else {
                 // Dead end, exit
@@ -192,8 +199,11 @@ impl TrieNode {
 
 impl<'a> FlatTrie<'a> {
     pub fn new(tokens: Box<[(&'a TrieNode, usize)]>) -> Self {
+        let indices = tokens.iter().enumerate().map(|(idx, (node, _))| (*node as *const TrieNode, idx)).collect();
+
         Self {
             tokens,
+            indices,
         }
     }
 
@@ -223,9 +233,9 @@ impl<'a> FlatTrie<'a> {
 
     pub fn index(
         &self,
-        node: &'a TrieNode,
+        node: &TrieNode,
     ) -> Option<usize> {
-        self.tokens.iter().position(|&(n, _)| std::ptr::eq(n, node))
+        self.indices.get(&(node as *const TrieNode)).copied()
     }
 
     pub fn accept(
@@ -237,7 +247,7 @@ impl<'a> FlatTrie<'a> {
         let mut accepted_tokens = Vec::new();
         let mut accepted_token_indices = Vec::new();
         loop {
-            let current_token_index = self.index(current_token).unwrap();
+            let current_token_index = self.index(current_token).expect("Linearized trie index must exist");
             let current_token_id = sampled_tokens[current_token_index];
 
             accepted_token_indices.push(current_token_index);

@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     iter::repeat_n,
     ops::{Deref, Range},
+    path::Path,
 };
 
 use bytemuck::cast_slice;
@@ -39,14 +40,23 @@ pub struct NGramSpeculator<B: Deref<Target = [u8]> + Send + Sync> {
 impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
     const HEADER_SIZE: usize = size_of::<NGramSpeculatorHeader>();
 
-    pub fn new(bytes: B) -> Self {
-        let mut off = 0;
+    pub fn new(bytes: B) -> Result<Self, String> {
+        if bytes.len() < Self::HEADER_SIZE {
+            return Err("ngram speculator file is too small for header".to_string());
+        }
 
-        let header = NGramSpeculatorHeader::ref_from_bytes(&bytes[..Self::HEADER_SIZE]).unwrap();
+        let mut off = 0usize;
+        let header = NGramSpeculatorHeader::ref_from_bytes(&bytes[..Self::HEADER_SIZE])
+            .map_err(|_| "failed to parse ngram speculator header".to_string())?;
         off += Self::HEADER_SIZE;
 
-        let ngram_kv_size = 4 * header.top_k as usize * header.hashtable_size as usize;
-        let ngram_c_size = 4 * header.hashtable_size as usize;
+        let ngram_kv_size = 4usize
+            .checked_mul(header.top_k as usize)
+            .and_then(|v| v.checked_mul(header.hashtable_size as usize))
+            .ok_or_else(|| "ngram speculator file size overflow".to_string())?;
+        let ngram_c_size = 4usize
+            .checked_mul(header.hashtable_size as usize)
+            .ok_or_else(|| "ngram speculator file size overflow".to_string())?;
 
         let ngram_keys_range = off..(off + ngram_kv_size);
         off += ngram_kv_size;
@@ -57,14 +67,16 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         let ngram_counts_range = off..(off + ngram_c_size);
         off += ngram_c_size;
 
-        assert_eq!(off, bytes.len());
+        if off != bytes.len() {
+            return Err(format!("invalid ngram speculator file size: expected {off} bytes, got {}", bytes.len()));
+        }
 
-        Self {
+        Ok(Self {
             bytes,
             ngram_keys_range,
             ngram_values_range,
             ngram_counts_range,
-        }
+        })
     }
 
     #[inline]
@@ -114,9 +126,11 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
 }
 
 impl NGramSpeculator<memmap2::Mmap> {
-    pub fn load(path: &str) -> Self {
-        let file = std::fs::File::open(path).unwrap();
-        let mmap = unsafe { memmap2::MmapOptions::default().map(&file).unwrap() };
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
+        let file =
+            std::fs::File::open(path.as_ref()).map_err(|e| format!("failed to open ngram speculator file: {e}"))?;
+        let mmap = unsafe { memmap2::MmapOptions::default().map(&file) }
+            .map_err(|e| format!("failed to mmap ngram speculator file: {e}"))?;
 
         Self::new(mmap)
     }
@@ -127,8 +141,22 @@ impl<B: Deref<Target = [u8]> + Send + Sync> Speculator for NGramSpeculator<B> {
         &self,
         prefix: &[u64],
     ) -> HashMap<u64, f32> {
-        let (ngram_keys, ngram_values, _ngram_counts) = self._seq_slice(prefix);
+        if prefix.is_empty() {
+            return HashMap::new();
+        }
 
-        ngram_keys.iter().copied().map(u64::from).zip(ngram_values.iter().copied()).collect()
+        let (ngram_keys, ngram_values, ngram_counts) = self._seq_slice(prefix);
+        let limit = (*ngram_counts as usize).min(ngram_keys.len()).min(ngram_values.len());
+
+        ngram_keys
+            .iter()
+            .copied()
+            .zip(ngram_values.iter().copied())
+            .take(limit)
+            .filter(|(_, p)| *p > 0.0)
+            .map(|(token, p)| (u64::from(token), p))
+            .collect()
     }
 }
+
+pub type NgramSpeculator = NGramSpeculator<memmap2::Mmap>;

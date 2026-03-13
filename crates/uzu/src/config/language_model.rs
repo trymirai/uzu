@@ -19,6 +19,8 @@ pub struct InnerModelConfig {
     pub embedding_config: EmbeddingConfig,
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pard_token: Option<u64>,
 }
 
 impl InnerModelConfig {

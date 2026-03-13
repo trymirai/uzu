@@ -70,7 +70,6 @@ autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
-
 # optimize the build script in debug builds
 [profile.dev.build-override]
 opt-level = 3

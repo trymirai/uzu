@@ -12,7 +12,7 @@ use uzu::session::{
     types::{Input, Output},
 };
 
-use crate::server::load_session;
+use crate::{server::load_session, speculator_args::SpeculatorArgs};
 
 fn format_output(output: Output) -> String {
     let stats = &output.stats;
@@ -53,11 +53,11 @@ pub fn handle_run(
     tokens_limit: usize,
     prefill_step_size: Option<usize>,
     seed: Option<u64>,
-    speculator: Option<String>,
     mut message: Option<String>,
     no_thinking: bool,
+    speculator_args: SpeculatorArgs,
 ) {
-    let mut session = load_session(model_path, prefill_step_size, seed, speculator);
+    let mut session = load_session(model_path, prefill_step_size, seed, speculator_args);
 
     let is_model_running = Arc::new(AtomicBool::new(false));
     let is_model_running_for_ctrlc = is_model_running.clone();
