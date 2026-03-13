@@ -63,10 +63,17 @@ fn existing_model_path(path: PathBuf) -> Option<PathBuf> {
 
 fn load_optional_fishaudio_model_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH") {
-        return existing_model_path(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        assert!(
+            path.join("config.json").exists() && path.join("model.safetensors").exists(),
+            "LALAMO_UZU_FISHAUDIO_MODEL_PATH does not point to a valid export: {}",
+            path.display()
+        );
+        return Some(path);
     }
 
     let preferred = [
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_f32_full",
         "/private/tmp/lalamo_fishaudio_s1mini_convert_f32a",
         "/private/tmp/lalamo_fishaudio_s1mini_f32",
         "/private/tmp/lalamo_fishaudio_s1mini_convert_f32",
@@ -77,10 +84,17 @@ fn load_optional_fishaudio_model_path() -> Option<PathBuf> {
 
 fn load_optional_fishaudio_model_path_f16() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16") {
-        return existing_model_path(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        assert!(
+            path.join("config.json").exists() && path.join("model.safetensors").exists(),
+            "LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 does not point to a valid export: {}",
+            path.display()
+        );
+        return Some(path);
     }
 
     let preferred = [
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_f16_full",
         "/private/tmp/lalamo_fishaudio_s1mini_convert_f16a",
         "/private/tmp/lalamo_fishaudio_s1mini_f16",
         "/private/tmp/lalamo_fishaudio_s1mini_convert_f16",
@@ -90,10 +104,17 @@ fn load_optional_fishaudio_model_path_f16() -> Option<PathBuf> {
 
 fn load_optional_fishaudio_model_path_bf16() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16") {
-        return existing_model_path(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        assert!(
+            path.join("config.json").exists() && path.join("model.safetensors").exists(),
+            "LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 does not point to a valid export: {}",
+            path.display()
+        );
+        return Some(path);
     }
 
     let preferred = [
+        "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16_full",
         "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16a",
         "/private/tmp/lalamo_fishaudio_s1mini_bf16",
         "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16",

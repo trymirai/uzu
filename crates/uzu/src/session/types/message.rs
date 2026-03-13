@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::MessageProcessorConfig,
+    config::{MessageProcessorConfig, TtsMessageProcessorConfig},
     session::{parameter::ConfigResolvableValue, types::Role},
 };
 
@@ -55,6 +55,26 @@ impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>> for 
         };
         let content = self.content.clone();
         let mut result = HashMap::from([(String::from("role"), role), (String::from("content"), content)]);
+        if let Some(reasoning_content) = self.reasoning_content.clone() {
+            result.insert(String::from("reasoning_content"), reasoning_content);
+        }
+        result
+    }
+}
+
+impl ConfigResolvableValue<TtsMessageProcessorConfig, HashMap<String, String>> for Message {
+    fn resolve(
+        &self,
+        config: &TtsMessageProcessorConfig,
+    ) -> HashMap<String, String> {
+        let role = match self.role {
+            Role::System => config.system_role_name.clone(),
+            Role::User => config.user_role_name.clone(),
+            Role::Assistant => config.assistant_role_name.clone(),
+        };
+        let mut result: HashMap<String, String> = config.default_message_fields.clone().into_iter().collect();
+        result.insert(String::from("role"), role);
+        result.insert(String::from("content"), self.content.clone());
         if let Some(reasoning_content) = self.reasoning_content.clone() {
             result.insert(String::from("reasoning_content"), reasoning_content);
         }

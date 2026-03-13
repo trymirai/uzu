@@ -52,12 +52,12 @@ use crate::{
 
 mod loaders;
 
-use loaders::{build_nanocodec_decoder_graph_from_lalamo_config, load_audio_runtime_from_tts_config};
 #[cfg(test)]
 use loaders::{
     SafeTensorReader, convert_lalamo_transpose_weight_oih_to_iog, read_fishaudio_norm_layer, read_matrix_f32,
     resolve_fishaudio_vocoder_data_type,
 };
+use loaders::{build_nanocodec_decoder_graph_from_lalamo_config, load_audio_runtime_from_tts_config};
 
 type MetalCommandBuffer = <Metal as Backend>::CommandBuffer;
 
@@ -1114,7 +1114,7 @@ struct RuntimeConfigJson {
 }
 
 fn build_runtime_config_from_nanocodec_audio_decoder(
-    config: &NanoCodecAudioDecoderConfig,
+    config: &NanoCodecAudioDecoderConfig
 ) -> AudioResult<RuntimeConfigJson> {
     Ok(RuntimeConfigJson {
         r#type: Some("nanocodec_fsq".to_string()),
@@ -1704,7 +1704,7 @@ fn fishaudio_kernels(
                 data_type,
                 false,
             )
-                .map_err(|err| AudioError::Runtime(format!("failed to initialize activation kernel: {err}")))?,
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize activation kernel: {err}")))?,
             add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(context.as_ref(), data_type)
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize add kernel: {err}")))?,
         });
@@ -2232,9 +2232,7 @@ fn gelu_enqueue(
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels
-            .activation
-            .encode(Some(input.buffer()), output.buffer(), n_u32, gelu_id, compute_encoder);
+        kernels.activation.encode(Some(input.buffer()), output.buffer(), n_u32, gelu_id, compute_encoder);
     });
     Ok(output)
 }
@@ -2281,9 +2279,7 @@ fn tanh_enqueue(
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
     let tanh_id = 2_u32;
     command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels
-            .activation
-            .encode(Some(input.buffer()), output.buffer(), n_u32, tanh_id, compute_encoder);
+        kernels.activation.encode(Some(input.buffer()), output.buffer(), n_u32, tanh_id, compute_encoder);
     });
     Ok(output)
 }
@@ -2575,9 +2571,9 @@ impl StructuredAudioCodecGraph {
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         command_buffer.submit();
         let wait_start = profile.is_some().then(Instant::now);
-        command_buffer.wait_until_completed().map_err(|err| {
-            AudioError::Runtime(format!("failed to wait for quantizer command buffer: {err}"))
-        })?;
+        command_buffer
+            .wait_until_completed()
+            .map_err(|err| AudioError::Runtime(format!("failed to wait for quantizer command buffer: {err}")))?;
         let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         push_audio_command_buffer_profile(profile, "quantizer", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
@@ -3292,9 +3288,9 @@ impl StructuredAudioCodecGraph {
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         command_buffer.submit();
         let wait_start = profile.is_some().then(Instant::now);
-        command_buffer.wait_until_completed().map_err(|err| {
-            AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}"))
-        })?;
+        command_buffer
+            .wait_until_completed()
+            .map_err(|err| AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}")))?;
         let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         push_audio_command_buffer_profile(profile, "post_module", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
@@ -3932,11 +3928,15 @@ pub struct NanoCodecFsqRuntimeConfig {
 impl NanoCodecFsqRuntimeConfig {
     pub fn from_tts_config(tts_config: &TtsConfig) -> AudioResult<Self> {
         match &tts_config.audio_decoder_config {
-            TtsAudioDecoderConfig::NanoCodecConfig { config } => {
+            TtsAudioDecoderConfig::NanoCodecConfig {
+                config,
+            } => {
                 let parsed = build_runtime_config_from_nanocodec_audio_decoder(config)?;
                 Self::from_runtime_config_json(parsed)
             },
-            TtsAudioDecoderConfig::DescriptAudioCodecConfig { .. } => Err(AudioError::Runtime(
+            TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+                ..
+            } => Err(AudioError::Runtime(
                 "DescriptAudioCodecConfig requires model weights; use from_tts_config_and_model_path".to_string(),
             )),
         }
@@ -3968,13 +3968,13 @@ impl NanoCodecFsqRuntimeConfig {
                 Ok(runtime)
             },
             LoadedTtsAudioRuntimeConfig::StructuredDecoder {
-                    runtime: runtime_config,
-                    decoder,
-                } => {
-                    let mut runtime = Self::from_runtime_config_json(runtime_config)?;
-                    runtime.structured_decoder = Some(decoder);
-                    Ok(runtime)
-                }
+                runtime: runtime_config,
+                decoder,
+            } => {
+                let mut runtime = Self::from_runtime_config_json(runtime_config)?;
+                runtime.structured_decoder = Some(decoder);
+                Ok(runtime)
+            },
         }
     }
 
@@ -4539,9 +4539,9 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         });
 
         command_buffer.submit();
-        command_buffer.wait_until_completed().map_err(|err| {
-            AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}"))
-        })?;
+        command_buffer
+            .wait_until_completed()
+            .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
 
         let mut tokens_u32 = vec![0_u32; tokens.num_elements()];
         for (index, &token) in tokens.as_slice::<i32>().iter().enumerate() {
@@ -4736,9 +4736,9 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         });
 
         command_buffer.submit();
-        command_buffer.wait_until_completed().map_err(|err| {
-            AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}"))
-        })?;
+        command_buffer
+            .wait_until_completed()
+            .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
 
         let (padded_output, out_channels, out_frames, out_lengths) = if let Some(decoder) = self.config.decoder() {
             let decoded = decoder.decode_padded(
@@ -4769,12 +4769,12 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        AudioDecodeStreamState, AudioDecodeStreamingMode, StructuredAudioCodecGraph, StructuredAudioConv1dLayer,
-        StructuredAudioConvNeXtLayer, StructuredAudioConvTranspose1dLayer, StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph,
-        StructuredAudioNormLayer, StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, MatrixF32, NanoCodecFsqRuntime,
-        NanoCodecFsqRuntimeConfig, RuntimePacking, Tensor3Json, convert_lalamo_transpose_weight_oih_to_iog,
-        pack_pcm_to_padded, parse_legacy_runtime_config_json, read_array_to_f32_vec, resolve_fishaudio_vocoder_data_type,
-        unpack_padded_to_pcm, write_f32_slice_to_array,
+        AudioDecodeStreamState, AudioDecodeStreamingMode, MatrixF32, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
+        RuntimePacking, StructuredAudioCodecGraph, StructuredAudioConv1dLayer, StructuredAudioConvNeXtLayer,
+        StructuredAudioConvTranspose1dLayer, StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph,
+        StructuredAudioNormLayer, StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, Tensor3Json,
+        convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded, parse_legacy_runtime_config_json,
+        read_array_to_f32_vec, resolve_fishaudio_vocoder_data_type, unpack_padded_to_pcm, write_f32_slice_to_array,
     };
     use crate::{
         DataType,
@@ -4994,7 +4994,12 @@ mod tests {
                 apply_post_module_cpu_layer_for_test(graph, post_module, layer, &mut x, active_len)?;
             }
 
-            StructuredAudioCodecGraph::apply_norm_sequence(&mut x, active_len, graph.input_dim, &post_module.output_norm)?;
+            StructuredAudioCodecGraph::apply_norm_sequence(
+                &mut x,
+                active_len,
+                graph.input_dim,
+                &post_module.output_norm,
+            )?;
             sequence.copy_from_slice(&x);
         }
 
@@ -5009,9 +5014,19 @@ mod tests {
         active_len: usize,
     ) -> AudioResult<()> {
         let mut normed = x.to_vec();
-        StructuredAudioCodecGraph::apply_norm_sequence(&mut normed, active_len, graph.input_dim, &layer.pre_mixer_norm)?;
-        let qkv =
-            StructuredAudioCodecGraph::linear_sequence(&normed, active_len, graph.input_dim, &layer.qkv_projection, None)?;
+        StructuredAudioCodecGraph::apply_norm_sequence(
+            &mut normed,
+            active_len,
+            graph.input_dim,
+            &layer.pre_mixer_norm,
+        )?;
+        let qkv = StructuredAudioCodecGraph::linear_sequence(
+            &normed,
+            active_len,
+            graph.input_dim,
+            &layer.qkv_projection,
+            None,
+        )?;
         let attention_dim = layer
             .num_heads
             .checked_mul(layer.head_dim)
@@ -5114,8 +5129,13 @@ mod tests {
 
         let mut mlp_in = x.to_vec();
         StructuredAudioCodecGraph::apply_norm_sequence(&mut mlp_in, active_len, graph.input_dim, &layer.pre_mlp_norm)?;
-        let up =
-            StructuredAudioCodecGraph::linear_sequence(&mlp_in, active_len, graph.input_dim, &layer.up_projection, None)?;
+        let up = StructuredAudioCodecGraph::linear_sequence(
+            &mlp_in,
+            active_len,
+            graph.input_dim,
+            &layer.up_projection,
+            None,
+        )?;
         let mut hidden = vec![0.0_f32; active_len * post_module.hidden_dim];
         for token in 0..active_len {
             let up_row = &up[token * post_module.hidden_dim * 2..(token + 1) * post_module.hidden_dim * 2];
@@ -5289,7 +5309,10 @@ mod tests {
         });
 
         let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse");
-        let crate::config::TtsAudioDecoderConfig::NanoCodecConfig { config } = parsed.audio_decoder_config else {
+        let crate::config::TtsAudioDecoderConfig::NanoCodecConfig {
+            config,
+        } = parsed.audio_decoder_config
+        else {
             panic!("expected NanoCodecConfig");
         };
         assert_eq!(config.samplerate, 22050);
@@ -5407,7 +5430,10 @@ mod tests {
         });
 
         let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
-        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig { config } = &parsed.audio_decoder_config else {
+        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+            config,
+        } = &parsed.audio_decoder_config
+        else {
             panic!("expected DescriptAudioCodecConfig");
         };
         let dtype = resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config).expect("resolve dtype");
@@ -5464,11 +5490,14 @@ mod tests {
         });
 
         let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
-        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig { config } = &parsed.audio_decoder_config else {
+        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+            config,
+        } = &parsed.audio_decoder_config
+        else {
             panic!("expected DescriptAudioCodecConfig");
         };
-        let error =
-            resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config).expect_err("must reject conflicting precision");
+        let error = resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config)
+            .expect_err("must reject conflicting precision");
         match error {
             AudioError::Runtime(message) => assert!(message.contains("conflicting FishAudio precision")),
             other => panic!("unexpected error type: {other:?}"),
@@ -5476,7 +5505,7 @@ mod tests {
     }
 
     #[test]
-    fn fishaudio_vocoder_dtype_requires_export_precision() {
+    fn fishaudio_vocoder_config_requires_precision_field() {
         let tts_config = serde_json::json!({
             "text_decoder_config": {
                 "type": "StubTextDecoderConfig",
@@ -5522,16 +5551,8 @@ mod tests {
             "vocoder_config": {}
         });
 
-        let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
-        let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig { config } = &parsed.audio_decoder_config else {
-            panic!("expected DescriptAudioCodecConfig");
-        };
-        let error =
-            resolve_fishaudio_vocoder_data_type(parsed.activation_precision, config).expect_err("must require export precision");
-        match error {
-            AudioError::Runtime(message) => assert!(message.contains("missing FishAudio precision")),
-            other => panic!("unexpected error type: {other:?}"),
-        }
+        let error = serde_json::from_value::<TtsConfig>(tts_config).expect_err("precision should be required");
+        assert!(error.to_string().contains("missing field `precision`"));
     }
 
     #[test]

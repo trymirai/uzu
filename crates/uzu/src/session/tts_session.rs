@@ -39,7 +39,7 @@ use crate::{
         },
         metal::Metal,
     },
-    config::{InnerModelConfig, ModelMetadata},
+    config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
     encodable_block::{Decoder, EncodableBlock, EncodingParameters, Sampling as GpuSampling},
     forward_pass::{
         cache_layers::CacheLayers,
@@ -53,15 +53,13 @@ use crate::{
             TextDecoderFollowupStrategy, TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig,
             TtsSessionOptions, TtsVocoderStreamingMode,
         },
-        parameter::{SamplingMethod, SamplingProcessingOrder},
+        parameter::{ConfigResolvableValue, SamplingMethod, SamplingProcessingOrder},
         types::{Error, Input},
     },
 };
 
 use backend_factory::load_tts_runtime;
 
-const DEFAULT_STUB_SPEAKER_ID: &str = "speaker:0";
-const DEFAULT_STUB_STYLE: &str = "interleave";
 const DEFAULT_STUB_SEED: u64 = 123;
 const DEFAULT_TTS_RANDOM_SEED: u64 = 123;
 const DEFAULT_CHUNK_EMA_ALPHA: f64 = 0.2;
@@ -108,8 +106,7 @@ pub struct TtsSession {
     tokenizer: Tokenizer,
     audio: AudioGenerationContext,
     audio_decoder: Box<dyn AudioDecoderBackend>,
-    prompt_template: String,
-    drop_initial_newline: bool,
+    message_processor_config: TtsMessageProcessorConfig,
     text_decoder: RefCell<Box<dyn SemanticDecoderBackend>>,
     last_execution_stats: RefCell<Option<TtsExecutionStats>>,
 }
@@ -1310,8 +1307,7 @@ impl TtsSession {
             tokenizer,
             audio: loaded_runtime.audio,
             audio_decoder: loaded_runtime.audio_decoder,
-            prompt_template: loaded_runtime.prompt_template,
-            drop_initial_newline: loaded_runtime.drop_initial_newline,
+            message_processor_config: loaded_runtime.message_processor_config,
             text_decoder: RefCell::new(loaded_runtime.text_decoder),
             last_execution_stats: RefCell::new(None),
         })
@@ -1324,19 +1320,13 @@ impl TtsSession {
         let messages = input
             .get_messages()
             .into_iter()
-            .map(|message| {
-                HashMap::from([
-                    (String::from("content"), message.content),
-                    (String::from("speaker_id"), String::from(DEFAULT_STUB_SPEAKER_ID)),
-                    (String::from("style"), String::from(DEFAULT_STUB_STYLE)),
-                ])
-            })
+            .map(|message| message.resolve(&self.message_processor_config))
             .collect::<Vec<_>>();
 
         let template_name = "tts_prompt_template";
         let mut environment = Environment::new();
         environment
-            .add_template(template_name, self.prompt_template.as_str())
+            .add_template(template_name, self.message_processor_config.prompt_template.as_str())
             .map_err(|_| Error::UnableToLoadPromptTemplate)?;
         let template = environment.get_template(template_name).map_err(|_| Error::UnableToLoadPromptTemplate)?;
 
@@ -1346,7 +1336,11 @@ impl TtsSession {
             ))
             .map_err(|_| Error::UnableToRenderPromptTemplate)?;
 
-        Ok(normalize_rendered_prompt(result, self.prompt_template.as_str(), self.drop_initial_newline))
+        Ok(normalize_rendered_prompt(
+            result,
+            self.message_processor_config.prompt_template.as_str(),
+            self.message_processor_config.drop_initial_newline,
+        ))
     }
 
     fn generate_semantic_tokens(
@@ -2567,14 +2561,15 @@ fn generate_stub_semantic_grid(
 mod tests {
     use super::{
         AdaptiveChunkController, DEFAULT_CHUNK_EMA_ALPHA, DEFAULT_CHUNK_HYSTERESIS_FRACTION, DEFAULT_STUB_SEED,
-        DEFAULT_TTS_RANDOM_SEED, MatrixF32, StreamingTokenAccumulator, TextSamplingState,
-        TextDecoderFollowupStrategy, build_semantic_sampling_mask_row, clear_token_in_sampling_mask,
-        expand_token_mask_for_sampling_row, generate_stub_tokens, load_stub_seed, normalize_rendered_prompt,
-        semantic_token_to_code,
+        DEFAULT_TTS_RANDOM_SEED, MatrixF32, StreamingTokenAccumulator, TextDecoderFollowupStrategy, TextSamplingState,
+        build_semantic_sampling_mask_row, clear_token_in_sampling_mask, expand_token_mask_for_sampling_row,
+        generate_stub_tokens, load_stub_seed, normalize_rendered_prompt, semantic_token_to_code,
     };
     use crate::audio::AudioTokenPacking;
+    use crate::config::{TtsMessageProcessorConfig, TtsModelConfig};
     use crate::session::config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig};
-    use crate::session::parameter::SamplingMethod;
+    use crate::session::parameter::{ConfigResolvableValue, SamplingMethod};
+    use crate::session::types::Message;
 
     #[test]
     fn missing_seed_file_uses_default_path() {
@@ -2624,6 +2619,76 @@ mod tests {
         let rendered = "\n<|interleave|><|speaker:0|>hello\n".to_string();
         let normalized = normalize_rendered_prompt(rendered, template, true);
         assert_eq!(normalized, "<|interleave|><|speaker:0|>hello");
+    }
+
+    #[test]
+    fn prompt_message_context_uses_config_defaults_and_preserves_role() {
+        let message_processor_config = TtsMessageProcessorConfig {
+            prompt_template: String::from("{{messages[0].content}}"),
+            drop_initial_newline: true,
+            system_role_name: String::from("system"),
+            user_role_name: String::from("user"),
+            assistant_role_name: String::from("assistant"),
+            default_message_fields: std::collections::BTreeMap::from([
+                (String::from("speaker_id"), String::from("speaker:42")),
+                (String::from("style"), String::from("relaxed")),
+            ]),
+        };
+        let rendered =
+            Message::assistant("hello".to_string(), Some("thinking".to_string())).resolve(&message_processor_config);
+
+        assert_eq!(rendered.get("content"), Some(&String::from("hello")));
+        assert_eq!(rendered.get("role"), Some(&String::from("assistant")));
+        assert_eq!(rendered.get("speaker_id"), Some(&String::from("speaker:42")));
+        assert_eq!(rendered.get("style"), Some(&String::from("relaxed")));
+        assert_eq!(rendered.get("reasoning_content"), Some(&String::from("thinking")));
+    }
+
+    #[test]
+    fn stub_text_decoder_backend_rejects_cardinality_mismatch() {
+        let model_config: TtsModelConfig = serde_json::from_value(serde_json::json!({
+            "tts_config": {
+                "text_decoder_config": {
+                    "type": "StubTextDecoderConfig",
+                    "num_codebooks": 2,
+                    "codebook_size": 49
+                },
+                "audio_decoder_config": {
+                    "type": "NanoCodecConfig",
+                    "samplerate": 24000,
+                    "quantizer_config": {
+                        "num_groups": 2,
+                        "quantizer_config": {
+                            "num_levels": [8, 6]
+                        }
+                    },
+                    "decoder_config": {
+                        "activation_config": {
+                            "leaky_relu_negative_slope": 0.01
+                        }
+                    },
+                    "base_channels": 32,
+                    "up_sample_rates": [2, 2],
+                    "resblock_kernel_sizes": [3],
+                    "resblock_dilations": [1]
+                },
+                "vocoder_config": {}
+            },
+            "message_processor_config": {
+                "prompt_template": "{{messages[0].content}}"
+            }
+        }))
+        .expect("tts model config");
+
+        let audio = model_config.create_audio_generation_context().expect("audio context");
+        let result = super::backend_factory::build_text_decoder_backend(
+            &model_config,
+            &audio,
+            std::path::Path::new("."),
+            &crate::session::config::TtsSessionOptions::default(),
+        );
+
+        assert!(result.is_err(), "stub backend should reject codebook cardinality mismatches");
     }
 
     #[test]

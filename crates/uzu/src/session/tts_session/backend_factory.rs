@@ -1,12 +1,11 @@
 use super::*;
-use crate::config::{ModelType, TtsModelConfig, TtsTextDecoderConfig};
+use crate::config::{ModelType, TtsMessageProcessorConfig, TtsModelConfig, TtsTextDecoderConfig};
 
 pub(super) struct LoadedTtsRuntime {
     pub(super) audio: AudioGenerationContext,
     pub(super) audio_decoder: Box<dyn AudioDecoderBackend>,
     pub(super) text_decoder: Box<dyn SemanticDecoderBackend>,
-    pub(super) prompt_template: String,
-    pub(super) drop_initial_newline: bool,
+    pub(super) message_processor_config: TtsMessageProcessorConfig,
 }
 
 pub(super) fn build_audio_decoder_backend(
@@ -34,8 +33,7 @@ pub(super) fn load_tts_runtime(
         audio,
         audio_decoder,
         text_decoder,
-        prompt_template: tts_model_config.message_processor_config.prompt_template.clone(),
-        drop_initial_newline: tts_model_config.message_processor_config.drop_initial_newline,
+        message_processor_config: tts_model_config.message_processor_config.clone(),
     })
 }
 
@@ -54,6 +52,9 @@ pub(super) fn build_text_decoder_backend(
                 return Err(Error::UnableToLoadConfig);
             }
             if *num_codebooks != audio.num_codebooks() {
+                return Err(Error::UnableToLoadConfig);
+            }
+            if *codebook_size != audio.codec_cardinality() {
                 return Err(Error::UnableToLoadConfig);
             }
             let default_seed = load_stub_seed(model_path.join("model.safetensors")).unwrap_or(DEFAULT_STUB_SEED);

@@ -58,6 +58,14 @@ fn metadata_with_tts_model_type_parses() {
         "{% for message in messages %}{{message.content}}{% endfor %}"
     );
     assert!(tts_config.message_processor_config.drop_initial_newline);
+    assert_eq!(
+        tts_config.message_processor_config.default_message_fields.get("speaker_id").map(String::as_str),
+        Some("speaker:0")
+    );
+    assert_eq!(
+        tts_config.message_processor_config.default_message_fields.get("style").map(String::as_str),
+        Some("interleave")
+    );
 }
 
 #[test]
@@ -106,6 +114,14 @@ fn tts_model_config_helpers_work() {
     let tts = model_config.as_tts().expect("tts variant");
     assert_eq!(tts.message_processor_config.prompt_template, "{{messages[0].content}}");
     assert!(tts.message_processor_config.drop_initial_newline);
+    assert_eq!(
+        tts.message_processor_config.default_message_fields.get("speaker_id").map(String::as_str),
+        Some("speaker:0")
+    );
+    assert_eq!(
+        tts.message_processor_config.default_message_fields.get("style").map(String::as_str),
+        Some("interleave")
+    );
 }
 
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]

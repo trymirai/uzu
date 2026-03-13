@@ -9,10 +9,37 @@ pub struct TtsMessageProcessorConfig {
     pub prompt_template: String,
     #[serde(default = "default_drop_initial_newline")]
     pub drop_initial_newline: bool,
+    #[serde(default = "default_system_role_name")]
+    pub system_role_name: String,
+    #[serde(default = "default_user_role_name")]
+    pub user_role_name: String,
+    #[serde(default = "default_assistant_role_name")]
+    pub assistant_role_name: String,
+    #[serde(default = "default_tts_message_fields")]
+    pub default_message_fields: BTreeMap<String, String>,
 }
 
 fn default_drop_initial_newline() -> bool {
     true
+}
+
+fn default_system_role_name() -> String {
+    String::from("system")
+}
+
+fn default_user_role_name() -> String {
+    String::from("user")
+}
+
+fn default_assistant_role_name() -> String {
+    String::from("assistant")
+}
+
+fn default_tts_message_fields() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (String::from("speaker_id"), String::from("speaker:0")),
+        (String::from("style"), String::from("interleave")),
+    ])
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Default)]
