@@ -1,5 +1,7 @@
 use super::*;
 use crate::config::TtsMessageProcessorConfig;
+use regex::Regex;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 pub(super) struct FishAudioTextDecoderRuntime {
     slow_runner: TokenDecoderRunner,
@@ -128,13 +130,23 @@ fn validate_fishaudio_decoder_contract(
     Ok(semantic_cardinality)
 }
 
-pub(super) fn resolve_fishaudio_message_processor_config(
-    base_config: &TtsMessageProcessorConfig
-) -> TtsMessageProcessorConfig {
-    let mut config = base_config.clone();
-    config.default_message_fields.entry(String::from("speaker_id")).or_insert_with(|| String::from("speaker:0"));
-    config.default_message_fields.entry(String::from("style")).or_insert_with(|| String::from("interleave"));
-    config
+static MESSAGE_FIELD_REF_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"message\.([A-Za-z_][A-Za-z0-9_]*)").expect("message field regex"));
+
+pub(super) fn validate_fishaudio_message_processor_config(config: &TtsMessageProcessorConfig) -> Result<(), Error> {
+    let builtin_fields = ["role", "content", "reasoning_content"].into_iter().collect::<BTreeSet<_>>();
+    let referenced_fields = MESSAGE_FIELD_REF_REGEX
+        .captures_iter(config.prompt_template.as_str())
+        .filter_map(|capture| capture.get(1).map(|field| field.as_str().to_owned()))
+        .collect::<BTreeSet<_>>();
+
+    for field in referenced_fields {
+        if !builtin_fields.contains(field.as_str()) && !config.default_message_fields.contains_key(field.as_str()) {
+            return Err(Error::UnableToLoadConfig);
+        }
+    }
+
+    Ok(())
 }
 
 pub(super) fn build_fishaudio_text_decoder_runtime(
@@ -784,7 +796,7 @@ impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_fishaudio_message_processor_config, validate_fishaudio_decoder_contract};
+    use super::{validate_fishaudio_decoder_contract, validate_fishaudio_message_processor_config};
     use crate::{config::TtsMessageProcessorConfig, session::types::Error};
 
     #[test]
@@ -814,8 +826,8 @@ mod tests {
     }
 
     #[test]
-    fn fishaudio_message_processor_defaults_are_injected_when_missing() {
-        let resolved = resolve_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
+    fn fishaudio_message_processor_rejects_missing_required_default_fields() {
+        let result = validate_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
             prompt_template: String::from(
                 "{% for message in messages %}<|{{message.style}}|><|{{message.speaker_id}}|>{{message.content}}{% endfor %}",
             ),
@@ -825,14 +837,15 @@ mod tests {
             assistant_role_name: String::from("assistant"),
             default_message_fields: Default::default(),
         });
-        assert_eq!(resolved.default_message_fields.get("speaker_id"), Some(&String::from("speaker:0")));
-        assert_eq!(resolved.default_message_fields.get("style"), Some(&String::from("interleave")));
+        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
     }
 
     #[test]
-    fn fishaudio_message_processor_defaults_preserve_explicit_values() {
-        let resolved = resolve_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
-            prompt_template: String::from("{{messages[0].content}}"),
+    fn fishaudio_message_processor_accepts_explicit_default_fields() {
+        let result = validate_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
+            prompt_template: String::from(
+                "{% for message in messages %}<|{{message.style}}|><|{{message.speaker_id}}|>{{message.content}}{% endfor %}",
+            ),
             drop_initial_newline: true,
             system_role_name: String::from("system"),
             user_role_name: String::from("user"),
@@ -844,7 +857,21 @@ mod tests {
             .into_iter()
             .collect(),
         });
-        assert_eq!(resolved.default_message_fields.get("speaker_id"), Some(&String::from("speaker:42")));
-        assert_eq!(resolved.default_message_fields.get("style"), Some(&String::from("relaxed")));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fishaudio_message_processor_accepts_builtin_message_fields_without_defaults() {
+        let result = validate_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
+            prompt_template: String::from(
+                "{% for message in messages %}{{message.role}}: {{message.content}}{% endfor %}",
+            ),
+            drop_initial_newline: true,
+            system_role_name: String::from("system"),
+            user_role_name: String::from("user"),
+            assistant_role_name: String::from("assistant"),
+            default_message_fields: Default::default(),
+        });
+        assert!(result.is_ok());
     }
 }

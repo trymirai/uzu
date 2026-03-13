@@ -63,6 +63,7 @@ impl TtsSession {
                 self.audio_decoder.decode(&semantic_tokens)?
             },
             crate::session::config::TtsNonStreamingMode::ChunkedIfNeeded => {
+                config.validate_stream_decode().map_err(|_| Error::GenerateFailed)?;
                 let total_frames = semantic_tokens.frames();
                 let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
                 if total_frames < chunked_threshold {
@@ -220,12 +221,12 @@ impl TtsSession {
     where
         F: FnMut(&AudioPcmBatch),
     {
-        config.validate().map_err(|_| Error::GenerateFailed)?;
         if !config.streaming_enabled {
             let pcm = self.synthesize_with_seed_and_config(input, seed, config)?;
             on_chunk(&pcm);
             return Ok(pcm);
         }
+        config.validate_stream_decode().map_err(|_| Error::GenerateFailed)?;
 
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self

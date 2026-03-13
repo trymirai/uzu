@@ -44,6 +44,17 @@ impl TtsRunConfig {
         if self.max_stream_workspace_frames == 0 {
             return Err("max_stream_workspace_frames must be greater than zero");
         }
+        if self.target_emit_latency_ms == 0 {
+            return Err("target_emit_latency_ms must be greater than zero");
+        }
+        if self.max_semantic_frames == 0 {
+            return Err("max_semantic_frames must be greater than zero");
+        }
+        Ok(())
+    }
+
+    pub fn validate_stream_decode(&self) -> Result<(), &'static str> {
+        self.validate()?;
         if self.max_stream_workspace_frames < self.max_chunk_frames {
             return Err("max_stream_workspace_frames must be greater than or equal to max_chunk_frames");
         }
@@ -53,12 +64,6 @@ impl TtsRunConfig {
             return Err(
                 "max_stream_workspace_frames must be greater than or equal to max_semantic_frames in PrefixFallback mode",
             );
-        }
-        if self.target_emit_latency_ms == 0 {
-            return Err("target_emit_latency_ms must be greater than zero");
-        }
-        if self.max_semantic_frames == 0 {
-            return Err("max_semantic_frames must be greater than zero");
         }
         Ok(())
     }
@@ -190,7 +195,7 @@ mod tests {
             max_stream_workspace_frames: 128,
             ..TtsRunConfig::default()
         };
-        assert!(invalid.validate().is_err());
+        assert!(invalid.validate_stream_decode().is_err());
     }
 
     #[test]
@@ -201,7 +206,20 @@ mod tests {
             max_semantic_frames: 512,
             ..TtsRunConfig::default()
         };
-        assert!(invalid.validate().is_err());
+        assert!(invalid.validate_stream_decode().is_err());
+    }
+
+    #[test]
+    fn full_decode_prefix_fallback_does_not_require_full_stream_workspace() {
+        let config = TtsRunConfig {
+            streaming_enabled: false,
+            non_streaming_mode: TtsNonStreamingMode::FullDecode,
+            vocoder_streaming_mode: TtsVocoderStreamingMode::PrefixFallback,
+            max_stream_workspace_frames: 256,
+            max_semantic_frames: 512,
+            ..TtsRunConfig::default()
+        };
+        assert!(config.validate().is_ok());
     }
 
     #[test]

@@ -28,12 +28,7 @@ pub(super) fn load_tts_runtime(
         .create_audio_generation_context_with_model_path_and_options(model_path, options.audio_runtime)?;
     let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, model_path, options)?;
     let audio_decoder = build_audio_decoder_backend(&audio)?;
-    let message_processor_config = match &tts_model_config.tts_config.text_decoder_config {
-        TtsTextDecoderConfig::FishAudioTextDecoderConfig {
-            ..
-        } => fishaudio::resolve_fishaudio_message_processor_config(&tts_model_config.message_processor_config),
-        _ => tts_model_config.message_processor_config.clone(),
-    };
+    let message_processor_config = tts_model_config.message_processor_config.clone();
 
     Ok(LoadedTtsRuntime {
         audio,
@@ -94,7 +89,10 @@ pub(super) fn build_text_decoder_backend(
         },
         TtsTextDecoderConfig::FishAudioTextDecoderConfig {
             config,
-        } => fishaudio::build_fishaudio_text_decoder_runtime(config, audio, model_path, &options.text_decoder),
+        } => {
+            fishaudio::validate_fishaudio_message_processor_config(&tts_model_config.message_processor_config)?;
+            fishaudio::build_fishaudio_text_decoder_runtime(config, audio, model_path, &options.text_decoder)
+        },
     }
 }
 
