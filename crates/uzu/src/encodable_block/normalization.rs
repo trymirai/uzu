@@ -5,7 +5,7 @@ use thiserror::Error;
 use super::{LayerNorm, LayerNormError, RMSNorm, RMSNormError};
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
     config::NormalizationConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -60,11 +60,11 @@ impl<B: Backend> Normalization<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         match self {
-            Self::LayerNorm(layer_norm) => layer_norm.encode(state, command_buffer),
-            Self::RMSNorm(rms_norm) => rms_norm.encode(state, command_buffer),
+            Self::LayerNorm(layer_norm) => layer_norm.encode(state, encoder),
+            Self::RMSNorm(rms_norm) => rms_norm.encode(state, encoder),
         }
     }
 }

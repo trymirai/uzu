@@ -10,7 +10,7 @@ use super::Linear;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
@@ -249,7 +249,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
@@ -260,7 +260,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
 
         self.kernel
             .encode(
-                command_buffer,
+                encoder,
                 QuantizedMatmulArguments {
                     a_buffer: input_array.buffer().borrow().deref(),
                     a_offset: 0,
@@ -284,7 +284,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
                 output_buf_borrow.deref_mut(),
                 self.output_dim as u32,
                 total_length as u32,
-                command_buffer,
+                encoder,
             );
         }
         Ok(())

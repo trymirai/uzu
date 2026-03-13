@@ -7,10 +7,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        Kernels, kernel::FullPrecisionEmbeddingLookupKernel,
-    },
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -62,7 +59,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let weights_array = context.create_array_from(&[input.vocab_size, input.model_dim], &input.weights, "");
     let output_array = context.create_array_uninitialized(&[input.batch_size, input.model_dim], T::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to get command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
     kernel.encode(
         token_ids_array.buffer().borrow().deref(),
         weights_array.buffer().borrow().deref(),
@@ -71,9 +68,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.vocab_size as u32,
         input.model_dim as u32,
         input.input_scale,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

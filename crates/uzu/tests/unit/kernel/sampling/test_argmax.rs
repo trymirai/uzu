@@ -7,8 +7,7 @@ use rand_distr::Normal;
 use uzu::{
     ArrayElement,
     backends::common::{
-        Backend, Buffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-        Context, Kernels,
+        Backend, Buffer, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
@@ -55,29 +54,23 @@ fn do_argmax_backend<B: Backend, T: ArrayElement + Float>(
     let twopass_kernel_main = <B::Kernels as Kernels>::ArgmaxMainKernel::new(context, T::data_type()).unwrap();
     let twopass_kernel_final = <B::Kernels as Kernels>::ArgmaxFinalKernel::new(context).unwrap();
 
-    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
-    single_kernel.encode(
-        &logits_buffer,
-        &mut single_output_buffer,
-        batch_size as u32,
-        vocab_size as u32,
-        &mut command_buffer,
-    );
+    let mut encoder = Encoder::new(context).unwrap();
+    single_kernel.encode(&logits_buffer, &mut single_output_buffer, batch_size as u32, vocab_size as u32, &mut encoder);
     twopass_kernel_main.encode(
         &logits_buffer,
         &mut twopass_partial_results_buffer,
         batch_size as u32,
         vocab_size as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
     twopass_kernel_final.encode(
         &twopass_partial_results_buffer,
         &mut twopass_output_buffer,
         batch_size as u32,
         vocab_size as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let single_output = unsafe {
         std::slice::from_raw_parts(single_output_buffer.cpu_ptr().as_ptr() as *const u32, batch_size)

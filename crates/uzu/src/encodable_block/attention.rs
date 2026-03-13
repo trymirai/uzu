@@ -8,7 +8,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
             SigmoidGateKernel,
@@ -147,7 +147,7 @@ impl<B: Backend> Attention<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -258,7 +258,7 @@ impl<B: Backend> Attention<B> {
                 suffix_length as u32,
                 0u32,
                 max_sequence_length as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -318,7 +318,7 @@ impl<B: Backend> Attention<B> {
                 suffix_length as u32,
                 segment_prefix_length as u32,
                 max_sequence_length as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -371,9 +371,7 @@ impl<B: Backend> Attention<B> {
                     is_causal: self.is_causal,
                     scale,
                 };
-                self.gemm_block
-                    .encode(state.context(), command_buffer, args)
-                    .expect("Failed to encode AttentionGemmBlock");
+                self.gemm_block.encode(state.context(), encoder, args).expect("Failed to encode AttentionGemmBlock");
             },
             KernelVariant::SinglePass => {
                 let kernel = match self.single_pass_kernels.get(&kernel_key) {
@@ -399,7 +397,7 @@ impl<B: Backend> Attention<B> {
                     sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
-                    command_buffer,
+                    encoder,
                 )
             },
             KernelVariant::TwoPass => {
@@ -432,7 +430,7 @@ impl<B: Backend> Attention<B> {
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
                     sinks_buffer,
-                    command_buffer,
+                    encoder,
                 );
                 kernel_pass2.encode(
                     partials_buf_borrow.deref(),
@@ -441,7 +439,7 @@ impl<B: Backend> Attention<B> {
                     attention_output_buf_borrow.deref_mut(),
                     num_heads as u32,
                     suffix_length as u32,
-                    command_buffer,
+                    encoder,
                 );
             },
         }
@@ -455,7 +453,7 @@ impl<B: Backend> Attention<B> {
                 gate_buf_borrow.deref(),
                 attention_output_buf_borrow.deref_mut(),
                 total_elements,
-                command_buffer,
+                encoder,
             );
         }
 

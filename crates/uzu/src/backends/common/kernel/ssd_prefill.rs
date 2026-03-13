@@ -1,7 +1,7 @@
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{SSDPrefill64Kernel, SSDPrefillKernel, SSDPrefillSequentialKernel},
     },
 };
@@ -55,7 +55,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
 
     pub fn encode(
         &self,
-        compute_encoder: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: SSDPrefillArguments<B>,
         mode: SSDPrefillMode,
     ) {
@@ -84,7 +84,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                     state_strides.as_slice(),
                     args.channels as u32,
                     args.head_dim as u32,
-                    compute_encoder,
+                    encoder,
                 )
             } else {
                 self.single.encode(
@@ -105,7 +105,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                     state_strides.as_slice(),
                     args.channels as u32,
                     args.head_dim as u32,
-                    compute_encoder,
+                    encoder,
                 )
             }
         } else if mode == SSDPrefillMode::Sequential {
@@ -127,7 +127,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                 state_strides.as_slice(),
                 args.channels as u32,
                 args.head_dim as u32,
-                compute_encoder,
+                encoder,
             )
         }
     }

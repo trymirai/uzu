@@ -7,7 +7,7 @@ use super::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
     },
 };
@@ -47,7 +47,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         mut args: MoeExpertsTwoPassArguments<B>,
     ) {
         if args.total_rows == 0 {
@@ -58,7 +58,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         const BLOCK_M: u32 = 4;
         let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
         self.pass_a_tile.encode_counts(
-            command_buffer,
+            encoder,
             MoePassATileCountsArguments {
                 expert_offsets: args.expert_offsets,
                 tile_counts: args.tile_counts.deref_mut(),
@@ -67,7 +67,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             },
         );
         self.pass_a_tile.encode_scan(
-            command_buffer,
+            encoder,
             MoePassATileScanArguments {
                 tile_counts: args.tile_counts,
                 tile_offsets: args.tile_offsets.deref_mut(),
@@ -76,7 +76,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             },
         );
         self.pass_a_tile.encode_row_map(
-            command_buffer,
+            encoder,
             MoePassARowMapArguments {
                 expert_offsets: args.expert_offsets,
                 row_expert_map: args.row_expert_map.deref_mut(),
@@ -85,7 +85,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             },
         );
         self.pass_a_tile.encode_build_map(
-            command_buffer,
+            encoder,
             MoePassATileBuildArguments {
                 expert_offsets: args.expert_offsets,
                 tile_offsets: args.tile_offsets,
@@ -96,7 +96,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             },
         );
         self.pass_a_tile.encode_dispatch_args(
-            command_buffer,
+            encoder,
             MoePassATileDispatchArguments {
                 total_tiles: args.total_tiles,
                 dispatch_args: args.dispatch_args.deref_mut(),
@@ -125,7 +125,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             args.silu_alpha,
             args.tile_map.deref(),
             args.dispatch_args.deref(),
-            command_buffer,
+            encoder,
         );
 
         // pass b
@@ -140,7 +140,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
-            command_buffer,
+            encoder,
         );
     }
 }

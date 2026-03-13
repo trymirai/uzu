@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::GumbelKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::GumbelKernel},
         cpu::Cpu,
     },
     gumbel_float, revidx,
@@ -71,17 +68,17 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         false => context.create_array_uninitialized(&[len], T::data_type(), ""),
     };
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         logits_buffer,
         seeds_array.buffer().borrow().deref(),
         output_array.buffer().borrow_mut().deref_mut(),
         input.batch_size,
         input.vocab_size,
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

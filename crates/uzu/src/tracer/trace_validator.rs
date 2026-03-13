@@ -18,10 +18,7 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        kernel::kv_cache_update::KVCacheUpdate,
-    },
+    backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{EncodingParameters, Sampling},
@@ -273,13 +270,13 @@ impl<B: Backend> TraceValidator<B> {
             None,
         );
 
-        let mut command_buffer =
-            ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder =
+            Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
         ctx.executables
-            .encode(&mut state, &EncodingParameters::new(), &mut command_buffer)
+            .encode(&mut state, &EncodingParameters::new(), &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        let pending = command_buffer.end_encoding().submit();
+        let pending = encoder.end_encoding().submit();
         pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let traces = state.traces().clone();

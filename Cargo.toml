@@ -50,6 +50,7 @@ walkdir = "2.5"
 depfile = "0.1"
 tempfile = "3.24"
 clang-ast = "0.1"
+rangemap = "1.7.1"
 futures = "0.3"
 tokio = { version = "1.49", features = ["full"] }
 blake3 = "1.8"

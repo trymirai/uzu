@@ -11,13 +11,14 @@ use crate::{
     DataType,
     backends::{
         common::{
+            Encoder,
             gpu_types::GemmParams,
             kernel::{
                 TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
             },
         },
-        metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext},
+        metal::{Metal, context::MetalContext},
     },
 };
 
@@ -109,7 +110,7 @@ impl MatmulMetalKernel {
     fn encode_gemv(
         &mut self,
         context: &MetalContext,
-        command_buffer: &mut MetalCommandBufferEncoding,
+        encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let m = arguments.batch;
@@ -182,7 +183,7 @@ impl MatmulMetalKernel {
             bias_stride,
             arguments.batch,
             specialization.output_rows_per_threadgroup() as i32,
-            command_buffer,
+            encoder,
         );
 
         let bias_is_fused = apply_output_scale_and_accumulate && has_bias;
@@ -193,7 +194,7 @@ impl MatmulMetalKernel {
                 arguments.d,
                 arguments.batch as usize,
                 arguments.output_dim as usize,
-                command_buffer,
+                encoder,
             )?;
         }
 
@@ -203,7 +204,7 @@ impl MatmulMetalKernel {
     fn encode_gemm(
         &mut self,
         context: &MetalContext,
-        command_buffer: &mut MetalCommandBufferEncoding,
+        encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let m = arguments.batch;
@@ -247,7 +248,7 @@ impl MatmulMetalKernel {
             std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
-            command_buffer,
+            encoder,
         );
 
         self.encode_bias_add(
@@ -256,7 +257,7 @@ impl MatmulMetalKernel {
             arguments.d,
             arguments.batch as usize,
             arguments.output_dim as usize,
-            command_buffer,
+            encoder,
         )?;
 
         Ok(())
@@ -269,7 +270,7 @@ impl MatmulMetalKernel {
         output: &mut <Metal as crate::backends::common::Backend>::Buffer,
         batch: usize,
         output_dim: usize,
-        command_buffer: &mut MetalCommandBufferEncoding,
+        encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let Some(bias) = bias else {
             return Ok(());
@@ -289,7 +290,7 @@ impl MatmulMetalKernel {
             output,
             output_dim as u32,
             total_length as u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }
@@ -327,12 +328,12 @@ impl MatmulKernel for MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         arguments: MatmulArguments<Metal>,
-        command_buffer: &mut MetalCommandBufferEncoding,
+        encoder: &mut Encoder<Metal>,
     ) {
         if Self::is_gemv_eligible(&arguments) {
-            self.encode_gemv(context, command_buffer, arguments).expect("Failed to encode GEMV kernel");
+            self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV kernel");
         } else {
-            self.encode_gemm(context, command_buffer, arguments).expect("Failed to encode GEMM kernel");
+            self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM kernel");
         }
     }
 }

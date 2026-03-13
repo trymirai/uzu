@@ -4,7 +4,7 @@ use crate::{
     DataType,
     array::Array,
     backends::common::{
-        Backend, CommandBuffer, Context, Kernels,
+        Backend, Context, Encoder, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::{DecoderLayerType, ShortConvConfig},
@@ -130,19 +130,19 @@ impl<B: Backend> ShortConvMixer<B> {
     fn run_conv(
         &self,
         state: &mut ForwardPassState<B>,
-        compute: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         active_suffix_length: usize,
     ) {
         self.clear_suffix_state_valid_range(state);
 
         if active_suffix_length == 1 {
-            self.run_decode_conv(state, compute, 1);
+            self.run_decode_conv(state, encoder, 1);
             return;
         }
 
         let sampling_len = state.sampling_length();
         if sampling_len == 0 {
-            self.run_prefill_conv(state, compute, active_suffix_length);
+            self.run_prefill_conv(state, encoder, active_suffix_length);
             return;
         }
 
@@ -150,26 +150,26 @@ impl<B: Backend> ShortConvMixer<B> {
         let trie_len = sampling_len;
 
         if trie_len <= 1 {
-            self.run_prefill_conv(state, compute, active_suffix_length);
+            self.run_prefill_conv(state, encoder, active_suffix_length);
             return;
         }
 
         if sampling_start > 0 {
             if sampling_start == 1 {
-                self.run_decode_conv(state, compute, 1);
+                self.run_decode_conv(state, encoder, 1);
             } else {
-                self.run_prefill_conv(state, compute, sampling_start);
+                self.run_prefill_conv(state, encoder, sampling_start);
             }
         }
 
-        self.run_trie_conv(state, compute, sampling_start, trie_len);
+        self.run_trie_conv(state, encoder, sampling_start, trie_len);
         self.set_suffix_state_valid_range(state, sampling_start, trie_len);
     }
 
     fn run_prefill_conv(
         &self,
         state: &mut ForwardPassState<B>,
-        compute: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         if self.model_dim == 0 || suffix_length == 0 {
@@ -204,7 +204,7 @@ impl<B: Backend> ShortConvMixer<B> {
             suffix_length as u32,
             self.model_dim as u32 * 3,
             self.model_dim as u32,
-            compute,
+            encoder,
         );
 
         self.short_conv_prefill.encode(
@@ -219,14 +219,14 @@ impl<B: Backend> ShortConvMixer<B> {
             self.model_dim as u32 * 3,
             state_stride as u32,
             self.model_dim as u32,
-            compute,
+            encoder,
         )
     }
 
     fn run_trie_conv(
         &self,
         state: &mut ForwardPassState<B>,
-        compute: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         sampling_start: usize,
         trie_len: usize,
     ) {
@@ -278,14 +278,14 @@ impl<B: Backend> ShortConvMixer<B> {
             in_proj_stride as u32,
             state_stride as u32,
             self.model_dim as u32,
-            compute,
+            encoder,
         );
     }
 
     fn run_decode_conv(
         &self,
         state: &mut ForwardPassState<B>,
-        compute: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         if self.model_dim == 0 || suffix_length == 0 {
@@ -317,25 +317,25 @@ impl<B: Backend> ShortConvMixer<B> {
             self.model_dim as u32 * 3,
             state_stride as u32,
             self.model_dim as u32,
-            compute,
+            encoder,
         )
     }
 
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
             return Ok(());
         }
 
-        self.in_projection.encode(state, command_buffer)?;
+        self.in_projection.encode(state, encoder)?;
 
-        self.run_conv(state, command_buffer, active_suffix_length);
+        self.run_conv(state, encoder, active_suffix_length);
 
-        self.out_projection.encode(state, command_buffer)?;
+        self.out_projection.encode(state, encoder)?;
 
         Ok(())
     }

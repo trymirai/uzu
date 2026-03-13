@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::sampling::{SamplingError, SamplingKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -31,7 +31,7 @@ impl<B: Backend> Sampling<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 
@@ -77,7 +77,7 @@ impl<B: Backend> Sampling<B> {
             sampling_method,
             batch_size,
             vocab_size,
-            command_buffer,
+            encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
         }
