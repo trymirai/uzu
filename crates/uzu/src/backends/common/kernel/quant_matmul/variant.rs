@@ -2,11 +2,13 @@ use std::fmt;
 
 use crate::{
     DataType,
-    backends::common::{Backend, Kernels, kernel::{
-        QuantizedMatmulGemmKernel, QuantizedMatmulGemmTransposed64x64Kernel,
-        QuantizedMatmulGemmTransposedKernel, QuantizedMatmulGemvFastKernel,
-        QuantizedMatmulGemvKernel, QuantizedMatmulVectorMatrixKernel,
-    }},
+    backends::common::{
+        Backend, Kernels,
+        kernel::{
+            QuantizedMatmulGemmKernel, QuantizedMatmulGemmTransposed64x64Kernel, QuantizedMatmulGemmTransposedKernel,
+            QuantizedMatmulGemvFastKernel, QuantizedMatmulGemvKernel, QuantizedMatmulVectorMatrixKernel,
+        },
+    },
 };
 
 use super::QuantizedMatmulError;
@@ -27,7 +29,10 @@ pub(super) enum KernelKey {
 }
 
 impl fmt::Display for KernelKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match self {
             Self::MatrixVector(MatrixVectorFamily::Gemv) => write!(f, "matrix_vector_gemv"),
             Self::MatrixVector(MatrixVectorFamily::GemvFast) => write!(f, "matrix_vector_gemv_fast"),
@@ -36,13 +41,13 @@ impl fmt::Display for KernelKey {
             Self::MatrixMatrix(MatrixMatrixFamily::GemmUnalignedK) => write!(f, "matrix_matrix_gemm_unaligned_k"),
             Self::MatrixMatrix(MatrixMatrixFamily::GemmTransposedAlignedN) => {
                 write!(f, "matrix_matrix_gemm_transposed_aligned_n")
-            }
+            },
             Self::MatrixMatrix(MatrixMatrixFamily::GemmTransposedUnalignedN) => {
                 write!(f, "matrix_matrix_gemm_transposed_unaligned_n")
-            }
+            },
             Self::MatrixMatrix(MatrixMatrixFamily::GemmTransposed64x64) => {
                 write!(f, "matrix_matrix_gemm_transposed_64x64")
-            }
+            },
         }
     }
 }
@@ -67,19 +72,34 @@ impl MatrixVectorFamily {
         match self {
             Self::Gemv => Ok(EncodableVariant::Gemv(
                 <B::Kernels as Kernels>::QuantizedMatmulGemvKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
             Self::GemvFast => Ok(EncodableVariant::GemvFast(
                 <B::Kernels as Kernels>::QuantizedMatmulGemvFastKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
             Self::VectorMatrix => Ok(EncodableVariant::VectorMatrix(
                 <B::Kernels as Kernels>::QuantizedMatmulVectorMatrixKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
@@ -109,31 +129,60 @@ impl MatrixMatrixFamily {
         match self {
             Self::GemmAlignedK => Ok(EncodableVariant::Gemm(
                 <B::Kernels as Kernels>::QuantizedMatmulGemmKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant, true,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
+                    true,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
             Self::GemmUnalignedK => Ok(EncodableVariant::Gemm(
                 <B::Kernels as Kernels>::QuantizedMatmulGemmKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant, false,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
+                    false,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
             Self::GemmTransposedAlignedN => Ok(EncodableVariant::GemmTransposed(
                 <B::Kernels as Kernels>::QuantizedMatmulGemmTransposedKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant, true,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
+                    true,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
             Self::GemmTransposedUnalignedN => Ok(EncodableVariant::GemmTransposed(
                 <B::Kernels as Kernels>::QuantizedMatmulGemmTransposedKernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant, false,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
+                    false,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),
             Self::GemmTransposed64x64 => Ok(EncodableVariant::GemmTransposed64x64(
                 <B::Kernels as Kernels>::QuantizedMatmulGemmTransposed64x64Kernel::new(
-                    context, data_type, group_size, bits, use_zero_points, use_mlx_quant,
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    use_zero_points,
+                    use_mlx_quant,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )),

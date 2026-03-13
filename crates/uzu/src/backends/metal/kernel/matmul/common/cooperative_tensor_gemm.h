@@ -1,6 +1,6 @@
 #pragma once
 
-#include "simdgroup_fragment_layout.h"
+#include "defines.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
@@ -79,46 +79,6 @@ METAL_FUNC void cooperative_tensor_gemm(
           decltype(right_tensor),
           AccumulatorType
       >();
-
-#ifdef MPP_LAYOUT_PROBE
-  if (k_dimension == -999) {
-    device int* probe = reinterpret_cast<device int*>(output_pointer);
-    const ushort lane = __metal_get_thread_index_in_simdgroup(ushort());
-    if (lane == 0) {
-      probe[0] = left_tensor.get_capacity();
-      probe[1] = right_tensor.get_capacity();
-      probe[2] = accumulator_tensor.get_capacity();
-    }
-    const int left_capacity = left_tensor.get_capacity();
-    const int right_capacity = right_tensor.get_capacity();
-    const int accumulator_capacity = accumulator_tensor.get_capacity();
-    const int per_lane =
-        (left_capacity + right_capacity + accumulator_capacity) * 2 + 8 * 2;
-    const int base = 3 + lane * per_lane;
-    int offset = base;
-    for (int i = 0; i < left_capacity; i++) {
-      auto coord = left_tensor.get_multidimensional_index(i);
-      probe[offset++] = coord[0];
-      probe[offset++] = coord[1];
-    }
-    for (int i = 0; i < right_capacity; i++) {
-      auto coord = right_tensor.get_multidimensional_index(i);
-      probe[offset++] = coord[0];
-      probe[offset++] = coord[1];
-    }
-    for (int i = 0; i < accumulator_capacity; i++) {
-      auto coord = accumulator_tensor.get_multidimensional_index(i);
-      probe[offset++] = coord[0];
-      probe[offset++] = coord[1];
-    }
-    for (short j = 0; j < 8; j++) {
-      short2 fragment_coord = SimdgroupFragmentLayout::get_coordinate(j);
-      probe[offset++] = fragment_coord.x;
-      probe[offset++] = fragment_coord.y;
-    }
-    return;
-  }
-#endif
 
   const short left_capacity = left_tensor.get_capacity();
   const short right_capacity = right_tensor.get_capacity();

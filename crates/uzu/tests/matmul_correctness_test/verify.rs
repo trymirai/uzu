@@ -2,13 +2,13 @@ use metal::{MTLDeviceExt, MTLResourceOptions};
 use uzu::backends::{
     common::{
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        kernel::matmul::{MatmulDispatchDescriptor, MatmulKernel},
+        kernel::matmul::MatmulKernel,
     },
-    metal::{Metal, MetalContext},
+    metal::{MetalContext, kernel::matmul::MatmulMetalKernel},
 };
 
 use super::{
-    common::matmul::{DtypeCombo, TestShape, make_arguments},
+    common::matmul::{DtypeCombo, MatmulVariant, TestShape, make_full_precision_arguments},
     output::TestResult,
     reference::{generate_typed_data, ndarray_reference, output_to_f64, tolerance_for},
 };
@@ -18,12 +18,12 @@ pub fn run_correctness_case(
     combo: &DtypeCombo,
     shape: &TestShape,
     dispatch_path_name: &str,
-    dispatch_descriptor: &MatmulDispatchDescriptor,
+    variant: MatmulVariant,
 ) -> TestResult {
     let a_bytes = generate_typed_data(combo.a_dtype, shape.batch * shape.input_dim, 13, -6);
     let b_bytes = generate_typed_data(combo.b_dtype, shape.output_dim * shape.input_dim, 17, -8);
 
-    let metal_result = run_metal_matmul(context, combo, &a_bytes, &b_bytes, shape, dispatch_descriptor);
+    let metal_result = run_metal_matmul(context, combo, &a_bytes, &b_bytes, shape, variant);
     let reference = ndarray_reference(combo, &a_bytes, &b_bytes, shape);
 
     let tolerance = tolerance_for(combo, shape);
@@ -49,30 +49,30 @@ fn run_metal_matmul(
     a_bytes: &[u8],
     b_bytes: &[u8],
     shape: &TestShape,
-    dispatch_descriptor: &MatmulDispatchDescriptor,
+    variant: MatmulVariant,
 ) -> Vec<f64> {
-    let a_buffer = context
-        .device
+    let a_buffer = context.device
         .new_buffer_with_data(a_bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create A buffer");
-    let b_buffer = context
-        .device
+    let b_buffer = context.device
         .new_buffer_with_data(b_bytes, MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create B buffer");
-    let mut d_buffer = context
-        .device
+    let mut d_buffer = context.device
         .new_buffer(
             shape.batch * shape.output_dim * combo.output_dtype.size_in_bytes(),
             MTLResourceOptions::STORAGE_MODE_SHARED,
         )
         .expect("Failed to create D buffer");
 
-    let mut kernel =
-        MatmulKernel::<Metal>::new_mixed(combo.a_dtype, combo.b_dtype, combo.output_dtype).expect("kernel creation");
+    let mut kernel = MatmulMetalKernel::new(context, combo.output_dtype).expect("kernel creation");
 
     let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
-    let arguments = make_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
-    kernel.encode_with_descriptor(context, arguments, dispatch_descriptor, &mut command_buffer).expect("encode");
+    let arguments = make_full_precision_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
+    match variant {
+        MatmulVariant::Gemv => kernel.encode_gemv(context, &mut command_buffer, arguments),
+        MatmulVariant::GemmMpp => kernel.encode_gemm_mpp(context, &mut command_buffer, arguments),
+        MatmulVariant::Gemm => kernel.encode_gemm(context, &mut command_buffer, arguments),
+    }
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     let element_count = shape.batch * shape.output_dim;

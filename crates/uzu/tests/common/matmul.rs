@@ -6,13 +6,7 @@ use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
-        common::kernel::matmul::{
-            MatmulArguments, MatmulDispatchDescriptor, gemm_mpp,
-            gemv::{
-                DispatchDescriptor as GemvDescriptor, OutputSource as GemvOutputSource,
-                Specialization as GemvSpecialization,
-            },
-        },
+        common::kernel::matmul::FullPrecisionMatmulArguments,
         metal::{Metal, MetalContext},
     },
 };
@@ -49,6 +43,13 @@ impl std::fmt::Display for TestShape {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum MatmulVariant {
+    Gemv,
+    GemmMpp,
+    Gemm,
+}
+
 pub fn test_combos() -> Vec<DtypeCombo> {
     vec![
         DtypeCombo {
@@ -64,85 +65,47 @@ pub fn test_combos() -> Vec<DtypeCombo> {
     ]
 }
 
-pub fn try_all_descriptors(
-    _context: &MetalContext,
+pub fn applicable_variants(
+    context: &MetalContext,
     combo: &DtypeCombo,
-    arguments: &MatmulArguments<Metal>,
-) -> Vec<(&'static str, MatmulDispatchDescriptor)> {
-    let mut descriptors = Vec::new();
+    shape: &TestShape,
+) -> Vec<(&'static str, MatmulVariant)> {
+    let mut variants = Vec::new();
 
-    if let Ok(descriptor) = gemm_mpp::DispatchDescriptor::new(combo.output_dtype, arguments) {
-        descriptors.push(("GemmMpp", MatmulDispatchDescriptor::GemmMpp(descriptor)));
+    if context.device_capabilities().supports_mxu {
+        variants.push(("GemmMpp", MatmulVariant::GemmMpp));
     }
+
+    variants.push(("Gemm", MatmulVariant::Gemm));
 
     let is_same_type = combo.a_dtype == combo.b_dtype && combo.b_dtype == combo.output_dtype;
     if is_same_type && matches!(combo.output_dtype, DataType::F16 | DataType::BF16) {
-        if let Some(descriptor) = force_gemv_descriptor(combo.output_dtype, arguments) {
-            descriptors.push(("Gemv", MatmulDispatchDescriptor::Gemv(descriptor)));
+        let m = shape.batch;
+        let n = shape.output_dim;
+        let gemv_eligible = if n == 1 { m == 1 } else { true };
+        if gemv_eligible {
+            variants.push(("Gemv", MatmulVariant::Gemv));
         }
     }
 
-    descriptors
+    variants
 }
 
-fn force_gemv_descriptor(
-    data_type: DataType,
-    arguments: &MatmulArguments<Metal>,
-) -> Option<GemvDescriptor> {
-    if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-        return None;
-    }
-
-    let m = arguments.batch;
-    let n = arguments.output_dim;
-
-    if n == 1 && m != 1 {
-        return None;
-    }
-
-    let matrix_is_rhs = n != 1;
-
-    let output_source = if arguments.bias.is_some() {
-        GemvOutputSource::Bias
-    } else {
-        GemvOutputSource::None
-    };
-
-    let apply_output_scale_and_accumulate = matches!(output_source, GemvOutputSource::Bias);
-    let output_dimension = if matrix_is_rhs { n } else { m };
-
-    let specialization = GemvSpecialization::select(
-        false,
-        arguments.input_dim,
-        output_dimension,
-        apply_output_scale_and_accumulate,
-    );
-
-    Some(GemvDescriptor {
-        specialization,
-        matrix_is_rhs,
-        output_source,
-        input_dimension: arguments.input_dim,
-        output_dimension,
-        batch_rows: m,
-    })
-}
-
-pub fn make_arguments<'a>(
+pub fn make_full_precision_arguments<'a>(
     a_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     b_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
-    d_buffer: &'a mut Retained<ProtocolObject<dyn MTLBuffer>>,
+    output_buffer: &'a mut Retained<ProtocolObject<dyn MTLBuffer>>,
     shape: &TestShape,
-) -> MatmulArguments<'a, Metal> {
-    MatmulArguments {
+) -> FullPrecisionMatmulArguments<'a, Metal> {
+    FullPrecisionMatmulArguments {
         a: a_buffer,
         a_offset: 0,
         b: b_buffer,
-        d: d_buffer,
+        output: output_buffer,
         bias: None,
-        batch: shape.batch as i32,
-        input_dim: shape.input_dim as i32,
-        output_dim: shape.output_dim as i32,
+        batch: shape.batch,
+        input_dim: shape.input_dim,
+        output_dim: shape.output_dim,
     }
 }
 

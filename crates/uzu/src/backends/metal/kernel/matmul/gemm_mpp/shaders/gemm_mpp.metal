@@ -2,7 +2,6 @@
 #include "../../../common/utils.h"
 #include "../../../definitions.metal"
 
-#include "../../common/params.h"
 #include "../../common/cooperative_tensor_gemm.h"
 #include "../../common/loader.h"
 #include "../../common/gemm_mpp_core.h"

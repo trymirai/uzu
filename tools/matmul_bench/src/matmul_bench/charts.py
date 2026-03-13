@@ -9,11 +9,14 @@ from matmul_bench.models import BenchmarkRun, PerfResult
 
 DISPATCH_STYLES: dict[str, dict] = {
     "GemmMpp": dict(color="#4285F4", marker="o", linestyle="-"),
+    "GemmMppDirect": dict(color="#1A73E8", marker="s", linestyle="-."),
+    "GemmMppSmallSubtile": dict(color="#0D47A1", marker="D", linestyle=":"),
+    "GemmMppNativeDesc": dict(color="#7B1FA2", marker="p", linestyle="-."),
     "GemvMpp": dict(color="#FBBC04", marker="s", linestyle="-"),
     "Gemv": dict(color="#34A853", marker="^", linestyle="--"),
-    "Gemm": dict(color="#9E9E9E", marker="v", linestyle="--"),
-    "SplitK": dict(color="#EA4335", marker="D", linestyle="--"),
-    "MixedTypesSimpleGemm": dict(color="#FF6D01", marker="p", linestyle="--"),
+    "Gemm": dict(color="#EA4335", marker="v", linestyle="--"),
+    "SplitK": dict(color="#FF6D01", marker="h", linestyle="--"),
+    "MixedTypesSimpleGemm": dict(color="#9E9E9E", marker="x", linestyle="--"),
 }
 
 DEFAULT_STYLE = dict(color="#757575", marker="x", linestyle="-.")

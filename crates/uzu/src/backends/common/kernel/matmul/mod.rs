@@ -1,15 +1,7 @@
-mod dispatch_descriptor;
 mod full_precision;
-pub mod gemm_mpp;
-pub mod gemv;
-mod grid_size;
-mod kernel;
-mod matmul_arguments;
+pub mod matmul_arguments;
 
-pub use dispatch_descriptor::MatmulDispatchDescriptor;
-pub use full_precision::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel};
-pub use grid_size::GridSize;
-pub use kernel::MatmulKernel;
+pub use full_precision::{FullPrecisionMatmulArguments, MatmulKernel};
 pub use matmul_arguments::MatmulArguments;
 use thiserror::Error;
 
@@ -17,19 +9,13 @@ use super::Kernels;
 use crate::backends::common::Backend;
 
 pub trait MatmulKernels: Kernels {
-    type FullPrecisionMatmulKernel: FullPrecisionMatmulKernel<Backend = Self::Backend>;
+    type MatmulKernel: MatmulKernel<Backend = Self::Backend>;
 }
 
 #[derive(Debug, Error)]
 pub enum MatmulError<B: Backend> {
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(crate::DataType),
-    #[error("Threadgroup dimension overflows u32: {0}")]
-    ThreadgroupOverflow(usize),
-    #[error("GEMV descriptor mismatch: apply_output_scale_and_accumulate=true but output_source=None")]
-    GemvOutputSourceMismatch,
-    #[error("GEMV descriptor requires bias buffer")]
-    GemvMissingBias,
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }

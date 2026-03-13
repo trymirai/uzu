@@ -28,16 +28,16 @@ use crate::{
     DataType,
     backends::{
         common::kernel::matmul::{
-            FullPrecisionMatmulArguments, FullPrecisionMatmulKernel as FullPrecisionMatmulKernelTrait, MatmulError,
+            FullPrecisionMatmulArguments, MatmulKernel as MatmulKernelTrait, MatmulError,
             MatmulKernels,
         },
         cpu::{Cpu, command_buffer::CpuCommandBuffer, context::CpuContext},
     },
 };
 
-pub struct FullPrecisionMatmulCpuKernel;
+pub struct MatmulCpuKernel;
 
-impl FullPrecisionMatmulKernelTrait for FullPrecisionMatmulCpuKernel {
+impl MatmulKernelTrait for MatmulCpuKernel {
     type Backend = Cpu;
 
     fn new(
@@ -58,5 +58,5 @@ impl FullPrecisionMatmulKernelTrait for FullPrecisionMatmulCpuKernel {
 }
 
 impl MatmulKernels for CpuKernels {
-    type FullPrecisionMatmulKernel = FullPrecisionMatmulCpuKernel;
+    type MatmulKernel = MatmulCpuKernel;
 }

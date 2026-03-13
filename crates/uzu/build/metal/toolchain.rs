@@ -13,17 +13,34 @@ use tokio::{io::AsyncWriteExt, process::Command};
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo, validate_raw_kernel};
 
 trait MetalCommandExtension {
-    fn metal_std(&mut self, metal_std: &MetalStd, sdk: &MetalSdk) -> &mut Self;
-    fn include_directories(&mut self, directories: &[PathBuf]) -> &mut Self;
+    fn metal_std(
+        &mut self,
+        metal_std: &MetalStd,
+        sdk: &MetalSdk,
+    ) -> &mut Self;
+    fn include_directories(
+        &mut self,
+        directories: &[PathBuf],
+    ) -> &mut Self;
 }
 
 impl MetalCommandExtension for Command {
-    fn metal_std(&mut self, metal_std: &MetalStd, sdk: &MetalSdk) -> &mut Self {
-        self.arg(format!("-std={}", metal_std.to_str()))
-            .arg(format!("-m{}-version-min={}", sdk.os(), metal_std.min_os()))
+    fn metal_std(
+        &mut self,
+        metal_std: &MetalStd,
+        sdk: &MetalSdk,
+    ) -> &mut Self {
+        self.arg(format!("-std={}", metal_std.to_str())).arg(format!(
+            "-m{}-version-min={}",
+            sdk.os(),
+            metal_std.min_os()
+        ))
     }
 
-    fn include_directories(&mut self, directories: &[PathBuf]) -> &mut Self {
+    fn include_directories(
+        &mut self,
+        directories: &[PathBuf],
+    ) -> &mut Self {
         for directory in directories {
             self.arg("-I").arg(directory);
         }

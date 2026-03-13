@@ -28,6 +28,7 @@ typedef struct {
   int64_t batch_stride_b;
   int64_t batch_stride_d;
   int32_t swizzle_log;
+  int32_t gemm_k_iterations_aligned;
 } GEMMParams;
 
 /**Split-K GEMM parameters. */

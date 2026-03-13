@@ -1,6 +1,9 @@
 use crate::{DataType, backends::common::Backend, config::QuantizationMode};
 
-use super::{QuantizedMatmulError, QuantizedMatmulType, variant::{MatrixMatrixFamily, MatrixVectorFamily}};
+use super::{
+    QuantizedMatmulError, QuantizedMatmulType,
+    variant::{MatrixMatrixFamily, MatrixVectorFamily},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulConfiguration {
@@ -15,10 +18,7 @@ pub struct QuantizedMatmulConfiguration {
 
 impl QuantizedMatmulConfiguration {
     pub fn validate<B: Backend>(&self) -> Result<(), QuantizedMatmulError<B>> {
-        if !matches!(
-            self.data_type,
-            DataType::F16 | DataType::BF16 | DataType::F32
-        ) {
+        if !matches!(self.data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(QuantizedMatmulError::UnsupportedDataType(self.data_type));
         }
 
@@ -41,7 +41,10 @@ impl QuantizedMatmulConfiguration {
         }
     }
 
-    pub(super) fn matrix_matrix_family(&self, bits: usize) -> MatrixMatrixFamily {
+    pub(super) fn matrix_matrix_family(
+        &self,
+        bits: usize,
+    ) -> MatrixMatrixFamily {
         if self.weights_transposed {
             let aligned_n = self.output_dim % 32 == 0;
             let use_64x64 = aligned_n

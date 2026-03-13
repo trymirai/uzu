@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use crate::backends::common::{
     Backend, CommandBuffer,
     kernel::{
-        QuantizedMatmulGemmKernel, QuantizedMatmulGemmTransposed64x64Kernel,
-        QuantizedMatmulGemmTransposedKernel, QuantizedMatmulGemvFastKernel,
-        QuantizedMatmulGemvKernel, QuantizedMatmulVectorMatrixKernel,
+        QuantizedMatmulGemmKernel, QuantizedMatmulGemmTransposed64x64Kernel, QuantizedMatmulGemmTransposedKernel,
+        QuantizedMatmulGemvFastKernel, QuantizedMatmulGemvKernel, QuantizedMatmulVectorMatrixKernel,
     },
 };
 
@@ -95,60 +94,104 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         let k = to_i32::<B>("input_dim", arguments.input_dim)?;
         let n = to_i32::<B>("output_dim", arguments.output_dim)?;
         let m = to_i32::<B>("batch", arguments.batch)?;
-        let (zero_points, biases) = self
-            .quantization_type
-            .split_buffers::<B>(arguments.zero_points_or_biases_buffer);
+        let (zero_points, biases) = self.quantization_type.split_buffers::<B>(arguments.zero_points_or_biases_buffer);
         let a_with_offset = (arguments.a_buffer, arguments.a_offset);
 
         match kernel {
             EncodableVariant::Gemv(kernel) => {
                 kernel.encode(
-                    arguments.b_buffer, arguments.scales_buffer,
-                    zero_points, biases, a_with_offset, arguments.output_buffer,
-                    k, n, m, encoder,
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
                 );
-            }
+            },
             EncodableVariant::GemvFast(kernel) => {
                 kernel.encode(
-                    arguments.b_buffer, arguments.scales_buffer,
-                    zero_points, biases, a_with_offset, arguments.output_buffer,
-                    k, n, m, encoder,
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
                 );
-            }
+            },
             EncodableVariant::VectorMatrix(kernel) => {
                 kernel.encode(
-                    arguments.b_buffer, arguments.scales_buffer,
-                    zero_points, biases, a_with_offset, arguments.output_buffer,
-                    k, n, m, encoder,
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
                 );
-            }
+            },
             EncodableVariant::Gemm(kernel) => {
                 kernel.encode(
-                    arguments.b_buffer, arguments.scales_buffer,
-                    zero_points, biases, a_with_offset, arguments.output_buffer,
-                    k, n, m, encoder,
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
                 );
-            }
+            },
             EncodableVariant::GemmTransposed(kernel) => {
                 kernel.encode(
-                    arguments.b_buffer, arguments.scales_buffer,
-                    zero_points, biases, a_with_offset, arguments.output_buffer,
-                    k, n, m, encoder,
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
                 );
-            }
+            },
             EncodableVariant::GemmTransposed64x64(kernel) => {
                 kernel.encode(
-                    arguments.b_buffer, arguments.scales_buffer,
-                    zero_points, biases, a_with_offset, arguments.output_buffer,
-                    k, n, m, encoder,
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
                 );
-            }
+            },
         }
 
         Ok(())
     }
 
-    fn select_runtime_variant(&self, batch: usize, output_dim: usize) -> RuntimeVariant {
+    fn select_runtime_variant(
+        &self,
+        batch: usize,
+        output_dim: usize,
+    ) -> RuntimeVariant {
         if batch < 32 || output_dim == 1 {
             RuntimeVariant::MatrixVector
         } else {
@@ -161,5 +204,8 @@ fn to_i32<B: Backend>(
     name: &'static str,
     value: usize,
 ) -> Result<i32, QuantizedMatmulError<B>> {
-    i32::try_from(value).map_err(|_| QuantizedMatmulError::ValueOutOfRange { name, value })
+    i32::try_from(value).map_err(|_| QuantizedMatmulError::ValueOutOfRange {
+        name,
+        value,
+    })
 }

@@ -15,8 +15,8 @@ pub struct FullPrecisionMatmulArguments<'a, B: Backend> {
     pub output_dim: usize,
 }
 
-pub trait FullPrecisionMatmulKernel: Sized {
-    type Backend: Backend<Kernels: MatmulKernels<FullPrecisionMatmulKernel = Self>>;
+pub trait MatmulKernel: Sized {
+    type Backend: Backend<Kernels: MatmulKernels<MatmulKernel = Self>>;
 
     fn new(
         context: &<Self::Backend as Backend>::Context,

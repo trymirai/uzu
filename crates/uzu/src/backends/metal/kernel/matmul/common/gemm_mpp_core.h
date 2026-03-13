@@ -1,7 +1,7 @@
 #pragma once
 
 #include "defines.h"
-#include "params.h"
+#include "matmul.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
@@ -20,7 +20,8 @@ template <
     short WARPS_N,
     short SUBTILE_ROWS,
     short SUBTILE_COLS,
-    short MATMUL_K_STEP
+    short MATMUL_K_STEP,
+    bool USE_NATIVE_LAYOUT = false
 >
 METAL_FUNC void gemm_mpp_staged(
     thread LoaderA& loader_a,
@@ -78,7 +79,7 @@ METAL_FUNC void gemm_mpp_staged(
       MATMUL_K_STEP,
       false,
       true,
-      false,
+      USE_NATIVE_LAYOUT,
       mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
   );
 

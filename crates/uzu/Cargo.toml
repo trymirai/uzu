@@ -22,6 +22,7 @@ num-traits.workspace = true
 regex.workspace = true
 libc.workspace = true
 bitflags.workspace = true
+byte-unit.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 clap.workspace = true
