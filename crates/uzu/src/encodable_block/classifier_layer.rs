@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
     config::TransformerLayerConfig,
     encodable_block::{
         Attention, EncodingParameters, Linear, Mlp, Normalization, QKNorm, Rope, TensorAddSwap, TensorCopy,
@@ -224,95 +224,83 @@ impl<B: Backend> ClassifierLayer<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         #[cfg(feature = "tracing")]
         let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut_mixer.encode(state, command_buffer)?;
+        self.copy_main_to_shortcut_mixer.encode(state, encoder)?;
 
         if let Some(ref pre_attn_norm) = self.pre_attention_norm {
-            pre_attn_norm.encode(state, command_buffer)?;
+            pre_attn_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
-                    command_buffer,
-                    ArrayId::Main,
-                    layer_traces.borrow().pre_attention_norm.clone(),
-                );
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
             }
         } else {
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
-                    command_buffer,
-                    ArrayId::Main,
-                    layer_traces.borrow().pre_attention_norm.clone(),
-                );
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
             }
         }
 
-        self.qkv_projection.encode(state, command_buffer)?;
+        self.qkv_projection.encode(state, encoder)?;
         if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode(state, command_buffer)?;
+            qk_norm.encode(state, encoder)?;
         }
-        self.rope.encode(state, command_buffer)?;
-        self.attention.encode(state, parameters, command_buffer)?;
-        self.out_projection.encode(state, command_buffer)?;
+        self.rope.encode(state, encoder)?;
+        self.attention.encode(state, parameters, encoder)?;
+        self.out_projection.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
-            post_attn_norm.encode(state, command_buffer)?;
+            post_attn_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
-                    command_buffer,
-                    ArrayId::Main,
-                    layer_traces.borrow().post_attention_norm.clone(),
-                );
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_attention_norm.clone());
             }
         }
 
-        self.mixer_residual_add.encode(state, command_buffer)?;
+        self.mixer_residual_add.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
 
-        self.copy_main_to_shortcut_mlp.encode(state, command_buffer)?;
+        self.copy_main_to_shortcut_mlp.encode(state, encoder)?;
 
-        self.pre_mlp_norm.encode(state, command_buffer)?;
+        self.pre_mlp_norm.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer)?;
+        self.mlp.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer)?;
+            post_mlp_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
         }
 
-        self.mlp_residual_add.encode(state, command_buffer)?;
+        self.mlp_residual_add.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().outputs.clone());
         }
 
         Ok(())

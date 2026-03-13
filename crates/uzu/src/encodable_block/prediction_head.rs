@@ -3,7 +3,7 @@
 #[cfg(feature = "tracing")]
 use crate::forward_pass::state::ArrayId;
 use crate::{
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
     encodable_block::{Activation, Normalization, linear::Linear},
     forward_pass::state::ForwardPassState,
 };
@@ -37,21 +37,17 @@ impl<B: Backend> ClassifierPredictionHead<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.dense.encode(state, command_buffer)?;
-        self.activation.encode(state, command_buffer)?;
-        self.norm.encode(state, command_buffer)?;
-        self.readout.encode(state, command_buffer)?;
+        self.dense.encode(state, encoder)?;
+        self.activation.encode(state, encoder)?;
+        self.norm.encode(state, encoder)?;
+        self.readout.encode(state, encoder)?;
 
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(
-                command_buffer,
-                ArrayId::ClassifierPredictionHeadLogits,
-                traces.borrow().logits.clone(),
-            );
+            state.encode_copy_array(encoder, ArrayId::ClassifierPredictionHeadLogits, traces.borrow().logits.clone());
         }
 
         Ok(())

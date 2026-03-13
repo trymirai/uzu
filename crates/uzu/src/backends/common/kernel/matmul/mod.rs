@@ -6,7 +6,7 @@ use thiserror::Error;
 use super::Kernels;
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
 };
 
 pub trait MatmulKernels: Kernels {
@@ -25,7 +25,7 @@ pub trait MatmulKernel: Sized {
         &mut self,
         context: &<Self::Backend as Backend>::Context,
         arguments: MatmulArguments<Self::Backend>,
-        command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<Self::Backend>,
     );
 }
 

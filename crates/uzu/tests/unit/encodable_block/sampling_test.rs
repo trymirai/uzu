@@ -9,8 +9,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             kernel::{
                 MinPKernel, TemperatureKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
@@ -76,7 +75,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel
         .encode(
             &mut logits_buffer,
@@ -88,10 +87,10 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
             SamplingMethod::Greedy,
             batch_size,
             vocab_size,
-            &mut command_buffer,
+            &mut encoder,
         )
         .expect("Argmax sampling should succeed");
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     // Check results
     let result_ptr = output_buffer.contents().as_ptr() as *const u32;
@@ -166,7 +165,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         .expect("Failed to create buffer");
 
     // ---- Launch once and time ----
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
     kernel
         .encode(
@@ -179,13 +178,13 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
             SamplingMethod::Greedy,
             BATCH,
             VOCAB,
-            &mut command_buffer,
+            &mut encoder,
         )
         .expect("encode");
 
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     match completed.gpu_execution_time() {
@@ -282,8 +281,7 @@ fn test_categorical_sampling() {
             .new_buffer_with_data(bytemuck::cast_slice(&seeds_vec), MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
 
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
         kernel
             .encode(
@@ -301,10 +299,10 @@ fn test_categorical_sampling() {
                 },
                 batch_size,
                 vocab_size,
-                &mut command_buffer,
+                &mut encoder,
             )
             .expect("Categorical sampling should succeed");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let result_ptr = output_buffer.contents().as_ptr() as *const u32;
         let results = unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
@@ -419,8 +417,7 @@ fn test_categorical_sampling_statistical() {
             .new_buffer_with_data(bytemuck::cast_slice(&seeds_vec), MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
 
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
         kernel
             .encode(
@@ -438,10 +435,10 @@ fn test_categorical_sampling_statistical() {
                 },
                 BATCH,
                 VOCAB,
-                &mut command_buffer,
+                &mut encoder,
             )
             .expect("encode");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let result_ptr = output_buffer.contents().as_ptr() as *const u32;
         let results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH) };
@@ -521,7 +518,7 @@ fn perf_categorical_128k_vocab() {
         .expect("Failed to create buffer");
 
     // Launch and time
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
     kernel
         .encode(
@@ -539,12 +536,12 @@ fn perf_categorical_128k_vocab() {
             },
             BATCH,
             VOCAB,
-            &mut command_buffer,
+            &mut encoder,
         )
         .expect("encode");
 
     let host_timer = Instant::now();
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
     match completed.gpu_execution_time() {
@@ -606,16 +603,9 @@ fn test_temperature_gpu_cpu_match() {
         .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(
-        Some(&logits_buffer),
-        &mut processed_buffer,
-        BATCH as u32,
-        VOCAB as u32,
-        TEMPERATURE,
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let gpu_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let gpu_results = unsafe { std::slice::from_raw_parts(gpu_ptr, logits.len()) };
@@ -673,9 +663,9 @@ fn test_minp_gpu_cpu_match() {
         .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
     let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
@@ -756,8 +746,7 @@ fn test_minp_sampling_exact_match(
             .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
             .expect("Failed to create buffer");
 
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel
             .encode(
                 &mut logits_buf,
@@ -774,10 +763,10 @@ fn test_minp_sampling_exact_match(
                 },
                 batch_size,
                 vocab_size,
-                &mut command_buffer,
+                &mut encoder,
             )
             .expect("encode");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let ptr = output_buf.contents().as_ptr() as *const u32;
         let sampled_ids = unsafe { std::slice::from_raw_parts(ptr, batch_size) };

@@ -1,5 +1,5 @@
 use crate::backends::common::{
-    Backend, CommandBuffer, Kernels,
+    Backend, Encoder, Kernels,
     kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
 };
 
@@ -22,15 +22,15 @@ impl<B: Backend> MoeTileMapKernels<B> {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoeTileCountsArguments<B>,
     ) {
-        self.counts.encode(args.offsets_buffer, args.tile_counts_buffer, args.e as u32, command_buffer);
+        self.counts.encode(args.offsets_buffer, args.tile_counts_buffer, args.e as u32, encoder);
     }
 
     pub fn encode_scan(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoeTileScanArguments<B>,
     ) {
         self.scan.encode(
@@ -38,13 +38,13 @@ impl<B: Backend> MoeTileMapKernels<B> {
             args.tile_offsets_buffer,
             args.total_tiles_buffer,
             args.e as u32,
-            command_buffer,
+            encoder,
         );
     }
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoeTileMapBuildArguments<B>,
     ) {
         self.build.encode(
@@ -53,16 +53,16 @@ impl<B: Backend> MoeTileMapKernels<B> {
             args.tile_counts,
             args.tile_map,
             args.e as u32,
-            command_buffer,
+            encoder,
         );
     }
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoeTileDispatchArguments<B>,
     ) {
-        self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_x, command_buffer);
+        self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_x, encoder);
     }
 }
 

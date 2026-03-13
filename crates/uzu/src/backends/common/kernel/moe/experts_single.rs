@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{MoeExpertsDecodeSinglePassAKernel, MoeExpertsDecodeSinglePassBKernel},
     },
 };
@@ -84,7 +84,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         mut args: MoeExpertsSingleDecodeArguments<B>,
     ) {
         if args.k == 0 {
@@ -110,7 +110,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
             args.gate_clip_max,
             args.up_clip_min,
             args.up_clip_max,
-            command_buffer,
+            encoder,
         );
 
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
@@ -125,7 +125,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
             args.d_model as u32,
             args.d_ff as u32,
             args.k as u32,
-            command_buffer,
+            encoder,
         );
     }
 }

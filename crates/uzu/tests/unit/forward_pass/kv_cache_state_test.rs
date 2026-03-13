@@ -4,10 +4,7 @@ use crate::{
     DataType,
     array::ArrayContextExt,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, kernel::kv_cache_update::KVCacheUpdate,
-        },
+        common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
@@ -186,15 +183,15 @@ fn run_scenario(
         },
     };
 
-    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
+    let mut encoder = Encoder::new(context).unwrap();
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
-        &mut command_buffer,
+        &mut encoder,
         &kv_cache_update,
     );
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     layer.register_accepted_tokens(&scenario.accepted_token_positions);
 

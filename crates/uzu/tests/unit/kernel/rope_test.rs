@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::RopeKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::RopeKernel},
         cpu::Cpu,
     },
 };
@@ -93,7 +90,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let rotated_queries_array = context.create_array_uninitialized(&[queries_len], T::data_type(), "");
     let rotated_keys_array = context.create_array_uninitialized(&[keys_len], T::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         qkv_array.buffer().borrow().deref(),
         cosines_array.buffer().borrow().deref(),
@@ -107,9 +104,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.num_groups,
         input.suffix_length,
         input.max_sequence_length,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (rotated_queries_array.as_slice().to_vec(), rotated_keys_array.as_slice().to_vec())
 }

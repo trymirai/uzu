@@ -7,8 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::SSDUpdateKernel,
+            Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel,
         },
         metal::Metal,
     },
@@ -242,7 +241,7 @@ fn ssd_update_with_z_bf16() {
         .expect("Failed to create buffer");
 
     let kernel = <<Metal as Backend>::Kernels as Kernels>::SSDUpdateKernel::new(&ctx, DataType::BF16, false).unwrap();
-    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+    let mut encoder = Encoder::new(ctx.as_ref()).unwrap();
     kernel.encode(
         &x_buf,
         &dt_buf,
@@ -262,9 +261,9 @@ fn ssd_update_with_z_bf16() {
         bsz as u32,
         h as u32,
         dh as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_ptr = y_buf.contents().as_ptr() as *const bf16;
     let y_out = unsafe { std::slice::from_raw_parts(y_ptr, bsz * h * dh) };

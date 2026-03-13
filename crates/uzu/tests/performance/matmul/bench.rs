@@ -4,8 +4,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context,
+            Backend, Encoder,
             kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         metal::Metal,
@@ -39,7 +38,7 @@ fn encode_and_run(
     b_buffer: &Buf,
     d_buffer: &mut Buf,
 ) -> Result<f64, BenchError> {
-    let mut command_buffer = context.create_command_buffer().map_err(|_| BenchError::CommandBuffer)?.start_encoding();
+    let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
     kernel.encode(
         context,
@@ -57,11 +56,10 @@ fn encode_and_run(
             leading_dimension_d: shape.output_dim as i32,
             transpose_b: true,
         },
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    let completed =
-        command_buffer.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
+    let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
     completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1000.0).ok_or(BenchError::GpuTimestamps)
 }

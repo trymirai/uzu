@@ -340,8 +340,8 @@ impl CpuCompiler {
                         (
                             Some(quote! { #buffer_lifetime }),
                             match access {
-                                KernelBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Box<[u8]>> },
-                                KernelBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Box<[u8]>> },
+                                KernelBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, std::cell::UnsafeCell<Box<[u8]>>> },
+                                KernelBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, std::cell::UnsafeCell<Box<[u8]>>> },
                             },
                         )
                     },
@@ -371,9 +371,9 @@ impl CpuCompiler {
                 let argument_ident = &argument.name;
                 match &argument.ty {
                     FunctionArgumentType::Buffer(access) => {
-                        let as_ptr_fn = match access {
-                            KernelBufferAccess::Read => quote! { as_ptr },
-                            KernelBufferAccess::ReadWrite => quote! { as_mut_ptr },
+                        let buffer_ptr = match access {
+                            KernelBufferAccess::Read => quote! { (&*__dsl_buffer.get()).as_ptr() },
+                            KernelBufferAccess::ReadWrite => quote! { (&mut *__dsl_buffer.get()).as_mut_ptr() },
                         };
 
                         if argument.conditional.is_some() {
@@ -381,7 +381,7 @@ impl CpuCompiler {
                                 let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
                                     let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
 
-                                    __dsl_buffer.#as_ptr_fn().byte_add(__dsl_offset)
+                                    #buffer_ptr.byte_add(__dsl_offset)
                                 });
                             })
                         } else {
@@ -389,7 +389,7 @@ impl CpuCompiler {
                                 let #argument_ident = unsafe {
                                     let (__dsl_buffer, __dsl_offset) = #argument_ident.into_parts();
 
-                                    __dsl_buffer.#as_ptr_fn().byte_add(__dsl_offset)
+                                    #buffer_ptr.byte_add(__dsl_offset)
                                 };
                             })
                         }
@@ -439,7 +439,7 @@ impl CpuCompiler {
             });
 
             quote! {
-                encoder.push_command(move || #monomorphized_function(#function_call_args_joined));
+                encoder.as_command_buffer_mut().push_command(move || #monomorphized_function(#function_call_args_joined));
             }
         };
 
@@ -530,7 +530,7 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::cpu::command_buffer::CpuCommandBuffer) {
+                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
                     #(#argument_copies)*
                     #encode_body
                 }

@@ -8,7 +8,7 @@ use ndarray::{Array, Array3, s};
 
 use super::*;
 use crate::backends::{
-    common::{CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context},
+    common::{Context, Encoder},
     metal::Metal,
 };
 
@@ -104,8 +104,8 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
         value_shape: [num_heads, seq_len, head_dim],
     };
 
-    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
-    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &mut command_buffer) {
+    let mut encoder = Encoder::new(context).unwrap();
+    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &mut encoder) {
         Ok(_) => {},
         Err(e) => {
             println!("Warning: Failed to encode KV cache update: {:?}. Skipping test.", e);
@@ -113,7 +113,7 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
         },
     }
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let key_result_ptr = key_buffer.borrow().contents().as_ptr() as *const f32;
     let value_result_ptr = value_buffer.borrow().contents().as_ptr() as *const f32;

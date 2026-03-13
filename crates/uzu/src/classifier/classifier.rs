@@ -7,9 +7,7 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-    },
+    backends::common::{Backend, Encoder},
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
@@ -108,54 +106,32 @@ impl<B: Backend> Classifier<B> {
 
         let encoding_params = EncodingParameters::new();
 
-        let mut command_buffer = self
-            .context
-            .context
-            .create_command_buffer()
-            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
-            .start_encoding();
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
-        self.context
-            .embed
-            .encode_lookup(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context
-            .embedding_norm
-            .encode(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.embed.encode_lookup(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.embedding_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(&mut command_buffer, ArrayId::Main, traces.borrow().embedding_norm().clone());
+            state.encode_copy_array(&mut encoder, ArrayId::Main, traces.borrow().embedding_norm().clone());
         }
 
         for layer in self.context.layers.iter() {
-            layer
-                .encode(&mut state, &encoding_params, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            layer.encode(&mut state, &encoding_params, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
-        self.context
-            .output_norm
-            .encode(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.output_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(&mut command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
+            state.encode_copy_array(&mut encoder, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.context.pooling.encode(&mut state, &mut command_buffer).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.pooling.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-        self.context
-            .prediction_head
-            .encode(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.prediction_head.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-        command_buffer
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let logits = self.copy_logits_from_state(&state)?;
 
@@ -183,41 +159,19 @@ impl<B: Backend> Classifier<B> {
 
         let encoding_params = EncodingParameters::new();
 
-        let mut command_buffer = self
-            .context
-            .context
-            .create_command_buffer()
-            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
-            .start_encoding();
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
-        self.context
-            .embed
-            .encode_lookup(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context
-            .embedding_norm
-            .encode(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.embed.encode_lookup(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.embedding_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         for layer in self.context.layers.iter() {
-            layer
-                .encode(&mut state, &encoding_params, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            layer.encode(&mut state, &encoding_params, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
-        self.context
-            .output_norm
-            .encode(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context.pooling.encode(&mut state, &mut command_buffer).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context
-            .prediction_head
-            .encode(&mut state, &mut command_buffer)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.output_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.pooling.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.prediction_head.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-        command_buffer
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let logits = self.copy_logits_from_state(&state)?;
 

@@ -11,8 +11,7 @@ use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             kernel::{TopPKernel, sampling::SamplingKernel},
         },
         cpu::Cpu,
@@ -73,17 +72,17 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         false => context.create_array_uninitialized(&[len], T::data_type(), ""),
     };
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         logits_buffer,
         output_array.buffer().borrow_mut().deref_mut(),
         input.batch_size,
         input.vocab_size,
         input.top_p,
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }
@@ -280,8 +279,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
         let seeds_array = context.create_array_from(&[batch_size], &seeds, "");
 
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel
             .encode(
                 logits_array.buffer().borrow_mut().deref_mut(),
@@ -298,10 +296,10 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
                 },
                 batch_size,
                 vocab_size,
-                &mut command_buffer,
+                &mut encoder,
             )
             .expect("encode");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let sampled_ids: &[u32] = output_array.as_slice();
 
@@ -384,8 +382,7 @@ fn test_topp_sampling_statistical_large() {
             let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; BATCH];
             let seeds_array = context.create_array_from(&[BATCH], &seeds, "");
 
-            let mut command_buffer =
-                context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+            let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
             kernel
                 .encode(
@@ -403,10 +400,10 @@ fn test_topp_sampling_statistical_large() {
                     },
                     BATCH,
                     VOCAB,
-                    &mut command_buffer,
+                    &mut encoder,
                 )
                 .expect("encode");
-            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let sample_ids: &[u32] = output_array.as_slice();
             for (b, &tok) in sample_ids.iter().enumerate() {
@@ -461,8 +458,7 @@ fn perf_topp_128k_vocab() {
         let seeds_array = context.create_array_from(&[BATCH], &seeds, "");
         let output_array = context.create_array_uninitialized(&[BATCH], DataType::U32, "");
 
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
         kernel
             .encode(
@@ -480,12 +476,12 @@ fn perf_topp_128k_vocab() {
                 },
                 BATCH,
                 VOCAB,
-                &mut command_buffer,
+                &mut encoder,
             )
             .expect("encode");
 
         let host_timer = std::time::Instant::now();
-        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
         match completed.gpu_execution_time() {

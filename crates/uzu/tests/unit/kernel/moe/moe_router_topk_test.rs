@@ -6,10 +6,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::MoeRouterTopKKernel,
-        },
+        common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
         metal::Metal,
     },
 };
@@ -160,7 +157,7 @@ fn run_router_topk_once(
     // For BFloat16 kernel, probs buffer must be bf16, not f32
     let mut probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
-    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
     kernel.encode(
         &input_buf,
         &weight_buf,
@@ -172,9 +169,9 @@ fn run_router_topk_once(
         e as u32,
         k as u32,
         renorm,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let ids_ptr = ids_buf.contents().as_ptr() as *const i32;
     let probs_ptr = probs_buf.contents().as_ptr() as *const bf16;
