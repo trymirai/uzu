@@ -105,6 +105,11 @@ impl Context for MetalContext {
         }
     }
 
+    /// Returns the device class for performance tuning.
+    fn device_type(&self) -> DeviceType {
+        self.architecture.device_class
+    }
+
     fn debug_active(&self) -> bool {
         let upper = std::env::var("METAL_DEVICE_WRAPPER_TYPE").unwrap_or_default().to_ascii_uppercase();
         matches!(upper.as_str(), "1" | "YES" | "TRUE")

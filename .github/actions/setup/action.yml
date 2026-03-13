@@ -14,11 +14,17 @@ inputs:
     description: "Download test model"
     required: false
     default: 'false'
+  nextest:
+    description: "Install nextest"
+    required: false
+    default: 'false'
 
 runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
+    - if: inputs.nextest == 'true'
+      uses: taiki-e/install-action@nextest
     - if: inputs.linters == 'true'
       run: |
         arch -arm64 brew install clang-format

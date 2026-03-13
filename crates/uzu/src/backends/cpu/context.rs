@@ -60,4 +60,8 @@ impl Context for CpuContext {
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
     }
+
+    fn device_type(&self) -> DeviceType {
+        DeviceType::Integrated
+    }
 }
