@@ -12,7 +12,10 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            kernel::matmul::{MatmulArguments, gemv},
+            kernel::matmul::{
+                MatmulArguments,
+                gemv::{GemvDispatchDescriptor, GemvKernel},
+            },
         },
         cpu::Cpu,
     },
@@ -82,11 +85,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         transpose_b: true,
     };
 
-    let descriptor = gemv::DispatchDescriptor::try_new::<B>(T::data_type(), &arguments)
+    let descriptor = GemvDispatchDescriptor::try_new::<B>(T::data_type(), &arguments)
         .expect("Failed to create descriptor")
         .expect("GEMV not applicable for these dimensions");
 
-    let mut kernel = gemv::GemvKernel::<B>::new(T::data_type()).expect("Failed to create GemvKernel");
+    let mut kernel = GemvKernel::<B>::new(T::data_type()).expect("Failed to create GemvKernel");
 
     let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
     kernel.encode(&context, &mut arguments, &descriptor, &mut command_buffer).expect("Failed to encode");

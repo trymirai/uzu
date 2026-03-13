@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, env, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use metal::{
     MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
@@ -9,7 +9,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{Metal, error::MetalError, kernel, metal_extensions::LibraryPipelineExtensions};
 use crate::backends::{
-    common::{Context, DeviceClass as CommonDeviceClass},
+    common::{Context, DeviceClass as CommonDeviceClass, DeviceType},
     metal::command_buffer::MetalCommandBufferInitial,
 };
 
@@ -40,26 +40,11 @@ impl DeviceGeneration {
     }
 }
 
-/// Device performance class based on the last character of architecture name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceClass {
-    Phone,      // 'p' - iPhone/iPad integrated
-    Integrated, // 'g' - Mac integrated GPU
-    Desktop,    // 'd' - Mac Pro/Max discrete-class GPU
-    Unknown(char),
-}
-
-impl DeviceClass {
-    pub fn is_high_performance(&self) -> bool {
-        matches!(self, Self::Desktop)
-    }
-}
-
 /// Complete device architecture information.
 #[derive(Debug, Clone)]
 pub struct DeviceArchitecture {
     pub generation: DeviceGeneration,
-    pub device_class: DeviceClass,
+    pub device_class: DeviceType,
     #[allow(dead_code)]
     pub arch_string: String,
 }
@@ -79,7 +64,7 @@ impl DeviceArchitecture {
         }
     }
 
-    fn parse_architecture_info(arch: &str) -> (DeviceGeneration, DeviceClass) {
+    fn parse_architecture_info(arch: &str) -> (DeviceGeneration, DeviceType) {
         // Parse generation and class from device name (e.g. "Apple M3 Pro")
         let generation = if arch.contains("M5") {
             DeviceGeneration::Gen18
@@ -100,11 +85,11 @@ impl DeviceArchitecture {
         };
 
         let device_class = if arch.contains("Max") || arch.contains("Ultra") || arch.contains("Pro") {
-            DeviceClass::Desktop
+            DeviceType::Desktop
         } else if arch.contains("iPhone") || arch.contains("iPad") {
-            DeviceClass::Phone
+            DeviceType::Phone
         } else {
-            DeviceClass::Integrated
+            DeviceType::Integrated
         };
 
         (generation, device_class)
@@ -146,16 +131,6 @@ impl MetalContext {
     /// Returns the device generation for tile size selection.
     pub fn device_generation(&self) -> DeviceGeneration {
         self.architecture.generation
-    }
-
-    /// Returns the device class for performance tuning.
-    pub fn device_class(&self) -> DeviceClass {
-        self.architecture.device_class
-    }
-
-    /// TF32 toggle via UZU_TF32 environment variable.
-    pub fn tf32_enabled(&self) -> bool {
-        env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
     }
 
     pub fn compute_pipeline_state(
@@ -215,6 +190,11 @@ impl Context for MetalContext {
         } else {
             CommonDeviceClass::Base
         }
+    }
+
+    /// Returns the device class for performance tuning.
+    fn device_type(&self) -> DeviceType {
+        self.architecture.device_class
     }
 
     fn debug_active(&self) -> bool {

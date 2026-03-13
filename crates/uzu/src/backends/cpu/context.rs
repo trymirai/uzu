@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Context, DeviceClass};
+use crate::backends::common::{Context, DeviceClass, DeviceType};
 
 pub struct CpuContext;
 
@@ -46,5 +46,9 @@ impl Context for CpuContext {
 
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
+    }
+
+    fn device_type(&self) -> DeviceType {
+        DeviceType::Integrated
     }
 }

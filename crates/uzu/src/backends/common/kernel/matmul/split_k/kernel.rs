@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use super::{super::matmul_arguments::MatmulArguments, dispatch_descriptor::DispatchDescriptor};
+use super::{super::matmul_arguments::MatmulArguments, dispatch_descriptor::SplitKDispatchDescriptor};
 use crate::{
     DataType,
     backends::common::{
@@ -67,7 +67,7 @@ impl<B: Backend> SplitKKernel<B> {
         &mut self,
         context: &B::Context,
         arguments: &mut MatmulArguments<B>,
-        dispatch_descriptor: &DispatchDescriptor,
+        dispatch_descriptor: &SplitKDispatchDescriptor,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), MatmulError<B>> {
         self.ensure_kernels(context)?;

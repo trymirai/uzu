@@ -13,7 +13,10 @@ use uzu::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
             gpu_types::GEMMParams,
-            kernel::matmul::{GridSize, MatmulArguments, gemm},
+            kernel::matmul::{
+                GridSize, MatmulArguments,
+                gemm::{GemmDispatchDescriptor, GemmKernel, GemmSpecialization},
+            },
         },
         cpu::Cpu,
     },
@@ -61,7 +64,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
 
     // Pick a precompile config matching alignment requirements
-    let configs = gemm::Specialization::precompile_configs(T::data_type());
+    let configs = GemmSpecialization::precompile_configs(T::data_type());
     let base = configs[0];
     let align_m = (m % base.block_rows) == 0;
     let align_n = (n % base.block_cols) == 0;
@@ -71,7 +74,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .iter()
         .find(|c| c.align_m == align_m && c.align_n == align_n && c.align_k == align_k)
         .copied()
-        .unwrap_or(gemm::Specialization {
+        .unwrap_or(GemmSpecialization {
             align_m,
             align_n,
             align_k,
@@ -98,7 +101,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         batch_ndim: 1,
     };
 
-    let descriptor = gemm::DispatchDescriptor {
+    let descriptor = GemmDispatchDescriptor {
         specialization: config,
         params,
         threadgroups: GridSize {
@@ -108,7 +111,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         },
     };
 
-    let mut kernel = gemm::GemmKernel::<B>::new(T::data_type()).expect("Failed to create GemmKernel");
+    let mut kernel = GemmKernel::<B>::new(T::data_type()).expect("Failed to create GemmKernel");
 
     let a_buf = a_array.buffer();
     let a_ref = a_buf.borrow();
