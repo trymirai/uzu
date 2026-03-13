@@ -295,10 +295,7 @@ pub(super) fn resolve_fishaudio_vocoder_data_type(
     for (field_name, precision) in [
         ("tts_config.activation_precision", top_level_precision),
         ("tts_config.audio_decoder_config.precision", Some(config.precision)),
-        (
-            "tts_config.audio_decoder_config.quantizer_config.precision",
-            config.quantizer_config.precision,
-        ),
+        ("tts_config.audio_decoder_config.quantizer_config.precision", config.quantizer_config.precision),
     ] {
         if let Some(precision) = precision {
             if let Some(existing) = resolved_precision {
@@ -679,10 +676,11 @@ fn build_structured_codec_graph_from_fishaudio_export(
     tts_config: &TtsConfig,
     model_weights_path: &Path,
 ) -> AudioResult<StructuredAudioCodecGraph> {
-    let TtsAudioDecoderConfig::DescriptAudioCodecConfig { config: cfg } = &tts_config.audio_decoder_config else {
-        return Err(AudioError::Runtime(
-            "expected DescriptAudioCodecConfig for structured audio runtime".to_string(),
-        ));
+    let TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+        config: cfg,
+    } = &tts_config.audio_decoder_config
+    else {
+        return Err(AudioError::Runtime("expected DescriptAudioCodecConfig for structured audio runtime".to_string()));
     };
     let reader = SafeTensorReader::open(model_weights_path)?;
     if cfg.n_codebooks == 0 || cfg.codebook_size <= 1 || cfg.semantic_codebook_size <= 1 {
@@ -737,7 +735,9 @@ pub(super) fn load_audio_runtime_from_tts_config(
     model_path: &Path,
 ) -> AudioResult<LoadedTtsAudioRuntimeConfig> {
     match &tts_config.audio_decoder_config {
-        TtsAudioDecoderConfig::DescriptAudioCodecConfig { config: cfg } => {
+        TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+            config: cfg,
+        } => {
             let fishaudio_weights = model_path.join("model.safetensors");
             if !fishaudio_weights.is_file() {
                 return Err(AudioError::Runtime(format!(
@@ -769,6 +769,8 @@ pub(super) fn load_audio_runtime_from_tts_config(
                 decoder,
             })
         },
-        TtsAudioDecoderConfig::NanoCodecConfig { config } => Ok(LoadedTtsAudioRuntimeConfig::Standard(config.clone())),
+        TtsAudioDecoderConfig::NanoCodecConfig {
+            config,
+        } => Ok(LoadedTtsAudioRuntimeConfig::Standard(config.clone())),
     }
 }

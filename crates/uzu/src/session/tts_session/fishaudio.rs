@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::TtsMessageProcessorConfig;
 
 pub(super) struct FishAudioTextDecoderRuntime {
     slow_runner: TokenDecoderRunner,
@@ -111,7 +112,7 @@ fn validate_fishaudio_decoder_contract(
     if num_codebooks != audio_num_codebooks {
         return Err(Error::UnableToLoadConfig);
     }
-    if codebook_size != audio_codec_cardinality {
+    if audio_codec_cardinality == 0 || audio_codec_cardinality > codebook_size {
         return Err(Error::UnableToLoadConfig);
     }
     if semantic_token_begin_id > semantic_token_end_id {
@@ -127,17 +128,23 @@ fn validate_fishaudio_decoder_contract(
     Ok(semantic_cardinality)
 }
 
+pub(super) fn resolve_fishaudio_message_processor_config(
+    base_config: &TtsMessageProcessorConfig
+) -> TtsMessageProcessorConfig {
+    let mut config = base_config.clone();
+    config.default_message_fields.entry(String::from("speaker_id")).or_insert_with(|| String::from("speaker:0"));
+    config.default_message_fields.entry(String::from("style")).or_insert_with(|| String::from("interleave"));
+    config
+}
+
 pub(super) fn build_fishaudio_text_decoder_runtime(
     config: &crate::config::FishAudioTextDecoderConfig,
     audio: &AudioGenerationContext,
     model_path: &Path,
     runtime_config: &TextDecoderRuntimeConfig,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
-    let audio_semantic_cardinality = audio
-        .runtime()
-        .config()
-        .semantic_codec_cardinality()
-        .ok_or(Error::UnableToLoadConfig)?;
+    let audio_semantic_cardinality =
+        audio.runtime().config().semantic_codec_cardinality().ok_or(Error::UnableToLoadConfig)?;
     let semantic_cardinality = validate_fishaudio_decoder_contract(
         config.num_codebooks,
         config.codebook_size,
@@ -242,9 +249,8 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
             return Err(Error::UnableToLoadConfig);
         }
     }
-    let apply_semantic_sampling_mask = runtime_config
-        .force_semantic_sampling_mask
-        .unwrap_or(!matches!(activation_data_type, DataType::F32));
+    let apply_semantic_sampling_mask =
+        runtime_config.force_semantic_sampling_mask.unwrap_or(!matches!(activation_data_type, DataType::F32));
 
     let gpu_path = FishAudioGpuPath::new(
         text_decoder_context.as_ref(),
@@ -333,11 +339,11 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::GenerateFailed);
         }
 
-        if codec_cardinality != self.codebook_size {
+        if codec_cardinality == 0 || codec_cardinality > self.codebook_size {
             return Err(Error::UnableToLoadConfig);
         }
         let semantic_token_upper_bound = self.semantic_cardinality;
-        let residual_token_upper_bound = self.codebook_size;
+        let residual_token_upper_bound = codec_cardinality;
         if semantic_token_upper_bound == 0 || residual_token_upper_bound == 0 {
             return Err(Error::UnableToLoadConfig);
         }
@@ -521,7 +527,9 @@ impl FishAudioTextDecoderRuntime {
             let codebook_size = self.codebook_size;
             let slow_model_dim = self.slow_model_dim;
             let mut pre_codebook_sum =
-                |runner: &TokenDecoderRunner, _state: &ForwardPassState<Metal>, command_buffer: &mut MetalCommandBuffer| {
+                |runner: &TokenDecoderRunner,
+                 _state: &ForwardPassState<Metal>,
+                 command_buffer: &mut MetalCommandBuffer| {
                     Self::encode_slow_codebook_sum_from_codes_on(
                         gpu_path,
                         &runner.single_override_embedding,
@@ -776,12 +784,12 @@ impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_fishaudio_decoder_contract;
-    use crate::session::types::Error;
+    use super::{resolve_fishaudio_message_processor_config, validate_fishaudio_decoder_contract};
+    use crate::{config::TtsMessageProcessorConfig, session::types::Error};
 
     #[test]
     fn fishaudio_decoder_contract_rejects_residual_cardinality_mismatch() {
-        let result = validate_fishaudio_decoder_contract(2, 49, 256, 10, 25, 2, 48, 16);
+        let result = validate_fishaudio_decoder_contract(2, 47, 256, 10, 25, 2, 48, 16);
         assert!(matches!(result, Err(Error::UnableToLoadConfig)));
     }
 
@@ -796,5 +804,47 @@ mod tests {
         let semantic_cardinality =
             validate_fishaudio_decoder_contract(2, 48, 256, 10, 25, 2, 48, 16).expect("matching contract");
         assert_eq!(semantic_cardinality, 16);
+    }
+
+    #[test]
+    fn fishaudio_decoder_contract_accepts_heterogeneous_semantic_and_residual_cardinalities() {
+        let semantic_cardinality = validate_fishaudio_decoder_contract(10, 4096, 8192, 151658, 155753, 10, 1024, 4096)
+            .expect("heterogeneous fishaudio contract");
+        assert_eq!(semantic_cardinality, 4096);
+    }
+
+    #[test]
+    fn fishaudio_message_processor_defaults_are_injected_when_missing() {
+        let resolved = resolve_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
+            prompt_template: String::from(
+                "{% for message in messages %}<|{{message.style}}|><|{{message.speaker_id}}|>{{message.content}}{% endfor %}",
+            ),
+            drop_initial_newline: true,
+            system_role_name: String::from("system"),
+            user_role_name: String::from("user"),
+            assistant_role_name: String::from("assistant"),
+            default_message_fields: Default::default(),
+        });
+        assert_eq!(resolved.default_message_fields.get("speaker_id"), Some(&String::from("speaker:0")));
+        assert_eq!(resolved.default_message_fields.get("style"), Some(&String::from("interleave")));
+    }
+
+    #[test]
+    fn fishaudio_message_processor_defaults_preserve_explicit_values() {
+        let resolved = resolve_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
+            prompt_template: String::from("{{messages[0].content}}"),
+            drop_initial_newline: true,
+            system_role_name: String::from("system"),
+            user_role_name: String::from("user"),
+            assistant_role_name: String::from("assistant"),
+            default_message_fields: [
+                (String::from("speaker_id"), String::from("speaker:42")),
+                (String::from("style"), String::from("relaxed")),
+            ]
+            .into_iter()
+            .collect(),
+        });
+        assert_eq!(resolved.default_message_fields.get("speaker_id"), Some(&String::from("speaker:42")));
+        assert_eq!(resolved.default_message_fields.get("style"), Some(&String::from("relaxed")));
     }
 }

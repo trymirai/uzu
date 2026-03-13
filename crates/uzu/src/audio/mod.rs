@@ -1,6 +1,6 @@
+mod codec;
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 mod context;
-mod codec;
 pub mod nanocodec;
 mod types;
 

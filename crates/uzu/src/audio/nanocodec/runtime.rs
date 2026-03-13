@@ -200,11 +200,9 @@ impl SubmittedDecodedPaddedAudio {
     fn resolve(mut self) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
         if let Some(command_buffer) = self.final_command_buffer.as_ref() {
             let wait_start = self.decode_profile.is_some().then(Instant::now);
-            if !command_buffer.is_completed() {
-                command_buffer.wait_until_completed().map_err(|err| {
-                    AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
-                })?;
-            }
+            command_buffer.wait_until_completed().map_err(|err| {
+                AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
+            })?;
             let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             if let Some(profile) = self.decode_profile.as_mut() {
                 profile.command_buffers.push(AudioCommandBufferProfile {

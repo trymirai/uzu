@@ -44,6 +44,16 @@ impl TtsRunConfig {
         if self.max_stream_workspace_frames == 0 {
             return Err("max_stream_workspace_frames must be greater than zero");
         }
+        if self.max_stream_workspace_frames < self.max_chunk_frames {
+            return Err("max_stream_workspace_frames must be greater than or equal to max_chunk_frames");
+        }
+        if self.vocoder_streaming_mode == TtsVocoderStreamingMode::PrefixFallback
+            && self.max_stream_workspace_frames < self.max_semantic_frames
+        {
+            return Err(
+                "max_stream_workspace_frames must be greater than or equal to max_semantic_frames in PrefixFallback mode",
+            );
+        }
         if self.target_emit_latency_ms == 0 {
             return Err("target_emit_latency_ms must be greater than zero");
         }
@@ -168,6 +178,27 @@ mod tests {
     fn run_config_validation_rejects_zero_workspace_frames() {
         let invalid = TtsRunConfig {
             max_stream_workspace_frames: 0,
+            ..TtsRunConfig::default()
+        };
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn run_config_validation_rejects_workspace_smaller_than_max_chunk() {
+        let invalid = TtsRunConfig {
+            max_chunk_frames: 256,
+            max_stream_workspace_frames: 128,
+            ..TtsRunConfig::default()
+        };
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn run_config_validation_rejects_prefix_fallback_workspace_smaller_than_semantic_cap() {
+        let invalid = TtsRunConfig {
+            vocoder_streaming_mode: TtsVocoderStreamingMode::PrefixFallback,
+            max_stream_workspace_frames: 256,
+            max_semantic_frames: 512,
             ..TtsRunConfig::default()
         };
         assert!(invalid.validate().is_err());
