@@ -36,90 +36,43 @@ fn greedy_fishaudio_session_options() -> TtsSessionOptions {
 }
 
 fn load_optional_model_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("LALAMO_UZU_MODEL_PATH") {
-        let path = PathBuf::from(path);
-        return if path.join("config.json").exists() && path.join("model.safetensors").exists() {
-            Some(path)
-        } else {
-            None
-        };
-    }
-
-    let default = PathBuf::from("/tmp/lalamo_nanocodec_convert");
-    if default.join("config.json").exists() && default.join("model.safetensors").exists() {
-        Some(default)
-    } else {
-        None
-    }
-}
-
-fn existing_model_path(path: PathBuf) -> Option<PathBuf> {
-    if path.join("config.json").exists() && path.join("model.safetensors").exists() {
-        Some(path)
-    } else {
-        None
-    }
+    let path = std::env::var("LALAMO_UZU_MODEL_PATH").ok().map(PathBuf::from)?;
+    assert!(
+        path.join("config.json").exists() && path.join("model.safetensors").exists(),
+        "LALAMO_UZU_MODEL_PATH does not point to a valid export: {}",
+        path.display()
+    );
+    Some(path)
 }
 
 fn load_optional_fishaudio_model_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH") {
-        let path = PathBuf::from(path);
-        assert!(
-            path.join("config.json").exists() && path.join("model.safetensors").exists(),
-            "LALAMO_UZU_FISHAUDIO_MODEL_PATH does not point to a valid export: {}",
-            path.display()
-        );
-        return Some(path);
-    }
-
-    let preferred = [
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_f32_full",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_f32a",
-        "/private/tmp/lalamo_fishaudio_s1mini_f32",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_f32",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert",
-    ];
-    preferred.iter().find_map(|path| existing_model_path(PathBuf::from(path)))
+    let path = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH").ok().map(PathBuf::from)?;
+    assert!(
+        path.join("config.json").exists() && path.join("model.safetensors").exists(),
+        "LALAMO_UZU_FISHAUDIO_MODEL_PATH does not point to a valid export: {}",
+        path.display()
+    );
+    Some(path)
 }
 
 fn load_optional_fishaudio_model_path_f16() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16") {
-        let path = PathBuf::from(path);
-        assert!(
-            path.join("config.json").exists() && path.join("model.safetensors").exists(),
-            "LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 does not point to a valid export: {}",
-            path.display()
-        );
-        return Some(path);
-    }
-
-    let preferred = [
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_f16_full",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_f16a",
-        "/private/tmp/lalamo_fishaudio_s1mini_f16",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_f16",
-    ];
-    preferred.iter().find_map(|path| existing_model_path(PathBuf::from(path)))
+    let path = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16").ok().map(PathBuf::from)?;
+    assert!(
+        path.join("config.json").exists() && path.join("model.safetensors").exists(),
+        "LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 does not point to a valid export: {}",
+        path.display()
+    );
+    Some(path)
 }
 
 fn load_optional_fishaudio_model_path_bf16() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16") {
-        let path = PathBuf::from(path);
-        assert!(
-            path.join("config.json").exists() && path.join("model.safetensors").exists(),
-            "LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 does not point to a valid export: {}",
-            path.display()
-        );
-        return Some(path);
-    }
-
-    let preferred = [
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16_full",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16a",
-        "/private/tmp/lalamo_fishaudio_s1mini_bf16",
-        "/private/tmp/lalamo_fishaudio_s1mini_convert_bf16",
-    ];
-    preferred.iter().find_map(|path| existing_model_path(PathBuf::from(path)))
+    let path = std::env::var("LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16").ok().map(PathBuf::from)?;
+    assert!(
+        path.join("config.json").exists() && path.join("model.safetensors").exists(),
+        "LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 does not point to a valid export: {}",
+        path.display()
+    );
+    Some(path)
 }
 
 fn load_fishaudio_greedy_fixture() -> Option<FishAudioGreedyFixture> {
@@ -132,7 +85,7 @@ fn load_fishaudio_greedy_fixture() -> Option<FishAudioGreedyFixture> {
 fn tts_session_synthesizes_audio_from_text_on_normal_export() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_model_path() else {
-        println!("Skipping TTS session test: set LALAMO_UZU_MODEL_PATH (or create /tmp/lalamo_nanocodec_convert)");
+        println!("Skipping TTS session test: set LALAMO_UZU_MODEL_PATH");
         return;
     };
 
@@ -150,9 +103,7 @@ fn tts_session_synthesizes_audio_from_text_on_normal_export() {
 fn tts_session_streaming_matches_non_streaming_audio_on_normal_export() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_model_path() else {
-        println!(
-            "Skipping streaming TTS session test: set LALAMO_UZU_MODEL_PATH (or create /tmp/lalamo_nanocodec_convert)"
-        );
+        println!("Skipping streaming TTS session test: set LALAMO_UZU_MODEL_PATH");
         return;
     };
 
@@ -178,9 +129,7 @@ fn tts_session_streaming_matches_non_streaming_audio_on_normal_export() {
 fn tts_session_fishaudio_f32_greedy_tokens_match_fixture() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path() else {
-        println!(
-            "Skipping FishAudio f32 parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f32a)"
-        );
+        println!("Skipping FishAudio f32 parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH");
         return;
     };
     let Some(fixture) = load_fishaudio_greedy_fixture() else {
@@ -207,9 +156,7 @@ fn tts_session_fishaudio_f32_greedy_tokens_match_fixture() {
 fn tts_session_fishaudio_f32_semantic_generation_respects_frame_cap() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path() else {
-        println!(
-            "Skipping FishAudio f32 semantic-cap test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f32a)"
-        );
+        println!("Skipping FishAudio f32 semantic-cap test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH");
         return;
     };
     let Some(fixture) = load_fishaudio_greedy_fixture() else {
@@ -248,9 +195,7 @@ fn tts_session_fishaudio_f32_semantic_generation_respects_frame_cap() {
 fn tts_session_fishaudio_f32_streaming_matches_non_streaming_audio_with_windowed_context() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path() else {
-        println!(
-            "Skipping FishAudio f32 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f32a)"
-        );
+        println!("Skipping FishAudio f32 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH");
         return;
     };
     let Some(fixture) = load_fishaudio_greedy_fixture() else {
@@ -314,9 +259,7 @@ fn tts_session_fishaudio_f32_streaming_matches_non_streaming_audio_with_windowed
 fn tts_session_fishaudio_f16_greedy_emits_bounded_semantic_frames() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path_f16() else {
-        println!(
-            "Skipping FishAudio f16 semantic-frame test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f16)"
-        );
+        println!("Skipping FishAudio f16 semantic-frame test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16");
         return;
     };
 
@@ -333,9 +276,7 @@ fn tts_session_fishaudio_f16_greedy_emits_bounded_semantic_frames() {
 fn tts_session_fishaudio_f16_streaming_matches_non_streaming_audio() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path_f16() else {
-        println!(
-            "Skipping FishAudio f16 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f16)"
-        );
+        println!("Skipping FishAudio f16 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16");
         return;
     };
 
@@ -384,9 +325,7 @@ fn tts_session_fishaudio_f16_streaming_matches_non_streaming_audio() {
 fn tts_session_fishaudio_f16_async_followups_match_sequential_with_repetition_penalty() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path_f16() else {
-        println!(
-            "Skipping FishAudio f16 followup parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_f16)"
-        );
+        println!("Skipping FishAudio f16 followup parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_F16");
         return;
     };
 
@@ -422,9 +361,7 @@ fn tts_session_fishaudio_f16_async_followups_match_sequential_with_repetition_pe
 fn tts_session_fishaudio_bf16_greedy_emits_bounded_semantic_frames() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path_bf16() else {
-        println!(
-            "Skipping FishAudio bf16 semantic-frame test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_bf16)"
-        );
+        println!("Skipping FishAudio bf16 semantic-frame test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16");
         return;
     };
 
@@ -441,9 +378,7 @@ fn tts_session_fishaudio_bf16_greedy_emits_bounded_semantic_frames() {
 fn tts_session_fishaudio_bf16_streaming_matches_non_streaming_audio() {
     let _guard = TEST_MUTEX.lock().expect("lock");
     let Some(model_path) = load_optional_fishaudio_model_path_bf16() else {
-        println!(
-            "Skipping FishAudio bf16 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16 (or create /private/tmp/lalamo_fishaudio_s1mini_convert_bf16)"
-        );
+        println!("Skipping FishAudio bf16 streaming parity test: set LALAMO_UZU_FISHAUDIO_MODEL_PATH_BF16");
         return;
     };
 

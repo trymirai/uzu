@@ -95,26 +95,59 @@ impl FishAudioGpuPath {
     }
 }
 
+fn validate_fishaudio_decoder_contract(
+    num_codebooks: usize,
+    codebook_size: usize,
+    max_seq_len: usize,
+    semantic_token_begin_id: i64,
+    semantic_token_end_id: i64,
+    audio_num_codebooks: usize,
+    audio_codec_cardinality: usize,
+    audio_semantic_cardinality: usize,
+) -> Result<usize, Error> {
+    if num_codebooks == 0 || codebook_size == 0 || max_seq_len == 0 {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if num_codebooks != audio_num_codebooks {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if codebook_size != audio_codec_cardinality {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if semantic_token_begin_id > semantic_token_end_id {
+        return Err(Error::UnableToLoadConfig);
+    }
+
+    let semantic_cardinality =
+        usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| Error::UnableToLoadConfig)?;
+    if semantic_cardinality == 0 || semantic_cardinality != audio_semantic_cardinality {
+        return Err(Error::UnableToLoadConfig);
+    }
+
+    Ok(semantic_cardinality)
+}
+
 pub(super) fn build_fishaudio_text_decoder_runtime(
     config: &crate::config::FishAudioTextDecoderConfig,
     audio: &AudioGenerationContext,
     model_path: &Path,
     runtime_config: &TextDecoderRuntimeConfig,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
-    if config.num_codebooks == 0 || config.codebook_size == 0 || config.max_seq_len == 0 {
-        return Err(Error::UnableToLoadConfig);
-    }
-    if config.num_codebooks != audio.num_codebooks() {
-        return Err(Error::UnableToLoadConfig);
-    }
-    if config.semantic_token_begin_id > config.semantic_token_end_id {
-        return Err(Error::UnableToLoadConfig);
-    }
-    let semantic_cardinality = usize::try_from(config.semantic_token_end_id - config.semantic_token_begin_id + 1)
-        .map_err(|_| Error::UnableToLoadConfig)?;
-    if semantic_cardinality == 0 {
-        return Err(Error::UnableToLoadConfig);
-    }
+    let audio_semantic_cardinality = audio
+        .runtime()
+        .config()
+        .semantic_codec_cardinality()
+        .ok_or(Error::UnableToLoadConfig)?;
+    let semantic_cardinality = validate_fishaudio_decoder_contract(
+        config.num_codebooks,
+        config.codebook_size,
+        config.max_seq_len,
+        config.semantic_token_begin_id,
+        config.semantic_token_end_id,
+        audio.num_codebooks(),
+        audio.codec_cardinality(),
+        audio_semantic_cardinality,
+    )?;
     if !config.slow_readout_config.is_full_precision() {
         return Err(Error::UnableToLoadConfig);
     }
@@ -300,8 +333,11 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::GenerateFailed);
         }
 
+        if codec_cardinality != self.codebook_size {
+            return Err(Error::UnableToLoadConfig);
+        }
         let semantic_token_upper_bound = self.semantic_cardinality;
-        let residual_token_upper_bound = self.codebook_size.min(codec_cardinality);
+        let residual_token_upper_bound = self.codebook_size;
         if semantic_token_upper_bound == 0 || residual_token_upper_bound == 0 {
             return Err(Error::UnableToLoadConfig);
         }
@@ -735,5 +771,30 @@ impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
 
     fn take_instrumentation(&mut self) -> RunnerInstrumentation {
         FishAudioTextDecoderRuntime::take_instrumentation(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_fishaudio_decoder_contract;
+    use crate::session::types::Error;
+
+    #[test]
+    fn fishaudio_decoder_contract_rejects_residual_cardinality_mismatch() {
+        let result = validate_fishaudio_decoder_contract(2, 49, 256, 10, 25, 2, 48, 16);
+        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
+    }
+
+    #[test]
+    fn fishaudio_decoder_contract_rejects_semantic_cardinality_mismatch() {
+        let result = validate_fishaudio_decoder_contract(2, 48, 256, 10, 25, 2, 48, 15);
+        assert!(matches!(result, Err(Error::UnableToLoadConfig)));
+    }
+
+    #[test]
+    fn fishaudio_decoder_contract_accepts_matching_cardinalities() {
+        let semantic_cardinality =
+            validate_fishaudio_decoder_contract(2, 48, 256, 10, 25, 2, 48, 16).expect("matching contract");
+        assert_eq!(semantic_cardinality, 16);
     }
 }

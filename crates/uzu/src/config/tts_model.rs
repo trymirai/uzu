@@ -36,10 +36,7 @@ fn default_assistant_role_name() -> String {
 }
 
 fn default_tts_message_fields() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (String::from("speaker_id"), String::from("speaker:0")),
-        (String::from("style"), String::from("interleave")),
-    ])
+    BTreeMap::new()
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Default)]

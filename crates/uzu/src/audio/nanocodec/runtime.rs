@@ -180,15 +180,6 @@ pub struct AudioDecodeProfile {
     pub trace_path: Option<PathBuf>,
 }
 
-#[derive(Clone)]
-struct PendingAudioCommandBufferProfile {
-    label: String,
-    cpu_encode_ms: f64,
-    cpu_wait_ms: f64,
-    command_buffer: MetalCommandBuffer,
-    estimated_macs: Option<usize>,
-}
-
 struct SubmittedDecodedPaddedAudio {
     output: Array<Metal>,
     channels: usize,
@@ -197,7 +188,6 @@ struct SubmittedDecodedPaddedAudio {
     final_command_buffer: Option<MetalCommandBuffer>,
     final_command_label: Option<String>,
     final_cpu_encode_ms: f64,
-    submitted_command_buffers: Vec<PendingAudioCommandBufferProfile>,
     decode_profile: Option<AudioDecodeProfile>,
     capture: Option<AudioCaptureGuard>,
 }
@@ -230,17 +220,6 @@ impl SubmittedDecodedPaddedAudio {
             let trace_path = capture.stop()?;
             if let Some(profile) = self.decode_profile.as_mut() {
                 profile.trace_path = Some(trace_path);
-            }
-        }
-        if let Some(profile) = self.decode_profile.as_mut() {
-            for pending in self.submitted_command_buffers.drain(..) {
-                profile.command_buffers.push(AudioCommandBufferProfile {
-                    label: pending.label,
-                    cpu_encode_ms: pending.cpu_encode_ms,
-                    cpu_wait_ms: pending.cpu_wait_ms,
-                    gpu_execution_ms: pending.command_buffer.gpu_execution_time_ms(),
-                    estimated_macs: pending.estimated_macs,
-                });
             }
         }
         let readback_start = self.decode_profile.is_some().then(Instant::now);
@@ -3519,7 +3498,6 @@ impl StructuredAudioCodecGraph {
                 final_command_buffer: None,
                 final_command_label: None,
                 final_cpu_encode_ms: 0.0,
-                submitted_command_buffers: Vec::new(),
                 decode_profile: None,
                 capture: None,
             });
@@ -3580,7 +3558,6 @@ impl StructuredAudioCodecGraph {
         let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
         let chunked_command_buffers = runtime_options.chunked_command_buffers;
         let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
-        let mut submitted_command_buffers = Vec::<PendingAudioCommandBufferProfile>::new();
         let mut command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
         let mut flush_stage = |label: String,
                                estimated_macs: Option<usize>,
@@ -3593,13 +3570,19 @@ impl StructuredAudioCodecGraph {
                 command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             command_buffer.submit();
             if decode_profile.is_some() {
-                submitted_command_buffers.push(PendingAudioCommandBufferProfile {
+                let wait_start = Instant::now();
+                command_buffer.wait_until_completed().map_err(|err| {
+                    AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
+                })?;
+                let cpu_wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
+                push_audio_command_buffer_profile(
+                    &mut decode_profile,
                     label,
+                    command_buffer,
                     cpu_encode_ms,
-                    cpu_wait_ms: 0.0,
-                    command_buffer: command_buffer.clone(),
+                    cpu_wait_ms,
                     estimated_macs,
-                });
+                );
             }
             *command_buffer = context.create_command_buffer().map_err(|err| {
                 AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}"))
@@ -3891,7 +3874,6 @@ impl StructuredAudioCodecGraph {
             final_command_buffer,
             final_command_label,
             final_cpu_encode_ms,
-            submitted_command_buffers,
             decode_profile,
             capture,
         })
@@ -4087,6 +4069,10 @@ impl NanoCodecFsqRuntimeConfig {
 
     pub fn codec_cardinality(&self) -> u32 {
         self.codec_cardinality
+    }
+
+    pub fn semantic_codec_cardinality(&self) -> Option<usize> {
+        self.structured_decoder.as_ref().map(|decoder| decoder.semantic_codebook_size)
     }
 
     pub fn eps(&self) -> f32 {
