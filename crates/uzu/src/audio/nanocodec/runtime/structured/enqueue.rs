@@ -29,8 +29,8 @@ fn snake1d_enqueue(
             alpha.data_type()
         )));
     }
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "fishaudio_snake_output");
+    let kernels = structured_audio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "structured_audio_snake_output");
 
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
@@ -63,7 +63,7 @@ fn causal_conv1d_grouped_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
-    layer: &StructuredAudioConv1dGpuLayer,
+    layer: &StructuredAudioConv1d,
     input_layout: SequenceLayout,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
@@ -105,7 +105,8 @@ fn causal_conv1d_grouped_enqueue(
     if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
         return Err(AudioError::Runtime("causal conv1d dtype mismatch".to_string()));
     }
-    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_causal_conv1d_output");
+    let output =
+        context.create_array(&[batch_size, layer.cout, seq_len], data_type, "structured_audio_causal_conv1d_output");
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
@@ -114,7 +115,7 @@ fn causal_conv1d_grouped_enqueue(
     let dilation_i32 = usize_to_i32(layer.dilation, "dilation")?;
     let input_layout_i32 = input_layout.as_i32();
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
-    let kernels = fishaudio_kernels(context, data_type)?;
+    let kernels = structured_audio_kernels(context, data_type)?;
     if layer.groups == 1 {
         let input_buffer = input.buffer();
         let input_buffer = input_buffer.borrow();
@@ -183,7 +184,7 @@ fn causal_conv1d_grouped_residual_enqueue(
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     residual: &Array<Metal>,
-    layer: &StructuredAudioConv1dGpuLayer,
+    layer: &StructuredAudioConv1d,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -239,8 +240,9 @@ fn causal_conv1d_grouped_residual_enqueue(
     {
         return Err(AudioError::Runtime("causal conv1d residual dtype mismatch".to_string()));
     }
-    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_causal_conv1d_output");
-    let kernels = fishaudio_kernels(context, data_type)?;
+    let output =
+        context.create_array(&[batch_size, layer.cout, seq_len], data_type, "structured_audio_causal_conv1d_output");
+    let kernels = structured_audio_kernels(context, data_type)?;
 
     let input_buffer = input.buffer();
     let input_buffer = input_buffer.borrow();
@@ -280,7 +282,7 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
-    layer: &StructuredAudioConvTranspose1dGpuLayer,
+    layer: &StructuredAudioConvTranspose1d,
     lengths: &[i32],
     batch_size: usize,
     seq_len_in: usize,
@@ -324,11 +326,11 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
     if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
         return Err(AudioError::Runtime("causal transpose dtype mismatch".to_string()));
     }
-    let kernels = fishaudio_kernels(context, data_type)?;
+    let kernels = structured_audio_kernels(context, data_type)?;
     let output = context.create_array(
         &[batch_size, layer.cout, seq_len_out],
         data_type,
-        "fishaudio_causal_conv_transpose_output",
+        "structured_audio_causal_conv_transpose_output",
     );
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
@@ -378,7 +380,7 @@ fn conv1d_pointwise_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
-    layer: &StructuredAudioPointwiseConvGpuLayer,
+    layer: &StructuredAudioPointwiseConv,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -418,8 +420,8 @@ fn conv1d_pointwise_ncs_enqueue(
     if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
         return Err(AudioError::Runtime("pointwise conv dtype mismatch".to_string()));
     }
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "fishaudio_pwconv_output");
+    let kernels = structured_audio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "structured_audio_pwconv_output");
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
@@ -463,7 +465,7 @@ fn norm_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
-    norm: &StructuredAudioNormGpuLayer,
+    norm: &StructuredAudioNorm,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -501,8 +503,8 @@ fn norm_ncs_enqueue(
     if norm.scales.data_type() != data_type || norm.bias.data_type() != data_type {
         return Err(AudioError::Runtime("norm dtype mismatch".to_string()));
     }
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "fishaudio_norm_output");
+    let kernels = structured_audio_kernels(context, data_type)?;
+    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "structured_audio_norm_output");
 
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
@@ -547,8 +549,8 @@ fn gelu_enqueue(
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
     let data_type = input.data_type();
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(input.shape(), data_type, "fishaudio_gelu_output");
+    let kernels = structured_audio_kernels(context, data_type)?;
+    let output = context.create_array(input.shape(), data_type, "structured_audio_gelu_output");
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
@@ -583,8 +585,8 @@ fn add_enqueue(
         )));
     }
     let data_type = a.data_type();
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(a.shape(), data_type, "fishaudio_add_out");
+    let kernels = structured_audio_kernels(context, data_type)?;
+    let output = context.create_array(a.shape(), data_type, "structured_audio_add_out");
     let n_i32 = usize_to_i32(a.num_elements(), "n")?;
     let a_buffer = a.buffer();
     let a_buffer = a_buffer.borrow();
@@ -604,8 +606,8 @@ fn tanh_enqueue(
     input: &Array<Metal>,
 ) -> AudioResult<Array<Metal>> {
     let data_type = input.data_type();
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(input.shape(), data_type, "fishaudio_tanh_output");
+    let kernels = structured_audio_kernels(context, data_type)?;
+    let output = context.create_array(input.shape(), data_type, "structured_audio_tanh_output");
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
     let tanh_id = 2_u32;

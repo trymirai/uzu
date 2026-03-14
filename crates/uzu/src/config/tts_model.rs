@@ -156,7 +156,7 @@ pub enum TtsAudioDecoderConfig {
 pub struct DescriptAudioCodecConfig {
     pub precision: ConfigDataType,
     pub quantizer_config: DescriptAudioQuantizerConfig,
-    pub decoder_config: serde_json::Value,
+    pub decoder_config: DescriptAudioDacDecoderConfig,
     pub samplerate: u32,
     pub encoder_dim: usize,
     pub encoder_rates: Vec<usize>,
@@ -168,6 +168,55 @@ pub struct DescriptAudioCodecConfig {
     pub downsample_factor: Vec<usize>,
     pub codebook_size: usize,
     pub semantic_codebook_size: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptAudioDacDecoderConfig {
+    pub precision: ConfigDataType,
+    pub conv_config: DescriptAudioCausalConv1dConfig,
+    pub snake_config: DescriptAudioSnake1dConfig,
+    pub decoder_block_config: DescriptAudioDacDecoderBlockConfig,
+    pub causal: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptAudioDacDecoderBlockConfig {
+    pub precision: ConfigDataType,
+    pub snake_config: DescriptAudioSnake1dConfig,
+    pub trans_conv_config: DescriptAudioCausalTransposeConv1dConfig,
+    pub res_unit_config: DescriptAudioResidualUnitConfig,
+    pub causal: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptAudioResidualUnitConfig {
+    pub precision: ConfigDataType,
+    pub snake_config: DescriptAudioSnake1dConfig,
+    pub conv_config: DescriptAudioCausalConv1dConfig,
+    pub causal: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptAudioCausalConv1dConfig {
+    pub precision: ConfigDataType,
+    pub has_biases: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptAudioCausalTransposeConv1dConfig {
+    pub precision: ConfigDataType,
+    pub has_biases: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptAudioSnake1dConfig {
+    pub precision: ConfigDataType,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

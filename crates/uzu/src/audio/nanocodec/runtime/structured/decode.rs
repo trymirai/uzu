@@ -4,7 +4,7 @@ impl StructuredAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &mut MetalCommandBuffer,
         input: &Array<Metal>,
-        unit: &StructuredAudioResidualUnitGpuLayer,
+        unit: &StructuredAudioResidualUnit,
         lengths: &[i32],
         lengths_array: &Array<Metal>,
         batch_size: usize,
@@ -55,13 +55,13 @@ impl StructuredAudioCodecGraph {
                 .map(|&length| {
                     length
                         .checked_mul(self.upsample_factor)
-                        .ok_or(AudioError::Runtime("FishAudio length scaling overflow".to_string()))
+                        .ok_or(AudioError::Runtime("structured audio length scaling overflow".to_string()))
                 })
                 .collect::<AudioResult<Vec<_>>>()?;
             let context = <Metal as Backend>::Context::new()
                 .map_err(|err| AudioError::Runtime(format!("failed to create metal audio context: {err}")))?;
             return Ok(SubmittedDecodedPaddedAudio {
-                output: context.create_array(&[0], DataType::F32, "fishaudio_empty_decode_output"),
+                output: context.create_array(&[0], DataType::F32, "structured_audio_empty_decode_output"),
                 channels: 1,
                 frames: out_lengths.iter().copied().max().unwrap_or(0),
                 lengths: out_lengths,
@@ -76,7 +76,8 @@ impl StructuredAudioCodecGraph {
         let mut lengths_i32 = lengths
             .iter()
             .map(|&length| {
-                i32::try_from(length).map_err(|_| AudioError::Runtime("FishAudio length exceeds i32 range".to_string()))
+                i32::try_from(length)
+                    .map_err(|_| AudioError::Runtime("structured audio length exceeds i32 range".to_string()))
             })
             .collect::<AudioResult<Vec<_>>>()?;
         let mut decode_profile = collect_command_buffer_profile.then(|| AudioDecodeProfile {
@@ -124,7 +125,7 @@ impl StructuredAudioCodecGraph {
         let vocoder_graph = self.vocoder_gpu_graph(&context)?;
         let mut command_buffer = context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?
+            .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}")))?
             .start_encoding();
         let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
         let chunked_command_buffers = runtime_options.chunked_command_buffers;
@@ -141,13 +142,13 @@ impl StructuredAudioCodecGraph {
                 command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             let next_command_buffer = context
                 .create_command_buffer()
-                .map_err(|err| AudioError::Runtime(format!("failed to create FishAudio decode command buffer: {err}")))?
+                .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}")))?
                 .start_encoding();
             let submitted = std::mem::replace(command_buffer, next_command_buffer).end_encoding().submit();
             if decode_profile.is_some() {
                 let wait_start = Instant::now();
                 let completed = submitted.wait_until_completed().map_err(|err| {
-                    AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
+                    AudioError::Runtime(format!("failed to wait for structured audio decoder command buffer: {err}"))
                 })?;
                 let cpu_wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
                 push_audio_command_buffer_profile(
@@ -165,24 +166,26 @@ impl StructuredAudioCodecGraph {
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
-        let mut lengths_array = context.create_array(&[lengths_i32.len()], DataType::I32, "fishaudio_lengths_a");
+        let mut lengths_array =
+            context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_a");
         write_i32_slice_into_array(&mut lengths_array, &lengths_i32)
-            .map_err(|err| AudioError::Runtime(format!("fishaudio_lengths_a: {err}")))?;
-        let mut next_lengths_array = context.create_array(&[lengths_i32.len()], DataType::I32, "fishaudio_lengths_b");
+            .map_err(|err| AudioError::Runtime(format!("structured_audio_lengths_a: {err}")))?;
+        let mut next_lengths_array =
+            context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_b");
 
         for (block_index, (trans_conv, convnext)) in vocoder_graph.upsample_blocks.iter().enumerate() {
             if trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
-                    "FishAudio upsampler input channel mismatch: expected {}, got {}",
+                    "structured audio upsampler input channel mismatch: expected {}, got {}",
                     trans_conv.cin, current_channels
                 )));
             }
             let next_frames = current_frames
                 .checked_mul(trans_conv.stride)
-                .ok_or(AudioError::Runtime("FishAudio upsampler frame overflow".to_string()))?;
+                .ok_or(AudioError::Runtime("structured audio upsampler frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, trans_conv.stride)?;
             write_i32_slice_into_array(&mut next_lengths_array, &next_lengths_i32)
-                .map_err(|err| AudioError::Runtime(format!("fishaudio_upsample_lengths: {err}")))?;
+                .map_err(|err| AudioError::Runtime(format!("structured_audio_upsample_lengths: {err}")))?;
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
@@ -198,7 +201,7 @@ impl StructuredAudioCodecGraph {
             )
             .map_err(|err| {
                 AudioError::Runtime(format!(
-                    "FishAudio upsample block {block_index} transpose_conv failed: {err} (x_len={}, batch_size={}, cin={}, seq_len_in={}, seq_len_out={})",
+                    "structured audio upsample block {block_index} transpose_conv failed: {err} (x_len={}, batch_size={}, cin={}, seq_len_in={}, seq_len_out={})",
                     x.num_elements(),
                     batch_size,
                     trans_conv.cin,
@@ -219,7 +222,7 @@ impl StructuredAudioCodecGraph {
                     next_frames,
                 )
                 .map_err(|err| {
-                    AudioError::Runtime(format!("FishAudio upsample block {block_index} convnext failed: {err}"))
+                    AudioError::Runtime(format!("structured audio upsample block {block_index} convnext failed: {err}"))
                 })?;
             flush_stage(format!("upsample_block_{block_index}"), None, &mut command_buffer)?;
 
@@ -232,7 +235,7 @@ impl StructuredAudioCodecGraph {
 
         if vocoder_graph.first_conv.cin != current_channels {
             return Err(AudioError::Runtime(format!(
-                "FishAudio decoder input channels mismatch: expected {}, got {}",
+                "structured audio decoder input channels mismatch: expected {}, got {}",
                 vocoder_graph.first_conv.cin, current_channels
             )));
         }
@@ -257,7 +260,7 @@ impl StructuredAudioCodecGraph {
         for (block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
             if block.trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
-                    "FishAudio decoder block input mismatch: expected {}, got {}",
+                    "structured audio decoder block input mismatch: expected {}, got {}",
                     block.trans_conv.cin, current_channels
                 )));
             }
@@ -273,10 +276,10 @@ impl StructuredAudioCodecGraph {
 
             let next_frames = current_frames
                 .checked_mul(block.trans_conv.stride)
-                .ok_or(AudioError::Runtime("FishAudio decoder frame overflow".to_string()))?;
+                .ok_or(AudioError::Runtime("structured audio decoder frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, block.trans_conv.stride)?;
             write_i32_slice_into_array(&mut next_lengths_array, &next_lengths_i32)
-                .map_err(|err| AudioError::Runtime(format!("fishaudio_decoder_block_lengths: {err}")))?;
+                .map_err(|err| AudioError::Runtime(format!("structured_audio_decoder_block_lengths: {err}")))?;
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &context,
@@ -300,7 +303,7 @@ impl StructuredAudioCodecGraph {
             let active_elements = batch_size
                 .checked_mul(current_channels)
                 .and_then(|value| value.checked_mul(current_frames))
-                .ok_or(AudioError::Runtime("FishAudio decoder element count overflow".to_string()))?;
+                .ok_or(AudioError::Runtime("structured audio decoder element count overflow".to_string()))?;
             let res1_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit1)?;
             let res2_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit2)?;
             let res3_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit3)?;
@@ -425,7 +428,9 @@ impl StructuredAudioCodecGraph {
             .into_iter()
             .map(|length| {
                 usize::try_from(length)
-                    .map_err(|_| AudioError::Runtime("FishAudio decoder produced invalid negative length".to_string()))
+                    .map_err(|_| {
+                        AudioError::Runtime("structured audio decoder produced invalid negative length".to_string())
+                    })
             })
             .collect::<AudioResult<Vec<_>>>()?;
         Ok(SubmittedDecodedPaddedAudio {

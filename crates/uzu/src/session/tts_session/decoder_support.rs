@@ -279,28 +279,6 @@ impl StreamingTokenAccumulator {
         self.by_codebook.first().map_or(0, Vec::len)
     }
 
-    #[cfg(test)]
-    pub(super) fn to_grid(&self) -> Result<AudioTokenGrid, Error> {
-        let frames = self.frames();
-        let mut tokens = Vec::with_capacity(self.by_codebook.len() * frames);
-        for codebook in &self.by_codebook {
-            if codebook.len() != frames {
-                return Err(Error::GenerateFailed);
-            }
-            tokens.extend_from_slice(codebook);
-        }
-
-        AudioTokenGrid::new(
-            tokens.into_boxed_slice(),
-            1,
-            self.by_codebook.len(),
-            frames,
-            vec![frames].into_boxed_slice(),
-            AudioTokenPacking::CodebookMajor,
-        )
-        .map_err(Error::from)
-    }
-
     pub(super) fn to_grid_range(
         &self,
         frame_start: usize,

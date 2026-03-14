@@ -1,4 +1,4 @@
-fn fishaudio_dtype_key(data_type: DataType) -> u8 {
+fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
         DataType::F16 => 1,
         DataType::BF16 => 2,
@@ -29,7 +29,7 @@ struct StructuredAudioKernelCache {
     add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel,
 }
 
-struct FishAudioQuantizerGpuResources {
+struct FishAudioQuantizerResources {
     data_type: DataType,
     codebook_dim: usize,
     residual_quantizers: usize,
@@ -51,8 +51,68 @@ thread_local! {
         RefCell::new(HashMap::new());
     static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioKernelCache>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioDecoderGpuGraph>>> =
+    static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioDecoderGraph>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerGpuResources>>> =
+    static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerResources>>> =
         RefCell::new(HashMap::new());
+}
+
+fn structured_audio_kernels(
+    context: &Rc<<Metal as Backend>::Context>,
+    data_type: DataType,
+) -> AudioResult<Rc<StructuredAudioKernelCache>> {
+    let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(structured_audio_dtype_key(data_type));
+    FISHAUDIO_KERNEL_CACHE.with(|cache| {
+        if let Some(existing) = cache.borrow().get(&key) {
+            return Ok(existing.clone());
+        }
+
+        let created = Rc::new(StructuredAudioKernelCache {
+            half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize snake1d kernel: {err}")))?,
+            causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize causal conv1d kernel: {err}")))?,
+            causal_conv1d_grouped: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel::new(
+                context.as_ref(),
+                data_type,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize grouped causal conv1d kernel: {err}")))?,
+            causal_conv1d_grouped_residual:
+                <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel::new(
+                    context.as_ref(),
+                    data_type,
+                )
+                .map_err(|err| {
+                    AudioError::Runtime(format!("failed to initialize grouped residual conv1d kernel: {err}"))
+                })?,
+            causal_conv_transpose1d_causal_pad:
+                <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(
+                    context.as_ref(),
+                    data_type,
+                )
+                .map_err(|err| {
+                    AudioError::Runtime(format!("failed to initialize causal transpose-conv kernel: {err}"))
+                })?,
+            conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize conv1d kernel: {err}")))?,
+            norm_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize norm kernel: {err}")))?,
+            activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(
+                context.as_ref(),
+                data_type,
+                false,
+            )
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize activation kernel: {err}")))?,
+            add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(context.as_ref(), data_type)
+                .map_err(|err| AudioError::Runtime(format!("failed to initialize add kernel: {err}")))?,
+        });
+        cache.borrow_mut().insert(key, created.clone());
+        Ok(created)
+    })
 }

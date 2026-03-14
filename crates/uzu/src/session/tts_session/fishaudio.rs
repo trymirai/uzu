@@ -1,7 +1,6 @@
 use super::*;
 use crate::array::Array;
 use crate::config::TtsMessageProcessorConfig;
-use crate::utils::array_io::{read_array_to_f32_vec, write_f32_slice_into_array};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 
@@ -86,32 +85,22 @@ impl FishAudioGpuPath {
 }
 
 fn load_float_tensor_array(
-    context: &MetalContext,
     parameter_tree: &crate::parameters::ParameterTree<MetalContext>,
     key: &str,
     expected_shape: [usize; 2],
     target_data_type: DataType,
-    label: &str,
 ) -> Result<Array<Metal>, Error> {
     let array = parameter_tree.leaf_array(key).map_err(|_| Error::UnableToLoadWeights)?;
     if array.shape() != expected_shape {
         return Err(Error::UnableToLoadConfig);
     }
-    if array.data_type() == target_data_type {
-        return Ok(array);
+    if array.data_type() != target_data_type {
+        return Err(Error::InvalidTtsModelConfig(format!(
+            "FishAudio tensor {key} dtype mismatch: expected {target_data_type:?}, got {:?}",
+            array.data_type()
+        )));
     }
-    if !matches!(array.data_type(), DataType::F32 | DataType::F16 | DataType::BF16)
-        || !matches!(target_data_type, DataType::F32 | DataType::F16 | DataType::BF16)
-    {
-        return Err(Error::UnableToLoadConfig);
-    }
-
-    let values = read_array_to_f32_vec(&array)
-        .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid float tensor {key}: {err}")))?;
-    let mut converted = context.create_array(&expected_shape, target_data_type, label);
-    write_f32_slice_into_array(&mut converted, &values)
-        .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid float tensor {key}: {err}")))?;
-    Ok(converted)
+    Ok(array)
 }
 
 fn validate_fishaudio_decoder_contract(
@@ -281,7 +270,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
     let root_weights = loader.tree();
 
     let codebook_embeddings = load_float_tensor_array(
-        text_decoder_context.as_ref(),
         &root_weights,
         "text_decoder.codebook_embeddings.weights",
         [
@@ -289,17 +277,14 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
             config.slow_model_dim,
         ],
         activation_data_type,
-        "tts_codebook_embeddings_gpu",
     )?;
 
     let fast_model_projection = if config.fast_model_projection_config.is_some() {
         Some(load_float_tensor_array(
-            text_decoder_context.as_ref(),
             &root_weights,
             "text_decoder.fast_model_projection.weights",
             [config.fast_model_dim, config.slow_model_dim],
             activation_data_type,
-            "tts_fast_projection_weights",
         )?)
     } else {
         None

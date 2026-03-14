@@ -40,23 +40,16 @@ use crate::{
     },
     parameters::ParameterLoader,
     utils::array_io::{
-        read_array_to_f32_vec, write_f32_slice_into_array as write_f32_slice_to_array, write_i32_slice_into_array,
+        read_array_to_f32_vec, write_i32_slice_into_array,
     },
 };
 
 mod loaders;
 
 use loaders::load_audio_runtime_from_tts_config;
-#[cfg(test)]
-use loaders::resolve_descript_audio_codec_vocoder_data_type;
 include!("runtime/profile.rs");
 include!("runtime/stream.rs");
 include!("runtime/structured.rs");
-
-#[cfg(test)]
-mod tests {
-    include!("runtime/tests.rs");
-}
 
 type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
 type MetalPendingCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Pending;

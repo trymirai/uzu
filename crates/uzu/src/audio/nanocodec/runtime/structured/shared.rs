@@ -9,7 +9,7 @@ fn checked_add_usize(
 fn conv1d_estimated_macs(
     batch_size: usize,
     seq_len: usize,
-    layer: &StructuredAudioConv1dGpuLayer,
+    layer: &StructuredAudioConv1d,
 ) -> AudioResult<usize> {
     let cin_per_group = layer
         .cin
@@ -21,7 +21,7 @@ fn conv1d_estimated_macs(
 fn convtranspose_estimated_macs(
     batch_size: usize,
     seq_len_in: usize,
-    layer: &StructuredAudioConvTranspose1dGpuLayer,
+    layer: &StructuredAudioConvTranspose1d,
 ) -> AudioResult<usize> {
     let cout_per_group = layer
         .cout
@@ -33,7 +33,7 @@ fn convtranspose_estimated_macs(
 fn residual_unit_estimated_macs(
     batch_size: usize,
     seq_len: usize,
-    unit: &StructuredAudioResidualUnitGpuLayer,
+    unit: &StructuredAudioResidualUnit,
 ) -> AudioResult<usize> {
     let conv1 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv1)?;
     let conv2 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv2)?;
@@ -74,88 +74,9 @@ impl SequenceLayout {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioVectorQuantizer {
-    codebook: Vec<f32>,
-    codebook_dim: usize,
-    out_proj: Vec<f32>,
-    out_bias: Vec<f32>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioConv1dLayer {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    cin: usize,
-    cout: usize,
-    kernel_size: usize,
-    dilation: usize,
-    groups: usize,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioConvTranspose1dLayer {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    cin: usize,
-    cout: usize,
-    kernel_size: usize,
-    stride: usize,
-    groups: usize,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioNormLayer {
-    scales: Vec<f32>,
-    biases: Option<Vec<f32>>,
-    epsilon: f32,
-    subtract_mean: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioConvNeXtLayer {
-    depthwise_conv: StructuredAudioConv1dLayer,
-    norm: StructuredAudioNormLayer,
-    pwconv1: Vec<f32>,
-    pwconv1_hidden_dim: usize,
-    pwconv1_bias: Vec<f32>,
-    pwconv2: Vec<f32>,
-    pwconv2_bias: Vec<f32>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioResidualUnitLayer {
-    snake1_alpha: Vec<f32>,
-    conv1: StructuredAudioConv1dLayer,
-    snake2_alpha: Vec<f32>,
-    conv2: StructuredAudioConv1dLayer,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioDecoderBlockLayer {
-    snake_alpha: Vec<f32>,
-    trans_conv: StructuredAudioConvTranspose1dLayer,
-    res_unit1: StructuredAudioResidualUnitLayer,
-    res_unit2: StructuredAudioResidualUnitLayer,
-    res_unit3: StructuredAudioResidualUnitLayer,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioDecoderGraph {
-    first_conv: StructuredAudioConv1dLayer,
-    upsample_blocks: Vec<(StructuredAudioConvTranspose1dLayer, StructuredAudioConvNeXtLayer)>,
-    decoder_blocks: Vec<StructuredAudioDecoderBlockLayer>,
-    final_snake_alpha: Vec<f32>,
-    final_conv: StructuredAudioConv1dLayer,
-    upsample_factor: usize,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 struct StructuredAudioCodecGraph {
-    semantic_quantizer: StructuredAudioVectorQuantizer,
-    residual_quantizers: Vec<StructuredAudioVectorQuantizer>,
-    post_module_transformer_config: crate::config::TransformerConfig,
+    config: DescriptAudioCodecConfig,
     weights_path: String,
-    decoder: StructuredAudioDecoderGraph,
     codebook_size: usize,
     semantic_codebook_size: usize,
     input_dim: usize,
@@ -165,7 +86,7 @@ struct StructuredAudioCodecGraph {
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioConv1dGpuLayer {
+struct StructuredAudioConv1d {
     weight: Array<Metal>,
     bias: Array<Metal>,
     cin: usize,
@@ -176,7 +97,7 @@ struct StructuredAudioConv1dGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioConvTranspose1dGpuLayer {
+struct StructuredAudioConvTranspose1d {
     weight: Array<Metal>,
     bias: Array<Metal>,
     cin: usize,
@@ -187,7 +108,7 @@ struct StructuredAudioConvTranspose1dGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioPointwiseConvGpuLayer {
+struct StructuredAudioPointwiseConv {
     weight: Array<Metal>,
     bias: Array<Metal>,
     cin: usize,
@@ -195,7 +116,7 @@ struct StructuredAudioPointwiseConvGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioNormGpuLayer {
+struct StructuredAudioNorm {
     scales: Array<Metal>,
     bias: Array<Metal>,
     epsilon: f32,
@@ -203,35 +124,35 @@ struct StructuredAudioNormGpuLayer {
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioConvNeXtGpuLayer {
-    depthwise_conv: StructuredAudioConv1dGpuLayer,
-    norm: StructuredAudioNormGpuLayer,
-    pwconv1: StructuredAudioPointwiseConvGpuLayer,
-    pwconv2: StructuredAudioPointwiseConvGpuLayer,
+struct StructuredAudioConvNeXt {
+    depthwise_conv: StructuredAudioConv1d,
+    norm: StructuredAudioNorm,
+    pwconv1: StructuredAudioPointwiseConv,
+    pwconv2: StructuredAudioPointwiseConv,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioResidualUnitGpuLayer {
+struct StructuredAudioResidualUnit {
     snake1_alpha: Array<Metal>,
-    conv1: StructuredAudioConv1dGpuLayer,
+    conv1: StructuredAudioConv1d,
     snake2_alpha: Array<Metal>,
-    conv2: StructuredAudioConv1dGpuLayer,
+    conv2: StructuredAudioConv1d,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioDecoderBlockGpuLayer {
+struct StructuredAudioDecoderBlock {
     snake_alpha: Array<Metal>,
-    trans_conv: StructuredAudioConvTranspose1dGpuLayer,
-    res_unit1: StructuredAudioResidualUnitGpuLayer,
-    res_unit2: StructuredAudioResidualUnitGpuLayer,
-    res_unit3: StructuredAudioResidualUnitGpuLayer,
+    trans_conv: StructuredAudioConvTranspose1d,
+    res_unit1: StructuredAudioResidualUnit,
+    res_unit2: StructuredAudioResidualUnit,
+    res_unit3: StructuredAudioResidualUnit,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioDecoderGpuGraph {
-    first_conv: StructuredAudioConv1dGpuLayer,
-    upsample_blocks: Vec<(StructuredAudioConvTranspose1dGpuLayer, StructuredAudioConvNeXtGpuLayer)>,
-    decoder_blocks: Vec<StructuredAudioDecoderBlockGpuLayer>,
+struct StructuredAudioDecoderGraph {
+    first_conv: StructuredAudioConv1d,
+    upsample_blocks: Vec<(StructuredAudioConvTranspose1d, StructuredAudioConvNeXt)>,
+    decoder_blocks: Vec<StructuredAudioDecoderBlock>,
     final_snake_alpha: Array<Metal>,
-    final_conv: StructuredAudioConv1dGpuLayer,
+    final_conv: StructuredAudioConv1d,
 }

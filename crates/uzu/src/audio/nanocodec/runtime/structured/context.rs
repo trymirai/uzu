@@ -1,5 +1,5 @@
 impl StructuredAudioCodecGraph {
-    fn conv1d_input_context(layer: &StructuredAudioConv1dLayer) -> AudioResult<usize> {
+    fn conv1d_input_context(layer: &StructuredAudioConv1d) -> AudioResult<usize> {
         layer
             .kernel_size
             .checked_sub(1)
@@ -9,7 +9,7 @@ impl StructuredAudioCodecGraph {
 
     fn convtranspose_input_context(
         output_context: usize,
-        layer: &StructuredAudioConvTranspose1dLayer,
+        layer: &StructuredAudioConvTranspose1d,
     ) -> AudioResult<usize> {
         let kernel_minus_one = layer.kernel_size.saturating_sub(1);
         let numerator = output_context
@@ -20,7 +20,7 @@ impl StructuredAudioCodecGraph {
 
     fn residual_unit_input_context(
         output_context: usize,
-        layer: &StructuredAudioResidualUnitLayer,
+        layer: &StructuredAudioResidualUnit,
     ) -> AudioResult<usize> {
         let conv2 = Self::conv1d_input_context(&layer.conv2)?;
         let conv1 = Self::conv1d_input_context(&layer.conv1)?;
@@ -32,7 +32,7 @@ impl StructuredAudioCodecGraph {
 
     fn convnext_input_context(
         output_context: usize,
-        layer: &StructuredAudioConvNeXtLayer,
+        layer: &StructuredAudioConvNeXt,
     ) -> AudioResult<usize> {
         output_context
             .checked_add(Self::conv1d_input_context(&layer.depthwise_conv)?)
@@ -41,7 +41,7 @@ impl StructuredAudioCodecGraph {
 
     fn decoder_block_input_context(
         output_context: usize,
-        layer: &StructuredAudioDecoderBlockLayer,
+        layer: &StructuredAudioDecoderBlock,
     ) -> AudioResult<usize> {
         let after_res3 = Self::residual_unit_input_context(output_context, &layer.res_unit3)?;
         let after_res2 = Self::residual_unit_input_context(after_res3, &layer.res_unit2)?;
@@ -49,28 +49,32 @@ impl StructuredAudioCodecGraph {
         Self::convtranspose_input_context(after_res1, &layer.trans_conv)
     }
 
-    fn streaming_vocoder_context_frames(&self) -> AudioResult<usize> {
-        let mut context = Self::conv1d_input_context(&self.decoder.final_conv)?;
+    fn streaming_vocoder_context_frames(
+        &self,
+        context: &Rc<<Metal as Backend>::Context>,
+    ) -> AudioResult<usize> {
+        let vocoder = self.vocoder_gpu_graph(context)?;
+        let mut required = Self::conv1d_input_context(&vocoder.final_conv)?;
 
-        for block in self.decoder.decoder_blocks.iter().rev() {
-            context = Self::decoder_block_input_context(context, block)?;
+        for block in vocoder.decoder_blocks.iter().rev() {
+            required = Self::decoder_block_input_context(required, block)?;
         }
 
-        context = context
-            .checked_add(Self::conv1d_input_context(&self.decoder.first_conv)?)
+        required = required
+            .checked_add(Self::conv1d_input_context(&vocoder.first_conv)?)
             .ok_or(AudioError::Runtime("decoder-first streaming context overflow".to_string()))?;
 
-        for (trans_conv, convnext) in self.decoder.upsample_blocks.iter().rev() {
-            context = Self::convnext_input_context(context, convnext)?;
-            context = Self::convtranspose_input_context(context, trans_conv)?;
+        for (trans_conv, convnext) in vocoder.upsample_blocks.iter().rev() {
+            required = Self::convnext_input_context(required, convnext)?;
+            required = Self::convtranspose_input_context(required, trans_conv)?;
         }
 
-        Ok(context)
+        Ok(required)
     }
 
     fn post_module_streaming_context_frames(&self) -> Option<usize> {
         let mut context = 0usize;
-        for layer in &self.post_module_transformer_config.layer_configs {
+        for layer in &self.config.quantizer_config.post_module_config.layer_configs {
             let window = layer.mixer_config.sliding_window_size()?;
             context = context.max(window.saturating_sub(1));
         }
@@ -78,7 +82,8 @@ impl StructuredAudioCodecGraph {
     }
 
     fn streaming_decode_context_frames(&self) -> AudioResult<Option<usize>> {
-        let vocoder_context = self.streaming_vocoder_context_frames()?;
+        let context = self.decode_context()?;
+        let vocoder_context = self.streaming_vocoder_context_frames(&context)?;
         let Some(post_module_context) = self.post_module_streaming_context_frames() else {
             return Ok(None);
         };
@@ -97,7 +102,7 @@ impl StructuredAudioCodecGraph {
     ) -> AudioResult<Array<Metal>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
-                "FishAudio codebook mismatch: expected {}, got {codebooks}",
+                "structured audio codebook mismatch: expected {}, got {codebooks}",
                 self.total_codebooks
             )));
         }
@@ -125,7 +130,7 @@ impl StructuredAudioCodecGraph {
         let quantizer_resources = self.quantizer_gpu_resources(context)?;
         if quantizer_resources.residual_quantizers + 1 != codebooks {
             return Err(AudioError::Runtime(format!(
-                "FishAudio residual quantizer count mismatch: expected {}, got {}",
+                "structured audio residual quantizer count mismatch: expected {}, got {}",
                 codebooks.saturating_sub(1),
                 quantizer_resources.residual_quantizers
             )));
@@ -141,15 +146,16 @@ impl StructuredAudioCodecGraph {
         let lengths_i32 = convert_lengths_to_i32(lengths, frames)?;
 
         let mut tokens_array =
-            context.create_array(&[batch_size, codebooks, frames], DataType::I32, "fishaudio_quantizer_tokens");
+            context.create_array(&[batch_size, codebooks, frames], DataType::I32, "structured_audio_quantizer_tokens");
         tokens_array.as_slice_mut::<i32>().copy_from_slice(&tokens_i32);
-        let mut lengths_array = context.create_array(&[batch_size], DataType::I32, "fishaudio_quantizer_lengths");
+        let mut lengths_array =
+            context.create_array(&[batch_size], DataType::I32, "structured_audio_quantizer_lengths");
         lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
 
         let output = context.create_array(
             &[batch_size, frames, self.input_dim],
             quantizer_resources.data_type,
-            "fishaudio_quantizer_output_nsc",
+            "structured_audio_quantizer_output_nsc",
         );
         let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
         let codebooks_i32 = usize_to_i32(codebooks, "codebooks")?;

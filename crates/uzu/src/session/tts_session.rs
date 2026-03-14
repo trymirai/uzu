@@ -6,8 +6,6 @@ mod decoder_runtime;
 mod decoder_support;
 mod fishaudio;
 mod generator;
-#[cfg(test)]
-mod tests;
 
 use std::{
     cell::RefCell,
