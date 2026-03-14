@@ -12,8 +12,6 @@ pub enum BenchError {
     Kernel(String),
     #[error("buffer allocation failed")]
     BufferAllocation,
-    #[error("dispatch descriptor failed: {0}")]
-    DispatchDescriptor(String),
     #[error("warmup iteration {iteration}: {source}")]
     Warmup {
         iteration: usize,

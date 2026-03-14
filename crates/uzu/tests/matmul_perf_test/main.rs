@@ -14,9 +14,9 @@ use uzu::{
     backends::{
         common::{
             Backend, Context,
-            kernel::matmul::{MatmulDispatchDescriptor, MatmulKernel},
+            kernel::matmul::{MatmulDispatchDescriptor, MatmulKernel, choose_matmul_dispatch_descriptor},
         },
-        metal::{Metal, choose_dispatch_descriptor},
+        metal::Metal,
     },
 };
 
@@ -75,7 +75,7 @@ fn matmul_perf() {
             let mut arguments = bench::make_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
             MatmulKernel::<Metal>::apply_batch_collapse(&mut arguments);
 
-            let descriptor = match choose_dispatch_descriptor(&context, data_type, &arguments) {
+            let descriptor = match choose_matmul_dispatch_descriptor::<Metal>(&context, data_type, &arguments) {
                 Ok(d) => d,
                 Err(e) => {
                     results.push(output::PerfResult {
