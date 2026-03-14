@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -49,10 +45,6 @@ impl ObjectInfo {
 
         (src_rel_path, kernels)
     }
-}
-
-fn is_nax_source(path: &Path) -> bool {
-    path.file_name().and_then(|s| s.to_str()).map(|s| s.contains("_nax")).unwrap_or(false)
 }
 
 async fn hash_dependencies(
@@ -322,22 +314,11 @@ impl MetalCompiler {
 #[async_trait]
 impl Compiler for MetalCompiler {
     async fn build(&self) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
-        let nax_enabled = cfg!(feature = "metal-nax");
-        debug_log!(
-            "metal nax {}",
-            if nax_enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
-
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("metal"))
             .map(|e| e.into_path())
-            .filter(|p| nax_enabled || !is_nax_source(p))
             .collect();
 
         let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
