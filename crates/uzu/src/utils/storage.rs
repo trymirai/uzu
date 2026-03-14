@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2_foundation::{NSHomeDirectory, NSSearchPathDirectory, NSString};
 
 const STORAGE_DIR_NAME: &str = "com.mirai.sdk.storage";
@@ -12,7 +12,7 @@ pub fn user_domain_path(dir: NSSearchPathDirectory) -> PathBuf {
     {
         use objc2_foundation::{NSFileManager, NSSearchPathDomainMask};
 
-        if let Some(path) = objc2::rc::autoreleasepool(|_| unsafe {
+        if let Some(path) = autoreleasepool(|_| {
             let fm = NSFileManager::defaultManager();
             let urls = fm.URLsForDirectory_inDomains(dir, NSSearchPathDomainMask::UserDomainMask);
 
@@ -56,7 +56,7 @@ pub fn storage_path() -> PathBuf {
         // `~/Library/Containers/<bundle-id>/Data`. Persist model files inside
         // the app-scoped caches directory to comply with sandbox rules:
         // `~/Library/Containers/<bundle-id>/Data/Library/Caches/…`.
-        let home = unsafe { NSHomeDirectory() }.to_string();
+        let home = NSHomeDirectory().to_string();
         PathBuf::from(&home).join("Library").join("Caches")
     };
 
