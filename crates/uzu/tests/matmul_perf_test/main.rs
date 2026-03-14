@@ -46,11 +46,7 @@ fn matmul_perf() {
     let data_types = [DataType::BF16, DataType::F16];
     let test_shapes = test_shapes();
 
-    eprintln!(
-        "Matmul perf: {} dtypes x {} shapes",
-        data_types.len(),
-        test_shapes.len(),
-    );
+    eprintln!("Matmul perf: {} dtypes x {} shapes", data_types.len(), test_shapes.len(),);
 
     let progress_bar = ProgressBar::new_spinner();
     progress_bar.set_style(

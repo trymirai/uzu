@@ -225,8 +225,7 @@ struct GEMMKernel {
     else { // Loop over K - unaligned case
       short tgp_bm = min(BM, params->M - c_row);
       short tgp_bn = min(BN, params->N - c_col);
-      short leftover_bk =
-          params->K - params->gemm_k_iterations_aligned * BK;
+      short leftover_bk = params->K - params->gemm_k_iterations_aligned * BK;
 
       if (tgp_bm == BM && tgp_bn == BN) {
         gemm_loop<true, true, K_aligned>(
