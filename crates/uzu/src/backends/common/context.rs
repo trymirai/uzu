@@ -5,11 +5,8 @@ use crate::backends::common::CommandBuffer;
 
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
-    type DeviceCapabilities;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
-
-    fn device_capabilities(&self) -> &Self::DeviceCapabilities;
 
     fn recommended_async_batch_size(
         &self,

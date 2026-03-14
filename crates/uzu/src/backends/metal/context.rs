@@ -52,7 +52,6 @@ impl MetalContext {
 
 impl Context for MetalContext {
     type Backend = Metal;
-    type DeviceCapabilities = MetalDeviceCapabilities;
 
     fn new() -> Result<Rc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
@@ -74,10 +73,6 @@ impl Context for MetalContext {
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
         }))
-    }
-
-    fn device_capabilities(&self) -> &MetalDeviceCapabilities {
-        &self.device_capabilities
     }
 
     fn is_high_performance(&self) -> bool {

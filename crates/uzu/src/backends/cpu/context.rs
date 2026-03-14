@@ -7,14 +7,9 @@ pub struct CpuContext;
 
 impl Context for CpuContext {
     type Backend = Cpu;
-    type DeviceCapabilities = ();
 
     fn new() -> Result<Rc<Self>, CpuError> {
         Ok(Rc::new(CpuContext))
-    }
-
-    fn device_capabilities(&self) -> &() {
-        &()
     }
 
     fn recommended_async_batch_size(&self, _model_path: &Path) -> usize {
