@@ -221,58 +221,39 @@ impl TokenDecoderRunner {
         Ok(())
     }
 
-    fn encode_repetition_penalty_if_needed_with_buffers<'tokens, 'counts>(
+    fn encode_repetition_penalty_if_needed(
         &self,
         sampling: &TextSamplingState,
-        count: u32,
-        previous_tokens: impl BufferArg<'tokens, <Metal as Backend>::Buffer>,
-        previous_counts: impl BufferArg<'counts, <Metal as Backend>::Buffer>,
-        batch_size: u32,
-        max_previous_tokens: u32,
     ) -> Result<(), Error> {
         if !sampling.uses_repetition_penalty() {
             return Ok(());
         }
+        let repetition_tokens = self.repetition_tokens.borrow();
+        let repetition_counts = self.repetition_counts.borrow();
+        let count = repetition_counts.as_slice::<u32>()[0];
         if count == 0 {
             return Ok(());
         }
+        let repetition_tokens_buffer = repetition_tokens.buffer();
+        let repetition_tokens_buffer = repetition_tokens_buffer.borrow();
+        let repetition_counts_buffer = repetition_counts.buffer();
+        let repetition_counts_buffer = repetition_counts_buffer.borrow();
         let logits = self.scratch_buffers.logits.borrow();
         let logits_buffer = logits.buffer();
         let mut logits_buffer = logits_buffer.borrow_mut();
         self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             self.repetition_penalty.encode(
                 &mut *logits_buffer,
-                previous_tokens,
-                previous_counts,
-                batch_size,
+                &*repetition_tokens_buffer,
+                &*repetition_counts_buffer,
+                1_u32,
                 self.decoder_config.vocab_size as u32,
-                max_previous_tokens,
+                repetition_tokens.shape()[0] as u32,
                 sampling.repetition_penalty(),
                 encoder,
             );
         });
         Ok(())
-    }
-
-    fn encode_repetition_penalty_if_needed(
-        &self,
-        sampling: &TextSamplingState,
-    ) -> Result<(), Error> {
-        let repetition_tokens = self.repetition_tokens.borrow();
-        let repetition_counts = self.repetition_counts.borrow();
-        let count = repetition_counts.as_slice::<u32>()[0];
-        let repetition_tokens_buffer = repetition_tokens.buffer();
-        let repetition_tokens_buffer = repetition_tokens_buffer.borrow();
-        let repetition_counts_buffer = repetition_counts.buffer();
-        let repetition_counts_buffer = repetition_counts_buffer.borrow();
-        self.encode_repetition_penalty_if_needed_with_buffers(
-            sampling,
-            count,
-            &*repetition_tokens_buffer,
-            &*repetition_counts_buffer,
-            1_u32,
-            repetition_tokens.shape()[0] as u32,
-        )
     }
 
     fn populate_async_chain_repetition_windows(
@@ -469,14 +450,23 @@ impl TokenDecoderRunner {
             let counts_offset = pass * std::mem::size_of::<u32>();
             let async_chain_repetition_tokens = self.async_chain_repetition_tokens.borrow();
             let async_chain_repetition_counts = self.async_chain_repetition_counts.borrow();
-            self.encode_repetition_penalty_if_needed_with_buffers(
-                sampling,
-                count,
-                (&*async_chain_repetition_tokens, tokens_offset),
-                (&*async_chain_repetition_counts, counts_offset),
-                1_u32,
-                self.repetition_capacity as u32,
-            )?;
+            if sampling.uses_repetition_penalty() && count != 0 {
+                let logits = self.scratch_buffers.logits.borrow();
+                let logits_buffer = logits.buffer();
+                let mut logits_buffer = logits_buffer.borrow_mut();
+                self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+                    self.repetition_penalty.encode(
+                        &mut *logits_buffer,
+                        (&*async_chain_repetition_tokens, tokens_offset),
+                        (&*async_chain_repetition_counts, counts_offset),
+                        1_u32,
+                        self.decoder_config.vocab_size as u32,
+                        self.repetition_capacity as u32,
+                        sampling.repetition_penalty(),
+                        encoder,
+                    );
+                });
+            }
             {
                 let mut command_buffer = self.command_buffer.borrow_mut();
                 self.sampler
@@ -957,103 +947,6 @@ fn read_sampled_token_from_sampling_output(state: &ForwardPassState<Metal>) -> R
     let tokens = output.as_slice::<u32>();
     let token = tokens.first().copied().ok_or(Error::GenerateFailed)?;
     Ok(u64::from(token))
-}
-
-impl MatrixF32 {
-    #[cfg(test)]
-    pub(super) fn row(
-        &self,
-        index: usize,
-    ) -> Option<&[f32]> {
-        if index >= self.rows {
-            return None;
-        }
-        let start = index.checked_mul(self.cols)?;
-        let end = start.checked_add(self.cols)?;
-        self.values.get(start..end)
-    }
-
-    #[cfg(test)]
-    pub(super) fn matmul_into(
-        &self,
-        input: &[f32],
-        output: &mut [f32],
-    ) -> Option<()> {
-        if input.len() != self.cols || output.len() != self.rows {
-            return None;
-        }
-        for (row_index, row) in self.values.chunks_exact(self.cols).enumerate() {
-            let mut acc = 0.0_f32;
-            for (&w, &x) in row.iter().zip(input.iter()) {
-                acc += w * x;
-            }
-            output[row_index] = acc;
-        }
-        Some(())
-    }
-}
-
-pub(super) fn load_matrix_f32(
-    weights_path: &Path,
-    key: &str,
-    expected_rows: usize,
-    expected_cols: usize,
-) -> Result<MatrixF32, Error> {
-    let file = File::open(weights_path).map_err(|_| Error::UnableToLoadWeights)?;
-    let (global_offset, metadata) = read_safetensors_metadata(&file).map_err(|_| Error::UnableToLoadWeights)?;
-    let tensor = metadata.tensors.get(key).ok_or(Error::UnableToLoadWeights)?;
-
-    if tensor.shape.len() != 2 {
-        return Err(Error::UnableToLoadWeights);
-    }
-    let rows = tensor.shape[0];
-    let cols = tensor.shape[1];
-    if rows != expected_rows || cols != expected_cols {
-        return Err(Error::UnableToLoadConfig);
-    }
-
-    let (begin, end) = tensor.data_offsets;
-    let size = end.checked_sub(begin).ok_or(Error::UnableToLoadWeights)?;
-    let offset = global_offset.checked_add(begin).ok_or(Error::UnableToLoadWeights)?;
-    let data_type: DataType = tensor.dtype.into();
-    let expected_size = rows
-        .checked_mul(cols)
-        .and_then(|n| n.checked_mul(data_type.size_in_bytes()))
-        .ok_or(Error::UnableToLoadWeights)?;
-    if size != expected_size {
-        return Err(Error::UnableToLoadWeights);
-    }
-
-    let mut bytes = vec![0_u8; size];
-    file.read_exact_at(&mut bytes, offset as u64).map_err(|_| Error::UnableToLoadWeights)?;
-
-    let values = match data_type {
-        DataType::F32 => decode_f32_bytes(&bytes),
-        DataType::F16 => decode_f16_bytes_to_f32(&bytes),
-        DataType::BF16 => decode_bf16_bytes_to_f32(&bytes),
-        _ => return Err(Error::UnableToLoadWeights),
-    };
-    if values.len() != rows.checked_mul(cols).ok_or(Error::UnableToLoadWeights)? {
-        return Err(Error::UnableToLoadWeights);
-    }
-
-    Ok(MatrixF32 {
-        rows,
-        cols,
-        values,
-    })
-}
-
-fn decode_f32_bytes(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4).map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect()
-}
-
-fn decode_f16_bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(2).map(|chunk| f32::from(f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])))).collect()
-}
-
-fn decode_bf16_bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(2).map(|chunk| f32::from(bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])))).collect()
 }
 
 pub(super) fn load_stub_seed(weights_path: PathBuf) -> Option<u64> {

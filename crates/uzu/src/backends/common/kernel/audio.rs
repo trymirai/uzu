@@ -15,6 +15,7 @@ pub struct AudioFsqDecodeArguments<'a, B: Backend> {
     pub seq_len: usize,
     pub codebook_dim_per_group: usize,
     pub num_levels_per_group: &'a [i32],
+    pub dim_base_index: &'a [i32],
 }
 
 pub struct AudioFsqEncodeArguments<'a, B: Backend> {

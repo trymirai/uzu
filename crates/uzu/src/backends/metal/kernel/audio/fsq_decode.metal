@@ -12,54 +12,45 @@ void fsq_decode(
     const constant int& seq_len,
     const constant int& codebook_dim,
     const constant int* num_levels,
+    const constant int* dim_base_index,
     const uint3 gid
 ) {
   const uint t = gid.x;
-  const uint g = gid.y;
+  const uint gd = gid.y;
   const uint b = gid.z;
+  const uint channels = (uint)(num_groups * codebook_dim);
 
-  if (t >= (uint)seq_len || g >= (uint)num_groups) {
+  if (t >= (uint)seq_len || gd >= channels) {
     return;
   }
 
+  const uint g = gd / (uint)codebook_dim;
+  const uint d = gd % (uint)codebook_dim;
+
   const int len_b = lengths ? lengths[b] : seq_len;
+  const uint out_idx = (b * channels + gd) * (uint)seq_len + t;
   if ((int)t >= len_b) {
-    // Zero all D codes for this token when masked.
-    for (int d = 0; d < codebook_dim; ++d) {
-      const uint out_c = g * (uint)codebook_dim + (uint)d;
-      const uint out_idx =
-          (b * (uint)(num_groups * codebook_dim) + out_c) * (uint)seq_len + t;
-      out[out_idx] = (T)0;
-    }
+    out[out_idx] = (T)0;
     return;
   }
 
   const uint token_idx = (b * (uint)num_groups + g) * (uint)seq_len + t;
   const int token = tokens[token_idx];
 
-  // Compute dim bases (small D, do it per-thread).
-  int base = 1;
-  for (int d = 0; d < codebook_dim; ++d) {
-    const int levels = num_levels[d];
-    const int scale = levels / 2; // integer division (matches PyTorch // 2)
-    const int offset = scale;
+  const int levels = num_levels[d];
+  const int scale = levels / 2; // integer division (matches PyTorch // 2)
+  const int offset = scale;
+  const int base = dim_base_index[d];
 
-    // Euclidean modulo to keep result in [0, levels) even if token is negative
-    // (tokens are expected nonnegative, but keep this robust).
-    const int div = token / base;
-    int code_nonneg = div % levels;
-    if (code_nonneg < 0) {
-      code_nonneg += levels;
-    }
-    const float code = ((float)(code_nonneg - offset)) / (float)scale;
-
-    const uint out_c = g * (uint)codebook_dim + (uint)d;
-    const uint out_idx =
-        (b * (uint)(num_groups * codebook_dim) + out_c) * (uint)seq_len + t;
-    out[out_idx] = (T)code;
-
-    base *= levels;
+  // Euclidean modulo to keep result in [0, levels) even if token is negative
+  // (tokens are expected nonnegative, but keep this robust).
+  const int div = token / base;
+  int code_nonneg = div % levels;
+  if (code_nonneg < 0) {
+    code_nonneg += levels;
   }
+  const float code = ((float)(code_nonneg - offset)) / (float)scale;
+  out[out_idx] = (T)code;
 }
 
 template <typename T>
@@ -72,9 +63,10 @@ KERNEL(AudioFsqDecode)(
     const constant int& seq_len,
     const constant int& codebook_dim,
     const constant int* num_levels,
+    const constant int* dim_base_index,
     const constant int& batch_size,
     uint t AXIS(seq_len, 32),
-    uint g AXIS(num_groups, 1),
+    uint gd AXIS(num_groups * codebook_dim, 1),
     uint b AXIS(batch_size, 1)
 ) {
   fsq_decode<T>(
@@ -85,6 +77,7 @@ KERNEL(AudioFsqDecode)(
       seq_len,
       codebook_dim,
       num_levels,
-      uint3(t, g, b)
+      dim_base_index,
+      uint3(t, gd, b)
   );
 }

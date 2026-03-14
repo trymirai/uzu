@@ -1,6 +1,7 @@
 use super::*;
+use crate::array::Array;
 use crate::config::TtsMessageProcessorConfig;
-use crate::utils::array_io::write_f32_slice_into_array;
+use crate::utils::array_io::{read_array_to_f32_vec, write_f32_slice_into_array};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 
@@ -41,20 +42,21 @@ impl FishAudioGpuPath {
     fn new(
         context: &MetalContext,
         data_type: DataType,
-        codebook_embeddings: &MatrixF32,
-        fast_model_projection: &Option<MatrixF32>,
+        codebook_embeddings: Array<Metal>,
+        fast_model_projection: Option<Array<Metal>>,
         num_codebooks: usize,
         codebook_size: usize,
         slow_model_dim: usize,
         fast_model_dim: usize,
     ) -> Result<Self, Error> {
-        if codebook_embeddings.rows != num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?
-            || codebook_embeddings.cols != slow_model_dim
+        if codebook_embeddings.shape()
+            != [num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?, slow_model_dim]
+            || codebook_embeddings.data_type() != data_type
         {
             return Err(Error::UnableToLoadConfig);
         }
-        if let Some(projection) = fast_model_projection
-            && (projection.rows != fast_model_dim || projection.cols != slow_model_dim)
+        if let Some(ref projection) = fast_model_projection
+            && (projection.shape() != [fast_model_dim, slow_model_dim] || projection.data_type() != data_type)
         {
             return Err(Error::UnableToLoadConfig);
         }
@@ -64,41 +66,53 @@ impl FishAudioGpuPath {
                 .map_err(unable_to_create_context)?;
         let projection =
             <<<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(
-                context, data_type,
+                context,
+                data_type,
             )
             .map_err(unable_to_create_context)?;
-        let tensor_copy = <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
-            .map_err(unable_to_create_context)?;
-
-        let mut codebook_embeddings_gpu = context.create_array(
-            &[num_codebooks.checked_mul(codebook_size).ok_or(Error::UnableToLoadConfig)?, slow_model_dim],
-            data_type,
-            "tts_codebook_embeddings_gpu",
-        );
-        write_f32_slice_into_array(&mut codebook_embeddings_gpu, &codebook_embeddings.values)
-            .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid FishAudio codebook embeddings: {err}")))?;
-
+        let tensor_copy =
+            <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
+                .map_err(unable_to_create_context)?;
         let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
-
-        let projection_weights = if let Some(projection) = fast_model_projection {
-            let mut weights =
-                context.create_array(&[fast_model_dim, slow_model_dim], data_type, "tts_fast_projection_weights");
-            write_f32_slice_into_array(&mut weights, &projection.values)
-                .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid FishAudio fast projection: {err}")))?;
-            Some(RefCell::new(weights))
-        } else {
-            None
-        };
 
         Ok(Self {
             embedding_rows_sum,
             projection,
             tensor_copy,
-            codebook_embeddings: RefCell::new(codebook_embeddings_gpu),
+            codebook_embeddings: RefCell::new(codebook_embeddings),
             codebook_row_indices: RefCell::new(codebook_row_indices),
-            projection_weights,
+            projection_weights: fast_model_projection.map(RefCell::new),
         })
     }
+}
+
+fn load_float_tensor_array(
+    context: &MetalContext,
+    parameter_tree: &crate::parameters::ParameterTree<MetalContext>,
+    key: &str,
+    expected_shape: [usize; 2],
+    target_data_type: DataType,
+    label: &str,
+) -> Result<Array<Metal>, Error> {
+    let array = parameter_tree.leaf_array(key).map_err(|_| Error::UnableToLoadWeights)?;
+    if array.shape() != expected_shape {
+        return Err(Error::UnableToLoadConfig);
+    }
+    if array.data_type() == target_data_type {
+        return Ok(array);
+    }
+    if !matches!(array.data_type(), DataType::F32 | DataType::F16 | DataType::BF16)
+        || !matches!(target_data_type, DataType::F32 | DataType::F16 | DataType::BF16)
+    {
+        return Err(Error::UnableToLoadConfig);
+    }
+
+    let values = read_array_to_f32_vec(&array)
+        .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid float tensor {key}: {err}")))?;
+    let mut converted = context.create_array(&expected_shape, target_data_type, label);
+    write_f32_slice_into_array(&mut converted, &values)
+        .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid float tensor {key}: {err}")))?;
+    Ok(converted)
 }
 
 fn validate_fishaudio_decoder_contract(
@@ -253,25 +267,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
         None
     };
 
-    let weights_path = model_path.join("model.safetensors");
-    let codebook_embeddings = load_matrix_f32(
-        &weights_path,
-        "text_decoder.codebook_embeddings.weights",
-        config.codebook_size.checked_mul(config.num_codebooks).ok_or(Error::UnableToLoadConfig)?,
-        config.slow_model_dim,
-    )?;
-
-    let fast_model_projection = if config.fast_model_projection_config.is_some() {
-        Some(load_matrix_f32(
-            &weights_path,
-            "text_decoder.fast_model_projection.weights",
-            config.fast_model_dim,
-            config.slow_model_dim,
-        )?)
-    } else {
-        None
-    };
-
     let activation_data_type = slow_runner.single_hidden_capture.borrow().data_type();
     if let Some(fast_runner_ref) = fast_runner.as_ref() {
         let fast_data_type = fast_runner_ref.single_override_embedding.borrow().data_type();
@@ -279,14 +274,46 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
             return Err(Error::UnableToLoadConfig);
         }
     }
+
+    let weights_path = model_path.join("model.safetensors");
+    let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
+    let loader =
+        ParameterLoader::new(&weights_file, text_decoder_context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
+    let root_weights = loader.tree();
+
+    let codebook_embeddings = load_float_tensor_array(
+        text_decoder_context.as_ref(),
+        &root_weights,
+        "text_decoder.codebook_embeddings.weights",
+        [
+            config.codebook_size.checked_mul(config.num_codebooks).ok_or(Error::UnableToLoadConfig)?,
+            config.slow_model_dim,
+        ],
+        activation_data_type,
+        "tts_codebook_embeddings_gpu",
+    )?;
+
+    let fast_model_projection = if config.fast_model_projection_config.is_some() {
+        Some(load_float_tensor_array(
+            text_decoder_context.as_ref(),
+            &root_weights,
+            "text_decoder.fast_model_projection.weights",
+            [config.fast_model_dim, config.slow_model_dim],
+            activation_data_type,
+            "tts_fast_projection_weights",
+        )?)
+    } else {
+        None
+    };
+
     let apply_semantic_sampling_mask =
         runtime_config.force_semantic_sampling_mask.unwrap_or(!matches!(activation_data_type, DataType::F32));
 
     let gpu_path = FishAudioGpuPath::new(
         text_decoder_context.as_ref(),
         activation_data_type,
-        &codebook_embeddings,
-        &fast_model_projection,
+        codebook_embeddings,
+        fast_model_projection,
         config.num_codebooks,
         config.codebook_size,
         config.slow_model_dim,

@@ -4,6 +4,7 @@ use std::{
     os::unix::fs::FileExt,
 };
 
+use half::{bf16, f16};
 use thiserror::Error;
 
 use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError, read_metadata as read_st_metadata};
@@ -62,6 +63,8 @@ pub enum ParameterLoaderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
     ArrayLoadingError(#[from] std::io::Error),
+    #[error("Unsupported host tensor dtype: {0:?}")]
+    UnsupportedHostTensorDataType(DataType),
 }
 
 pub struct ParameterLoader<'context, 'file, C: Context>
@@ -177,6 +180,55 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
             self.metadata.offset as u64,
         )?;
         Ok(buffer)
+    }
+
+    pub fn read_f32_tensor(&self) -> Result<(Box<[usize]>, Vec<f32>), ParameterLoaderError<C::Backend>> {
+        let num_elements = self
+            .metadata
+            .shape
+            .iter()
+            .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
+            .ok_or_else(|| ParameterLoaderError::SizeMismatch {
+                data_type: self.metadata.data_type,
+                shape: self.metadata.shape.to_owned(),
+                expected_size: usize::MAX,
+                actual_size: self.metadata.size,
+            })?;
+        let expected_size = num_elements
+            .checked_mul(self.metadata.data_type.size_in_bytes())
+            .ok_or_else(|| ParameterLoaderError::SizeMismatch {
+                data_type: self.metadata.data_type,
+                shape: self.metadata.shape.to_owned(),
+                expected_size: usize::MAX,
+                actual_size: self.metadata.size,
+            })?;
+        if expected_size != self.metadata.size {
+            return Err(ParameterLoaderError::SizeMismatch {
+                data_type: self.metadata.data_type,
+                shape: self.metadata.shape.to_owned(),
+                expected_size,
+                actual_size: self.metadata.size,
+            });
+        }
+
+        let mut bytes = vec![0u8; self.metadata.size];
+        self.loader.file.read_exact_at(&mut bytes, self.metadata.offset as u64)?;
+        let values = match self.metadata.data_type {
+            DataType::F32 => bytes
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect(),
+            DataType::F16 => bytes
+                .chunks_exact(2)
+                .map(|chunk| f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
+                .collect(),
+            DataType::BF16 => bytes
+                .chunks_exact(2)
+                .map(|chunk| bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
+                .collect(),
+            other => return Err(ParameterLoaderError::UnsupportedHostTensorDataType(other)),
+        };
+        Ok((self.metadata.shape.to_owned(), values))
     }
 }
 

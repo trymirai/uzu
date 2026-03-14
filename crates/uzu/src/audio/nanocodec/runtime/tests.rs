@@ -1,384 +1,18 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{
-    AudioDecodeStreamState, AudioDecodeStreamingMode, MatrixF32, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
-    StructuredAudioCodecGraph, StructuredAudioConv1dLayer, StructuredAudioConvNeXtLayer,
-    StructuredAudioConvTranspose1dLayer, StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph,
-    StructuredAudioNormLayer, StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, Tensor3Json,
-    convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded, read_array_to_f32_vec,
-    resolve_descript_audio_codec_vocoder_data_type, unpack_padded_to_pcm, write_f32_slice_to_array,
+    AudioDecodeStreamState, AudioDecodeStreamingMode, NanoCodecFsqRuntimeConfig, StructuredAudioCodecGraph,
+    StructuredAudioConv1dLayer, StructuredAudioConvNeXtLayer, StructuredAudioConvTranspose1dLayer,
+    StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph, StructuredAudioNormLayer,
+    StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, Tensor3Json,
+    convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded, resolve_descript_audio_codec_vocoder_data_type,
+    unpack_padded_to_pcm,
 };
 use crate::{
     DataType,
-    array::ArrayContextExt,
-    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
+    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking},
     config::TtsConfig,
 };
-
-#[derive(Debug, Clone)]
-struct CpuPostModuleLayer {
-    pre_mixer_norm: StructuredAudioNormLayer,
-    qkv_projection: MatrixF32,
-    out_projection: MatrixF32,
-    pre_mlp_norm: StructuredAudioNormLayer,
-    up_projection: MatrixF32,
-    down_projection: MatrixF32,
-    num_heads: usize,
-    num_groups: usize,
-    head_dim: usize,
-    attention_scale: f32,
-    sliding_window_size: Option<usize>,
-}
-
-#[derive(Debug, Clone)]
-struct CpuPostModule {
-    rope_cosines: MatrixF32,
-    rope_sines: MatrixF32,
-    layers: Vec<CpuPostModuleLayer>,
-    output_norm: StructuredAudioNormLayer,
-    hidden_dim: usize,
-}
-
-fn load_optional_fishaudio_model_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("LALAMO_UZU_MODEL_PATH") {
-        let path = PathBuf::from(path);
-        return if path.join("config.json").exists() && path.join("model.safetensors").exists() {
-            Some(path)
-        } else {
-            None
-        };
-    }
-
-    let default = PathBuf::from("/private/tmp/lalamo_fishaudio_s1mini_convert");
-    if default.join("config.json").exists() && default.join("model.safetensors").exists() {
-        Some(default)
-    } else {
-        None
-    }
-}
-
-fn build_cpu_post_module_for_test(graph: &StructuredAudioCodecGraph) -> AudioResult<CpuPostModule> {
-    let loader = super::TensorLoader::open(Path::new(graph.weights_path.as_str()))?;
-    let post_module_tree = loader
-        .tree()
-        .subtree("audio_decoder")?
-        .subtree("quantizer")?
-        .subtree("post_module")?;
-    let transformer = &graph.post_module_transformer_config;
-    let first_layer = transformer
-        .layer_configs
-        .first()
-        .ok_or(AudioError::Runtime("FishAudio post_module has no layers".to_string()))?;
-    let crate::config::MixerConfig::Attention(first_attention) = &first_layer.mixer_config else {
-        return Err(AudioError::Runtime(
-            "FishAudio post_module first layer mixer must be AttentionConfig".to_string(),
-        ));
-    };
-    let rope_head_dim = first_attention
-        .head_dim
-        .ok_or(AudioError::Runtime("FishAudio post_module head_dim missing".to_string()))?;
-    let rope_tree = post_module_tree.subtree("global_rope")?;
-    let rope_cosines = rope_tree.leaf_matrix_f32("cosines", transformer.context_length, rope_head_dim)?;
-    let rope_sines = rope_tree.leaf_matrix_f32("sines", rope_cosines.rows, rope_cosines.cols)?;
-    let output_norm = super::read_norm_layer(
-        &post_module_tree.subtree("output_norm")?,
-        transformer.output_norm_config.epsilon,
-        transformer.output_norm_config.subtract_mean,
-        false,
-    )?;
-    if output_norm.scales.len() != transformer.model_dim {
-        return Err(AudioError::Runtime(format!(
-            "FishAudio output_norm scale mismatch: expected {}, got {}",
-            transformer.model_dim,
-            output_norm.scales.len()
-        )));
-    }
-
-    let mut layers = Vec::with_capacity(transformer.layer_configs.len());
-    for (index, layer_config) in transformer.layer_configs.iter().enumerate() {
-        let Some(pre_mixer_norm_config) = layer_config.pre_attention_norm_config.as_ref() else {
-            return Err(AudioError::Runtime(
-                "FishAudio post_module requires pre_attention_norm_config".to_string(),
-            ));
-        };
-
-        let crate::config::MixerConfig::Attention(attention_config) = &layer_config.mixer_config else {
-            return Err(AudioError::Runtime(
-                "FishAudio post_module layer mixer must be AttentionConfig".to_string(),
-            ));
-        };
-        let num_heads = attention_config
-            .num_heads
-            .ok_or(AudioError::Runtime("FishAudio attention num_heads missing".to_string()))?;
-        let num_groups = attention_config
-            .num_groups
-            .ok_or(AudioError::Runtime("FishAudio attention num_groups missing".to_string()))?;
-        let head_dim = attention_config
-            .head_dim
-            .ok_or(AudioError::Runtime("FishAudio attention head_dim missing".to_string()))?;
-        if num_heads == 0 || num_groups == 0 || head_dim == 0 || num_heads % num_groups != 0 {
-            return Err(AudioError::InvalidTokenCardinality);
-        }
-        let layer_tree = post_module_tree.subtree("layers")?.subtree(&index.to_string())?;
-        let pre_mixer_norm = super::read_norm_layer(
-            &layer_tree.subtree("pre_mixer_norm")?,
-            pre_mixer_norm_config.epsilon,
-            pre_mixer_norm_config.subtract_mean,
-            false,
-        )?;
-        let pre_mlp_norm = super::read_norm_layer(
-            &layer_tree.subtree("pre_mlp_norm")?,
-            layer_config.pre_mlp_norm_config.epsilon,
-            layer_config.pre_mlp_norm_config.subtract_mean,
-            false,
-        )?;
-
-        let attention_dim = num_heads
-            .checked_mul(head_dim)
-            .ok_or(AudioError::Runtime("FishAudio attention dimension overflow".to_string()))?;
-        let mixer_tree = layer_tree.subtree("mixer")?;
-        let qkv_projection = mixer_tree
-            .subtree("qkv_projection")?
-            .leaf_matrix_f32("weights", attention_dim * 3, transformer.model_dim)?;
-        let out_projection = mixer_tree
-            .subtree("out_projection")?
-            .leaf_matrix_f32("weights", transformer.model_dim, attention_dim)?;
-        let mlp_tree = layer_tree.subtree("mlp")?;
-        let up_projection = mlp_tree.subtree("up_projection")?.leaf_matrix_f32(
-            "weights",
-            transformer
-                .hidden_dim
-                .checked_mul(2)
-                .ok_or(AudioError::Runtime("FishAudio hidden dimension overflow".to_string()))?,
-            transformer.model_dim,
-        )?;
-        let down_projection = mlp_tree
-            .subtree("down_projection")?
-            .leaf_matrix_f32("weights", transformer.model_dim, transformer.hidden_dim)?;
-
-        layers.push(CpuPostModuleLayer {
-            pre_mixer_norm,
-            qkv_projection,
-            out_projection,
-            pre_mlp_norm,
-            up_projection,
-            down_projection,
-            num_heads,
-            num_groups,
-            head_dim,
-            attention_scale: attention_config.scale.unwrap_or(1.0 / (head_dim as f32).sqrt()),
-            sliding_window_size: attention_config.sliding_window_size,
-        });
-    }
-
-    Ok(CpuPostModule {
-        rope_cosines,
-        rope_sines,
-        layers,
-        output_norm,
-        hidden_dim: transformer.hidden_dim,
-    })
-}
-
-fn apply_post_module_cpu_reference_for_test(
-    graph: &StructuredAudioCodecGraph,
-    post_module: &CpuPostModule,
-    latent_nsc: &mut [f32],
-    lengths: &[usize],
-    batch_size: usize,
-    frames: usize,
-) -> AudioResult<()> {
-    if graph.post_module_model_dim != graph.input_dim {
-        return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
-    }
-
-    for batch in 0..batch_size {
-        let active_len = lengths[batch];
-        if active_len == 0 {
-            continue;
-        }
-        if active_len > frames {
-            return Err(AudioError::InvalidTokenLengthValue {
-                length: active_len,
-                frames,
-            });
-        }
-
-        let batch_base = batch * frames * graph.input_dim;
-        let sequence = &mut latent_nsc[batch_base..batch_base + active_len * graph.input_dim];
-        let mut x = sequence.to_vec();
-
-        for layer in &post_module.layers {
-            apply_post_module_cpu_layer_for_test(graph, post_module, layer, &mut x, active_len)?;
-        }
-
-        StructuredAudioCodecGraph::apply_norm_sequence(
-            &mut x,
-            active_len,
-            graph.input_dim,
-            &post_module.output_norm,
-        )?;
-        sequence.copy_from_slice(&x);
-    }
-
-    Ok(())
-}
-
-fn apply_post_module_cpu_layer_for_test(
-    graph: &StructuredAudioCodecGraph,
-    post_module: &CpuPostModule,
-    layer: &CpuPostModuleLayer,
-    x: &mut [f32],
-    active_len: usize,
-) -> AudioResult<()> {
-    let mut normed = x.to_vec();
-    StructuredAudioCodecGraph::apply_norm_sequence(
-        &mut normed,
-        active_len,
-        graph.input_dim,
-        &layer.pre_mixer_norm,
-    )?;
-    let qkv = StructuredAudioCodecGraph::linear_sequence(
-        &normed,
-        active_len,
-        graph.input_dim,
-        &layer.qkv_projection,
-        None,
-    )?;
-    let attention_dim = layer
-        .num_heads
-        .checked_mul(layer.head_dim)
-        .ok_or(AudioError::Runtime("attention dimension overflow".to_string()))?;
-    let group_dim = layer
-        .num_groups
-        .checked_mul(layer.head_dim)
-        .ok_or(AudioError::Runtime("group dimension overflow".to_string()))?;
-    if attention_dim != group_dim {
-        return Err(AudioError::Runtime("post_module CPU reference requires num_heads == num_groups".to_string()));
-    }
-
-    let mut q = vec![0.0_f32; active_len * attention_dim];
-    let mut k = vec![0.0_f32; active_len * attention_dim];
-    let mut v = vec![0.0_f32; active_len * attention_dim];
-    for token in 0..active_len {
-        let row = &qkv[token * (attention_dim * 3)..(token + 1) * (attention_dim * 3)];
-        q[token * attention_dim..(token + 1) * attention_dim].copy_from_slice(&row[..attention_dim]);
-        k[token * attention_dim..(token + 1) * attention_dim]
-            .copy_from_slice(&row[attention_dim..attention_dim * 2]);
-        v[token * attention_dim..(token + 1) * attention_dim]
-            .copy_from_slice(&row[attention_dim * 2..attention_dim * 3]);
-    }
-
-    let half = layer.head_dim / 2;
-    let q_source = q.clone();
-    let k_source = k.clone();
-    for token in 0..active_len {
-        for head in 0..layer.num_heads {
-            let rope_row = token.min(post_module.rope_cosines.rows.saturating_sub(1));
-            for dim in 0..layer.head_dim {
-                let cos = post_module.rope_cosines.values[rope_row * layer.head_dim + dim];
-                let sin = post_module.rope_sines.values[rope_row * layer.head_dim + dim];
-                let base = token * attention_dim + head * layer.head_dim;
-                let qv = q_source[base + dim];
-                let kv = k_source[base + dim];
-                let q_pair = if dim < half {
-                    -q_source[base + dim + half]
-                } else {
-                    q_source[base + dim - half]
-                };
-                let k_pair = if dim < half {
-                    -k_source[base + dim + half]
-                } else {
-                    k_source[base + dim - half]
-                };
-                q[base + dim] = qv * cos + q_pair * sin;
-                k[base + dim] = kv * cos + k_pair * sin;
-            }
-        }
-    }
-
-    let mut attention_output = vec![0.0_f32; active_len * attention_dim];
-    for token in 0..active_len {
-        let window_start =
-            layer.sliding_window_size.map(|window| token.saturating_sub(window.saturating_sub(1))).unwrap_or(0);
-
-        for head in 0..layer.num_heads {
-            let query_offset = token * attention_dim + head * layer.head_dim;
-            let mut logits = Vec::with_capacity(token + 1 - window_start);
-            let mut max_logit = f32::NEG_INFINITY;
-            for key_token in window_start..=token {
-                let key_offset = key_token * attention_dim + head * layer.head_dim;
-                let mut score = 0.0_f32;
-                for dim in 0..layer.head_dim {
-                    score += q[query_offset + dim] * k[key_offset + dim];
-                }
-                score *= layer.attention_scale;
-                max_logit = max_logit.max(score);
-                logits.push((key_token, score));
-            }
-            let mut denom = 0.0_f32;
-            for (_, score) in logits.iter_mut() {
-                *score = (*score - max_logit).exp();
-                denom += *score;
-            }
-            if denom <= 0.0 {
-                continue;
-            }
-            for (key_token, score) in logits {
-                let weight = score / denom;
-                let value_offset = key_token * attention_dim + head * layer.head_dim;
-                for dim in 0..layer.head_dim {
-                    attention_output[query_offset + dim] += weight * v[value_offset + dim];
-                }
-            }
-        }
-    }
-
-    let attention_projected = StructuredAudioCodecGraph::linear_sequence(
-        &attention_output,
-        active_len,
-        attention_dim,
-        &layer.out_projection,
-        None,
-    )?;
-    for (dst, value) in x.iter_mut().zip(attention_projected.iter()) {
-        *dst += *value;
-    }
-
-    let mut mlp_in = x.to_vec();
-    StructuredAudioCodecGraph::apply_norm_sequence(&mut mlp_in, active_len, graph.input_dim, &layer.pre_mlp_norm)?;
-    let up = StructuredAudioCodecGraph::linear_sequence(
-        &mlp_in,
-        active_len,
-        graph.input_dim,
-        &layer.up_projection,
-        None,
-    )?;
-    let mut hidden = vec![0.0_f32; active_len * post_module.hidden_dim];
-    for token in 0..active_len {
-        let up_row = &up[token * post_module.hidden_dim * 2..(token + 1) * post_module.hidden_dim * 2];
-        let hidden_row = &mut hidden[token * post_module.hidden_dim..(token + 1) * post_module.hidden_dim];
-        for dim in 0..post_module.hidden_dim {
-            let up_val = up_row[dim];
-            let gate_val = up_row[post_module.hidden_dim + dim];
-            let silu = gate_val / (1.0 + (-gate_val).exp());
-            hidden_row[dim] = up_val * silu;
-        }
-    }
-    let mlp_out = StructuredAudioCodecGraph::linear_sequence(
-        &hidden,
-        active_len,
-        post_module.hidden_dim,
-        &layer.down_projection,
-        None,
-    )?;
-    for (dst, value) in x.iter_mut().zip(mlp_out.iter()) {
-        *dst += *value;
-    }
-
-    Ok(())
-}
-
 #[test]
 fn config_rejects_invalid_eps() {
     let config = NanoCodecFsqRuntimeConfig::new(
@@ -773,29 +407,15 @@ fn fishaudio_runtime_decode_path_handles_empty_frames() {
 
     config.structured_decoder = Some(StructuredAudioCodecGraph {
         semantic_quantizer: StructuredAudioVectorQuantizer {
-            codebook: MatrixF32 {
-                rows: 2,
-                cols: 1,
-                values: vec![0.0, 1.0],
-            },
-            out_proj: MatrixF32 {
-                rows: 1,
-                cols: 1,
-                values: vec![1.0],
-            },
+            codebook: vec![0.0, 1.0],
+            codebook_dim: 1,
+            out_proj: vec![1.0],
             out_bias: vec![0.0],
         },
         residual_quantizers: vec![StructuredAudioVectorQuantizer {
-            codebook: MatrixF32 {
-                rows: 2,
-                cols: 1,
-                values: vec![0.0, 1.0],
-            },
-            out_proj: MatrixF32 {
-                rows: 1,
-                cols: 1,
-                values: vec![1.0],
-            },
+            codebook: vec![0.0, 1.0],
+            codebook_dim: 1,
+            out_proj: vec![1.0],
             out_bias: vec![0.0],
         }],
         post_module_model_dim: 1,
@@ -855,46 +475,32 @@ fn fishaudio_runtime_decode_path_handles_empty_frames() {
 fn fishaudio_quantizer_decode_gpu_matches_cpu_reference_small_graph() {
     let graph = StructuredAudioCodecGraph {
         semantic_quantizer: StructuredAudioVectorQuantizer {
-            codebook: MatrixF32 {
-                rows: 4,
-                cols: 3,
-                values: vec![
-                    0.0, 0.1, 0.2, //
-                    0.3, 0.4, 0.5, //
-                    0.6, 0.7, 0.8, //
-                    0.9, 1.0, 1.1, //
-                ],
-            },
-            out_proj: MatrixF32 {
-                rows: 2,
-                cols: 3,
-                values: vec![
-                    0.2, -0.1, 0.3, //
-                    0.5, 0.4, -0.2, //
-                ],
-            },
+            codebook: vec![
+                0.0, 0.1, 0.2, //
+                0.3, 0.4, 0.5, //
+                0.6, 0.7, 0.8, //
+                0.9, 1.0, 1.1, //
+            ],
+            codebook_dim: 3,
+            out_proj: vec![
+                0.2, -0.1, 0.3, //
+                0.5, 0.4, -0.2, //
+            ],
             out_bias: vec![0.01, -0.02],
         },
         residual_quantizers: vec![StructuredAudioVectorQuantizer {
-            codebook: MatrixF32 {
-                rows: 5,
-                cols: 3,
-                values: vec![
-                    0.2, -0.2, 0.0, //
-                    0.1, 0.0, 0.3, //
-                    -0.1, 0.4, 0.2, //
-                    0.7, -0.3, 0.5, //
-                    0.6, 0.8, -0.4, //
-                ],
-            },
-            out_proj: MatrixF32 {
-                rows: 2,
-                cols: 3,
-                values: vec![
-                    0.3, 0.1, -0.2, //
-                    -0.4, 0.6, 0.2, //
-                ],
-            },
+            codebook: vec![
+                0.2, -0.2, 0.0, //
+                0.1, 0.0, 0.3, //
+                -0.1, 0.4, 0.2, //
+                0.7, -0.3, 0.5, //
+                0.6, 0.8, -0.4, //
+            ],
+            codebook_dim: 3,
+            out_proj: vec![
+                0.3, 0.1, -0.2, //
+                -0.4, 0.6, 0.2, //
+            ],
             out_bias: vec![0.03, -0.01],
         }],
         post_module_model_dim: 2,
@@ -974,160 +580,6 @@ fn fishaudio_quantizer_decode_gpu_matches_cpu_reference_small_graph() {
 }
 
 #[test]
-fn fishaudio_post_module_gpu_matches_cpu_reference_on_real_export() {
-    let Some(model_path) = load_optional_fishaudio_model_path() else {
-        println!("Skipping FishAudio post-module parity test: set LALAMO_UZU_MODEL_PATH");
-        return;
-    };
-
-    let config_bytes = std::fs::read(model_path.join("config.json")).expect("read model config");
-    let config_json: serde_json::Value = serde_json::from_slice(&config_bytes).expect("parse model config");
-    let tts_config = config_json
-        .get("model_config")
-        .and_then(|value| value.get("tts_config"))
-        .expect("model_config.tts_config")
-        .clone();
-    let runtime_config = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, &model_path)
-        .expect("runtime config");
-    let fishaudio = runtime_config.structured_decoder().expect("structured decoder");
-    let cpu_post_module = build_cpu_post_module_for_test(fishaudio).expect("cpu post-module");
-
-    let batch_size = 1usize;
-    let frames = 6usize;
-    let lengths = vec![6usize];
-    let mut tokens = vec![0_u32; batch_size * fishaudio.total_codebooks * frames];
-    for frame in 0..frames {
-        let semantic = (frame * 17) % fishaudio.semantic_codebook_size;
-        tokens[frame] = semantic as u32;
-        for residual in 0..(fishaudio.total_codebooks - 1) {
-            let index = ((residual + 1) * frames) + frame;
-            let value = ((frame + 3) * (residual + 5)) % fishaudio.codebook_size;
-            tokens[index] = value as u32;
-        }
-    }
-    let latent_cpu = fishaudio
-        .decode_quantizer_to_nsc_reference(&tokens, &lengths, batch_size, fishaudio.total_codebooks, frames)
-        .expect("decode quantizer cpu reference");
-    let latent = fishaudio
-        .decode_quantizer_to_nsc(&tokens, &lengths, batch_size, fishaudio.total_codebooks, frames)
-        .expect("decode quantizer");
-    assert_eq!(latent.len(), latent_cpu.len());
-    let mut quantizer_max_abs_diff = 0.0_f32;
-    for (&cpu_value, &gpu_value) in latent_cpu.iter().zip(latent.iter()) {
-        quantizer_max_abs_diff = quantizer_max_abs_diff.max((cpu_value - gpu_value).abs());
-    }
-    println!("quantizer latent parity: max_abs_diff={quantizer_max_abs_diff}");
-    assert!(quantizer_max_abs_diff <= 1e-4, "quantizer decode parity mismatch: {quantizer_max_abs_diff}");
-
-    let mut cpu = latent.clone();
-    apply_post_module_cpu_reference_for_test(fishaudio, &cpu_post_module, &mut cpu, &lengths, batch_size, frames)
-        .expect("cpu post-module");
-    let context = NanoCodecFsqRuntime::create_context().expect("create metal context");
-    let mut latent_array = context.create_array(
-        &[batch_size, frames, fishaudio.input_dim],
-        fishaudio.vocoder_data_type,
-        "fishaudio_test_post_module_single_input_nsc",
-    );
-    write_f32_slice_to_array(&mut latent_array, &latent).expect("write latent to array");
-    let mut profile = None;
-    let gpu = read_array_to_f32_vec(
-        &fishaudio
-            .apply_post_module_gpu_on_array(&context, &latent_array, &lengths, batch_size, frames, &mut profile)
-            .expect("gpu post-module"),
-    )
-    .expect("read gpu post-module");
-
-    let mut max_abs_diff = 0.0_f32;
-    let mut sum_sq_diff = 0.0_f64;
-    for (&cpu_value, &gpu_value) in cpu.iter().zip(gpu.iter()) {
-        let diff = (cpu_value - gpu_value).abs();
-        max_abs_diff = max_abs_diff.max(diff);
-        sum_sq_diff += f64::from(diff * diff);
-    }
-    let rmse = (sum_sq_diff / cpu.len() as f64).sqrt() as f32;
-    println!("post-module latent parity: max_abs_diff={max_abs_diff}, rmse={rmse}");
-
-    assert!(max_abs_diff <= 1e-4, "post-module max_abs_diff too high: {max_abs_diff}, rmse={rmse}");
-    assert!(rmse <= 1e-5, "post-module rmse too high: {rmse}, max_abs_diff={max_abs_diff}");
-}
-
-#[test]
-fn fishaudio_post_module_gpu_general_path_batches_lengths_in_one_command_buffer() {
-    let Some(model_path) = load_optional_fishaudio_model_path() else {
-        println!("Skipping FishAudio multi-batch post-module test: set LALAMO_UZU_MODEL_PATH");
-        return;
-    };
-
-    let config_bytes = std::fs::read(model_path.join("config.json")).expect("read model config");
-    let config_json: serde_json::Value = serde_json::from_slice(&config_bytes).expect("parse model config");
-    let tts_config = config_json
-        .get("model_config")
-        .and_then(|value| value.get("tts_config"))
-        .expect("model_config.tts_config")
-        .clone();
-    let runtime_config = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, &model_path)
-        .expect("runtime config");
-    let fishaudio = runtime_config.structured_decoder().expect("structured decoder");
-    let cpu_post_module = build_cpu_post_module_for_test(fishaudio).expect("cpu post-module");
-
-    let batch_size = 3usize;
-    let frames = 6usize;
-    let lengths = vec![6usize, 4usize, 4usize];
-    let mut tokens = vec![0_u32; batch_size * fishaudio.total_codebooks * frames];
-    for batch in 0..batch_size {
-        for frame in 0..frames {
-            let semantic = ((batch + 1) * 17 + frame * 13) % fishaudio.semantic_codebook_size;
-            let semantic_index = ((batch * fishaudio.total_codebooks) * frames) + frame;
-            tokens[semantic_index] = semantic as u32;
-            for residual in 0..(fishaudio.total_codebooks - 1) {
-                let index = ((batch * fishaudio.total_codebooks) + residual + 1) * frames + frame;
-                let value = ((batch + 3) * (frame + 5) * (residual + 7)) % fishaudio.codebook_size;
-                tokens[index] = value as u32;
-            }
-        }
-    }
-
-    let latent_cpu = fishaudio
-        .decode_quantizer_to_nsc_reference(&tokens, &lengths, batch_size, fishaudio.total_codebooks, frames)
-        .expect("decode quantizer cpu reference");
-    let mut cpu = latent_cpu.clone();
-    apply_post_module_cpu_reference_for_test(fishaudio, &cpu_post_module, &mut cpu, &lengths, batch_size, frames)
-        .expect("cpu post-module");
-
-    let context = NanoCodecFsqRuntime::create_context().expect("create metal context");
-    let mut latent = context.create_array(
-        &[batch_size, frames, fishaudio.input_dim],
-        fishaudio.vocoder_data_type,
-        "fishaudio_test_post_module_input_nsc",
-    );
-    write_f32_slice_to_array(&mut latent, &latent_cpu).expect("write latent to array");
-    let mut profile = Some(super::AudioDecodeProfile::default());
-    let output = fishaudio
-        .apply_post_module_gpu_on_array(&context, &latent, &lengths, batch_size, frames, &mut profile)
-        .expect("gpu post-module");
-    let gpu = read_array_to_f32_vec(&output).expect("read gpu post-module");
-
-    let mut max_abs_diff = 0.0_f32;
-    let mut sum_sq_diff = 0.0_f64;
-    for (&cpu_value, &gpu_value) in cpu.iter().zip(gpu.iter()) {
-        let diff = (cpu_value - gpu_value).abs();
-        max_abs_diff = max_abs_diff.max(diff);
-        sum_sq_diff += f64::from(diff * diff);
-    }
-    let rmse = (sum_sq_diff / cpu.len() as f64).sqrt() as f32;
-    println!("multi-batch post-module latent parity: max_abs_diff={max_abs_diff}, rmse={rmse}");
-
-    assert!(max_abs_diff <= 2e-4, "post-module max_abs_diff too high: {max_abs_diff}, rmse={rmse}");
-    assert!(rmse <= 2e-5, "post-module rmse too high: {rmse}, max_abs_diff={max_abs_diff}");
-
-    let profile = profile.expect("profile");
-    assert_eq!(profile.command_buffers.len(), batch_size, "expected one post-module command buffer per batch item");
-    assert_eq!(profile.command_buffers[0].label, "post_module_len_4_batch_1");
-    assert_eq!(profile.command_buffers[1].label, "post_module_len_4_batch_2");
-    assert_eq!(profile.command_buffers[2].label, "post_module_len_6_batch_0");
-}
-
-#[test]
 fn transpose_weight_conversion_matches_expected_layout() {
     let weight_oih = Tensor3Json {
         shape: [2, 2, 2],
@@ -1172,17 +624,10 @@ fn fishaudio_streaming_context_matches_expected_value() {
             epsilon: 1e-5,
             subtract_mean: true,
         },
-        pwconv1: MatrixF32 {
-            rows: 2,
-            cols: 2,
-            values: vec![1.0, 0.0, 0.0, 1.0],
-        },
+        pwconv1: vec![1.0, 0.0, 0.0, 1.0],
+        pwconv1_hidden_dim: 2,
         pwconv1_bias: vec![0.0, 0.0],
-        pwconv2: MatrixF32 {
-            rows: 2,
-            cols: 2,
-            values: vec![1.0, 0.0, 0.0, 1.0],
-        },
+        pwconv2: vec![1.0, 0.0, 0.0, 1.0],
         pwconv2_bias: vec![0.0, 0.0],
     };
     let residual_unit = StructuredAudioResidualUnitLayer {
@@ -1210,16 +655,9 @@ fn fishaudio_streaming_context_matches_expected_value() {
 
     let graph = StructuredAudioCodecGraph {
         semantic_quantizer: StructuredAudioVectorQuantizer {
-            codebook: MatrixF32 {
-                rows: 2,
-                cols: 2,
-                values: vec![0.0, 0.0, 0.0, 0.0],
-            },
-            out_proj: MatrixF32 {
-                rows: 2,
-                cols: 2,
-                values: vec![1.0, 0.0, 0.0, 1.0],
-            },
+            codebook: vec![0.0, 0.0, 0.0, 0.0],
+            codebook_dim: 2,
+            out_proj: vec![1.0, 0.0, 0.0, 1.0],
             out_bias: vec![0.0, 0.0],
         },
         residual_quantizers: vec![],

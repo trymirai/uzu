@@ -766,6 +766,7 @@ fn audio_fsq_decode_matches_reference() {
     let seq_len = 3usize;
     let codebook_dim = 2usize;
     let num_levels: Vec<i32> = vec![8, 5];
+    let dim_base_index: Vec<i32> = vec![1, 8];
 
     let mut tokens = context.create_array(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_tokens");
     tokens.as_slice_mut::<i32>().copy_from_slice(&[
@@ -791,6 +792,7 @@ fn audio_fsq_decode_matches_reference() {
             seq_len as i32,
             codebook_dim as i32,
             &num_levels,
+            &dim_base_index,
             batch_size as i32,
             command_buffer,
         );

@@ -1,6 +1,6 @@
 use super::{
     AdaptiveChunkController, AudioDecodeStepStats, DEFAULT_CHUNK_EMA_ALPHA, DEFAULT_CHUNK_HYSTERESIS_FRACTION,
-    DEFAULT_STUB_SEED, DEFAULT_TTS_RANDOM_SEED, MatrixF32, PendingAudioChunkBackend, PendingStreamingChunk,
+    DEFAULT_STUB_SEED, DEFAULT_TTS_RANDOM_SEED, PendingAudioChunkBackend, PendingStreamingChunk,
     StreamingTokenAccumulator, TextDecoderFollowupStrategy, TextSamplingState, audio_decode_streaming_mode,
     build_semantic_sampling_mask_row, clear_token_in_sampling_mask, expand_token_mask_for_sampling_row,
     generate_stub_tokens, load_stub_seed, maybe_flush_pending_stream_chunk, normalize_rendered_prompt,
@@ -256,23 +256,6 @@ fn repetition_penalty_kernel_adjusts_selected_logits() {
         let delta = (got - exp).abs();
         assert!(delta <= 1e-5, "index={index}: expected {exp}, got {got}, delta={delta}");
     }
-}
-
-#[test]
-fn matrix_f32_row_and_matmul_work() {
-    let matrix = MatrixF32 {
-        rows: 2,
-        cols: 3,
-        values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-    };
-
-    assert_eq!(matrix.row(0), Some([1.0_f32, 2.0, 3.0].as_slice()));
-    assert_eq!(matrix.row(1), Some([4.0_f32, 5.0, 6.0].as_slice()));
-    assert_eq!(matrix.row(2), None);
-    let mut out = [0.0_f32; 2];
-    assert_eq!(matrix.matmul_into(&[1.0, 0.0, 1.0], &mut out), Some(()));
-    assert_eq!(out, [4.0, 10.0]);
-    assert_eq!(matrix.matmul_into(&[1.0, 0.0], &mut out), None);
 }
 
 #[test]

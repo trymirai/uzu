@@ -153,8 +153,4 @@ impl CommandBufferCompleted for CpuCommandBuffer {
     fn gpu_execution_time_ms(&self) -> Option<f64> {
         self.gpu_execution_time.get().copied().map(|duration| duration.as_secs_f64() * 1000.0)
     }
-
-    fn gpu_execution_time(&self) -> Option<Duration> {
-        self.gpu_execution_time.get().copied()
-    }
 }

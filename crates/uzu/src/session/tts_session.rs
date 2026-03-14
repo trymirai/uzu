@@ -20,7 +20,6 @@ use std::{
     time::Instant,
 };
 
-use half::{bf16, f16};
 use minijinja::{Environment, context};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tokenizers::Tokenizer;
@@ -37,7 +36,7 @@ use crate::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
             CommandBufferPending, Context as BackendContext, Kernels,
             kernel::{
-                BufferArg, EmbeddingRowsSumKernel, RepetitionPenaltyKernel, TensorAddScaleKernel, TensorCopyKernel,
+                EmbeddingRowsSumKernel, RepetitionPenaltyKernel, TensorAddScaleKernel, TensorCopyKernel,
                 TokenCopySampledKernel, TokenCopyToResultsKernel,
                 kv_cache_update::KVCacheUpdate,
                 matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},

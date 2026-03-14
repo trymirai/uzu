@@ -1,234 +1,116 @@
 use super::*;
-use crate::audio::nanocodec::decoder::NanoCodecDecoderJson;
-
-#[derive(Debug)]
-pub(super) struct TensorLoader {
-    file: File,
-    entries: HashMap<String, TensorEntry>,
-}
+use crate::{
+    audio::nanocodec::decoder::NanoCodecDecoderJson,
+    backends::{
+        common::{Backend, Context},
+        cpu::Cpu,
+    },
+    parameters::{ParameterLoader, ParameterTree},
+};
 
 #[derive(Debug, Clone, Copy)]
 enum TransposeConvWeightLayout {
     Oih,
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct TensorTree<'loader> {
-    loader: &'loader TensorLoader,
-    prefix: Option<String>,
+type AudioParameterContext = <Cpu as Backend>::Context;
+type AudioParameterTree<'loader> = ParameterTree<'loader, AudioParameterContext>;
+
+fn parameter_tree_path(
+    tree: &AudioParameterTree<'_>,
+    name: &str,
+) -> String {
+    tree.path_prefix().map_or_else(|| name.to_string(), |prefix| format!("{prefix}.{name}"))
 }
 
-impl TensorLoader {
-    pub(super) fn open(path: &Path) -> AudioResult<Self> {
-        let file = File::open(path).map_err(|err| {
-            AudioError::Runtime(format!("failed to open safetensors file '{}': {err}", path.display()))
-        })?;
-        let (global_offset, metadata) = read_safetensors_metadata(&file).map_err(|err| {
-            AudioError::Runtime(format!("failed to parse safetensors metadata from '{}': {err}", path.display()))
-        })?;
-
-        let mut entries = HashMap::new();
-        for (name, tensor) in metadata.tensors {
-            let (local_begin, local_end) = tensor.data_offsets;
-            let size = local_end
-                .checked_sub(local_begin)
-                .ok_or(AudioError::Runtime("invalid tensor data offsets in safetensors metadata".to_string()))?;
-            let offset = global_offset
-                .checked_add(local_begin)
-                .ok_or(AudioError::Runtime("safetensors tensor offset overflow".to_string()))?;
-
-            entries.insert(
-                name,
-                TensorEntry {
-                    data_type: tensor.dtype.into(),
-                    shape: tensor.shape,
-                    offset,
-                    size,
-                },
-            );
-        }
-
-        Ok(Self {
-            file,
-            entries,
-        })
-    }
-
-    pub(super) fn tree(&self) -> TensorTree<'_> {
-        TensorTree {
-            loader: self,
-            prefix: None,
-        }
-    }
-
-    fn read_tensor_f32(
-        &self,
-        key: &str,
-    ) -> AudioResult<(Vec<usize>, Vec<f32>)> {
-        let entry = self
-            .entries
-            .get(key)
-            .ok_or_else(|| AudioError::Runtime(format!("missing tensor '{key}' in model.safetensors")))?;
-
-        let num_elements = checked_product(&entry.shape)?;
-        let expected_size = num_elements
-            .checked_mul(entry.data_type.size_in_bytes())
-            .ok_or(AudioError::Runtime(format!("tensor '{key}' byte-size overflow")))?;
-        if entry.size != expected_size {
-            return Err(AudioError::Runtime(format!(
-                "tensor '{key}' size mismatch: expected {expected_size} bytes from shape {:?} and dtype {:?}, got {}",
-                entry.shape, entry.data_type, entry.size
-            )));
-        }
-
-        let mut bytes = vec![0_u8; entry.size];
-        self.file.read_exact_at(&mut bytes, entry.offset as u64).map_err(|err| {
-            AudioError::Runtime(format!("failed reading tensor '{key}' from model.safetensors: {err}"))
-        })?;
-
-        let values = match entry.data_type {
-            DataType::F32 => decode_f32_bytes(&bytes),
-            DataType::F16 => decode_f16_bytes(&bytes).into_iter().map(f16::to_f32).collect::<Vec<f32>>(),
-            DataType::BF16 => decode_bf16_bytes(&bytes).into_iter().map(bf16::to_f32).collect::<Vec<f32>>(),
-            other => {
-                return Err(AudioError::Runtime(format!(
-                    "unsupported tensor dtype for '{key}': {other:?} (expected F32/F16/BF16)"
-                )));
-            },
-        };
-
-        if values.len() != num_elements {
-            return Err(AudioError::Runtime(format!(
-                "decoded tensor '{key}' element count mismatch: expected {num_elements}, got {}",
-                values.len()
-            )));
-        }
-
-        Ok((entry.shape.clone(), values))
-    }
+fn map_parameter_error(
+    err: crate::parameters::ParameterLoaderError<<AudioParameterContext as Context>::Backend>,
+) -> AudioError {
+    AudioError::Runtime(err.to_string())
 }
 
-impl<'loader> TensorTree<'loader> {
-    fn join_prefix(
-        &self,
-        name: &str,
-    ) -> String {
-        match self.prefix {
-            Some(ref prefix) => format!("{prefix}.{name}"),
-            None => name.to_string(),
-        }
-    }
-
-    pub(super) fn subtree(
-        &self,
-        name: &str,
-    ) -> AudioResult<Self> {
-        let joined = self.join_prefix(name);
-        let subtree_prefix = format!("{joined}.");
-        let found = self.loader.entries.keys().any(|key| key == &joined || key.starts_with(&subtree_prefix));
-        if !found {
-            return Err(AudioError::Runtime(format!("missing tensor subtree '{joined}' in model.safetensors")));
-        }
-
-        Ok(Self {
-            loader: self.loader,
-            prefix: Some(joined),
-        })
-    }
-
-    fn read_tensor_f32(
-        &self,
-        name: &str,
-    ) -> AudioResult<(Vec<usize>, Vec<f32>)> {
-        self.loader.read_tensor_f32(&self.join_prefix(name))
-    }
-
-    pub(super) fn leaf_vector_f32(
-        &self,
-        name: &str,
-    ) -> AudioResult<Vec<f32>> {
-        let key = self.join_prefix(name);
-        let (shape, values) = self.read_tensor_f32(name)?;
-        if shape.len() != 1 {
-            return Err(AudioError::Runtime(format!("expected rank-1 tensor for '{key}', got shape {shape:?}")));
-        }
-        Ok(values)
-    }
-
-    pub(super) fn leaf_tensor_3(
-        &self,
-        name: &str,
-    ) -> AudioResult<Tensor3Json> {
-        let key = self.join_prefix(name);
-        let (shape, values) = self.read_tensor_f32(name)?;
-        if shape.len() != 3 {
-            return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{key}', got shape {shape:?}")));
-        }
-        Ok(Tensor3Json {
-            shape: [shape[0], shape[1], shape[2]],
-            values,
-        })
-    }
-
-    pub(super) fn leaf_matrix_f32(
-        &self,
-        name: &str,
-        expected_rows: usize,
-        expected_cols: usize,
-    ) -> AudioResult<MatrixF32> {
-        let key = self.join_prefix(name);
-        let (shape, values) = self.read_tensor_f32(name)?;
-        if shape.len() != 2 {
-            return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
-        }
-        if shape[0] != expected_rows || shape[1] != expected_cols {
-            return Err(AudioError::Runtime(format!(
-                "tensor '{key}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {shape:?}"
-            )));
-        }
-        Ok(MatrixF32 {
-            rows: shape[0],
-            cols: shape[1],
-            values,
-        })
-    }
-
-    fn leaf_matrix_f32_any(
-        &self,
-        name: &str,
-    ) -> AudioResult<MatrixF32> {
-        let key = self.join_prefix(name);
-        let (shape, values) = self.read_tensor_f32(name)?;
-        if shape.len() != 2 {
-            return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
-        }
-        Ok(MatrixF32 {
-            rows: shape[0],
-            cols: shape[1],
-            values,
-        })
-    }
+fn subtree<'loader>(
+    tree: &AudioParameterTree<'loader>,
+    name: &str,
+) -> AudioResult<AudioParameterTree<'loader>> {
+    tree.subtree(name).map_err(map_parameter_error)
 }
 
-fn decode_f32_bytes(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4).map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect()
+fn read_tensor_f32(
+    tree: &AudioParameterTree<'_>,
+    name: &str,
+) -> AudioResult<(Box<[usize]>, Vec<f32>)> {
+    tree.leaf(name)
+        .map_err(map_parameter_error)?
+        .read_f32_tensor()
+        .map_err(map_parameter_error)
 }
 
-fn decode_f16_bytes(bytes: &[u8]) -> Vec<f16> {
-    bytes.chunks_exact(2).map(|chunk| f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]]))).collect()
+fn leaf_vector_f32(
+    tree: &AudioParameterTree<'_>,
+    name: &str,
+) -> AudioResult<Vec<f32>> {
+    let key = parameter_tree_path(tree, name);
+    let (shape, values) = read_tensor_f32(tree, name)?;
+    if shape.len() != 1 {
+        return Err(AudioError::Runtime(format!("expected rank-1 tensor for '{key}', got shape {shape:?}")));
+    }
+    Ok(values)
 }
 
-fn decode_bf16_bytes(bytes: &[u8]) -> Vec<bf16> {
-    bytes.chunks_exact(2).map(|chunk| bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]]))).collect()
+fn leaf_tensor_3(
+    tree: &AudioParameterTree<'_>,
+    name: &str,
+) -> AudioResult<Tensor3Json> {
+    let key = parameter_tree_path(tree, name);
+    let (shape, values) = read_tensor_f32(tree, name)?;
+    if shape.len() != 3 {
+        return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{key}', got shape {shape:?}")));
+    }
+    Ok(Tensor3Json {
+        shape: [shape[0], shape[1], shape[2]],
+        values,
+    })
+}
+
+fn leaf_matrix_f32(
+    tree: &AudioParameterTree<'_>,
+    name: &str,
+    expected_rows: usize,
+    expected_cols: usize,
+) -> AudioResult<Vec<f32>> {
+    let key = parameter_tree_path(tree, name);
+    let (shape, values) = read_tensor_f32(tree, name)?;
+    if shape.len() != 2 {
+        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
+    }
+    if shape[0] != expected_rows || shape[1] != expected_cols {
+        return Err(AudioError::Runtime(format!(
+            "tensor '{key}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {shape:?}"
+        )));
+    }
+    Ok(values)
+}
+
+fn leaf_matrix_f32_any(
+    tree: &AudioParameterTree<'_>,
+    name: &str,
+) -> AudioResult<([usize; 2], Vec<f32>)> {
+    let key = parameter_tree_path(tree, name);
+    let (shape, values) = read_tensor_f32(tree, name)?;
+    if shape.len() != 2 {
+        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
+    }
+    Ok(([shape[0], shape[1]], values))
 }
 
 fn read_causal_conv_1d(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     dilation: usize,
 ) -> AudioResult<CausalConv1dJson> {
     Ok(CausalConv1dJson {
-        weight: tree.leaf_tensor_3("weights")?,
-        bias: tree.leaf_vector_f32("biases")?,
+        weight: leaf_tensor_3(tree, "weights")?,
+        bias: leaf_vector_f32(tree, "biases")?,
         dilation,
     })
 }
@@ -296,10 +178,21 @@ pub(super) fn build_nanocodec_decoder_graph_from_lalamo_config(
     model_weights_path: &Path,
 ) -> AudioResult<NanoCodecDecoderGraph> {
     let cfg = config;
-    let loader = TensorLoader::open(model_weights_path)?;
-    let decoder_tree = loader.tree().subtree("audio_decoder")?.subtree("decoder")?;
+    let file = File::open(model_weights_path).map_err(|err| {
+        AudioError::Runtime(format!("failed to open safetensors file '{}': {err}", model_weights_path.display()))
+    })?;
+    let host_context = <AudioParameterContext as Context>::new()
+        .map_err(|err| AudioError::Runtime(format!("failed to create cpu parameter context: {err}")))?;
+    let loader = ParameterLoader::new(&file, host_context.as_ref()).map_err(|err| {
+        AudioError::Runtime(format!(
+            "failed to parse safetensors metadata from '{}': {err}",
+            model_weights_path.display()
+        ))
+    })?;
+    let audio_decoder_tree = subtree(&loader.tree(), "audio_decoder")?;
+    let decoder_tree = subtree(&audio_decoder_tree, "decoder")?;
 
-    let pre_conv = read_causal_conv_1d(&decoder_tree.subtree("pre_conv")?, 1)?;
+    let pre_conv = read_causal_conv_1d(&subtree(&decoder_tree, "pre_conv")?, 1)?;
     let mut stages = Vec::with_capacity(cfg.up_sample_rates.len());
 
     let mut current_channels = cfg.base_channels;
@@ -319,15 +212,16 @@ pub(super) fn build_nanocodec_decoder_graph_from_lalamo_config(
         }
         let groups = out_channels;
 
-        let activation_alpha = decoder_tree
-            .subtree("activations")?
-            .subtree(&stage_index.to_string())?
-            .subtree("snake")?
-            .leaf_vector_f32("alpha")?;
+        let activations_tree = subtree(&decoder_tree, "activations")?;
+        let activation_alpha = leaf_vector_f32(
+            &subtree(&subtree(&activations_tree, &stage_index.to_string())?, "snake")?,
+            "alpha",
+        )?;
 
-        let upsample_tree = decoder_tree.subtree("upsample_convs")?.subtree(&stage_index.to_string())?;
-        let upsample_weight_oih = upsample_tree.leaf_tensor_3("weights")?;
-        let upsample_bias = upsample_tree.leaf_vector_f32("biases")?;
+        let upsample_convs_tree = subtree(&decoder_tree, "upsample_convs")?;
+        let upsample_tree = subtree(&upsample_convs_tree, &stage_index.to_string())?;
+        let upsample_weight_oih = leaf_tensor_3(&upsample_tree, "weights")?;
+        let upsample_bias = leaf_vector_f32(&upsample_tree, "biases")?;
         let upsample_weight =
             convert_lalamo_transpose_weight_oih_to_iog(&upsample_weight_oih, current_channels, out_channels, groups)?;
         let upsample_conv = CausalConvTranspose1dJson {
@@ -341,24 +235,28 @@ pub(super) fn build_nanocodec_decoder_graph_from_lalamo_config(
         for (res_block_index, _) in cfg.resblock_kernel_sizes.iter().enumerate() {
             let mut residuals = Vec::with_capacity(cfg.resblock_dilations.len());
             for (residual_index, &dilation) in cfg.resblock_dilations.iter().enumerate() {
-                let residual_tree = decoder_tree
-                    .subtree("res_layers")?
-                    .subtree(&stage_index.to_string())?
-                    .subtree("res_blocks")?
-                    .subtree(&res_block_index.to_string())?
-                    .subtree("res_blocks")?
-                    .subtree(&residual_index.to_string())?;
+                let res_layers_tree = subtree(&decoder_tree, "res_layers")?;
+                let residual_tree = subtree(
+                    &subtree(
+                        &subtree(
+                            &subtree(&subtree(&res_layers_tree, &stage_index.to_string())?, "res_blocks")?,
+                            &res_block_index.to_string(),
+                        )?,
+                        "res_blocks",
+                    )?,
+                    &residual_index.to_string(),
+                )?;
                 residuals.push(NanoCodecResidualBlockJson {
-                    input_activation_alpha: residual_tree
-                        .subtree("input_activation")?
-                        .subtree("snake")?
-                        .leaf_vector_f32("alpha")?,
-                    input_conv: read_causal_conv_1d(&residual_tree.subtree("input_conv")?, dilation)?,
-                    skip_activation_alpha: residual_tree
-                        .subtree("skip_activation")?
-                        .subtree("snake")?
-                        .leaf_vector_f32("alpha")?,
-                    skip_conv: read_causal_conv_1d(&residual_tree.subtree("skip_conv")?, 1)?,
+                    input_activation_alpha: leaf_vector_f32(
+                        &subtree(&subtree(&residual_tree, "input_activation")?, "snake")?,
+                        "alpha",
+                    )?,
+                    input_conv: read_causal_conv_1d(&subtree(&residual_tree, "input_conv")?, dilation)?,
+                    skip_activation_alpha: leaf_vector_f32(
+                        &subtree(&subtree(&residual_tree, "skip_activation")?, "snake")?,
+                        "alpha",
+                    )?,
+                    skip_conv: read_causal_conv_1d(&subtree(&residual_tree, "skip_conv")?, 1)?,
                 });
             }
             res_blocks.push(NanoCodecHiFiGanResBlockJson {
@@ -377,8 +275,9 @@ pub(super) fn build_nanocodec_decoder_graph_from_lalamo_config(
         current_channels = out_channels;
     }
 
-    let post_activation_alpha = decoder_tree.subtree("post_activation")?.subtree("snake")?.leaf_vector_f32("alpha")?;
-    let post_conv = read_causal_conv_1d(&decoder_tree.subtree("post_conv")?, 1)?;
+    let post_activation_alpha =
+        leaf_vector_f32(&subtree(&subtree(&decoder_tree, "post_activation")?, "snake")?, "alpha")?;
+    let post_conv = read_causal_conv_1d(&subtree(&decoder_tree, "post_conv")?, 1)?;
 
     Ok(NanoCodecDecoderJson {
         pre_conv,
@@ -433,13 +332,12 @@ tts_config.audio_decoder_config.precision, or tts_config.audio_decoder_config.qu
 }
 
 fn read_vector_quantizer(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     codebook_size: usize,
     output_dim: usize,
 ) -> AudioResult<StructuredAudioVectorQuantizer> {
-    let codebook_tree = tree.subtree("codebook")?;
-    let codebook = codebook_tree.leaf_matrix_f32_any("weights")?;
-    let shape = [codebook.rows, codebook.cols];
+    let codebook_tree = subtree(tree, "codebook")?;
+    let (shape, codebook) = leaf_matrix_f32_any(&codebook_tree, "weights")?;
     if shape[0] != codebook_size {
         return Err(AudioError::Runtime(format!("codebook rows mismatch: expected {codebook_size}, got {}", shape[0])));
     }
@@ -448,9 +346,9 @@ fn read_vector_quantizer(
         return Err(AudioError::InvalidTokenCardinality);
     }
 
-    let out_proj_tree = tree.subtree("out_proj")?;
-    let out_proj = out_proj_tree.leaf_matrix_f32("weights", output_dim, code_dim)?;
-    let out_bias = out_proj_tree.leaf_vector_f32("biases")?;
+    let out_proj_tree = subtree(tree, "out_proj")?;
+    let out_proj = leaf_matrix_f32(&out_proj_tree, "weights", output_dim, code_dim)?;
+    let out_bias = leaf_vector_f32(&out_proj_tree, "biases")?;
     if out_bias.len() != output_dim {
         return Err(AudioError::Runtime(format!(
             "out_proj bias shape mismatch: expected {output_dim}, got {}",
@@ -460,25 +358,26 @@ fn read_vector_quantizer(
 
     Ok(StructuredAudioVectorQuantizer {
         codebook,
+        codebook_dim: code_dim,
         out_proj,
         out_bias,
     })
 }
 
 fn read_conv1d_layer(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     dilation: usize,
     groups: usize,
 ) -> AudioResult<StructuredAudioConv1dLayer> {
-    let weight_key = tree.join_prefix("weights");
-    let weight = tree.leaf_tensor_3("weights")?;
+    let weight_key = parameter_tree_path(tree, "weights");
+    let weight = leaf_tensor_3(tree, "weights")?;
     let shape = weight.shape;
     let values = weight.values;
     if shape.len() != 3 {
         return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{weight_key}', got shape {shape:?}")));
     }
-    let bias_key = tree.join_prefix("biases");
-    let bias = tree.leaf_vector_f32("biases")?;
+    let bias_key = parameter_tree_path(tree, "biases");
+    let bias = leaf_vector_f32(tree, "biases")?;
     if bias.len() != shape[0] {
         return Err(AudioError::Runtime(format!(
             "bias shape mismatch for '{bias_key}': expected {}, got {}",
@@ -508,7 +407,7 @@ fn read_conv1d_layer(
 }
 
 fn read_conv_transpose1d_layer(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     stride: usize,
     groups: usize,
     weight_layout: TransposeConvWeightLayout,
@@ -516,13 +415,13 @@ fn read_conv_transpose1d_layer(
     if stride == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    let weight = tree.leaf_tensor_3("weights")?;
-    let bias = tree.leaf_vector_f32("biases")?;
+    let weight = leaf_tensor_3(tree, "weights")?;
+    let bias = leaf_vector_f32(tree, "biases")?;
     let out_channels = weight.shape[0];
     if bias.len() != out_channels {
         return Err(AudioError::Runtime(format!(
             "transpose conv bias mismatch for '{}': expected {out_channels}, got {}",
-            tree.join_prefix("biases"),
+            parameter_tree_path(tree, "biases"),
             bias.len()
         )));
     }
@@ -546,37 +445,37 @@ fn read_conv_transpose1d_layer(
 }
 
 fn read_residual_unit_layer(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     dilation: usize,
 ) -> AudioResult<StructuredAudioResidualUnitLayer> {
     Ok(StructuredAudioResidualUnitLayer {
-        snake1_alpha: tree.subtree("snake1")?.leaf_vector_f32("alpha")?,
-        conv1: read_conv1d_layer(&tree.subtree("conv1")?, dilation, 1)?,
-        snake2_alpha: tree.subtree("snake2")?.leaf_vector_f32("alpha")?,
-        conv2: read_conv1d_layer(&tree.subtree("conv2")?, 1, 1)?,
+        snake1_alpha: leaf_vector_f32(&subtree(tree, "snake1")?, "alpha")?,
+        conv1: read_conv1d_layer(&subtree(tree, "conv1")?, dilation, 1)?,
+        snake2_alpha: leaf_vector_f32(&subtree(tree, "snake2")?, "alpha")?,
+        conv2: read_conv1d_layer(&subtree(tree, "conv2")?, 1, 1)?,
     })
 }
 
 pub(super) fn read_norm_layer(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     epsilon: f32,
     subtract_mean: bool,
     use_bias: bool,
 ) -> AudioResult<StructuredAudioNormLayer> {
-    let scales = tree.leaf_vector_f32("scales")?;
+    let scales = leaf_vector_f32(tree, "scales")?;
     let biases = if use_bias {
-        Some(tree.leaf_vector_f32("biases")?)
+        Some(leaf_vector_f32(tree, "biases")?)
     } else {
         None
     };
     if let Some(biases) = &biases {
         if biases.len() != scales.len() {
             return Err(AudioError::Runtime(format!(
-                "norm scale/bias length mismatch at '{}': {} vs {}",
-                tree.join_prefix("scales"),
-                scales.len(),
-                biases.len()
-            )));
+            "norm scale/bias length mismatch at '{}': {} vs {}",
+            parameter_tree_path(tree, "scales"),
+            scales.len(),
+            biases.len()
+        )));
         }
     }
     Ok(StructuredAudioNormLayer {
@@ -588,16 +487,16 @@ pub(super) fn read_norm_layer(
 }
 
 fn read_convnext_layer(
-    tree: &TensorTree<'_>,
+    tree: &AudioParameterTree<'_>,
     norm_config: &DescriptAudioConvNeXtNormConfig,
 ) -> AudioResult<StructuredAudioConvNeXtLayer> {
-    let depthwise_tree = tree.subtree("dwconv")?;
-    let depthwise_weight = depthwise_tree.leaf_tensor_3("weights")?;
-    let depthwise_bias = depthwise_tree.leaf_vector_f32("biases")?;
+    let depthwise_tree = subtree(tree, "dwconv")?;
+    let depthwise_weight = leaf_tensor_3(&depthwise_tree, "weights")?;
+    let depthwise_bias = leaf_vector_f32(&depthwise_tree, "biases")?;
     if depthwise_weight.shape[1] != 1 {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt depthwise weight in_channels_per_group must be 1 at {}, got {}",
-            depthwise_tree.join_prefix("weights"),
+            parameter_tree_path(&depthwise_tree, "weights"),
             depthwise_weight.shape[1]
         )));
     }
@@ -613,7 +512,7 @@ fn read_convnext_layer(
     if depthwise_conv.bias.len() != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt depthwise bias mismatch at {}: expected {}, got {}",
-            depthwise_tree.join_prefix("biases"),
+            parameter_tree_path(&depthwise_tree, "biases"),
             depthwise_conv.cout,
             depthwise_conv.bias.len()
         )));
@@ -626,42 +525,46 @@ fn read_convnext_layer(
             "ConvNeXt depthwise conv expects cin==cout, got {} vs {} at {}",
             depthwise_conv.cin,
             depthwise_conv.cout,
-            depthwise_tree.join_prefix("weights")
+            parameter_tree_path(&depthwise_tree, "weights")
         )));
     }
 
-    let norm =
-        read_norm_layer(&tree.subtree("norm")?, norm_config.epsilon, norm_config.subtract_mean, norm_config.use_bias)?;
+    let norm = read_norm_layer(
+        &subtree(tree, "norm")?,
+        norm_config.epsilon,
+        norm_config.subtract_mean,
+        norm_config.use_bias,
+    )?;
     if norm.scales.len() != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt norm channels mismatch at {}: expected {}, got {}",
-            tree.join_prefix("norm"),
+            parameter_tree_path(tree, "norm"),
             depthwise_conv.cout,
             norm.scales.len()
         )));
     }
 
-    let pwconv1_tree = tree.subtree("pwconv1")?;
-    let pwconv1 = pwconv1_tree.leaf_matrix_f32_any("weights")?;
-    let pwconv1_bias = pwconv1_tree.leaf_vector_f32("biases")?;
-    if pwconv1.cols != depthwise_conv.cout || pwconv1.rows != pwconv1_bias.len() {
+    let pwconv1_tree = subtree(tree, "pwconv1")?;
+    let ([pwconv1_out, pwconv1_in], pwconv1) = leaf_matrix_f32_any(&pwconv1_tree, "weights")?;
+    let pwconv1_bias = leaf_vector_f32(&pwconv1_tree, "biases")?;
+    if pwconv1_in != depthwise_conv.cout || pwconv1_out != pwconv1_bias.len() {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt pwconv1 shape mismatch at {}: weight [{}, {}], bias {}",
-            pwconv1_tree.join_prefix("weights"),
-            pwconv1.rows,
-            pwconv1.cols,
+            parameter_tree_path(&pwconv1_tree, "weights"),
+            pwconv1_out,
+            pwconv1_in,
             pwconv1_bias.len()
         )));
     }
 
-    let pwconv2_tree = tree.subtree("pwconv2")?;
-    let pwconv2 = pwconv2_tree.leaf_matrix_f32("weights", depthwise_conv.cout, pwconv1.rows)?;
-    let pwconv2_bias = pwconv2_tree.leaf_vector_f32("biases")?;
-    if pwconv2_bias.len() != pwconv2.rows {
+    let pwconv2_tree = subtree(tree, "pwconv2")?;
+    let pwconv2 = leaf_matrix_f32(&pwconv2_tree, "weights", depthwise_conv.cout, pwconv1_out)?;
+    let pwconv2_bias = leaf_vector_f32(&pwconv2_tree, "biases")?;
+    if pwconv2_bias.len() != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt pwconv2 bias mismatch at {}: expected {}, got {}",
-            pwconv2_tree.join_prefix("biases"),
-            pwconv2.rows,
+            parameter_tree_path(&pwconv2_tree, "biases"),
+            depthwise_conv.cout,
             pwconv2_bias.len()
         )));
     }
@@ -670,6 +573,7 @@ fn read_convnext_layer(
         depthwise_conv,
         norm,
         pwconv1,
+        pwconv1_hidden_dim: pwconv1_out,
         pwconv1_bias,
         pwconv2,
         pwconv2_bias,
@@ -677,7 +581,7 @@ fn read_convnext_layer(
 }
 
 fn build_structured_decoder_graph_from_descript_audio_codec_config(
-    root: &TensorTree<'_>,
+    root: &AudioParameterTree<'_>,
     cfg: &DescriptAudioCodecConfig,
 ) -> AudioResult<StructuredAudioDecoderGraph> {
     if cfg.decoder_rates.is_empty() {
@@ -691,15 +595,16 @@ fn build_structured_decoder_graph_from_descript_audio_codec_config(
         )));
     }
 
-    let quantizer_tree = root.subtree("audio_decoder")?.subtree("quantizer")?;
-    let decoder_tree = root.subtree("audio_decoder")?.subtree("decoder")?;
+    let audio_decoder_tree = subtree(root, "audio_decoder")?;
+    let quantizer_tree = subtree(&audio_decoder_tree, "quantizer")?;
+    let decoder_tree = subtree(&audio_decoder_tree, "decoder")?;
     let mut upsample_blocks = Vec::with_capacity(cfg.downsample_factor.len());
     for (index, &stride) in cfg.downsample_factor.iter().rev().enumerate() {
-        let block_tree = quantizer_tree.subtree("upsampler")?.subtree("blocks")?.subtree(&index.to_string())?;
+        let block_tree = subtree(&subtree(&subtree(&quantizer_tree, "upsampler")?, "blocks")?, &index.to_string())?;
         let trans_conv =
-            read_conv_transpose1d_layer(&block_tree.subtree("trans_conv")?, stride, 1, TransposeConvWeightLayout::Oih)?;
+            read_conv_transpose1d_layer(&subtree(&block_tree, "trans_conv")?, stride, 1, TransposeConvWeightLayout::Oih)?;
         let convnext = read_convnext_layer(
-            &block_tree.subtree("convnext")?,
+            &subtree(&block_tree, "convnext")?,
             &cfg.quantizer_config.upsampler_config.block_configs[index].convnext_config.norm_config,
         )?;
         if convnext.depthwise_conv.cin != trans_conv.cout {
@@ -711,26 +616,26 @@ fn build_structured_decoder_graph_from_descript_audio_codec_config(
         upsample_blocks.push((trans_conv, convnext));
     }
 
-    let first_conv = read_conv1d_layer(&decoder_tree.subtree("first_conv")?, 1, 1)?;
+    let first_conv = read_conv1d_layer(&subtree(&decoder_tree, "first_conv")?, 1, 1)?;
     let mut decoder_blocks = Vec::with_capacity(cfg.decoder_rates.len());
     for (index, &stride) in cfg.decoder_rates.iter().enumerate() {
-        let block_tree = decoder_tree.subtree("decoder_blocks")?.subtree(&index.to_string())?;
+        let block_tree = subtree(&subtree(&decoder_tree, "decoder_blocks")?, &index.to_string())?;
         decoder_blocks.push(StructuredAudioDecoderBlockLayer {
-            snake_alpha: block_tree.subtree("snake")?.leaf_vector_f32("alpha")?,
+            snake_alpha: leaf_vector_f32(&subtree(&block_tree, "snake")?, "alpha")?,
             trans_conv: read_conv_transpose1d_layer(
-                &block_tree.subtree("trans_conv")?,
+                &subtree(&block_tree, "trans_conv")?,
                 stride,
                 1,
                 TransposeConvWeightLayout::Oih,
             )?,
-            res_unit1: read_residual_unit_layer(&block_tree.subtree("res_unit1")?, 1)?,
-            res_unit2: read_residual_unit_layer(&block_tree.subtree("res_unit2")?, 3)?,
-            res_unit3: read_residual_unit_layer(&block_tree.subtree("res_unit3")?, 9)?,
+            res_unit1: read_residual_unit_layer(&subtree(&block_tree, "res_unit1")?, 1)?,
+            res_unit2: read_residual_unit_layer(&subtree(&block_tree, "res_unit2")?, 3)?,
+            res_unit3: read_residual_unit_layer(&subtree(&block_tree, "res_unit3")?, 9)?,
         });
     }
 
-    let final_snake_alpha = decoder_tree.subtree("final_snake")?.leaf_vector_f32("alpha")?;
-    let final_conv = read_conv1d_layer(&decoder_tree.subtree("final_conv")?, 1, 1)?;
+    let final_snake_alpha = leaf_vector_f32(&subtree(&decoder_tree, "final_snake")?, "alpha")?;
+    let final_conv = read_conv1d_layer(&subtree(&decoder_tree, "final_conv")?, 1, 1)?;
 
     let upsample_factor = cfg
         .downsample_factor
@@ -759,10 +664,20 @@ fn build_structured_codec_graph_from_descript_audio_codec_export(
     else {
         return Err(AudioError::Runtime("expected DescriptAudioCodecConfig for structured audio runtime".to_string()));
     };
-    let loader = TensorLoader::open(model_weights_path)?;
+    let file = File::open(model_weights_path).map_err(|err| {
+        AudioError::Runtime(format!("failed to open safetensors file '{}': {err}", model_weights_path.display()))
+    })?;
+    let host_context = <AudioParameterContext as Context>::new()
+        .map_err(|err| AudioError::Runtime(format!("failed to create cpu parameter context: {err}")))?;
+    let loader = ParameterLoader::new(&file, host_context.as_ref()).map_err(|err| {
+        AudioError::Runtime(format!(
+            "failed to parse safetensors metadata from '{}': {err}",
+            model_weights_path.display()
+        ))
+    })?;
     let root = loader.tree();
-    let audio_decoder_tree = root.subtree("audio_decoder")?;
-    let quantizer_tree = audio_decoder_tree.subtree("quantizer")?;
+    let audio_decoder_tree = subtree(&root, "audio_decoder")?;
+    let quantizer_tree = subtree(&audio_decoder_tree, "quantizer")?;
     if cfg.n_codebooks == 0 || cfg.codebook_size <= 1 || cfg.semantic_codebook_size <= 1 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -774,14 +689,14 @@ fn build_structured_codec_graph_from_descript_audio_codec_export(
     }
 
     let semantic_quantizer = read_vector_quantizer(
-        &quantizer_tree.subtree("semantic_quantizer")?.subtree("quantizers")?.subtree("0")?,
+        &subtree(&subtree(&subtree(&quantizer_tree, "semantic_quantizer")?, "quantizers")?, "0")?,
         cfg.semantic_codebook_size,
         cfg.input_dim,
     )?;
     let mut residual_quantizers = Vec::with_capacity(cfg.n_codebooks);
     for index in 0..cfg.n_codebooks {
         residual_quantizers.push(read_vector_quantizer(
-            &quantizer_tree.subtree("quantizer")?.subtree("quantizers")?.subtree(&index.to_string())?,
+            &subtree(&subtree(&subtree(&quantizer_tree, "quantizer")?, "quantizers")?, &index.to_string())?,
             cfg.codebook_size,
             cfg.input_dim,
         )?);

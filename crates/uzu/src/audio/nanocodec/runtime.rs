@@ -2,14 +2,12 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
     fs::File,
-    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, RwLock},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use half::{bf16, f16};
 use serde::Deserialize;
 
 use super::{
@@ -47,7 +45,7 @@ use crate::{
         scratch_buffers::ScratchBuffers,
         state::{ArrayId, ForwardPassState, RopeType, SharedBuffers},
     },
-    parameters::{ParameterLoader, read_safetensors_metadata},
+    parameters::ParameterLoader,
     utils::array_io::{
         read_array_to_f32_vec, write_f32_slice_into_array as write_f32_slice_to_array, write_i32_slice_into_array,
     },
@@ -57,8 +55,7 @@ mod loaders;
 
 #[cfg(test)]
 use loaders::{
-    TensorLoader, convert_lalamo_transpose_weight_oih_to_iog, read_norm_layer,
-    resolve_descript_audio_codec_vocoder_data_type,
+    convert_lalamo_transpose_weight_oih_to_iog, resolve_descript_audio_codec_vocoder_data_type,
 };
 use loaders::{build_nanocodec_decoder_graph_from_lalamo_config, load_audio_runtime_from_tts_config};
 include!("runtime/profile.rs");
@@ -1044,6 +1041,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
                     frames_i32,
                     codebook_dim_i32,
                     self.config.num_levels_per_group(),
+                    self.config.dim_base_index(),
                     batch_size_i32,
                     compute_encoder,
                 );

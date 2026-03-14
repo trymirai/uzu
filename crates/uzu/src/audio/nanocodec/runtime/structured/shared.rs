@@ -82,31 +82,10 @@ impl SequenceLayout {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct MatrixF32 {
-    rows: usize,
-    cols: usize,
-    values: Vec<f32>,
-}
-
-impl MatrixF32 {
-    #[cfg(test)]
-    fn row(
-        &self,
-        index: usize,
-    ) -> Option<&[f32]> {
-        if index >= self.rows {
-            return None;
-        }
-        let start = index.checked_mul(self.cols)?;
-        let end = start.checked_add(self.cols)?;
-        self.values.get(start..end)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 struct StructuredAudioVectorQuantizer {
-    codebook: MatrixF32,
-    out_proj: MatrixF32,
+    codebook: Vec<f32>,
+    codebook_dim: usize,
+    out_proj: Vec<f32>,
     out_bias: Vec<f32>,
 }
 
@@ -144,9 +123,10 @@ struct StructuredAudioNormLayer {
 struct StructuredAudioConvNeXtLayer {
     depthwise_conv: StructuredAudioConv1dLayer,
     norm: StructuredAudioNormLayer,
-    pwconv1: MatrixF32,
+    pwconv1: Vec<f32>,
+    pwconv1_hidden_dim: usize,
     pwconv1_bias: Vec<f32>,
-    pwconv2: MatrixF32,
+    pwconv2: Vec<f32>,
     pwconv2_bias: Vec<f32>,
 }
 
@@ -315,12 +295,4 @@ thread_local! {
         RefCell::new(HashMap::new());
     static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerGpuResources>>> =
         RefCell::new(HashMap::new());
-}
-
-#[derive(Debug, Clone)]
-struct TensorEntry {
-    data_type: DataType,
-    shape: Vec<usize>,
-    offset: usize,
-    size: usize,
 }

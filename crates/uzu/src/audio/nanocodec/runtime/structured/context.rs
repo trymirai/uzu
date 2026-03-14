@@ -91,14 +91,25 @@ impl StructuredAudioCodecGraph {
         quantizer: &StructuredAudioVectorQuantizer,
         code_index: usize,
     ) -> AudioResult<()> {
-        let code_row = quantizer
-            .codebook
-            .row(code_index)
-            .ok_or(AudioError::Runtime("quantizer code index out of range".to_string()))?;
-        if quantizer.out_proj.cols != code_row.len() || quantizer.out_proj.rows != target.len() {
+        let code_dim = quantizer.codebook_dim;
+        if code_dim == 0
+            || quantizer.codebook.len() % code_dim != 0
+            || quantizer.out_proj.len() != target.len().saturating_mul(code_dim)
+            || quantizer.out_bias.len() != target.len()
+        {
             return Err(AudioError::Runtime("quantizer projection shape mismatch".to_string()));
         }
-        for (row_index, row) in quantizer.out_proj.values.chunks_exact(quantizer.out_proj.cols).enumerate() {
+        let code_start = code_index
+            .checked_mul(code_dim)
+            .ok_or(AudioError::Runtime("quantizer code index overflow".to_string()))?;
+        let code_end = code_start
+            .checked_add(code_dim)
+            .ok_or(AudioError::Runtime("quantizer code slice overflow".to_string()))?;
+        let code_row = quantizer
+            .codebook
+            .get(code_start..code_end)
+            .ok_or(AudioError::Runtime("quantizer code index out of range".to_string()))?;
+        for (row_index, row) in quantizer.out_proj.chunks_exact(code_dim).enumerate() {
             let mut acc = quantizer.out_bias[row_index];
             for (&w, &x) in row.iter().zip(code_row.iter()) {
                 acc += w * x;

@@ -1,117 +1,4 @@
 impl StructuredAudioCodecGraph {
-    #[cfg(test)]
-    fn apply_norm_sequence(
-        values: &mut [f32],
-        seq_len: usize,
-        channels: usize,
-        norm: &StructuredAudioNormLayer,
-    ) -> AudioResult<()> {
-        if norm.scales.len() != channels {
-            return Err(AudioError::Runtime(format!(
-                "norm scale length mismatch: expected {channels}, got {}",
-                norm.scales.len()
-            )));
-        }
-        if let Some(biases) = &norm.biases {
-            if biases.len() != channels {
-                return Err(AudioError::Runtime(format!(
-                    "norm bias length mismatch: expected {channels}, got {}",
-                    biases.len()
-                )));
-            }
-        }
-        let expected = checked_product(&[seq_len, channels])?;
-        if values.len() != expected {
-            return Err(AudioError::InvalidTokenShape {
-                expected_tokens: expected,
-                actual_tokens: values.len(),
-            });
-        }
-
-        for token in 0..seq_len {
-            let row_start = token * channels;
-            let row = &mut values[row_start..row_start + channels];
-            let mean = if norm.subtract_mean {
-                row.iter().sum::<f32>() / channels as f32
-            } else {
-                0.0
-            };
-            let variance_sum = if norm.subtract_mean {
-                row.iter()
-                    .map(|&value| {
-                        let centered = value - mean;
-                        centered * centered
-                    })
-                    .sum::<f32>()
-            } else {
-                row.iter().map(|&value| value * value).sum::<f32>()
-            };
-            let variance = variance_sum / channels as f32;
-
-            let inv_std = 1.0 / (variance + norm.epsilon).sqrt();
-            for channel in 0..channels {
-                let mut normalized = if norm.subtract_mean {
-                    row[channel] - mean
-                } else {
-                    row[channel]
-                };
-                normalized *= inv_std * norm.scales[channel];
-                if let Some(biases) = &norm.biases {
-                    normalized += biases[channel];
-                }
-                row[channel] = normalized;
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn linear_sequence(
-        input: &[f32],
-        seq_len: usize,
-        in_dim: usize,
-        weight: &MatrixF32,
-        bias: Option<&[f32]>,
-    ) -> AudioResult<Vec<f32>> {
-        let expected_input = checked_product(&[seq_len, in_dim])?;
-        if input.len() != expected_input {
-            return Err(AudioError::InvalidTokenShape {
-                expected_tokens: expected_input,
-                actual_tokens: input.len(),
-            });
-        }
-        if weight.cols != in_dim {
-            return Err(AudioError::Runtime(format!(
-                "linear input dim mismatch: expected {}, got {}",
-                weight.cols, in_dim
-            )));
-        }
-        if let Some(bias_values) = bias {
-            if bias_values.len() != weight.rows {
-                return Err(AudioError::Runtime(format!(
-                    "linear bias shape mismatch: expected {}, got {}",
-                    weight.rows,
-                    bias_values.len()
-                )));
-            }
-        }
-
-        let mut output = vec![0.0_f32; checked_product(&[seq_len, weight.rows])?];
-        for token in 0..seq_len {
-            let input_row = &input[token * in_dim..(token + 1) * in_dim];
-            let output_row = &mut output[token * weight.rows..(token + 1) * weight.rows];
-            for row_index in 0..weight.rows {
-                let mut acc = bias.map_or(0.0, |bias_values| bias_values[row_index]);
-                let row = &weight.values[row_index * weight.cols..(row_index + 1) * weight.cols];
-                for (&weight_value, &input_value) in row.iter().zip(input_row.iter()) {
-                    acc += weight_value * input_value;
-                }
-                output_row[row_index] = acc;
-            }
-        }
-        Ok(output)
-    }
-
     fn apply_convnext_ncs_enqueued(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
@@ -346,19 +233,20 @@ impl StructuredAudioCodecGraph {
         if self.semantic_codebook_size == 0 || self.codebook_size == 0 {
             return Err(AudioError::InvalidTokenCardinality);
         }
-        let codebook_dim = self.semantic_quantizer.codebook.cols;
+        let codebook_dim = self.semantic_quantizer.codebook_dim;
         if codebook_dim == 0 {
             return Err(AudioError::InvalidTokenCardinality);
         }
-        if self.semantic_quantizer.codebook.rows != self.semantic_codebook_size {
+        if self.semantic_quantizer.codebook.len() != checked_product(&[self.semantic_codebook_size, codebook_dim])? {
             return Err(AudioError::Runtime(format!(
-                "semantic codebook row mismatch: expected {}, got {}",
-                self.semantic_codebook_size, self.semantic_quantizer.codebook.rows
+                "semantic codebook shape mismatch: expected {} values for [{}, {}], got {}",
+                checked_product(&[self.semantic_codebook_size, codebook_dim])?,
+                self.semantic_codebook_size,
+                codebook_dim,
+                self.semantic_quantizer.codebook.len()
             )));
         }
-        if self.semantic_quantizer.out_proj.rows != self.input_dim
-            || self.semantic_quantizer.out_proj.cols != codebook_dim
-        {
+        if self.semantic_quantizer.out_proj.len() != checked_product(&[self.input_dim, codebook_dim])? {
             return Err(AudioError::Runtime("semantic out_proj shape mismatch".to_string()));
         }
         if self.semantic_quantizer.out_bias.len() != self.input_dim {
@@ -367,10 +255,12 @@ impl StructuredAudioCodecGraph {
 
         let residual_quantizers = self.residual_quantizers.len();
         for (index, quantizer) in self.residual_quantizers.iter().enumerate() {
-            if quantizer.codebook.rows != self.codebook_size || quantizer.codebook.cols != codebook_dim {
+            if quantizer.codebook_dim != codebook_dim
+                || quantizer.codebook.len() != checked_product(&[self.codebook_size, codebook_dim])?
+            {
                 return Err(AudioError::Runtime(format!("residual quantizer {index} codebook shape mismatch")));
             }
-            if quantizer.out_proj.rows != self.input_dim || quantizer.out_proj.cols != codebook_dim {
+            if quantizer.out_proj.len() != checked_product(&[self.input_dim, codebook_dim])? {
                 return Err(AudioError::Runtime(format!("residual quantizer {index} out_proj shape mismatch")));
             }
             if quantizer.out_bias.len() != self.input_dim {
@@ -388,11 +278,11 @@ impl StructuredAudioCodecGraph {
             data_type,
             "fishaudio_quantizer_semantic_codebook",
         );
-        write_f32_slice_to_array(&mut semantic_codebook, &self.semantic_quantizer.codebook.values)?;
+        write_f32_slice_to_array(&mut semantic_codebook, &self.semantic_quantizer.codebook)?;
 
         let mut semantic_out_proj =
             context.create_array(&[self.input_dim, codebook_dim], data_type, "fishaudio_quantizer_semantic_out_proj");
-        write_f32_slice_to_array(&mut semantic_out_proj, &self.semantic_quantizer.out_proj.values)?;
+        write_f32_slice_to_array(&mut semantic_out_proj, &self.semantic_quantizer.out_proj)?;
 
         let mut semantic_out_bias =
             context.create_array(&[self.input_dim], data_type, "fishaudio_quantizer_semantic_out_bias");
@@ -415,7 +305,7 @@ impl StructuredAudioCodecGraph {
             let codebook_end = codebook_offset
                 .checked_add(checked_product(&[self.codebook_size, codebook_dim])?)
                 .ok_or(AudioError::Runtime("residual codebook offset overflow".to_string()))?;
-            residual_codebook_host[codebook_offset..codebook_end].copy_from_slice(&quantizer.codebook.values);
+            residual_codebook_host[codebook_offset..codebook_end].copy_from_slice(&quantizer.codebook);
 
             let proj_offset = index
                 .checked_mul(self.input_dim)
@@ -424,7 +314,7 @@ impl StructuredAudioCodecGraph {
             let proj_end = proj_offset
                 .checked_add(checked_product(&[self.input_dim, codebook_dim])?)
                 .ok_or(AudioError::Runtime("residual proj offset overflow".to_string()))?;
-            residual_proj_host[proj_offset..proj_end].copy_from_slice(&quantizer.out_proj.values);
+            residual_proj_host[proj_offset..proj_end].copy_from_slice(&quantizer.out_proj);
 
             let bias_offset = index
                 .checked_mul(self.input_dim)

@@ -3,13 +3,6 @@ use super::*;
 pub(super) type PreInjectionEncodeCallback<'a> =
     dyn FnMut(&TokenDecoderRunner, &ForwardPassState<Metal>, &mut MetalCommandBuffer) -> Result<(), Error> + 'a;
 
-#[derive(Debug, Clone)]
-pub(super) struct MatrixF32 {
-    pub(super) rows: usize,
-    pub(super) cols: usize,
-    pub(super) values: Vec<f32>,
-}
-
 pub(super) enum EmbeddingInjection {
     None,
     AddPreloaded {

@@ -105,30 +105,32 @@ fn create_conv_transpose1d_gpu_layer(
 fn create_pointwise_conv_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
-    weight: &MatrixF32,
+    weight: &[f32],
+    out_dim: usize,
+    in_dim: usize,
     bias: &[f32],
     label_prefix: &str,
 ) -> AudioResult<StructuredAudioPointwiseConvGpuLayer> {
-    if bias.len() != weight.rows {
+    if bias.len() != out_dim {
         return Err(AudioError::Runtime(format!(
             "pointwise layer '{label_prefix}' bias mismatch: expected {}, got {}",
-            weight.rows,
+            out_dim,
             bias.len()
         )));
     }
     let weight_array = create_data_array(
         context,
         data_type,
-        &[weight.rows, weight.cols, 1],
-        &weight.values,
+        &[out_dim, in_dim, 1],
+        weight,
         &format!("{label_prefix}_weight"),
     )?;
-    let bias_array = create_data_array(context, data_type, &[weight.rows], bias, &format!("{label_prefix}_bias"))?;
+    let bias_array = create_data_array(context, data_type, &[out_dim], bias, &format!("{label_prefix}_bias"))?;
     Ok(StructuredAudioPointwiseConvGpuLayer {
         weight: weight_array,
         bias: bias_array,
-        cin: weight.cols,
-        cout: weight.rows,
+        cin: in_dim,
+        cout: out_dim,
     })
 }
 
@@ -182,6 +184,8 @@ fn create_convnext_gpu_layer(
             context,
             data_type,
             &layer.pwconv1,
+            layer.pwconv1_hidden_dim,
+            channels,
             &layer.pwconv1_bias,
             &format!("{label_prefix}_pwconv1"),
         )?,
@@ -189,6 +193,8 @@ fn create_convnext_gpu_layer(
             context,
             data_type,
             &layer.pwconv2,
+            channels,
+            layer.pwconv1_hidden_dim,
             &layer.pwconv2_bias,
             &format!("{label_prefix}_pwconv2"),
         )?,
@@ -287,4 +293,3 @@ fn fishaudio_kernels(
         Ok(created)
     })
 }
-

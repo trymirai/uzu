@@ -45,18 +45,18 @@ pub enum EmbeddingError<B: Backend> {
 
 enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
-        input_weights: B::Buffer,
-        output_weights: B::Buffer,
+        lookup_weights: B::Buffer,
+        readout_weights: B::Buffer,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
         readout: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
     },
     Quantized {
-        input_weights: B::Buffer,
-        input_scales: B::Buffer,
-        input_biases: B::Buffer,
-        output_weights: B::Buffer,
-        output_scales: B::Buffer,
-        output_biases: B::Buffer,
+        lookup_weights: B::Buffer,
+        lookup_scales: B::Buffer,
+        lookup_biases: B::Buffer,
+        readout_weights: B::Buffer,
+        readout_scales: B::Buffer,
+        readout_biases: B::Buffer,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
@@ -176,8 +176,8 @@ impl<B: Backend> Embedding<B> {
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::FullPrecision {
-                        input_weights,
-                        output_weights,
+                        lookup_weights: input_weights,
+                        readout_weights: output_weights,
                         lookup,
                         readout,
                     },
@@ -285,12 +285,12 @@ impl<B: Backend> Embedding<B> {
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::Quantized {
-                        input_weights,
-                        input_scales,
-                        input_biases,
-                        output_weights,
-                        output_scales,
-                        output_biases,
+                        lookup_weights: input_weights,
+                        lookup_scales: input_scales,
+                        lookup_biases: input_biases,
+                        readout_weights: output_weights,
+                        readout_scales: output_scales,
+                        readout_biases: output_biases,
                         lookup,
                         readout,
                     },
@@ -488,9 +488,9 @@ impl<B: Backend> Embedding<B> {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::FullPrecision {
-                        input_weights: weights,
+                        lookup_weights: weights,
                         lookup,
-                        output_weights: _,
+                        readout_weights: _,
                         readout: _,
                     },
             }
@@ -514,13 +514,13 @@ impl<B: Backend> Embedding<B> {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::Quantized {
-                        input_weights: weights,
-                        input_scales: scales,
-                        input_biases: biases,
+                        lookup_weights: weights,
+                        lookup_scales: scales,
+                        lookup_biases: biases,
                         lookup,
-                        output_weights: _,
-                        output_scales: _,
-                        output_biases: _,
+                        readout_weights: _,
+                        readout_scales: _,
+                        readout_biases: _,
                         readout: _,
                     },
             }
@@ -581,8 +581,8 @@ impl<B: Backend> Embedding<B> {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::FullPrecision {
-                        input_weights: _,
-                        output_weights: weights,
+                        lookup_weights: _,
+                        readout_weights: weights,
                         lookup: _,
                         readout,
                     },
@@ -613,12 +613,12 @@ impl<B: Backend> Embedding<B> {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::Quantized {
-                        input_weights: _,
-                        input_scales: _,
-                        input_biases: _,
-                        output_weights: weights,
-                        output_scales: scales,
-                        output_biases: biases,
+                        lookup_weights: _,
+                        lookup_scales: _,
+                        lookup_biases: _,
+                        readout_weights: weights,
+                        readout_scales: scales,
+                        readout_biases: biases,
                         lookup: _,
                         readout,
                     },
