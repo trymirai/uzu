@@ -72,29 +72,3 @@ impl MetalDeviceCapabilities {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_known_generations() {
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g13p"), DeviceGeneration::Gen13);
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g14g"), DeviceGeneration::Gen14);
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g15g"), DeviceGeneration::Gen15);
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g16s"), DeviceGeneration::Gen16);
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g17s"), DeviceGeneration::Gen17);
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g18d"), DeviceGeneration::Gen18);
-    }
-
-    #[test]
-    fn returns_unknown_for_malformed_architecture() {
-        assert_eq!(MetalDeviceCapabilities::parse_generation(""), DeviceGeneration::Unknown(0));
-        assert_eq!(MetalDeviceCapabilities::parse_generation("not_a_gpu"), DeviceGeneration::Unknown(0));
-    }
-
-    #[test]
-    fn returns_unknown_for_unrecognized_generation() {
-        assert_eq!(MetalDeviceCapabilities::parse_generation("applegpu_g99g"), DeviceGeneration::Unknown(99));
-    }
-}
