@@ -31,7 +31,7 @@ itertools.workspace = true
 schemars.workspace = true
 
 # metal feature requires objc2, block2 (for callbacks) and metal
-byte-unit = { workspace = true, optional = true }
+bytesize = { workspace = true, optional = true }
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
 block2 = { workspace = true, optional = true }
@@ -79,7 +79,7 @@ clang-ast = { workspace = true, optional = true }
 default = ["metal"]
 
 metal = [
-    "dep:byte-unit",
+    "dep:bytesize",
     "dep:clang-ast",
     "dep:objc2",
     "dep:objc2-foundation",

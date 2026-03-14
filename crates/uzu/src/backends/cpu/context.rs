@@ -1,34 +1,23 @@
 use std::{cell::RefCell, path::Path, rc::Rc};
 
 use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Context, DeviceCapabilities};
+use crate::backends::common::Context;
 
-pub struct CpuDeviceCapabilities;
-
-impl DeviceCapabilities for CpuDeviceCapabilities {}
-
-pub struct CpuContext {
-    device_capabilities: CpuDeviceCapabilities,
-}
+pub struct CpuContext;
 
 impl Context for CpuContext {
     type Backend = Cpu;
-    type DeviceCapabilities = CpuDeviceCapabilities;
+    type DeviceCapabilities = ();
 
     fn new() -> Result<Rc<Self>, CpuError> {
-        Ok(Rc::new(CpuContext {
-            device_capabilities: CpuDeviceCapabilities,
-        }))
+        Ok(Rc::new(CpuContext))
     }
 
-    fn device_capabilities(&self) -> &CpuDeviceCapabilities {
-        &self.device_capabilities
+    fn device_capabilities(&self) -> &() {
+        &()
     }
 
-    fn recommended_async_batch_size(
-        &self,
-        _model_path: &Path,
-    ) -> usize {
+    fn recommended_async_batch_size(&self, _model_path: &Path) -> usize {
         1
     }
 

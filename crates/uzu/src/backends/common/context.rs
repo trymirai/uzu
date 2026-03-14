@@ -3,11 +3,9 @@ use std::{env, path::Path, rc::Rc};
 use super::Backend;
 use crate::backends::common::CommandBuffer;
 
-pub trait DeviceCapabilities {}
-
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
-    type DeviceCapabilities: DeviceCapabilities;
+    type DeviceCapabilities;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 

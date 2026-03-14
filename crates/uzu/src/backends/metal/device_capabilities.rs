@@ -1,9 +1,8 @@
-use byte_unit::Byte;
+use bytesize::ByteSize;
 use metal::{MTLDevice, MTLDeviceExt as _};
 use objc2::runtime::ProtocolObject;
 
 use super::metal_extensions::{DeviceExt, DeviceGeneration};
-use crate::backends::common::DeviceCapabilities;
 
 const HIGH_PERFORMANCE_CORE_THRESHOLD: u32 = 10;
 
@@ -12,8 +11,8 @@ pub struct MetalDeviceCapabilities {
     pub generation: DeviceGeneration,
     pub family_name: String,
     pub gpu_core_count: u32,
-    pub max_threadgroup_memory: Byte,
-    pub shared_memory_size: Byte,
+    pub max_threadgroup_memory: ByteSize,
+    pub shared_memory_size: ByteSize,
     pub supports_simd_group: bool,
     pub supports_simd_group_matrix: bool,
     pub supports_simd_reduction: bool,
@@ -23,13 +22,11 @@ pub struct MetalDeviceCapabilities {
     pub supports_tls: bool,
 }
 
-impl DeviceCapabilities for MetalDeviceCapabilities {}
-
 impl MetalDeviceCapabilities {
     pub fn from_device(device: &ProtocolObject<dyn MTLDevice>) -> Self {
         let architecture_name = device.architecture().name();
         let generation = Self::parse_generation(&architecture_name);
-        let max_threadgroup_memory = Byte::from_u64(device.max_threadgroup_memory_length() as u64);
+        let max_threadgroup_memory = ByteSize(device.max_threadgroup_memory_length() as u64);
 
         Self {
             generation,

@@ -1,4 +1,4 @@
-use byte_unit::Byte;
+use bytesize::ByteSize;
 use metal::MTLDevice;
 use objc2::{Message, msg_send, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSString;
@@ -53,8 +53,8 @@ pub trait DeviceExt: MTLDevice + Message {
     }
 
     /// Total unified (shared) memory.
-    fn shared_memory_size(&self) -> Byte {
-        Byte::from_u64(unsafe { msg_send![self, sharedMemorySize] })
+    fn shared_memory_size(&self) -> ByteSize {
+        ByteSize(unsafe { msg_send![self, sharedMemorySize] })
     }
 
     /// Whether the GPU supports SIMD group (warp-level) operations.
