@@ -2,7 +2,7 @@ use std::ops::DerefMut;
 
 use super::{
     MatmulError, dispatch_descriptor::MatmulDispatchDescriptor, gemm::GemmKernel, gemv::GemvKernel,
-    matmul_arguments::MatmulArguments, split_k::SplitKKernel,
+    matmul_arguments::MatmulArguments,
 };
 use crate::{
     DataType,
@@ -13,7 +13,6 @@ pub struct MatmulKernel<B: Backend> {
     pub(crate) data_type: DataType,
     gemm: Option<GemmKernel<B>>,
     gemv: Option<GemvKernel<B>>,
-    splitk: Option<SplitKKernel<B>>,
     bias_add: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
 }
 
@@ -27,7 +26,6 @@ impl<B: Backend> MatmulKernel<B> {
             data_type,
             gemm: None,
             gemv: None,
-            splitk: None,
             bias_add: None,
         })
     }
@@ -41,9 +39,6 @@ impl<B: Backend> MatmulKernel<B> {
 
         let gemv = self.get_or_create_gemv()?;
         gemv.precompile(context)?;
-
-        let splitk = self.get_or_create_splitk()?;
-        splitk.precompile(context)?;
 
         Ok(())
     }
@@ -62,13 +57,6 @@ impl<B: Backend> MatmulKernel<B> {
         Ok(self.gemv.as_mut().unwrap())
     }
 
-    fn get_or_create_splitk(&mut self) -> Result<&mut SplitKKernel<B>, MatmulError<B>> {
-        if self.splitk.is_none() {
-            self.splitk = Some(SplitKKernel::<B>::new(self.data_type)?);
-        }
-        Ok(self.splitk.as_mut().unwrap())
-    }
-
     fn encode_dispatch_descriptor(
         &mut self,
         context: &B::Context,
@@ -80,10 +68,6 @@ impl<B: Backend> MatmulKernel<B> {
             MatmulDispatchDescriptor::Gemv(d) => {
                 let gemv = self.get_or_create_gemv()?;
                 gemv.encode(context, arguments, d, command_buffer)
-            },
-            MatmulDispatchDescriptor::SplitK(d) => {
-                let splitk = self.get_or_create_splitk()?;
-                splitk.encode(context, arguments, d, command_buffer)
             },
             MatmulDispatchDescriptor::Gemm(d) => {
                 let gemm = self.get_or_create_gemm()?;
@@ -119,8 +103,7 @@ impl<B: Backend> MatmulKernel<B> {
     ) -> Result<(), MatmulError<B>> {
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
-        let batch_count = arguments.batch_count as usize;
-        let total_len = m * n * batch_count;
+        let total_len = m * n;
         if total_len == 0 {
             return Ok(());
         }
@@ -134,15 +117,5 @@ impl<B: Backend> MatmulKernel<B> {
         let bias_add = self.bias_add.as_ref().unwrap();
         bias_add.encode(None::<&B::Buffer>, bias, arguments.d.deref_mut(), n as u32, total_len as u32, command_buffer);
         Ok(())
-    }
-
-    pub fn apply_batch_collapse(arguments: &mut MatmulArguments<B>) {
-        if arguments.batch_count <= 1 {
-            return;
-        }
-        if arguments.lda == arguments.input_dim && arguments.transpose_b {
-            arguments.batch *= arguments.batch_count;
-            arguments.batch_count = 1;
-        }
     }
 }

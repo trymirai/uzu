@@ -5,7 +5,6 @@ pub mod gemv;
 mod grid_size;
 mod kernel;
 mod matmul_arguments;
-pub mod split_k;
 
 pub use dispatch_descriptor::{MatmulDispatchDescriptor, choose_matmul_dispatch_descriptor};
 pub use full_precision::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel};
@@ -31,8 +30,6 @@ pub enum MatmulError<B: Backend> {
     GemvOutputSourceMismatch,
     #[error("GEMV descriptor requires bias buffer")]
     GemvMissingBias,
-    #[error("GEMV stride overflows i32: {0}")]
-    GemvStrideOverflow(i64),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }

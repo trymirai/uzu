@@ -5,7 +5,6 @@ use crate::backends::{
 
 pub mod gemm;
 pub mod gemv;
-pub mod split_k;
 
 impl MatmulKernels for CpuKernels {
     type FullPrecisionMatmulKernel = MatmulKernel<Cpu>;
