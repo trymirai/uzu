@@ -57,6 +57,7 @@ impl<B: Backend> Attention<B> {
         has_sinks: bool,
         is_causal: bool,
         sliding_window_size: Option<usize>,
+        has_gate: bool,
     ) -> Result<Self, B::Error> {
         let mut single_pass_kernels = HashMap::new();
         let mut two_pass_1_kernels = HashMap::new();
@@ -87,9 +88,9 @@ impl<B: Backend> Attention<B> {
         }
 
         let update_kv_cache_kernel =
-            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, false)?;
+            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, has_gate, false)?;
         let update_kv_cache_inplace_kernel =
-            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, true)?;
+            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, has_gate, true)?;
         let gemm_block = AttentionGemmBlock::new(data_type);
 
         Ok(Self {

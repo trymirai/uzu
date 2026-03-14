@@ -139,6 +139,7 @@ impl<B: Backend> LayerExecutables<B> {
                         attention_config.has_sinks,
                         attention_config.is_causal.unwrap_or(true),
                         attention_config.sliding_window_size,
+                        attention_config.has_gate,
                     )
                     .expect("Failed to create AttentionWrapper kernel");
 

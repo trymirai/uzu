@@ -28,6 +28,7 @@ struct Input<T: ArrayElement + Float> {
     rope_dim: u32,
     num_heads: u32,
     num_groups: u32,
+    has_gate: bool,
     suffix_length: u32,
     max_sequence_length: u32,
 }
@@ -70,6 +71,7 @@ fn get_test_data<T: ArrayElement + Float>(
         rope_dim,
         num_heads,
         num_groups,
+        has_gate: false,
         suffix_length,
         max_sequence_length,
     }
@@ -78,10 +80,15 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, T::data_type())
+    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, T::data_type(), input.has_gate)
         .expect("Failed to create RopeKernel");
 
-    let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
+    let gate_heads = if input.has_gate {
+        input.num_heads
+    } else {
+        0
+    };
+    let total_heads = (input.num_heads + 2 * input.num_groups + gate_heads) as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
     let cos_sin_len = input.max_sequence_length as usize * input.rope_dim as usize;
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
@@ -176,6 +183,34 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input);
 }
 
+fn with_gate<T: ArrayElement + Float>(input: Input<T>) -> Input<T> {
+    let old_stride = (input.num_heads + 2 * input.num_groups) as usize * input.head_dim as usize;
+    let gate_size = input.num_heads as usize * input.head_dim as usize;
+    let new_stride = old_stride + gate_size;
+    let new_qkv = (0..input.suffix_length as usize)
+        .flat_map(|t| {
+            input.qkv[t * old_stride..(t + 1) * old_stride]
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(T::zero()).take(gate_size))
+        })
+        .collect::<Box<[_]>>();
+    debug_assert_eq!(new_qkv.len(), input.suffix_length as usize * new_stride);
+    Input {
+        qkv: new_qkv,
+        has_gate: true,
+        ..input
+    }
+}
+
+fn test_gated<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_test_data::<T>(4, 2, 8, 8, 2, 16);
+    let (expected_queries, expected_keys) = get_output::<T, Cpu>(&input);
+    let (gated_queries, gated_keys) = get_output::<T, Cpu>(&with_gate(input));
+    assert_eq_float::<T>(&expected_queries, &gated_queries, 1e-6, "gated queries must match non-gated");
+    assert_eq_float::<T>(&expected_keys, &gated_keys, 1e-6, "gated keys must match non-gated");
+}
+
 // f32 tests
 #[test]
 fn test_basic_f32() {
@@ -252,4 +287,9 @@ fn test_partial_rope_basic_f32() {
 #[test]
 fn test_partial_rope_small_f32() {
     test_partial_rope_small::<f32>();
+}
+
+#[test]
+fn test_gated_f32() {
+    test_gated::<f32>();
 }

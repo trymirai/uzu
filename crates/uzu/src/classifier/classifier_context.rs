@@ -301,7 +301,7 @@ impl<B: Backend> ClassifierContext<B> {
         data_type: DataType,
         rope_type: RopeType,
     ) -> Result<Rc<Rope<B>>, ClassifierError> {
-        let rotation = Rope::<B>::new(context, data_type, rope_type)
+        let rotation = Rope::<B>::new(context, data_type, rope_type, false)
             .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?;
         Ok(Rc::new(rotation))
     }

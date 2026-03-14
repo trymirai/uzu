@@ -17,6 +17,7 @@ KERNEL(AttentionUpdateKVCache)(
     const uint group_index AXIS(num_groups, 1),
     const uint token_index AXIS(suffix_length, 1),
     const uint dim_index AXIS(head_dim, 64),
+    const bool has_gate SPECIALIZE,
     const bool keys_in_place SPECIALIZE
 ) {
   if (keys_in_place) {
@@ -34,9 +35,10 @@ KERNEL(AttentionUpdateKVCache)(
   key_cache[keyCacheOffset] = rotated_keys[rotatedKeyOffset];
 
   // Copy value to cache
-  // qkv layout: [suffix_length, (num_heads + 2*num_groups) * head_dim]
-  // Values start at offset: (num_heads * head_dim) + (num_groups * head_dim)
-  const uint qkvStride = (num_heads + 2 * num_groups) * head_dim;
+  // qkv layout: [suffix_length, (num_heads + 2*num_groups + gated_num_heads) *
+  // head_dim] Values start at offset: (num_heads + num_groups) * head_dim
+  const uint gate_heads = has_gate ? num_heads : 0;
+  const uint qkvStride = (num_heads + 2 * num_groups + gate_heads) * head_dim;
   const uint valueBaseOffset = (num_heads + num_groups) * head_dim;
   const uint valueOffset = token_index * qkvStride + valueBaseOffset +
                            group_index * head_dim + dim_index;

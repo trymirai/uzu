@@ -17,6 +17,7 @@ pub fn attention_update_kv_cache<T: ArrayElement + Float>(
     suffix_length: u32,
     prefix_segment_length: u32,
     max_sequence_length: u32,
+    #[specialize] has_gate: bool,
     #[specialize] keys_in_place: bool,
 ) {
     let rotated_keys: *const T = match keys_in_place {
@@ -34,7 +35,12 @@ pub fn attention_update_kv_cache<T: ArrayElement + Float>(
                     *key_cache.add(key_cache_offset as usize) = *rotated_keys.add(rotated_key_offset as usize);
                 }
 
-                let qkv_stride = (num_heads + 2 * num_groups) * head_dim;
+                let gate_heads = if has_gate {
+                    num_heads
+                } else {
+                    0
+                };
+                let qkv_stride = (num_heads + 2 * num_groups + gate_heads) * head_dim;
                 let value_base_offset = (num_heads + num_groups) * head_dim;
                 let value_offset = token_index * qkv_stride + value_base_offset + group_index * head_dim + dim_index;
                 let value_cache_offset = (group_index * max_sequence_length + cache_token_index) * head_dim + dim_index;

@@ -21,7 +21,7 @@ inline T applyRopeTransform(
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(Rope)(
-    device const T* qkv,                // [suffix_len, (num_heads + 2*num_groups) * head_dim]
+    device const T* qkv,                // [suffix_len, (num_heads + 2*num_groups + gated_num_heads) * head_dim]
     device const T* cosines,            // [max_seq_len, rope_dim]
     device const T* sines,              // [max_seq_len, rope_dim]
     device const int* token_positions,  // [suffix_len] - actual token positions
@@ -35,7 +35,8 @@ KERNEL(Rope)(
     constant uint& max_sequence_length,
     const uint head_index AXIS(num_heads, 1),
     const uint token_index AXIS(suffix_length, 1),
-    const uint dimension_index AXIS(head_dim, 32)
+    const uint dimension_index AXIS(head_dim, 32),
+    const bool has_gate SPECIALIZE
 ) {
   if (head_index >= num_heads || token_index >= suffix_length ||
       dimension_index >= head_dim)
@@ -54,7 +55,8 @@ KERNEL(Rope)(
   const uint group_index =
       head_index /
       (num_heads / num_groups); // which KV group this head belongs to
-  const uint total_heads = num_heads + 2 * num_groups;
+  const uint gate_heads = has_gate ? num_heads : 0;
+  const uint total_heads = num_heads + 2 * num_groups + gate_heads;
   // Use actual token position from buffer
   const uint raw_position = token_positions[token_index];
   const uint absolutePosition =

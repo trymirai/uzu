@@ -64,16 +64,20 @@ impl<B: Backend> Decoder<B> {
             MixerConfig::DeltaNet(delta_net_config) => delta_net_config.in_proj_config.activation_precision().into(),
         };
 
+        let has_gate = Self::attention_has_gate(&decoder_config);
+
         let global_rope = if decoder_config.global_rope_config.is_some() {
             attention_data_type
                 .as_ref()
-                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Global))
+                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Global, has_gate))
         } else {
             None
         };
 
         let local_rope = if decoder_config.local_rope_config.is_some() {
-            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Local))
+            attention_data_type
+                .as_ref()
+                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Local, has_gate))
         } else {
             None
         };
@@ -153,8 +157,9 @@ impl<B: Backend> Decoder<B> {
         context: &B::Context,
         data_type: DataType,
         rope_type: RopeType,
+        has_gate: bool,
     ) -> Rc<Rope<B>> {
-        Rc::new(Rope::<B>::new(context, data_type, rope_type).expect("Failed to create Rope"))
+        Rc::new(Rope::<B>::new(context, data_type, rope_type, has_gate).expect("Failed to create Rope"))
     }
 
     fn attention_data_type(decoder_config: &DecoderConfig) -> Option<DataType> {
@@ -168,6 +173,19 @@ impl<B: Backend> Decoder<B> {
                 .attention_config()
                 .map(|attention_config| attention_config.qkv_projection_config.activation_precision().into())
         })
+    }
+
+    fn attention_has_gate(decoder_config: &DecoderConfig) -> bool {
+        (0..decoder_config.num_layers)
+            .find_map(|layer_index| {
+                let layer_config = decoder_config
+                    .layer_configs
+                    .as_ref()
+                    .map(|configs| &configs[layer_index])
+                    .unwrap_or(&decoder_config.layer_config);
+                layer_config.attention_config().map(|c| c.has_gate)
+            })
+            .unwrap_or(false)
     }
 
     pub fn encode(

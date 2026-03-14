@@ -21,9 +21,10 @@ impl<B: Backend> Rope<B> {
         context: &B::Context,
         data_type: DataType,
         rope_type: RopeType,
+        has_gate: bool,
     ) -> Result<Self, B::Error> {
         Ok(Self {
-            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type)?,
+            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type, has_gate)?,
             rope_type,
         })
     }

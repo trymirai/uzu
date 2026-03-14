@@ -37,6 +37,7 @@ pub fn rope<T: ArrayElement + Float>(
     num_groups: u32,
     suffix_length: u32,
     max_sequence_length: u32,
+    #[specialize] has_gate: bool,
 ) {
     if num_groups == 0 || head_dim & 1 != 0 || rope_dim & 1 != 0 || rope_dim > head_dim || num_heads % num_groups != 0 {
         return;
@@ -50,7 +51,12 @@ pub fn rope<T: ArrayElement + Float>(
     let max_sequence_length = max_sequence_length as usize;
 
     let half_rope_dim = rope_dim / 2;
-    let total_heads = num_heads + 2 * num_groups;
+    let gate_heads = if has_gate {
+        num_heads
+    } else {
+        0
+    };
+    let total_heads = num_heads + 2 * num_groups + gate_heads;
     let heads_per_group = num_heads / num_groups;
 
     for head_index in 0..num_heads {

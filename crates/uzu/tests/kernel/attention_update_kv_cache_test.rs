@@ -27,6 +27,7 @@ struct Input<T: ArrayElement + Float> {
     num_groups: u32,
     num_heads: u32,
     head_dim: u32,
+    has_gate: bool,
     suffix_length: u32,
     prefix_segment_length: u32,
     max_sequence_length: u32,
@@ -39,6 +40,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let kernel = <<B as Backend>::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(
         &context,
         T::data_type(),
+        input.has_gate,
         input.keys_in_place,
     )
     .expect("Failed to create AttentionUpdateKVCacheKernel");
@@ -115,6 +117,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(keys_in_place: bool) -> Input<T>
         num_groups,
         num_heads,
         head_dim,
+        has_gate: false,
         suffix_length,
         prefix_segment_length,
         max_sequence_length,
@@ -164,6 +167,7 @@ fn get_test_data_single_token<T: ArrayElement + Float>(keys_in_place: bool) -> I
         num_groups,
         num_heads,
         head_dim,
+        has_gate: false,
         suffix_length,
         prefix_segment_length,
         max_sequence_length,
@@ -204,6 +208,7 @@ fn get_test_data_prefix_zero<T: ArrayElement + Float>() -> Input<T> {
         num_groups,
         num_heads,
         head_dim,
+        has_gate: false,
         suffix_length,
         prefix_segment_length,
         max_sequence_length,
@@ -308,4 +313,35 @@ fn test_prefix_zero_f16() {
 #[test]
 fn test_prefix_zero_bf16() {
     test_prefix_zero::<bf16>();
+}
+
+fn with_gate<T: ArrayElement + Float>(input: Input<T>) -> Input<T> {
+    let old_stride = (input.num_heads + 2 * input.num_groups) as usize * input.head_dim as usize;
+    let gate_size = input.num_heads as usize * input.head_dim as usize;
+    let new_qkv = (0..input.suffix_length as usize)
+        .flat_map(|t| {
+            input.qkv[t * old_stride..(t + 1) * old_stride]
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(T::zero()).take(gate_size))
+        })
+        .collect::<Box<[_]>>();
+    Input {
+        qkv: new_qkv,
+        has_gate: true,
+        ..input
+    }
+}
+
+fn test_gated<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_test_data_basic::<T>(false);
+    let (expected_key_cache, expected_value_cache) = get_output::<T, Cpu>(&input);
+    let (gated_key_cache, gated_value_cache) = get_output::<T, Cpu>(&with_gate(input));
+    assert_eq_float::<T>(&expected_key_cache, &gated_key_cache, 1e-6, "gated key_cache must match non-gated");
+    assert_eq_float::<T>(&expected_value_cache, &gated_value_cache, 1e-6, "gated value_cache must match non-gated");
+}
+
+#[test]
+fn test_gated_f32() {
+    test_gated::<f32>();
 }
