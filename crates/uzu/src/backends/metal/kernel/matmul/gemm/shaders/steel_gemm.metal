@@ -26,8 +26,6 @@ METAL_FUNC void gemm_dispatch(
 #define GEMM_DISPATCH(T, BM, BN, BK, WM, WN) \
   if (block_rows == BM && block_cols == BN && block_depth == BK && \
       warps_per_row == WM && warps_per_col == WN) { \
-    constexpr short tgp_a = BM * (BK + 16 / sizeof(T)); \
-    constexpr short tgp_b = BN * (BK + 16 / sizeof(T)); \
     if (align_m && align_n) { \
       if (align_k) \
         gemm_dispatch<T, BM, BN, BK, WM, WN, true, true>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint3(group_x, group_y, group_z), uint3(thread_x, thread_y, thread_z)); \
