@@ -12,7 +12,10 @@ impl Context for CpuContext {
         Ok(Rc::new(CpuContext))
     }
 
-    fn recommended_async_batch_size(&self, _model_path: &Path) -> usize {
+    fn recommended_async_batch_size(
+        &self,
+        _model_path: &Path,
+    ) -> usize {
         1
     }
 
