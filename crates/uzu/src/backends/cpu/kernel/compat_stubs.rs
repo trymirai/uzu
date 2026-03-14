@@ -18,6 +18,7 @@ pub fn audio_causal_conv1d_grouped<T: ArrayElement + Float>(
     #[allow(unused)] kernel_size: i32,
     #[allow(unused)] dilation: i32,
     #[allow(unused)] groups: i32,
+    #[allow(unused)] input_layout: i32,
     #[allow(unused)] batch_size: i32,
 ) {
     todo!()
@@ -101,18 +102,6 @@ pub fn audio_quantizer_decode<T: ArrayElement + Float>(
     #[allow(unused)] residual_quantizers: i32,
     #[allow(unused)] semantic_cardinality: i32,
     #[allow(unused)] residual_cardinality: i32,
-) {
-    todo!()
-}
-
-#[kernel(AudioTransposeNscToNcs)]
-#[variants(T, f32, f16, bf16)]
-pub fn audio_transpose_nsc_to_ncs<T: ArrayElement + Float>(
-    #[allow(unused)] input: *const T,
-    #[allow(unused)] output: *mut T,
-    #[allow(unused)] seq_len: i32,
-    #[allow(unused)] channels: i32,
-    #[allow(unused)] batch_size: i32,
 ) {
     todo!()
 }

@@ -10,13 +10,7 @@ use std::{
 
 use serde::Deserialize;
 
-use super::{
-    decoder::{
-        CausalConv1dJson, CausalConvTranspose1dJson, NanoCodecDecoderGraph, NanoCodecHiFiGanResBlockJson,
-        NanoCodecHiFiGanResLayerJson, NanoCodecResidualBlockJson, NanoCodecUpsampleStageJson, Tensor3Json,
-    },
-    fsq::compute_dim_base_index,
-};
+use super::fsq::compute_dim_base_index;
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
@@ -30,20 +24,19 @@ use crate::{
                 AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
                 AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
                 AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
-                AudioTransposeNscToNcsKernel,
             },
         },
         metal::Metal,
     },
     config::{
         ConfigDataType, DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
-        EmbeddingConfigCommon, InnerModelConfig, NanoCodecAudioDecoderConfig, TtsAudioDecoderConfig, TtsConfig,
+        EmbeddingConfigCommon, InnerModelConfig, TtsAudioDecoderConfig, TtsConfig,
     },
-    encodable_block::{EncodingParameters, LayerExecutables, RMSNorm, Rope},
+    encodable_block::{Decoder, EncodingParameters, LayerExecutables, RMSNorm},
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState, RopeType, SharedBuffers},
+        state::{ArrayId, ForwardPassState, SharedBuffers},
     },
     parameters::ParameterLoader,
     utils::array_io::{
@@ -53,11 +46,9 @@ use crate::{
 
 mod loaders;
 
+use loaders::load_audio_runtime_from_tts_config;
 #[cfg(test)]
-use loaders::{
-    convert_lalamo_transpose_weight_oih_to_iog, resolve_descript_audio_codec_vocoder_data_type,
-};
-use loaders::{build_nanocodec_decoder_graph_from_lalamo_config, load_audio_runtime_from_tts_config};
+use loaders::resolve_descript_audio_codec_vocoder_data_type;
 include!("runtime/profile.rs");
 include!("runtime/stream.rs");
 include!("runtime/structured.rs");
@@ -71,78 +62,7 @@ type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::
 type MetalPendingCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Pending;
 type MetalCompletedCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Completed;
 
-fn checked_product(values: &[usize]) -> AudioResult<usize> {
-    values
-        .iter()
-        .try_fold(1usize, |acc, &value| acc.checked_mul(value))
-        .ok_or(AudioError::Runtime("dimension product overflow".to_string()))
-}
-
-fn usize_to_i32(
-    value: usize,
-    name: &str,
-) -> AudioResult<i32> {
-    i32::try_from(value).map_err(|_| AudioError::Runtime(format!("{name} exceeds i32 range")))
-}
-
-fn convert_lengths_to_i32(
-    lengths: &[usize],
-    frames: usize,
-) -> AudioResult<Vec<i32>> {
-    let mut out = Vec::with_capacity(lengths.len());
-    for &length in lengths {
-        if length > frames {
-            return Err(AudioError::InvalidTokenLengthValue {
-                length,
-                frames,
-            });
-        }
-        out.push(usize_to_i32(length, "length")?);
-    }
-    Ok(out)
-}
-
-fn checked_mul_i32(
-    value: i32,
-    mul: usize,
-) -> AudioResult<i32> {
-    i32::try_from(mul)
-        .map_err(|_| AudioError::Runtime("length scaling factor exceeds i32 range".to_string()))?
-        .checked_mul(value)
-        .ok_or(AudioError::Runtime("scaled length overflow".to_string()))
-}
-
-fn checked_div_ceil(
-    numerator: usize,
-    denominator: usize,
-) -> AudioResult<usize> {
-    if denominator == 0 {
-        return Err(AudioError::Runtime("division by zero".to_string()));
-    }
-    let addend = denominator.saturating_sub(1);
-    numerator
-        .checked_add(addend)
-        .ok_or(AudioError::Runtime("ceil-division overflow".to_string()))
-        .map(|value| value / denominator)
-}
-
-fn scale_lengths_i32_in_place(
-    source: &[i32],
-    destination: &mut [i32],
-    factor: usize,
-) -> AudioResult<()> {
-    if destination.len() != source.len() {
-        return Err(AudioError::Runtime(format!(
-            "scaled length buffer mismatch: expected {}, got {}",
-            source.len(),
-            destination.len()
-        )));
-    }
-    for (dst, &src) in destination.iter_mut().zip(source.iter()) {
-        *dst = checked_mul_i32(src, factor)?;
-    }
-    Ok(())
-}
+include!("runtime/support.rs");
 
 fn default_eps() -> f32 {
     1e-3
@@ -177,34 +97,6 @@ struct RuntimeConfigJson {
     output_packing: RuntimePacking,
 }
 
-fn build_runtime_config_from_nanocodec_audio_decoder(
-    config: &NanoCodecAudioDecoderConfig
-) -> AudioResult<RuntimeConfigJson> {
-    Ok(RuntimeConfigJson {
-        sample_rate: config.samplerate,
-        num_groups: config.quantizer_config.num_groups,
-        num_levels_per_group: config.quantizer_config.quantizer_config.num_levels.clone(),
-        eps: config.quantizer_config.quantizer_config.eps.unwrap_or_else(default_eps),
-        output_packing: RuntimePacking::CodebookMajor,
-    })
-}
-
-fn default_negative_slope() -> f32 {
-    0.01
-}
-
-fn default_decoder_eps() -> f32 {
-    1e-9
-}
-
-enum LoadedTtsAudioRuntimeConfig {
-    Standard(NanoCodecAudioDecoderConfig),
-    StructuredDecoder {
-        runtime: RuntimeConfigJson,
-        decoder: StructuredAudioCodecGraph,
-    },
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct NanoCodecFsqRuntimeConfig {
     sample_rate: u32,
@@ -216,54 +108,18 @@ pub struct NanoCodecFsqRuntimeConfig {
     codec_cardinality: u32,
     eps: f32,
     output_packing: AudioTokenPacking,
-    decoder: Option<NanoCodecDecoderGraph>,
     structured_decoder: Option<StructuredAudioCodecGraph>,
 }
 
 impl NanoCodecFsqRuntimeConfig {
-    pub fn from_tts_config(tts_config: &TtsConfig) -> AudioResult<Self> {
-        match &tts_config.audio_decoder_config {
-            TtsAudioDecoderConfig::NanoCodecConfig {
-                config,
-            } => {
-                let parsed = build_runtime_config_from_nanocodec_audio_decoder(config)?;
-                Self::from_runtime_config_json(parsed)
-            },
-            TtsAudioDecoderConfig::DescriptAudioCodecConfig {
-                ..
-            } => Err(AudioError::Runtime(
-                "DescriptAudioCodecConfig requires model weights; use from_tts_config_and_model_path".to_string(),
-            )),
-        }
-    }
-
     pub fn from_tts_config_and_model_path(
         tts_config: &TtsConfig,
         model_path: &Path,
     ) -> AudioResult<Self> {
-        match load_audio_runtime_from_tts_config(tts_config, model_path)? {
-            LoadedTtsAudioRuntimeConfig::Standard(config) => {
-                let runtime_config = build_runtime_config_from_nanocodec_audio_decoder(&config)?;
-                let mut runtime = Self::from_runtime_config_json(runtime_config)?;
-                let weights_path = model_path.join("model.safetensors");
-                if !weights_path.is_file() {
-                    return Err(AudioError::Runtime(format!(
-                        "missing exported NanoCodec decoder weights '{}'",
-                        weights_path.display()
-                    )));
-                }
-                runtime.decoder = Some(build_nanocodec_decoder_graph_from_lalamo_config(&config, &weights_path)?);
-                Ok(runtime)
-            },
-            LoadedTtsAudioRuntimeConfig::StructuredDecoder {
-                runtime: runtime_config,
-                decoder,
-            } => {
-                let mut runtime = Self::from_runtime_config_json(runtime_config)?;
-                runtime.structured_decoder = Some(decoder);
-                Ok(runtime)
-            },
-        }
+        let (runtime_config, decoder) = load_audio_runtime_from_tts_config(tts_config, model_path)?;
+        let mut runtime = Self::from_runtime_config_json(runtime_config)?;
+        runtime.structured_decoder = Some(decoder);
+        Ok(runtime)
     }
 
     fn from_runtime_config_json(parsed: RuntimeConfigJson) -> AudioResult<Self> {
@@ -330,7 +186,6 @@ impl NanoCodecFsqRuntimeConfig {
             codec_cardinality,
             eps,
             output_packing,
-            decoder: None,
             structured_decoder: None,
         })
     }
@@ -375,10 +230,6 @@ impl NanoCodecFsqRuntimeConfig {
         self.output_packing
     }
 
-    pub fn decoder(&self) -> Option<&NanoCodecDecoderGraph> {
-        self.decoder.as_ref()
-    }
-
     fn structured_decoder(&self) -> Option<&StructuredAudioCodecGraph> {
         self.structured_decoder.as_ref()
     }
@@ -408,10 +259,6 @@ impl NanoCodecFsqRuntime {
             options,
             last_decode_profile: Arc::new(RwLock::new(None)),
         }
-    }
-
-    pub fn from_tts_config(tts_config: &TtsConfig) -> AudioResult<Self> {
-        Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config(tts_config)?))
     }
 
     pub fn from_tts_config_and_model_path(
@@ -483,10 +330,10 @@ impl NanoCodecFsqRuntime {
         state: &mut AudioDecodeStreamState,
         fishaudio: &StructuredAudioCodecGraph,
         input_frames: usize,
-    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+    ) -> AudioResult<DecodedPaddedAudio> {
         if state.total_frames() == 0 {
             state.record_last_step_stats(input_frames, 0, 0);
-            return Ok(super::decoder::DecodedPaddedAudio {
+            return Ok(DecodedPaddedAudio {
                 samples: Vec::new(),
                 channels: 1,
                 frames: 0,
@@ -551,12 +398,12 @@ impl NanoCodecFsqRuntime {
         AudioDecodeStreamState::new(batch_size, codebooks, max_workspace_frames, mode)
     }
 
-    pub fn decode_stream_step(
+    pub(crate) fn decode_stream_step(
         &self,
         state: &mut AudioDecodeStreamState,
         new_tokens: &AudioTokenGrid,
         _is_final: bool,
-    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+    ) -> AudioResult<DecodedPaddedAudio> {
         if new_tokens.codebooks() != state.codebooks {
             return Err(AudioError::Runtime(format!(
                 "stream delta codebook mismatch: expected {}, got {}",
@@ -573,11 +420,9 @@ impl NanoCodecFsqRuntime {
         }
         if new_tokens.frames() == 0 {
             state.record_last_step_stats(0, state.total_frames(), 0);
-            return Ok(super::decoder::DecodedPaddedAudio {
+            return Ok(DecodedPaddedAudio {
                 samples: Vec::new(),
-                channels: if let Some(decoder) = self.config.decoder() {
-                    decoder.output_channels()
-                } else if self.config.structured_decoder().is_some() {
+                channels: if self.config.structured_decoder().is_some() {
                     1
                 } else {
                     self.config.channels()
@@ -684,9 +529,9 @@ impl NanoCodecFsqRuntime {
         }))
     }
 
-    pub fn decoded_padded_to_pcm_batch(
+    pub(crate) fn decoded_padded_to_pcm_batch(
         &self,
-        decoded: &super::decoder::DecodedPaddedAudio,
+        decoded: &DecodedPaddedAudio,
     ) -> AudioResult<AudioPcmBatch> {
         let samples = unpack_padded_to_pcm(
             &decoded.samples,
@@ -721,7 +566,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         &self,
         pcm: &AudioPcmBatch,
     ) -> AudioResult<AudioTokenGrid> {
-        if self.config.decoder().is_some() || self.config.structured_decoder().is_some() {
+        if self.config.structured_decoder().is_some() {
             return Err(AudioError::Runtime("encode is not supported when a decoder graph is configured".to_string()));
         }
 
@@ -859,23 +704,12 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         let lengths_i32 = convert_lengths_to_i32(&lengths_usize, frames)?;
 
         if batch_size == 0 || frames == 0 {
-            let channels = if let Some(decoder) = self.config.decoder() {
-                decoder.output_channels()
-            } else if self.config.structured_decoder().is_some() {
+            let channels = if self.config.structured_decoder().is_some() {
                 1
             } else {
                 self.config.channels()
             };
-            let out_lengths = if let Some(decoder) = self.config.decoder() {
-                lengths_usize
-                    .iter()
-                    .map(|&length| {
-                        length
-                            .checked_mul(decoder.upsample_factor())
-                            .ok_or(AudioError::Runtime("decoder length scaling overflow".to_string()))
-                    })
-                    .collect::<AudioResult<Vec<_>>>()?
-            } else if let Some(decoder) = self.config.structured_decoder() {
+            let out_lengths = if let Some(decoder) = self.config.structured_decoder() {
                 lengths_usize
                     .iter()
                     .map(|&length| {
@@ -1015,18 +849,10 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
 
-        let (padded_output, out_channels, out_frames, out_lengths) = if let Some(decoder) = self.config.decoder() {
-            let decoded = decoder.decode_padded(
-                output.as_slice::<f32>(),
-                &lengths_usize,
-                batch_size,
-                self.config.channels(),
-                frames,
-            )?;
-            (decoded.samples, decoded.channels, decoded.frames, decoded.lengths)
-        } else {
-            (output.as_slice::<f32>().to_vec(), self.config.channels(), frames, lengths_usize.clone())
-        };
+        let padded_output = output.as_slice::<f32>().to_vec();
+        let out_channels = self.config.channels();
+        let out_frames = frames;
+        let out_lengths = lengths_usize.clone();
 
         let samples = unpack_padded_to_pcm(&padded_output, batch_size, out_channels, out_frames, &out_lengths)?;
 

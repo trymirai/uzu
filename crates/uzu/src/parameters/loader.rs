@@ -204,7 +204,6 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
     ) -> Result<ParameterLeaf<'loader, 'loader, 'leaf, C>, ParameterLoaderError<C::Backend>> {
         self.loader.get_leaf(&self.join_prefix(name))
     }
-
 }
 
 pub fn resolve_subtree<'tree, C: Context>(

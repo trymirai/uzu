@@ -1,5 +1,7 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 
+use crate::{backends::common::Backend, parameters::ParameterLoaderError};
+
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum AudioError {
     #[error("sample_rate must be > 0")]
@@ -46,6 +48,12 @@ pub enum AudioError {
 }
 
 pub type AudioResult<T> = Result<T, AudioError>;
+
+impl<B: Backend> From<ParameterLoaderError<B>> for AudioError {
+    fn from(value: ParameterLoaderError<B>) -> Self {
+        Self::Runtime(value.to_string())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AudioTokenPacking {

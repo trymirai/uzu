@@ -3,9 +3,12 @@
 
 using namespace metal;
 
+constant int AUDIO_LAYOUT_NCS = 0;
+constant int AUDIO_LAYOUT_NSC = 1;
+
 template <typename T>
 void causal_conv1d_grouped(
-    device const T* input,     // [B, Cin, T]
+    device const T* input,     // [B, Cin, T] when NCS, [B, T, Cin] when NSC
     device const T* weight,    // [Cout, Cin/groups, K]
     device const T* bias,      // [Cout]
     device T* output,          // [B, Cout, T]
@@ -16,6 +19,7 @@ void causal_conv1d_grouped(
     const constant int& kernel_size,
     const constant int& dilation,
     const constant int& groups,
+    const constant int& input_layout,
     const uint3 gid
 ) {
   const uint t = gid.x;
@@ -26,7 +30,8 @@ void causal_conv1d_grouped(
     return;
   }
 
-  if (groups <= 0 || (cin % groups) != 0 || (cout % groups) != 0) {
+  if ((input_layout != AUDIO_LAYOUT_NCS && input_layout != AUDIO_LAYOUT_NSC) ||
+      groups <= 0 || (cin % groups) != 0 || (cout % groups) != 0) {
     return;
   }
 
@@ -52,14 +57,15 @@ void causal_conv1d_grouped(
         ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group +
          (uint)ic_local) *
         (uint)kernel_size;
-    const uint x_base = (b * (uint)cin + (uint)ic) * (uint)seq_len;
-
     for (int k = 0; k < kernel_size; ++k) {
       const int x_t = (int)t + k * dilation - pad;
       if (x_t < 0 || x_t >= seq_len) {
         continue;
       }
-      acc += float(weight[w_base + (uint)k]) * float(input[x_base + (uint)x_t]);
+      const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
+          ? (((b * (uint)cin + (uint)ic) * (uint)seq_len) + (uint)x_t)
+          : (((b * (uint)seq_len + (uint)x_t) * (uint)cin) + (uint)ic);
+      acc += float(weight[w_base + (uint)k]) * float(input[x_idx]);
     }
   }
 
@@ -80,6 +86,7 @@ KERNEL(AudioCausalConv1dGrouped)(
     const constant int& kernel_size,
     const constant int& dilation,
     const constant int& groups,
+    const constant int& input_layout,
     const constant int& batch_size,
     uint t AXIS(seq_len, 32),
     uint oc AXIS(cout, 1),
@@ -97,6 +104,7 @@ KERNEL(AudioCausalConv1dGrouped)(
       kernel_size,
       dilation,
       groups,
+      input_layout,
       uint3(t, oc, b)
   );
 }

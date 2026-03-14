@@ -21,23 +21,41 @@ fn metadata_with_tts_model_type_parses() {
             "codebook_size": 48
           },
           "audio_decoder_config": {
-            "type": "NanoCodecConfig",
-            "samplerate": 24000,
+            "type": "DescriptAudioCodecConfig",
+            "precision": "float16",
+            "samplerate": 44100,
+            "encoder_dim": 1024,
+            "encoder_rates": [2, 4, 8, 8],
+            "decoder_dim": 1536,
+            "n_codebooks": 9,
+            "codebook_dim": 8,
+            "codebook_size": 1024,
+            "semantic_codebook_size": 4096,
+            "input_dim": 1024,
+            "downsample_factor": [2, 2],
+            "decoder_rates": [8, 8, 4, 2],
+            "decoder_config": {},
             "quantizer_config": {
-              "num_groups": 2,
-              "quantizer_config": {
-                "num_levels": [8, 6]
+              "post_module_config": {
+                "global_rope_config": null,
+                "local_rope_config": null,
+                "layer_configs": [],
+                "output_norm_config": {
+                  "scale_precision": "float32",
+                  "accumulation_precision": "float32",
+                  "epsilon": 1e-5,
+                  "scale_offset": null,
+                  "upcast_mode": "full_layer",
+                  "subtract_mean": true
+                },
+                "model_dim": 1024,
+                "hidden_dim": 1024,
+                "context_length": 1
+              },
+              "upsampler_config": {
+                "block_configs": []
               }
-            },
-            "decoder_config": {
-              "activation_config": {
-                "leaky_relu_negative_slope": 0.01
-              }
-            },
-            "base_channels": 32,
-            "up_sample_rates": [2, 2],
-            "resblock_kernel_sizes": [3],
-            "resblock_dilations": [1]
+            }
           },
           "vocoder_config": {}
         },
@@ -72,23 +90,41 @@ fn tts_model_config_helpers_work() {
           "codebook_size": 48
         },
         "audio_decoder_config": {
-          "type": "NanoCodecConfig",
-          "samplerate": 24000,
+          "type": "DescriptAudioCodecConfig",
+          "precision": "float16",
+          "samplerate": 44100,
+          "encoder_dim": 1024,
+          "encoder_rates": [2, 4, 8, 8],
+          "decoder_dim": 1536,
+          "n_codebooks": 9,
+          "codebook_dim": 8,
+          "codebook_size": 1024,
+          "semantic_codebook_size": 4096,
+          "input_dim": 1024,
+          "downsample_factor": [2, 2],
+          "decoder_rates": [8, 8, 4, 2],
+          "decoder_config": {},
           "quantizer_config": {
-            "num_groups": 2,
-            "quantizer_config": {
-              "num_levels": [8, 6]
+            "post_module_config": {
+              "global_rope_config": null,
+              "local_rope_config": null,
+              "layer_configs": [],
+              "output_norm_config": {
+                "scale_precision": "float32",
+                "accumulation_precision": "float32",
+                "epsilon": 1e-5,
+                "scale_offset": null,
+                "upcast_mode": "full_layer",
+                "subtract_mean": true
+              },
+              "model_dim": 1024,
+              "hidden_dim": 1024,
+              "context_length": 1
+            },
+            "upsampler_config": {
+              "block_configs": []
             }
-          },
-          "decoder_config": {
-            "activation_config": {
-              "leaky_relu_negative_slope": 0.01
-            }
-          },
-          "base_channels": 32,
-          "up_sample_rates": [2, 2],
-          "resblock_kernel_sizes": [3],
-          "resblock_dilations": [1]
+          }
         },
         "vocoder_config": {}
       },
@@ -108,61 +144,4 @@ fn tts_model_config_helpers_work() {
     assert_eq!(tts.message_processor_config.prompt_template, "{{messages[0].content}}");
     assert!(tts.message_processor_config.drop_initial_newline);
     assert!(tts.message_processor_config.default_message_fields.is_empty());
-}
-
-#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
-#[test]
-fn tts_model_can_build_audio_codec_runtime() {
-    let model_config_json = r#"
-    {
-      "tts_config": {
-        "text_decoder_config": {
-          "type": "StubTextDecoderConfig",
-          "num_codebooks": 2,
-          "codebook_size": 48
-        },
-        "audio_decoder_config": {
-          "type": "NanoCodecConfig",
-          "samplerate": 24000,
-          "quantizer_config": {
-            "num_groups": 2,
-            "quantizer_config": {
-              "num_levels": [8, 6]
-            }
-          },
-          "decoder_config": {
-            "activation_config": {
-              "leaky_relu_negative_slope": 0.01
-            }
-          },
-          "base_channels": 32,
-          "up_sample_rates": [2, 2],
-          "resblock_kernel_sizes": [3],
-          "resblock_dilations": [1]
-        }
-        ,
-        "vocoder_config": {}
-      },
-      "message_processor_config": {
-        "prompt_template": "{{messages[0].content}}"
-      }
-    }
-    "#;
-
-    let model_config: ModelConfig = serde_json::from_str(model_config_json).expect("model config parse");
-    let tts = model_config.as_tts().expect("tts variant");
-    let audio = tts.create_audio_generation_context().expect("audio context");
-    assert_eq!(audio.sample_rate(), 24_000);
-    assert_eq!(audio.num_codebooks(), 2);
-    assert_eq!(audio.codec_cardinality(), 48);
-
-    let runtime = tts.create_audio_codec_runtime().expect("audio runtime");
-    let config = runtime.config();
-
-    assert_eq!(config.sample_rate(), 24_000);
-    assert_eq!(config.num_groups(), 2);
-    assert_eq!(config.num_levels_per_group(), &[8, 6]);
-    assert_eq!(config.channels(), 4);
-    assert_eq!(config.codec_cardinality(), 48);
-    assert_eq!(config.output_packing(), uzu::audio::AudioTokenPacking::CodebookMajor);
 }

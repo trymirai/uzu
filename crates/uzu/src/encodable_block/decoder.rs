@@ -29,8 +29,6 @@ pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
-    pub global_rope: Option<Rc<Rope<B>>>,
-    pub local_rope: Option<Rc<Rope<B>>>,
 }
 
 impl<B: Backend> Decoder<B> {
@@ -50,9 +48,6 @@ impl<B: Backend> Decoder<B> {
         embedding_subtree: &str,
         readout_subtree: &str,
     ) -> Self {
-        let decoder_weight_loader =
-            root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
-
         let embedding_weight_loader =
             root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
         let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
@@ -66,6 +61,25 @@ impl<B: Backend> Decoder<B> {
             &readout_weight_loader,
         )
         .expect("Failed to create embedding");
+
+        let (layers, norm) =
+            Self::build_transformer_layers_and_norm(context, decoder_config.clone(), root_weight_loader, transformer_subtree);
+
+        Self {
+            embed,
+            layers,
+            norm,
+        }
+    }
+
+    pub(crate) fn build_transformer_layers_and_norm(
+        context: Rc<B::Context>,
+        decoder_config: Rc<DecoderConfig>,
+        root_weight_loader: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+    ) -> (Box<[LayerExecutables<B>]>, RMSNorm<B>) {
+        let decoder_weight_loader =
+            root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer =
@@ -153,13 +167,7 @@ impl<B: Backend> Decoder<B> {
         .map(RMSNorm::with_sampling_range)
         .expect("Failed to create output RMS norm kernel");
 
-        Self {
-            embed,
-            layers: layers.into_boxed_slice(),
-            norm: norm_block,
-            global_rope,
-            local_rope,
-        }
+        (layers.into_boxed_slice(), norm_block)
     }
 
     fn create_rope_block(

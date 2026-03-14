@@ -70,9 +70,8 @@ impl FishAudioGpuPath {
                 data_type,
             )
             .map_err(unable_to_create_context)?;
-        let tensor_copy =
-            <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
-                .map_err(unable_to_create_context)?;
+        let tensor_copy = <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
+            .map_err(unable_to_create_context)?;
         let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
 
         Ok(Self {

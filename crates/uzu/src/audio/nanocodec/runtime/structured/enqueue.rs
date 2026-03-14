@@ -1,42 +1,3 @@
-fn transpose_nsc_to_ncs_enqueue(
-    context: &Rc<<Metal as Backend>::Context>,
-    command_buffer: &mut MetalCommandBuffer,
-    input: &Array<Metal>,
-    batch_size: usize,
-    seq_len: usize,
-    channels: usize,
-) -> AudioResult<Array<Metal>> {
-    let expected = checked_product(&[batch_size, seq_len, channels])?;
-    if input.num_elements() != expected {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected,
-            actual_tokens: input.num_elements(),
-        });
-    }
-
-    let data_type = input.data_type();
-    let kernels = fishaudio_kernels(context, data_type)?;
-    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "fishaudio_ncs_output");
-    let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
-    let channels_i32 = usize_to_i32(channels, "channels")?;
-    let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
-    let input_buffer = input.buffer();
-    let input_buffer = input_buffer.borrow();
-    let output_buffer = output.buffer();
-    let mut output_buffer = output_buffer.borrow_mut();
-    command_buffer.with_compute_encoder(|compute_encoder| {
-        kernels.transpose_nsc_to_ncs.encode(
-            &*input_buffer,
-            &mut *output_buffer,
-            seq_len_i32,
-            channels_i32,
-            batch_i32,
-            compute_encoder,
-        );
-    });
-    Ok(output)
-}
-
 fn snake1d_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
@@ -103,6 +64,7 @@ fn causal_conv1d_grouped_enqueue(
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
     layer: &StructuredAudioConv1dGpuLayer,
+    input_layout: SequenceLayout,
     lengths: &[i32],
     lengths_array: &Array<Metal>,
     batch_size: usize,
@@ -150,6 +112,7 @@ fn causal_conv1d_grouped_enqueue(
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
     let kernel_size_i32 = usize_to_i32(layer.kernel_size, "kernel_size")?;
     let dilation_i32 = usize_to_i32(layer.dilation, "dilation")?;
+    let input_layout_i32 = input_layout.as_i32();
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
     let kernels = fishaudio_kernels(context, data_type)?;
     if layer.groups == 1 {
@@ -175,6 +138,7 @@ fn causal_conv1d_grouped_enqueue(
                 seq_len_i32,
                 kernel_size_i32,
                 dilation_i32,
+                input_layout_i32,
                 batch_i32,
                 compute_encoder,
             );
@@ -204,6 +168,7 @@ fn causal_conv1d_grouped_enqueue(
                 kernel_size_i32,
                 dilation_i32,
                 groups_i32,
+                input_layout_i32,
                 batch_i32,
                 compute_encoder,
             );
@@ -653,4 +618,3 @@ fn tanh_enqueue(
     });
     Ok(output)
 }
-

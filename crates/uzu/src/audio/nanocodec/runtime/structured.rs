@@ -1,4 +1,5 @@
 include!("structured/shared.rs");
+include!("structured/fishaudio.rs");
 include!("structured/build.rs");
 include!("structured/enqueue.rs");
 include!("structured/context.rs");

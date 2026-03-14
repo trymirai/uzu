@@ -260,7 +260,7 @@ impl AudioDecodeStreamState {
     fn extract_delta_padded(
         &mut self,
         full_pcm: &AudioPcmBatch,
-    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+    ) -> AudioResult<DecodedPaddedAudio> {
         if full_pcm.batch_size() != self.batch_size {
             return Err(AudioError::Runtime(format!(
                 "stream decoded batch mismatch: expected {}, got {}",
@@ -301,7 +301,7 @@ impl AudioDecodeStreamState {
         }
 
         let (delta_padded, delta_frames) = pack_unpacked_to_padded(&delta_unpacked, channels, &delta_lengths)?;
-        Ok(super::decoder::DecodedPaddedAudio {
+        Ok(DecodedPaddedAudio {
             samples: delta_padded,
             channels,
             frames: delta_frames,
@@ -311,10 +311,10 @@ impl AudioDecodeStreamState {
 
     fn extract_delta_from_padded_with_offset(
         &mut self,
-        full_padded: &super::decoder::DecodedPaddedAudio,
+        full_padded: &DecodedPaddedAudio,
         audio_offset_frames: usize,
         upsample_factor: usize,
-    ) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+    ) -> AudioResult<DecodedPaddedAudio> {
         let previous_audio_lengths = self.emitted_audio_lengths.clone();
         let semantic_lengths = self.semantic_lengths.clone();
         let delta = extract_delta_from_padded_with_offset_snapshot(
@@ -372,12 +372,12 @@ impl AudioDecodeStreamState {
 }
 
 fn extract_delta_from_padded_with_offset_snapshot(
-    full_padded: &super::decoder::DecodedPaddedAudio,
+    full_padded: &DecodedPaddedAudio,
     previous_audio_lengths: &[usize],
     semantic_lengths: &[usize],
     audio_offset_frames: usize,
     upsample_factor: usize,
-) -> AudioResult<super::decoder::DecodedPaddedAudio> {
+) -> AudioResult<DecodedPaddedAudio> {
     if full_padded.lengths.len() != semantic_lengths.len() || previous_audio_lengths.len() != semantic_lengths.len() {
         return Err(AudioError::Runtime(format!(
             "stream decoded batch mismatch: full_lengths={}, previous_lengths={}, semantic_lengths={}",
@@ -436,7 +436,7 @@ fn extract_delta_from_padded_with_offset_snapshot(
         }
     }
 
-    Ok(super::decoder::DecodedPaddedAudio {
+    Ok(DecodedPaddedAudio {
         samples: delta_padded,
         channels,
         frames: max_delta_frames,

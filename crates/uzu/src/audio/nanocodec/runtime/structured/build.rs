@@ -239,11 +239,6 @@ fn fishaudio_kernels(
         }
 
         let created = Rc::new(StructuredAudioKernelCache {
-            transpose_nsc_to_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel::new(
-                context.as_ref(),
-                data_type,
-            )
-            .map_err(|err| AudioError::Runtime(format!("failed to initialize NSC->NCS transpose kernel: {err}")))?,
             half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(
                 context.as_ref(),
                 data_type,

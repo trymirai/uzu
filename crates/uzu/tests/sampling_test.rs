@@ -190,11 +190,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         Some(gpu_time_ms) => {
             println!(
                 "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH,
-                VOCAB,
-                strategy,
-                gpu_time_ms,
-                host_elapsed_ms
+                BATCH, VOCAB, strategy, gpu_time_ms, host_elapsed_ms
             );
         },
         None => {
@@ -549,10 +545,7 @@ fn perf_categorical_128k_vocab() {
         Some(gpu_time_ms) => {
             println!(
                 "Categorical sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH,
-                VOCAB,
-                gpu_time_ms,
-                host_elapsed_ms
+                BATCH, VOCAB, gpu_time_ms, host_elapsed_ms
             );
         },
         None => {

@@ -61,7 +61,7 @@ impl SubmittedDecodedPaddedAudio {
         self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
     }
 
-    fn resolve(mut self) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+    fn resolve(mut self) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
         if let Some(command_buffer) = self.final_command_buffer.take() {
             let wait_start = self.decode_profile.is_some().then(Instant::now);
             let command_buffer = command_buffer.wait_until_completed().map_err(|err| {
@@ -90,7 +90,7 @@ impl SubmittedDecodedPaddedAudio {
             profile.readback_cpu_ms = readback_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         }
         Ok((
-            super::decoder::DecodedPaddedAudio {
+            DecodedPaddedAudio {
                 samples,
                 channels: self.channels,
                 frames: self.frames,

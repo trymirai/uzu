@@ -17,6 +17,7 @@ impl StructuredAudioCodecGraph {
             command_buffer,
             input,
             &layer.depthwise_conv,
+            SequenceLayout::Ncs,
             lengths,
             lengths_array,
             batch_size,
@@ -87,7 +88,7 @@ impl StructuredAudioCodecGraph {
         })?;
         let root_loader_view = loader.tree();
         let transformer_subtree_name = "audio_decoder.quantizer.post_module";
-        let transformer_tree = root_loader_view
+        root_loader_view
             .subtree(transformer_subtree_name)
             .map_err(|err| AudioError::Runtime(format!("missing FishAudio post_module subtree: {err}")))?;
 
@@ -101,94 +102,19 @@ impl StructuredAudioCodecGraph {
             max_sequence_length,
             max_sequence_length,
         );
-
-        let attention_data_type = (0..decoder_config.num_layers).find_map(|layer_index| {
-            let layer_config = decoder_config
-                .layer_configs
-                .as_ref()
-                .map(|configs| &configs[layer_index])
-                .unwrap_or(&decoder_config.layer_config);
-            layer_config
-                .attention_config()
-                .map(|attention_config| attention_config.qkv_projection_config.activation_precision().into())
-        });
-        let attention_data_type =
-            attention_data_type.ok_or(AudioError::Runtime("post_module has no attention layers".to_string()))?;
-
-        let create_rope_block = |rope_type: RopeType| -> AudioResult<Rc<Rope<Metal>>> {
-            let rope = Rope::<Metal>::new(context.as_ref(), attention_data_type, rope_type)
-                .map_err(|err| AudioError::Runtime(format!("failed to initialize post_module rope block: {err}")))?;
-            Ok(Rc::new(rope))
-        };
-        let global_rope =
-            decoder_config.global_rope_config.as_ref().map(|_| create_rope_block(RopeType::Global)).transpose()?;
-
-        let mut layers = Vec::with_capacity(decoder_config.num_layers);
-        for layer_index in 0..decoder_config.num_layers {
-            let layer_config = decoder_config
-                .layer_configs
-                .as_ref()
-                .map(|configs| &configs[layer_index])
-                .unwrap_or(&decoder_config.layer_config);
-            let layer_type = model_shape.layer_type(layer_index);
-            let rope_for_layer = match layer_type {
-                crate::config::DecoderLayerType::Transformer => Some(
-                    global_rope.clone().ok_or(AudioError::Runtime("post_module missing global rope".to_string()))?,
-                ),
-                _ => None,
-            };
-            let layer_loader = transformer_tree
-                .subtree(&format!("layers.{layer_index}"))
-                .map_err(|err| AudioError::Runtime(format!("failed to load post_module layer {layer_index}: {err}")))?;
-
-            layers.push(LayerExecutables::new(
-                context.clone(),
-                layer_config,
-                layer_type,
-                layer_index,
-                decoder_config.model_dim,
-                decoder_config.hidden_dim,
-                decoder_config.num_heads,
-                decoder_config.head_dim,
-                decoder_config.num_groups,
-                decoder_config.attention_scale,
-                &layer_loader,
-                rope_for_layer,
-            ));
-        }
-
-        let norm_reference_layer =
-            decoder_config.layer_configs.as_ref().map(|configs| &configs[0]).unwrap_or(&decoder_config.layer_config);
-        let norm_data_type: DataType = match &norm_reference_layer.mixer_config {
-            crate::config::MixerConfig::Attention(attention_config) => {
-                attention_config.qkv_projection_config.activation_precision().into()
-            },
-            crate::config::MixerConfig::Mamba(mamba_config) => {
-                mamba_config.in_projection_config.activation_precision().into()
-            },
-            crate::config::MixerConfig::ShortConv(short_conv_config) => {
-                short_conv_config.in_projection_config.activation_precision().into()
-            },
-        };
-        let output_norm_tree = transformer_tree
-            .subtree("output_norm")
-            .map_err(|err| AudioError::Runtime(format!("failed to load post_module output_norm: {err}")))?;
-        let output_norm = RMSNorm::new(
-            context.as_ref(),
-            norm_data_type,
-            decoder_config.output_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
-            &output_norm_tree,
-        )
-        .map_err(|err| AudioError::Runtime(format!("failed to build post_module output_norm: {err}")))?;
+        let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
+            context.clone(),
+            decoder_config,
+            &root_loader_view,
+            transformer_subtree_name,
+        );
 
         Ok(StructuredAudioPostModuleRuntime {
             context,
             model_shape,
             scratch_buffers,
             shared_buffers,
-            layers: layers.into_boxed_slice(),
+            layers,
             output_norm,
             max_sequence_length,
         })
@@ -506,9 +432,6 @@ impl StructuredAudioCodecGraph {
         frames: usize,
         profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<Metal>> {
-        if self.post_module_model_dim != self.input_dim {
-            return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
-        }
         if frames == 0 {
             return Ok(latent_nsc.clone());
         }
@@ -594,9 +517,6 @@ impl StructuredAudioCodecGraph {
         frames: usize,
         profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<Metal>> {
-        if self.post_module_model_dim != self.input_dim {
-            return Err(AudioError::Runtime("post_module model_dim mismatch".to_string()));
-        }
         if lengths.len() != batch_size {
             return Err(AudioError::InvalidTokenLengths {
                 expected_lengths: batch_size,

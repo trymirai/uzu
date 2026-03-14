@@ -3,14 +3,14 @@
 mod common;
 
 use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
+use common::audio_nanocodec_ops_reference::{
+    CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
+    causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
+    conv1d_reference, half_snake_reference,
+};
 use uzu::{
     DataType,
     array::ArrayContextExt,
-    audio::nanocodec::ops::{
-        CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-        causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
-        conv1d_reference, half_snake_reference,
-    },
     backends::{
         common::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
@@ -18,7 +18,7 @@ use uzu::{
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
                 AudioCausalConvTranspose1dKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
-                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioTransposeNscToNcsKernel,
+                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel,
             },
         },
         metal::Metal,
@@ -219,6 +219,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
             seq_len as i32,
             kernel_size as i32,
             dilation as i32,
+            0,
             batch_size as i32,
             command_buffer,
         );
@@ -806,53 +807,6 @@ fn audio_fsq_decode_matches_reference() {
     for (index, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
         let delta = (a - e).abs();
         assert!(delta <= 1e-5, "index={index}, actual={a}, expected={e}, delta={delta}");
-    }
-}
-
-#[test]
-fn audio_transpose_nsc_to_ncs_matches_reference_f32() {
-    let context = create_test_context();
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioTransposeNscToNcsKernel::new(&context, DataType::F32)
-        .expect("audio runtime");
-
-    let batch_size = 2usize;
-    let seq_len = 5usize;
-    let channels = 3usize;
-    let input_len = batch_size * seq_len * channels;
-    let input_values: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.031).sin()).collect();
-
-    let mut input = context.create_array(&[batch_size, seq_len, channels], DataType::F32, "audio_nsc_input");
-    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
-    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_ncs_output");
-
-    let mut expected = vec![0.0_f32; input_len];
-    for b in 0..batch_size {
-        for t in 0..seq_len {
-            for c in 0..channels {
-                let src_index = (b * seq_len + t) * channels + c;
-                let dst_index = (b * channels + c) * seq_len + t;
-                expected[dst_index] = input_values[src_index];
-            }
-        }
-    }
-
-    run_command_buffer(&context, |command_buffer| {
-        borrow_array_buffer!(input_buffer = input);
-        borrow_array_buffer_mut!(output_buffer = output);
-        kernel.encode(
-            &*input_buffer,
-            &mut *output_buffer,
-            seq_len as i32,
-            channels as i32,
-            batch_size as i32,
-            command_buffer,
-        );
-    });
-
-    let actual = output.as_slice::<f32>();
-    for (index, (&got, &exp)) in actual.iter().zip(expected.iter()).enumerate() {
-        let delta = (got - exp).abs();
-        assert!(delta <= 1e-6, "index={index}: expected {exp}, got {got}, delta={delta}");
     }
 }
 

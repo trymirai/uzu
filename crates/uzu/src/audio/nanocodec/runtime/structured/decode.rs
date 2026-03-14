@@ -18,6 +18,7 @@ impl StructuredAudioCodecGraph {
             command_buffer,
             &x,
             &unit.conv1,
+            SequenceLayout::Ncs,
             lengths,
             lengths_array,
             batch_size,
@@ -229,20 +230,6 @@ impl StructuredAudioCodecGraph {
             std::mem::swap(&mut lengths_array, &mut next_lengths_array);
         }
 
-        if x_layout == SequenceLayout::Nsc {
-            x = transpose_nsc_to_ncs_enqueue(
-                &context,
-                &mut command_buffer,
-                &x,
-                batch_size,
-                current_frames,
-                current_channels,
-            )?;
-            x_layout = SequenceLayout::Ncs;
-            flush_stage("upsample_to_decoder_layout".to_string(), None, &mut command_buffer)?;
-        }
-        debug_assert_eq!(x_layout, SequenceLayout::Ncs);
-
         if vocoder_graph.first_conv.cin != current_channels {
             return Err(AudioError::Runtime(format!(
                 "FishAudio decoder input channels mismatch: expected {}, got {}",
@@ -254,6 +241,7 @@ impl StructuredAudioCodecGraph {
             &mut command_buffer,
             &x,
             &vocoder_graph.first_conv,
+            x_layout,
             &lengths_i32,
             &lengths_array,
             batch_size,
@@ -421,6 +409,7 @@ impl StructuredAudioCodecGraph {
             &mut command_buffer,
             &x,
             &vocoder_graph.final_conv,
+            SequenceLayout::Ncs,
             &lengths_i32,
             &lengths_array,
             batch_size,
@@ -460,7 +449,7 @@ impl StructuredAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<(super::decoder::DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
         self.submit_decode_padded(runtime_options, tokens, lengths, batch_size, codebooks, frames)?.resolve()
     }
 }

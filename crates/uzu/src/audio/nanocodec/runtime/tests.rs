@@ -4,9 +4,8 @@ use super::{
     AudioDecodeStreamState, AudioDecodeStreamingMode, NanoCodecFsqRuntimeConfig, StructuredAudioCodecGraph,
     StructuredAudioConv1dLayer, StructuredAudioConvNeXtLayer, StructuredAudioConvTranspose1dLayer,
     StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph, StructuredAudioNormLayer,
-    StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, Tensor3Json, checked_product,
-    convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded, resolve_descript_audio_codec_vocoder_data_type,
-    unpack_padded_to_pcm,
+    StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, checked_product,
+    pack_pcm_to_padded, resolve_descript_audio_codec_vocoder_data_type, unpack_padded_to_pcm,
 };
 use crate::{
     DataType,
@@ -170,91 +169,6 @@ fn runtime_config_builder_rejects_unsupported_type() {
 }
 
 #[test]
-fn parses_current_tts_config_shape() {
-    let tts_config = serde_json::json!({
-        "text_decoder_config": {
-            "type": "StubTextDecoderConfig",
-            "num_codebooks": 2,
-            "codebook_size": 48
-        },
-        "audio_decoder_config": {
-            "type": "NanoCodecConfig",
-            "samplerate": 24000,
-            "quantizer_config": {
-                "num_groups": 2,
-                "quantizer_config": {
-                    "num_levels": [8, 6],
-                    "eps": 1e-3
-                }
-            },
-            "decoder_config": {
-                "activation_config": {
-                    "leaky_relu_negative_slope": 0.01
-                }
-            },
-            "base_channels": 4,
-            "up_sample_rates": [2],
-            "resblock_kernel_sizes": [3],
-            "resblock_dilations": [1]
-        },
-        "vocoder_config": {}
-    });
-
-    let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse");
-    let config = NanoCodecFsqRuntimeConfig::from_tts_config(&parsed).expect("runtime config");
-    assert_eq!(config.sample_rate(), 24_000);
-    assert_eq!(config.num_groups(), 2);
-    assert_eq!(config.num_levels_per_group(), &[8, 6]);
-    assert_eq!(config.output_packing(), AudioTokenPacking::CodebookMajor);
-    assert!(config.decoder().is_none());
-}
-
-#[test]
-fn parses_lalamo_tts_config_shape() {
-    let tts_config = serde_json::json!({
-        "text_decoder_config": {
-            "type": "StubTextDecoderConfig",
-            "num_codebooks": 13,
-            "codebook_size": 336
-        },
-        "audio_decoder_config": {
-            "type": "NanoCodecConfig",
-            "samplerate": 22050,
-            "quantizer_config": {
-                "num_groups": 13,
-                "quantizer_config": {
-                    "num_levels": [8, 7, 6, 6],
-                    "eps": 1e-3
-                }
-            },
-            "decoder_config": {
-                "activation_config": {
-                    "leaky_relu_negative_slope": 0.01
-                }
-            },
-            "base_channels": 864,
-            "up_sample_rates": [7, 7, 6, 3, 2],
-            "resblock_kernel_sizes": [3, 7, 11],
-            "resblock_dilations": [1, 3, 5]
-        },
-        "vocoder_config": {},
-        "activation_precision": "float32"
-    });
-
-    let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse");
-    let crate::config::TtsAudioDecoderConfig::NanoCodecConfig {
-        config,
-    } = parsed.audio_decoder_config
-    else {
-        panic!("expected NanoCodecConfig");
-    };
-    assert_eq!(config.samplerate, 22050);
-    assert_eq!(config.quantizer_config.num_groups, 13);
-    assert_eq!(config.quantizer_config.quantizer_config.num_levels, vec![8, 7, 6, 6]);
-    assert_eq!(config.up_sample_rates, vec![7, 7, 6, 3, 2]);
-}
-
-#[test]
 fn fishaudio_dac_config_requires_model_weights() {
     let tts_config = serde_json::json!({
         "text_decoder_config": {
@@ -364,11 +278,10 @@ fn fishaudio_vocoder_dtype_uses_lalamo_export_precision() {
     });
 
     let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
-    let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig {
-        config,
-    } = &parsed.audio_decoder_config
-    else {
-        panic!("expected DescriptAudioCodecConfig");
+    let config = match &parsed.audio_decoder_config {
+        crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+            config,
+        } => config,
     };
     let dtype =
         resolve_descript_audio_codec_vocoder_data_type(parsed.activation_precision, config).expect("resolve dtype");
@@ -425,11 +338,10 @@ fn fishaudio_vocoder_dtype_rejects_conflicting_export_precision() {
     });
 
     let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse fishaudio config");
-    let crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig {
-        config,
-    } = &parsed.audio_decoder_config
-    else {
-        panic!("expected DescriptAudioCodecConfig");
+    let config = match &parsed.audio_decoder_config {
+        crate::config::TtsAudioDecoderConfig::DescriptAudioCodecConfig {
+            config,
+        } => config,
     };
     let error = resolve_descript_audio_codec_vocoder_data_type(parsed.activation_precision, config)
         .expect_err("must reject conflicting precision");
@@ -524,7 +436,6 @@ fn fishaudio_runtime_decode_path_handles_empty_frames() {
             out_proj: vec![1.0],
             out_bias: vec![0.0],
         }],
-        post_module_model_dim: 1,
         post_module_transformer_config: serde_json::from_value(serde_json::json!({
             "global_rope_config": null,
             "local_rope_config": null,
@@ -609,7 +520,6 @@ fn fishaudio_quantizer_decode_gpu_matches_cpu_reference_small_graph() {
             ],
             out_bias: vec![0.03, -0.01],
         }],
-        post_module_model_dim: 2,
         post_module_transformer_config: serde_json::from_value(serde_json::json!({
             "global_rope_config": null,
             "local_rope_config": null,
@@ -686,33 +596,6 @@ fn fishaudio_quantizer_decode_gpu_matches_cpu_reference_small_graph() {
 }
 
 #[test]
-fn transpose_weight_conversion_matches_expected_layout() {
-    let weight_oih = Tensor3Json {
-        shape: [2, 2, 2],
-        values: vec![
-            // out=0
-            1.0, 2.0, // in_group=0
-            3.0, 4.0, // in_group=1
-            // out=1
-            5.0, 6.0, // in_group=0
-            7.0, 8.0, // in_group=1
-        ],
-    };
-
-    let converted = convert_lalamo_transpose_weight_oih_to_iog(&weight_oih, 4, 2, 2).expect("convert");
-    assert_eq!(converted.shape, [4, 1, 2]);
-    assert_eq!(
-        converted.values,
-        vec![
-            1.0, 2.0, // in=0, out_group=0
-            3.0, 4.0, // in=1, out_group=0
-            5.0, 6.0, // in=2, out_group=0
-            7.0, 8.0, // in=3, out_group=0
-        ]
-    );
-}
-
-#[test]
 fn fishaudio_streaming_context_matches_expected_value() {
     let convnext = StructuredAudioConvNeXtLayer {
         depthwise_conv: StructuredAudioConv1dLayer {
@@ -767,7 +650,6 @@ fn fishaudio_streaming_context_matches_expected_value() {
             out_bias: vec![0.0, 0.0],
         },
         residual_quantizers: vec![],
-        post_module_model_dim: 2,
         post_module_transformer_config: serde_json::from_value(serde_json::json!({
             "global_rope_config": null,
             "local_rope_config": null,
@@ -865,7 +747,7 @@ fn stream_delta_extraction_with_window_offset_matches_expected_slice() {
     )
     .expect("first token grid");
     state.append_delta(&first_delta).expect("append first delta");
-    let first_decoded = crate::audio::nanocodec::decoder::DecodedPaddedAudio {
+    let first_decoded = super::DecodedPaddedAudio {
         samples: (0..8).map(|value| value as f32).collect(),
         channels: 1,
         frames: 8,
@@ -885,7 +767,7 @@ fn stream_delta_extraction_with_window_offset_matches_expected_slice() {
     )
     .expect("second token grid");
     state.append_delta(&second_delta).expect("append second delta");
-    let window_decoded = crate::audio::nanocodec::decoder::DecodedPaddedAudio {
+    let window_decoded = super::DecodedPaddedAudio {
         // Global output range is [4, 12), local window starts at global sample 4.
         samples: (4..12).map(|value| value as f32).collect(),
         channels: 1,

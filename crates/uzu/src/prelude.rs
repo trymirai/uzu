@@ -25,6 +25,4 @@ pub use crate::{
 };
 
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
-pub use crate::session::TtsCodecSession;
-#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 pub use crate::session::TtsSession;

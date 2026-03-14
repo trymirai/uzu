@@ -146,57 +146,10 @@ impl FishAudioEmbeddingConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum TtsAudioDecoderConfig {
-    NanoCodecConfig {
-        #[serde(flatten)]
-        config: NanoCodecAudioDecoderConfig,
-    },
     DescriptAudioCodecConfig {
         #[serde(flatten)]
         config: DescriptAudioCodecConfig,
     },
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct NanoCodecAudioDecoderConfig {
-    pub samplerate: u32,
-    pub quantizer_config: NanoCodecGroupedQuantizerConfig,
-    pub decoder_config: NanoCodecDecoderConfig,
-    pub base_channels: usize,
-    pub up_sample_rates: Vec<usize>,
-    #[serde(default)]
-    pub in_kernel_size: Option<usize>,
-    #[serde(default)]
-    pub out_kernel_size: Option<usize>,
-    pub resblock_kernel_sizes: Vec<usize>,
-    pub resblock_dilations: Vec<usize>,
-    #[serde(default)]
-    pub precision: Option<ConfigDataType>,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct NanoCodecGroupedQuantizerConfig {
-    pub num_groups: usize,
-    pub quantizer_config: NanoCodecQuantizerConfig,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct NanoCodecQuantizerConfig {
-    pub num_levels: Vec<i32>,
-    #[serde(default)]
-    pub eps: Option<f32>,
-    #[serde(default)]
-    pub precision: Option<ConfigDataType>,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct NanoCodecDecoderConfig {
-    pub activation_config: NanoCodecActivationConfig,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct NanoCodecActivationConfig {
-    #[serde(default)]
-    pub leaky_relu_negative_slope: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -257,10 +210,6 @@ pub struct TtsModelConfig {
 
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 impl TtsModelConfig {
-    pub fn create_audio_generation_context(&self) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext> {
-        crate::audio::AudioGenerationContext::from_tts_config(&self.tts_config)
-    }
-
     pub fn create_audio_generation_context_with_model_path(
         &self,
         model_path: &Path,
@@ -274,29 +223,6 @@ impl TtsModelConfig {
         options: crate::audio::NanoCodecFsqRuntimeOptions,
     ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext> {
         crate::audio::AudioGenerationContext::from_tts_config_and_model_path_with_options(
-            &self.tts_config,
-            model_path,
-            options,
-        )
-    }
-
-    pub fn create_audio_codec_runtime(&self) -> crate::audio::AudioResult<crate::audio::NanoCodecFsqRuntime> {
-        crate::audio::NanoCodecFsqRuntime::from_tts_config(&self.tts_config)
-    }
-
-    pub fn create_audio_codec_runtime_with_model_path(
-        &self,
-        model_path: &Path,
-    ) -> crate::audio::AudioResult<crate::audio::NanoCodecFsqRuntime> {
-        crate::audio::NanoCodecFsqRuntime::from_tts_config_and_model_path(&self.tts_config, model_path)
-    }
-
-    pub fn create_audio_codec_runtime_with_model_path_and_options(
-        &self,
-        model_path: &Path,
-        options: crate::audio::NanoCodecFsqRuntimeOptions,
-    ) -> crate::audio::AudioResult<crate::audio::NanoCodecFsqRuntime> {
-        crate::audio::NanoCodecFsqRuntime::from_tts_config_and_model_path_with_options(
             &self.tts_config,
             model_path,
             options,

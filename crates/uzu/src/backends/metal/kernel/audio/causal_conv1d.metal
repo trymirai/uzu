@@ -4,10 +4,12 @@
 using namespace metal;
 
 constant uint AUDIO_TIME_TILE = 4;
+constant int AUDIO_LAYOUT_NCS = 0;
+constant int AUDIO_LAYOUT_NSC = 1;
 
 template <typename T>
 void causal_conv1d(
-    device const T* input,     // [B, Cin, T]
+    device const T* input,     // [B, Cin, T] when NCS, [B, T, Cin] when NSC
     device const T* weight,    // [Cout, Cin, K]
     device const T* bias,      // [Cout]
     device T* output,          // [B, Cout, T]
@@ -17,6 +19,7 @@ void causal_conv1d(
     const constant int& seq_len,
     const constant int& kernel_size,
     const constant int& dilation,
+    const constant int& input_layout,
     const uint3 gid
 ) {
   const uint t = gid.x * AUDIO_TIME_TILE;
@@ -24,6 +27,10 @@ void causal_conv1d(
   const uint b = gid.z;
 
   if (t >= (uint)seq_len || oc >= (uint)cout) {
+    return;
+  }
+
+  if (input_layout != AUDIO_LAYOUT_NCS && input_layout != AUDIO_LAYOUT_NSC) {
     return;
   }
 
@@ -55,29 +62,49 @@ void causal_conv1d(
     const bool full_tile = valid_count == (int)AUDIO_TIME_TILE;
     for (int ic = 0; ic < cin; ++ic) {
       const uint w_base = (oc * (uint)cin + (uint)ic) * (uint)kernel_size;
-      const uint x_base = (b * (uint)cin + (uint)ic) * (uint)seq_len;
+      const uint x_base_ncs = (b * (uint)cin + (uint)ic) * (uint)seq_len;
       for (int k = 0; k < kernel_size; ++k) {
         const float w = float(weight[w_base + (uint)k]);
         const int x_t = (int)t + k * dilation - pad;
         if (full_tile && x_t >= 0 && x_t + 3 < seq_len) {
-          const uint x_idx = x_base + (uint)x_t;
-          acc0 += w * float(input[x_idx]);
-          acc1 += w * float(input[x_idx + 1]);
-          acc2 += w * float(input[x_idx + 2]);
-          acc3 += w * float(input[x_idx + 3]);
+          if (input_layout == AUDIO_LAYOUT_NCS) {
+            const uint x_idx = x_base_ncs + (uint)x_t;
+            acc0 += w * float(input[x_idx]);
+            acc1 += w * float(input[x_idx + 1]);
+            acc2 += w * float(input[x_idx + 2]);
+            acc3 += w * float(input[x_idx + 3]);
+          } else {
+            const uint x_idx0 = (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
+            acc0 += w * float(input[x_idx0]);
+            acc1 += w * float(input[x_idx0 + (uint)cin]);
+            acc2 += w * float(input[x_idx0 + (uint)(2 * cin)]);
+            acc3 += w * float(input[x_idx0 + (uint)(3 * cin)]);
+          }
           continue;
         }
         if (valid_count > 0 && x_t >= 0 && x_t < seq_len) {
-          acc0 += w * float(input[x_base + (uint)x_t]);
+          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
+              ? (x_base_ncs + (uint)x_t)
+              : ((b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic);
+          acc0 += w * float(input[x_idx]);
         }
         if (valid_count > 1 && x_t + 1 >= 0 && x_t + 1 < seq_len) {
-          acc1 += w * float(input[x_base + (uint)(x_t + 1)]);
+          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
+              ? (x_base_ncs + (uint)(x_t + 1))
+              : ((b * (uint)seq_len + (uint)(x_t + 1)) * (uint)cin + (uint)ic);
+          acc1 += w * float(input[x_idx]);
         }
         if (valid_count > 2 && x_t + 2 >= 0 && x_t + 2 < seq_len) {
-          acc2 += w * float(input[x_base + (uint)(x_t + 2)]);
+          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
+              ? (x_base_ncs + (uint)(x_t + 2))
+              : ((b * (uint)seq_len + (uint)(x_t + 2)) * (uint)cin + (uint)ic);
+          acc2 += w * float(input[x_idx]);
         }
         if (valid_count > 3 && x_t + 3 >= 0 && x_t + 3 < seq_len) {
-          acc3 += w * float(input[x_base + (uint)(x_t + 3)]);
+          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
+              ? (x_base_ncs + (uint)(x_t + 3))
+              : ((b * (uint)seq_len + (uint)(x_t + 3)) * (uint)cin + (uint)ic);
+          acc3 += w * float(input[x_idx]);
         }
       }
     }
@@ -110,6 +137,7 @@ KERNEL(AudioCausalConv1d)(
     const constant int& seq_len,
     const constant int& kernel_size,
     const constant int& dilation,
+    const constant int& input_layout,
     const constant int& batch_size,
     uint t AXIS((seq_len + 3) / 4, 32),
     uint oc AXIS(cout, 1),
@@ -126,6 +154,7 @@ KERNEL(AudioCausalConv1d)(
       seq_len,
       kernel_size,
       dilation,
+      input_layout,
       uint3(t, oc, b)
   );
 }

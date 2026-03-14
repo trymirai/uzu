@@ -15,10 +15,6 @@ pub struct AudioGenerationContext {
 }
 
 impl AudioGenerationContext {
-    pub fn from_tts_config(tts_config: &TtsConfig) -> AudioResult<Self> {
-        Self::with_runtime(NanoCodecFsqRuntime::from_tts_config(tts_config)?)
-    }
-
     pub fn from_tts_config_and_model_path(
         tts_config: &TtsConfig,
         model_path: &Path,

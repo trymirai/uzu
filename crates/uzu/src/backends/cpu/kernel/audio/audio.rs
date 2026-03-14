@@ -44,6 +44,7 @@ pub fn audio_causal_conv1d<T: ArrayElement + Float>(
     #[allow(unused)] seq_len: i32,
     #[allow(unused)] kernel_size: i32,
     #[allow(unused)] dilation: i32,
+    #[allow(unused)] input_layout: i32,
     #[allow(unused)] batch_size: i32,
 ) {
     todo!()

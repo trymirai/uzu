@@ -6,7 +6,7 @@ use super::{
     generate_stub_tokens, load_stub_seed, maybe_flush_pending_stream_chunk, normalize_rendered_prompt,
     semantic_token_to_code,
 };
-use crate::config::{TtsMessageProcessorConfig, TtsModelConfig};
+use crate::config::TtsMessageProcessorConfig;
 use crate::session::config::{
     TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsVocoderStreamingMode,
 };
@@ -97,53 +97,6 @@ fn prompt_message_context_uses_config_defaults_and_preserves_role() {
     assert_eq!(rendered.get("speaker_id"), Some(&String::from("speaker:42")));
     assert_eq!(rendered.get("style"), Some(&String::from("relaxed")));
     assert_eq!(rendered.get("reasoning_content"), Some(&String::from("thinking")));
-}
-
-#[test]
-fn stub_text_decoder_backend_rejects_cardinality_mismatch() {
-    let model_config: TtsModelConfig = serde_json::from_value(serde_json::json!({
-        "tts_config": {
-            "text_decoder_config": {
-                "type": "StubTextDecoderConfig",
-                "num_codebooks": 2,
-                "codebook_size": 49
-            },
-            "audio_decoder_config": {
-                "type": "NanoCodecConfig",
-                "samplerate": 24000,
-                "quantizer_config": {
-                    "num_groups": 2,
-                    "quantizer_config": {
-                        "num_levels": [8, 6]
-                    }
-                },
-                "decoder_config": {
-                    "activation_config": {
-                        "leaky_relu_negative_slope": 0.01
-                    }
-                },
-                "base_channels": 32,
-                "up_sample_rates": [2, 2],
-                "resblock_kernel_sizes": [3],
-                "resblock_dilations": [1]
-            },
-            "vocoder_config": {}
-        },
-        "message_processor_config": {
-            "prompt_template": "{{messages[0].content}}"
-        }
-    }))
-    .expect("tts model config");
-
-    let audio = model_config.create_audio_generation_context().expect("audio context");
-    let result = super::backend_factory::build_text_decoder_backend(
-        &model_config,
-        &audio,
-        std::path::Path::new("."),
-        &crate::session::config::TtsSessionOptions::default(),
-    );
-
-    assert!(result.is_err(), "stub backend should reject codebook cardinality mismatches");
 }
 
 #[test]
