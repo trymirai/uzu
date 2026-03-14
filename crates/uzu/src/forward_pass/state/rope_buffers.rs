@@ -8,9 +8,9 @@ use crate::{
 };
 
 pub struct RopeBuffers<B: Backend> {
-    /// [rope_max_sequence_length, head_dim]
+    /// [rope_max_sequence_length, rope_dim]
     pub cosines: ArrayCell<B>,
-    /// [rope_max_sequence_length, head_dim]
+    /// [rope_max_sequence_length, rope_dim]
     pub sines: ArrayCell<B>,
 }
 
