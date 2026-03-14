@@ -75,23 +75,23 @@ impl<B: Backend> LayerExecutables<B> {
                 MixerConfig::Attention(attention_config) => {
                     let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
-                    if attention_config.has_gate || attention_config.partial_rope_dim.is_some() {
-                        todo!("Gated attention and partial RoPE kernels not yet implemented");
-                    }
-
                     let layer_num_heads = attention_config.num_heads.unwrap_or(num_heads);
                     let layer_num_groups = attention_config.num_groups.unwrap_or(num_groups);
                     let layer_head_dim = attention_config.head_dim.unwrap_or(head_dim);
+
+                    let q_dim = layer_num_heads * layer_head_dim;
+                    let kv_dim = layer_num_groups * layer_head_dim;
+                    let gate_dim = if attention_config.has_gate {
+                        q_dim
+                    } else {
+                        0
+                    };
 
                     let qkv_projection = <dyn Linear<B>>::new(
                         &attention_config.qkv_projection_config,
                         attention_config.has_qkv_biases,
                         model_dim,
-                        [
-                            layer_num_heads * layer_head_dim,
-                            layer_num_groups * layer_head_dim,
-                            layer_num_groups * layer_head_dim,
-                        ],
+                        [q_dim, kv_dim, kv_dim, gate_dim],
                         ctx,
                         &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
                         ArrayId::Main,

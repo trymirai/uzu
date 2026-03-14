@@ -10,7 +10,8 @@ use crate::{
     backends::common::{
         Backend, CommandBuffer, Kernels,
         kernel::{
-            AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
+            AttentionGateKernel, AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
+            AttentionUpdateKVCacheKernel,
             attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
     },
@@ -40,6 +41,7 @@ pub struct Attention<B: Backend> {
     two_pass_2_kernels: HashMap<u32, <B::Kernels as Kernels>::AttentionTwoPass2Kernel>,
     update_kv_cache_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
     update_kv_cache_inplace_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
+    gate_kernel: Option<<B::Kernels as Kernels>::AttentionGateKernel>,
     gemm_block: AttentionGemmBlock<B>,
     layer_index: usize,
     attention_scale: Option<f32>,
@@ -91,6 +93,11 @@ impl<B: Backend> Attention<B> {
             <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, has_gate, false)?;
         let update_kv_cache_inplace_kernel =
             <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, has_gate, true)?;
+        let gate_kernel = if has_gate {
+            Some(<B::Kernels as Kernels>::AttentionGateKernel::new(context, data_type)?)
+        } else {
+            None
+        };
         let gemm_block = AttentionGemmBlock::new(data_type);
 
         Ok(Self {
@@ -99,6 +106,7 @@ impl<B: Backend> Attention<B> {
             two_pass_2_kernels,
             update_kv_cache_kernel,
             update_kv_cache_inplace_kernel,
+            gate_kernel,
             gemm_block,
             layer_index,
             attention_scale,
@@ -435,6 +443,18 @@ impl<B: Backend> Attention<B> {
                     command_buffer,
                 );
             },
+        }
+
+        if let Some(gate_kernel) = &self.gate_kernel {
+            gate_kernel.encode(
+                qkv_buf_borrow.deref(),
+                attention_output_buf_borrow.deref_mut(),
+                num_heads as u32,
+                num_groups as u32,
+                head_dim as u32,
+                suffix_length as u32,
+                command_buffer,
+            );
         }
 
         Ok(())
