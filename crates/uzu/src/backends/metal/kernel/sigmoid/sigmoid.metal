@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Sigmoid) (
+PUBLIC KERNEL(Sigmoid) (
     const device T* input,
     device T* output,
     const constant uint& total_elements,

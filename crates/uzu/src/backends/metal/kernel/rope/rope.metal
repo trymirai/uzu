@@ -20,7 +20,7 @@ inline T applyRopeTransform(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Rope)(
+PUBLIC KERNEL(Rope)(
     device const T* qkv,                // [suffix_len, (num_heads + 2*num_groups) * head_dim]
     device const T* cosines,            // [max_seq_len, head_dim]
     device const T* sines,              // [max_seq_len, head_dim]

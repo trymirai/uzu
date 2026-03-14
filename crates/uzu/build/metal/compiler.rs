@@ -45,7 +45,7 @@ impl ObjectInfo {
             .map(|s| s.to_string().into_boxed_str())
             .collect();
 
-        let kernels = self.kernels.iter().map(|ki| ki.to_kernel()).collect();
+        let kernels = self.kernels.iter().filter_map(|ki| ki.to_kernel()).collect();
 
         (src_rel_path, kernels)
     }
@@ -280,7 +280,9 @@ impl MetalCompiler {
                 super::bindgen::bindgen(k, specialize_indices)
                     .with_context(|| format!("cannot generate bindings for {}", k.name))
             })
-            .collect::<anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)>>()?;
+            .collect::<anyhow::Result<(Vec<TokenStream>, Vec<Option<TokenStream>>)>>()?;
+
+        let associated_types = associated_types.into_iter().flatten().collect::<Vec<TokenStream>>();
 
         let tokens = quote! {
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};

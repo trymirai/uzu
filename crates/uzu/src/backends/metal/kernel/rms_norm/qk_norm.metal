@@ -16,7 +16,7 @@ VARIANTS(InputT, float, half, bfloat)
 VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
-KERNEL(QKNorm)(
+PUBLIC KERNEL(QKNorm)(
     const device InputT* qkv_input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* qkv_output,

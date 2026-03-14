@@ -4,7 +4,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Conv1dPack)(
+PUBLIC KERNEL(Conv1dPack)(
     device const T* state_in,
     device const T* x,
     device T* padded,
@@ -28,7 +28,7 @@ KERNEL(Conv1dPack)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Conv1dDecode)(
+PUBLIC KERNEL(Conv1dDecode)(
     device const T* x,
     device const T* w,
     device const T* b OPTIONAL(has_bias),
@@ -105,7 +105,7 @@ KERNEL(Conv1dDecode)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Conv1dScan)(
+PUBLIC KERNEL(Conv1dScan)(
     device const T* padded, // (prefix+suffix, channels)
     device const T* w,      // (channels, kernel)
     device const T* b OPTIONAL(has_bias), // optional (channels)

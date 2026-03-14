@@ -261,7 +261,7 @@ METAL_FUNC void gemm_splitk_accum_impl(
 // DSL kernel entry points
 ///////////////////////////////////////////////////////////////////////////////
 
-KERNEL(MatmulSplitKPartialBfloat16)(
+PUBLIC KERNEL(MatmulSplitKPartialBfloat16)(
     const device bfloat16_t* a,
     const device bfloat16_t* b,
     device float* c,
@@ -300,7 +300,7 @@ KERNEL(MatmulSplitKPartialBfloat16)(
   );
 }
 
-KERNEL(MatmulSplitKAccumBfloat16)(
+PUBLIC KERNEL(MatmulSplitKAccumBfloat16)(
     const device float* c_split,
     device bfloat16_t* d,
     const constant int& k_partitions,

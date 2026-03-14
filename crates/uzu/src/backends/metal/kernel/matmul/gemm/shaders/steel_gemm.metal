@@ -187,7 +187,7 @@ METAL_FUNC void gemm_impl(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MatmulGemm)(
+PUBLIC KERNEL(MatmulGemm)(
     const device T* a,
     const device T* b,
     device T* d,

@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MaskUpdate) (
+PUBLIC KERNEL(MaskUpdate) (
     device T* mask,
     constant int& unmask_col,
     constant int& mask_col

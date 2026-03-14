@@ -39,7 +39,7 @@ template <typename T, uint BK, uint BD>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(BK, 16, 32)
 VARIANTS(BD, 64, 128, 256)
-KERNEL(AttentionGemm)(
+PUBLIC KERNEL(AttentionGemm)(
     const device T* q,
     const device T* k,
     const device T* v,

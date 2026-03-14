@@ -483,7 +483,7 @@ void fsq_encode(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioFsqDecode)(
+PUBLIC KERNEL(AudioFsqDecode)(
     device const int* tokens,
     device T* out,
     device const int* lengths,
@@ -510,7 +510,7 @@ KERNEL(AudioFsqDecode)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioLeakyRelu)(
+PUBLIC KERNEL(AudioLeakyRelu)(
     device const T* input,
     device T* output,
     const constant int& n,
@@ -522,7 +522,7 @@ KERNEL(AudioLeakyRelu)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioTanh)(
+PUBLIC KERNEL(AudioTanh)(
     device const T* input,
     device T* output,
     const constant int& n,
@@ -533,7 +533,7 @@ KERNEL(AudioTanh)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioAdd)(
+PUBLIC KERNEL(AudioAdd)(
     device const T* a,
     device const T* b,
     device T* out,
@@ -545,7 +545,7 @@ KERNEL(AudioAdd)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioScale)(
+PUBLIC KERNEL(AudioScale)(
     device const T* input,
     device T* output,
     const constant int& n,
@@ -557,7 +557,7 @@ KERNEL(AudioScale)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioCausalConv1d)(
+PUBLIC KERNEL(AudioCausalConv1d)(
     device const T* input,
     device const T* weight,
     device const T* bias,
@@ -590,7 +590,7 @@ KERNEL(AudioCausalConv1d)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioCausalConvTranspose1d)(
+PUBLIC KERNEL(AudioCausalConvTranspose1d)(
     device const T* input,
     device const T* weight,
     device const T* bias,
@@ -625,7 +625,7 @@ KERNEL(AudioCausalConvTranspose1d)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioHalfSnake)(
+PUBLIC KERNEL(AudioHalfSnake)(
     device const T* input,
     device const T* alpha,
     device T* output,
@@ -654,7 +654,7 @@ KERNEL(AudioHalfSnake)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioClamp)(
+PUBLIC KERNEL(AudioClamp)(
     device const T* input,
     device T* output,
     const constant int& n,
@@ -667,7 +667,7 @@ KERNEL(AudioClamp)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioConv1d)(
+PUBLIC KERNEL(AudioConv1d)(
     device const T* input,
     device const T* weight,
     device const T* bias,
@@ -708,7 +708,7 @@ KERNEL(AudioConv1d)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioFsqEncode)(
+PUBLIC KERNEL(AudioFsqEncode)(
     device const T* input,
     device int* tokens,
     device const int* lengths,

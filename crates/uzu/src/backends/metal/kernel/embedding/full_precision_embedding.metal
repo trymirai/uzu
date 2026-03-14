@@ -5,7 +5,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(FullPrecisionEmbeddingLookup) (
+PUBLIC KERNEL(FullPrecisionEmbeddingLookup) (
     const device uint64_t* token_ids, // [batch_size]
     const device T* weights,          // [vocab_size, model_dim]
     device T* output,                 // [batch_size, model_dim]

@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AttentionUpdateKVCache)(
+PUBLIC KERNEL(AttentionUpdateKVCache)(
     const device T* rotated_keys OPTIONAL(!keys_in_place),
     const device T* qkv,
     device T* key_cache,

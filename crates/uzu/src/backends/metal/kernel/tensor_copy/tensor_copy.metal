@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(TensorCopy)(
+PUBLIC KERNEL(TensorCopy)(
     const device T* src_buffer,
     device T* dst_buffer,
     constant uint& length,

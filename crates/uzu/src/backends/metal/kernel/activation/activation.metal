@@ -5,7 +5,7 @@
 
 template <typename T>
 VARIANTS(T, half, float, bfloat)
-KERNEL(Activation) (
+PUBLIC KERNEL(Activation) (
     const device T* input OPTIONAL(!in_place),
     device T* output,
     const constant uint& n,

@@ -5,7 +5,7 @@
 #define BM 16
 
 // Compute per-expert tile counts: tiles_e = ceil((seg_len)/BM)
-KERNEL(MoeTileCounts)(
+PUBLIC KERNEL(MoeTileCounts)(
     device const uint* offsets, // [e+1]
     device uint* tile_counts,   // [e]
     constant uint& e,
@@ -20,7 +20,7 @@ KERNEL(MoeTileCounts)(
 
 // Single-threadgroup exclusive scan over tile_counts -> tile_row_offsets, also
 // writes total_tiles
-KERNEL(MoeTileScan)(
+PUBLIC KERNEL(MoeTileScan)(
     device const uint* tile_counts, // [e]
     device uint* tile_row_offsets,  // [e+1]
     device uint* total_tiles_buf,   // [>=2]
@@ -73,7 +73,7 @@ KERNEL(MoeTileScan)(
 
 // Build flattened tile_map of length total_tiles; each entry is 3 uints:
 // [3*i+0]=expert_idx, [3*i+1]=seg_start, [3*i+2]=tile_m0
-KERNEL(MoeBuildTileMap)(
+PUBLIC KERNEL(MoeBuildTileMap)(
     device const uint* offsets,          // [e+1]
     device const uint* tile_row_offsets, // [e+1]
     device const uint* tile_counts,      // [e]
@@ -94,7 +94,7 @@ KERNEL(MoeBuildTileMap)(
 
 // Write MTLDispatchThreadgroupsIndirectArguments {x, y, z} where:
 //  x = num_tiles_n (computed on CPU and passed in), y = total_tiles, z = 1
-KERNEL(MoeWriteDispatchArgs)(
+PUBLIC KERNEL(MoeWriteDispatchArgs)(
     device const uint*
         total_tiles_buf,        // [>=1], total_tiles_buf[0] = total_rows
     device uint* dispatch_args, // [3] u32

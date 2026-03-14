@@ -18,7 +18,7 @@ use crate::{
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
-) -> anyhow::Result<(TokenStream, TokenStream)> {
+) -> anyhow::Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{kernel_name}Kernel");
     let struct_name = format_ident!("{kernel_name}MetalKernel");
@@ -305,14 +305,24 @@ pub fn bindgen(
         quote! {}
     };
 
+    let (maybe_trait_impl, maybe_associate_backend, associated_type) = if kernel.public {
+        (
+            quote! {crate::backends::common::kernel::#trait_name for},
+            quote! { type Backend = crate::backends::metal::Metal; },
+            Some(quote! { type #trait_name = #struct_name; }),
+        )
+    } else {
+        (quote! {}, quote! {}, None)
+    };
+
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
             #(#conditional_buffer_fields,)*
         }
 
-        impl crate::backends::common::kernel::#trait_name for #struct_name {
-            type Backend = crate::backends::metal::Metal;
+        impl #maybe_trait_impl #struct_name {
+            #maybe_associate_backend
 
             fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
                 let entry_name = #entry_name;
@@ -330,8 +340,6 @@ pub fn bindgen(
             }
         }
     };
-
-    let associated_type = quote! { type #trait_name = #struct_name; };
 
     Ok((kernel, associated_type))
 }
