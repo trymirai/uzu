@@ -4,7 +4,6 @@ use std::{
     os::unix::fs::FileExt,
 };
 
-use half::{bf16, f16};
 use thiserror::Error;
 
 use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError, read_metadata as read_st_metadata};
@@ -63,8 +62,6 @@ pub enum ParameterLoaderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
     ArrayLoadingError(#[from] std::io::Error),
-    #[error("Unsupported host tensor dtype: {0:?}")]
-    UnsupportedHostTensorDataType(DataType),
 }
 
 pub struct ParameterLoader<'context, 'file, C: Context>
@@ -93,11 +90,11 @@ where
         })
     }
 
-    pub fn keys(&self) -> Keys<'_, String, ParameterMetadata> {
+    fn keys(&self) -> Keys<'_, String, ParameterMetadata> {
         self.index.keys()
     }
 
-    pub fn get_leaf<'leaf>(
+    fn get_leaf<'leaf>(
         &'leaf self,
         key: &str,
     ) -> Result<ParameterLeaf<'file, 'context, 'leaf, C>, ParameterLoaderError<C::Backend>> {
@@ -108,7 +105,7 @@ where
         })
     }
 
-    pub fn get(
+    fn get(
         &self,
         key: &str,
     ) -> Result<Array<C::Backend>, ParameterLoaderError<C::Backend>> {
@@ -128,20 +125,6 @@ where
         }
         self.file.read_exact_at(array.as_bytes_mut(), offset as u64)?;
         Ok(array)
-    }
-
-    pub fn read_extract_at(
-        &self,
-        key: &str,
-        buf: &mut [u8],
-        shape: &mut Box<[usize]>,
-        data_type: &mut DataType,
-    ) -> Result<(), ParameterLoaderError<C::Backend>> {
-        let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
-        self.file.read_exact_at(buf, metadata_entry.offset as u64)?;
-        *shape = metadata_entry.shape.to_owned();
-        *data_type = metadata_entry.data_type;
-        Ok(())
     }
 
     pub fn tree<'loader>(&'loader self) -> ParameterTree<'loader, C> {
@@ -167,10 +150,6 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         self.metadata.data_type
     }
 
-    pub fn size(&self) -> usize {
-        self.metadata.size
-    }
-
     pub fn read_buffer(&self) -> Result<<C::Backend as Backend>::Buffer, ParameterLoaderError<C::Backend>> {
         let mut buffer =
             self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
@@ -181,55 +160,6 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         )?;
         Ok(buffer)
     }
-
-    pub fn read_f32_tensor(&self) -> Result<(Box<[usize]>, Vec<f32>), ParameterLoaderError<C::Backend>> {
-        let num_elements = self
-            .metadata
-            .shape
-            .iter()
-            .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
-            .ok_or_else(|| ParameterLoaderError::SizeMismatch {
-                data_type: self.metadata.data_type,
-                shape: self.metadata.shape.to_owned(),
-                expected_size: usize::MAX,
-                actual_size: self.metadata.size,
-            })?;
-        let expected_size = num_elements
-            .checked_mul(self.metadata.data_type.size_in_bytes())
-            .ok_or_else(|| ParameterLoaderError::SizeMismatch {
-                data_type: self.metadata.data_type,
-                shape: self.metadata.shape.to_owned(),
-                expected_size: usize::MAX,
-                actual_size: self.metadata.size,
-            })?;
-        if expected_size != self.metadata.size {
-            return Err(ParameterLoaderError::SizeMismatch {
-                data_type: self.metadata.data_type,
-                shape: self.metadata.shape.to_owned(),
-                expected_size,
-                actual_size: self.metadata.size,
-            });
-        }
-
-        let mut bytes = vec![0u8; self.metadata.size];
-        self.loader.file.read_exact_at(&mut bytes, self.metadata.offset as u64)?;
-        let values = match self.metadata.data_type {
-            DataType::F32 => bytes
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                .collect(),
-            DataType::F16 => bytes
-                .chunks_exact(2)
-                .map(|chunk| f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
-                .collect(),
-            DataType::BF16 => bytes
-                .chunks_exact(2)
-                .map(|chunk| bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
-                .collect(),
-            other => return Err(ParameterLoaderError::UnsupportedHostTensorDataType(other)),
-        };
-        Ok((self.metadata.shape.to_owned(), values))
-    }
 }
 
 pub struct ParameterTree<'loader, C: Context> {
@@ -238,17 +168,6 @@ pub struct ParameterTree<'loader, C: Context> {
 }
 
 impl<'loader, C: Context> ParameterTree<'loader, C> {
-    pub fn new(loader: &'loader ParameterLoader<'loader, 'loader, C>) -> Self {
-        Self {
-            loader,
-            prefix: None,
-        }
-    }
-
-    pub fn path_prefix(&self) -> Option<&str> {
-        self.prefix.as_deref()
-    }
-
     fn join_prefix(
         &self,
         name: &str,
@@ -286,15 +205,6 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
         self.loader.get_leaf(&self.join_prefix(name))
     }
 
-    pub fn read_extract_at(
-        &self,
-        name: &str,
-        buf: &mut [u8],
-        shape: &mut Box<[usize]>,
-        data_type: &mut DataType,
-    ) -> Result<(), ParameterLoaderError<C::Backend>> {
-        self.loader.read_extract_at(&self.join_prefix(name), buf, shape, data_type)
-    }
 }
 
 pub fn resolve_subtree<'tree, C: Context>(

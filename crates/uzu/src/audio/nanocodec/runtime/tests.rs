@@ -4,15 +4,122 @@ use super::{
     AudioDecodeStreamState, AudioDecodeStreamingMode, NanoCodecFsqRuntimeConfig, StructuredAudioCodecGraph,
     StructuredAudioConv1dLayer, StructuredAudioConvNeXtLayer, StructuredAudioConvTranspose1dLayer,
     StructuredAudioDecoderBlockLayer, StructuredAudioDecoderGraph, StructuredAudioNormLayer,
-    StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, Tensor3Json,
+    StructuredAudioResidualUnitLayer, StructuredAudioVectorQuantizer, Tensor3Json, checked_product,
     convert_lalamo_transpose_weight_oih_to_iog, pack_pcm_to_padded, resolve_descript_audio_codec_vocoder_data_type,
     unpack_padded_to_pcm,
 };
 use crate::{
     DataType,
-    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking},
+    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     config::TtsConfig,
+    utils::array_io::read_array_to_f32_vec,
 };
+
+fn add_quantized_code_to_latent(
+    target: &mut [f32],
+    quantizer: &StructuredAudioVectorQuantizer,
+    code_index: usize,
+) -> AudioResult<()> {
+    let code_dim = quantizer.codebook_dim;
+    if code_dim == 0
+        || quantizer.codebook.len() % code_dim != 0
+        || quantizer.out_proj.len() != target.len().saturating_mul(code_dim)
+        || quantizer.out_bias.len() != target.len()
+    {
+        return Err(AudioError::Runtime("quantizer projection shape mismatch".to_string()));
+    }
+    let code_start = code_index
+        .checked_mul(code_dim)
+        .ok_or(AudioError::Runtime("quantizer code index overflow".to_string()))?;
+    let code_end =
+        code_start.checked_add(code_dim).ok_or(AudioError::Runtime("quantizer code slice overflow".to_string()))?;
+    let code_row = quantizer
+        .codebook
+        .get(code_start..code_end)
+        .ok_or(AudioError::Runtime("quantizer code index out of range".to_string()))?;
+    for (row_index, row) in quantizer.out_proj.chunks_exact(code_dim).enumerate() {
+        let mut acc = quantizer.out_bias[row_index];
+        for (&w, &x) in row.iter().zip(code_row.iter()) {
+            acc += w * x;
+        }
+        target[row_index] += acc;
+    }
+    Ok(())
+}
+
+fn decode_quantizer_to_nsc_reference(
+    graph: &StructuredAudioCodecGraph,
+    tokens: &[u32],
+    lengths: &[usize],
+    batch_size: usize,
+    codebooks: usize,
+    frames: usize,
+) -> AudioResult<Vec<f32>> {
+    if codebooks != graph.total_codebooks {
+        return Err(AudioError::Runtime(format!(
+            "FishAudio codebook mismatch: expected {}, got {codebooks}",
+            graph.total_codebooks
+        )));
+    }
+    let expected_tokens = checked_product(&[batch_size, codebooks, frames])?;
+    if tokens.len() != expected_tokens {
+        return Err(AudioError::InvalidTokenShape {
+            expected_tokens,
+            actual_tokens: tokens.len(),
+        });
+    }
+    if lengths.len() != batch_size {
+        return Err(AudioError::InvalidTokenLengths {
+            expected_lengths: batch_size,
+            actual_lengths: lengths.len(),
+        });
+    }
+
+    let mut latent_nsc = vec![0.0_f32; checked_product(&[batch_size, frames, graph.input_dim])?];
+    for batch in 0..batch_size {
+        let active_frames = lengths[batch];
+        if active_frames > frames {
+            return Err(AudioError::InvalidTokenLengthValue {
+                length: active_frames,
+                frames,
+            });
+        }
+        for frame in 0..active_frames {
+            let row_start = (batch * frames + frame) * graph.input_dim;
+            let row_end = row_start + graph.input_dim;
+            let target = &mut latent_nsc[row_start..row_end];
+
+            let semantic_token_index = ((batch * codebooks) * frames) + frame;
+            let semantic_token = tokens[semantic_token_index] as usize;
+            let semantic_clamped = semantic_token.min(graph.semantic_codebook_size.saturating_sub(1));
+            add_quantized_code_to_latent(target, &graph.semantic_quantizer, semantic_clamped)?;
+
+            for (residual_index, quantizer) in graph.residual_quantizers.iter().enumerate() {
+                let token_index = ((batch * codebooks + (residual_index + 1)) * frames) + frame;
+                let token = tokens[token_index] as usize;
+                let clamped = token.min(graph.codebook_size.saturating_sub(1));
+                add_quantized_code_to_latent(target, quantizer, clamped)?;
+            }
+        }
+    }
+
+    Ok(latent_nsc)
+}
+
+fn decode_quantizer_to_nsc_gpu(
+    graph: &StructuredAudioCodecGraph,
+    tokens: &[u32],
+    lengths: &[usize],
+    batch_size: usize,
+    codebooks: usize,
+    frames: usize,
+) -> AudioResult<Vec<f32>> {
+    let context = graph.decode_context()?;
+    let mut profile = None;
+    let output =
+        graph.decode_quantizer_to_nsc_array_on_context(&context, tokens, lengths, batch_size, codebooks, frames, &mut profile)?;
+    Ok(read_array_to_f32_vec(&output)?)
+}
 #[test]
 fn config_rejects_invalid_eps() {
     let config = NanoCodecFsqRuntimeConfig::new(
@@ -58,11 +165,8 @@ fn runtime_config_builder_rejects_unsupported_type() {
         "vocoder_config": {}
     });
 
-    let error = NanoCodecFsqRuntimeConfig::from_tts_config_value(&tts_config).expect_err("must fail");
-    match error {
-        AudioError::Runtime(message) => assert!(message.contains("failed to parse TTS config")),
-        other => panic!("unexpected error: {other:?}"),
-    }
+    let error = serde_json::from_value::<TtsConfig>(tts_config).expect_err("must fail");
+    assert!(error.to_string().contains("other_codec"));
 }
 
 #[test]
@@ -96,7 +200,8 @@ fn parses_current_tts_config_shape() {
         "vocoder_config": {}
     });
 
-    let config = NanoCodecFsqRuntimeConfig::from_tts_config_value(&tts_config).expect("runtime config");
+    let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse");
+    let config = NanoCodecFsqRuntimeConfig::from_tts_config(&parsed).expect("runtime config");
     assert_eq!(config.sample_rate(), 24_000);
     assert_eq!(config.num_groups(), 2);
     assert_eq!(config.num_levels_per_group(), &[8, 6]);
@@ -197,7 +302,8 @@ fn fishaudio_dac_config_requires_model_weights() {
         "vocoder_config": {}
     });
 
-    let error = NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(&tts_config, Path::new("."))
+    let parsed: TtsConfig = serde_json::from_value(tts_config).expect("parse");
+    let error = NanoCodecFsqRuntimeConfig::from_tts_config_and_model_path(&parsed, Path::new("."))
         .expect_err("fishaudio runtime must require exported model.safetensors");
     match error {
         AudioError::Runtime(message) => {
@@ -565,12 +671,12 @@ fn fishaudio_quantizer_decode_gpu_matches_cpu_reference_small_graph() {
         0, 4, 3, 2,
     ];
 
-    let expected = graph
-        .decode_quantizer_to_nsc_reference(&tokens, &lengths, batch_size, graph.total_codebooks, frames)
-        .expect("cpu decode");
-    let actual = graph
-        .decode_quantizer_to_nsc(&tokens, &lengths, batch_size, graph.total_codebooks, frames)
-        .expect("gpu decode");
+    let expected =
+        decode_quantizer_to_nsc_reference(&graph, &tokens, &lengths, batch_size, graph.total_codebooks, frames)
+            .expect("cpu decode");
+    let actual =
+        decode_quantizer_to_nsc_gpu(&graph, &tokens, &lengths, batch_size, graph.total_codebooks, frames)
+            .expect("gpu decode");
 
     assert_eq!(actual.len(), expected.len());
     for (index, (&exp, &got)) in expected.iter().zip(actual.iter()).enumerate() {

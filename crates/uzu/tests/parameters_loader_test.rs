@@ -20,7 +20,7 @@ fn test_parameter_loader_basic() {
     let file = std::fs::File::open(&weights_path).expect("Weights file not found; run download script");
 
     let loader = ParameterLoader::new(&file, context.as_ref()).expect("create loader");
-    let embeddings = loader.get("embedding.weights").expect("weights embeddings");
+    let embeddings = loader.tree().leaf_array("embedding.weights").expect("weights embeddings");
     let view = embeddings.as_view::<bf16>();
     assert!(is_close!(view[[5usize, 3usize]], bf16::from_f32(-0.01819)));
 

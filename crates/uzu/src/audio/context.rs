@@ -36,7 +36,7 @@ impl AudioGenerationContext {
         )?)
     }
 
-    pub fn with_runtime(runtime: NanoCodecFsqRuntime) -> AudioResult<Self> {
+    fn with_runtime(runtime: NanoCodecFsqRuntime) -> AudioResult<Self> {
         let codec_cardinality = usize::try_from(runtime.config().codec_cardinality())
             .map_err(|_| super::AudioError::Runtime("audio codec cardinality exceeds usize".to_string()))?;
         Ok(Self {
@@ -50,10 +50,6 @@ impl AudioGenerationContext {
 
     pub fn runtime(&self) -> &NanoCodecFsqRuntime {
         self.runtime.as_ref()
-    }
-
-    pub fn runtime_rc(&self) -> Rc<NanoCodecFsqRuntime> {
-        Rc::clone(&self.runtime)
     }
 
     pub fn codec_cardinality(&self) -> usize {

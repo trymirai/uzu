@@ -6,6 +6,7 @@ use crate::{
         cpu::Cpu,
     },
     parameters::{ParameterLoader, ParameterTree},
+    utils::array_io::read_array_to_f32_vec,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -15,13 +16,6 @@ enum TransposeConvWeightLayout {
 
 type AudioParameterContext = <Cpu as Backend>::Context;
 type AudioParameterTree<'loader> = ParameterTree<'loader, AudioParameterContext>;
-
-fn parameter_tree_path(
-    tree: &AudioParameterTree<'_>,
-    name: &str,
-) -> String {
-    tree.path_prefix().map_or_else(|| name.to_string(), |prefix| format!("{prefix}.{name}"))
-}
 
 fn map_parameter_error(
     err: crate::parameters::ParameterLoaderError<<AudioParameterContext as Context>::Backend>,
@@ -40,20 +34,18 @@ fn read_tensor_f32(
     tree: &AudioParameterTree<'_>,
     name: &str,
 ) -> AudioResult<(Box<[usize]>, Vec<f32>)> {
-    tree.leaf(name)
-        .map_err(map_parameter_error)?
-        .read_f32_tensor()
-        .map_err(map_parameter_error)
+    let array = tree.leaf_array(name).map_err(map_parameter_error)?;
+    let shape = array.shape().iter().copied().collect::<Vec<_>>().into_boxed_slice();
+    Ok((shape, read_array_to_f32_vec(&array)?))
 }
 
 fn leaf_vector_f32(
     tree: &AudioParameterTree<'_>,
     name: &str,
 ) -> AudioResult<Vec<f32>> {
-    let key = parameter_tree_path(tree, name);
     let (shape, values) = read_tensor_f32(tree, name)?;
     if shape.len() != 1 {
-        return Err(AudioError::Runtime(format!("expected rank-1 tensor for '{key}', got shape {shape:?}")));
+        return Err(AudioError::Runtime(format!("expected rank-1 tensor for '{name}', got shape {shape:?}")));
     }
     Ok(values)
 }
@@ -62,10 +54,9 @@ fn leaf_tensor_3(
     tree: &AudioParameterTree<'_>,
     name: &str,
 ) -> AudioResult<Tensor3Json> {
-    let key = parameter_tree_path(tree, name);
     let (shape, values) = read_tensor_f32(tree, name)?;
     if shape.len() != 3 {
-        return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{key}', got shape {shape:?}")));
+        return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{name}', got shape {shape:?}")));
     }
     Ok(Tensor3Json {
         shape: [shape[0], shape[1], shape[2]],
@@ -79,14 +70,13 @@ fn leaf_matrix_f32(
     expected_rows: usize,
     expected_cols: usize,
 ) -> AudioResult<Vec<f32>> {
-    let key = parameter_tree_path(tree, name);
     let (shape, values) = read_tensor_f32(tree, name)?;
     if shape.len() != 2 {
-        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
+        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{name}', got shape {shape:?}")));
     }
     if shape[0] != expected_rows || shape[1] != expected_cols {
         return Err(AudioError::Runtime(format!(
-            "tensor '{key}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {shape:?}"
+            "tensor '{name}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {shape:?}"
         )));
     }
     Ok(values)
@@ -96,10 +86,9 @@ fn leaf_matrix_f32_any(
     tree: &AudioParameterTree<'_>,
     name: &str,
 ) -> AudioResult<([usize; 2], Vec<f32>)> {
-    let key = parameter_tree_path(tree, name);
     let (shape, values) = read_tensor_f32(tree, name)?;
     if shape.len() != 2 {
-        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{key}', got shape {shape:?}")));
+        return Err(AudioError::Runtime(format!("expected rank-2 tensor for '{name}', got shape {shape:?}")));
     }
     Ok(([shape[0], shape[1]], values))
 }
@@ -369,18 +358,16 @@ fn read_conv1d_layer(
     dilation: usize,
     groups: usize,
 ) -> AudioResult<StructuredAudioConv1dLayer> {
-    let weight_key = parameter_tree_path(tree, "weights");
     let weight = leaf_tensor_3(tree, "weights")?;
     let shape = weight.shape;
     let values = weight.values;
     if shape.len() != 3 {
-        return Err(AudioError::Runtime(format!("expected rank-3 tensor for '{weight_key}', got shape {shape:?}")));
+        return Err(AudioError::Runtime(format!("expected rank-3 tensor for 'weights', got shape {shape:?}")));
     }
-    let bias_key = parameter_tree_path(tree, "biases");
     let bias = leaf_vector_f32(tree, "biases")?;
     if bias.len() != shape[0] {
         return Err(AudioError::Runtime(format!(
-            "bias shape mismatch for '{bias_key}': expected {}, got {}",
+            "bias shape mismatch for 'biases': expected {}, got {}",
             shape[0],
             bias.len()
         )));
@@ -390,7 +377,7 @@ fn read_conv1d_layer(
     }
     if shape[0] % groups != 0 {
         return Err(AudioError::Runtime(format!(
-            "invalid grouped conv weights for '{weight_key}': out_channels {} not divisible by groups {groups}",
+            "invalid grouped conv weights for 'weights': out_channels {} not divisible by groups {groups}",
             shape[0]
         )));
     }
@@ -420,8 +407,7 @@ fn read_conv_transpose1d_layer(
     let out_channels = weight.shape[0];
     if bias.len() != out_channels {
         return Err(AudioError::Runtime(format!(
-            "transpose conv bias mismatch for '{}': expected {out_channels}, got {}",
-            parameter_tree_path(tree, "biases"),
+            "transpose conv bias mismatch for 'biases': expected {out_channels}, got {}",
             bias.len()
         )));
     }
@@ -471,11 +457,10 @@ pub(super) fn read_norm_layer(
     if let Some(biases) = &biases {
         if biases.len() != scales.len() {
             return Err(AudioError::Runtime(format!(
-            "norm scale/bias length mismatch at '{}': {} vs {}",
-            parameter_tree_path(tree, "scales"),
-            scales.len(),
-            biases.len()
-        )));
+                "norm scale/bias length mismatch at 'scales': {} vs {}",
+                scales.len(),
+                biases.len()
+            )));
         }
     }
     Ok(StructuredAudioNormLayer {
@@ -495,8 +480,7 @@ fn read_convnext_layer(
     let depthwise_bias = leaf_vector_f32(&depthwise_tree, "biases")?;
     if depthwise_weight.shape[1] != 1 {
         return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise weight in_channels_per_group must be 1 at {}, got {}",
-            parameter_tree_path(&depthwise_tree, "weights"),
+            "ConvNeXt depthwise weight in_channels_per_group must be 1 at 'weights', got {}",
             depthwise_weight.shape[1]
         )));
     }
@@ -511,8 +495,7 @@ fn read_convnext_layer(
     };
     if depthwise_conv.bias.len() != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise bias mismatch at {}: expected {}, got {}",
-            parameter_tree_path(&depthwise_tree, "biases"),
+            "ConvNeXt depthwise bias mismatch at 'biases': expected {}, got {}",
             depthwise_conv.cout,
             depthwise_conv.bias.len()
         )));
@@ -522,10 +505,9 @@ fn read_convnext_layer(
     }
     if depthwise_conv.cin != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise conv expects cin==cout, got {} vs {} at {}",
+            "ConvNeXt depthwise conv expects cin==cout, got {} vs {} at 'weights'",
             depthwise_conv.cin,
             depthwise_conv.cout,
-            parameter_tree_path(&depthwise_tree, "weights")
         )));
     }
 
@@ -537,8 +519,7 @@ fn read_convnext_layer(
     )?;
     if norm.scales.len() != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
-            "ConvNeXt norm channels mismatch at {}: expected {}, got {}",
-            parameter_tree_path(tree, "norm"),
+            "ConvNeXt norm channels mismatch at 'norm': expected {}, got {}",
             depthwise_conv.cout,
             norm.scales.len()
         )));
@@ -549,8 +530,7 @@ fn read_convnext_layer(
     let pwconv1_bias = leaf_vector_f32(&pwconv1_tree, "biases")?;
     if pwconv1_in != depthwise_conv.cout || pwconv1_out != pwconv1_bias.len() {
         return Err(AudioError::Runtime(format!(
-            "ConvNeXt pwconv1 shape mismatch at {}: weight [{}, {}], bias {}",
-            parameter_tree_path(&pwconv1_tree, "weights"),
+            "ConvNeXt pwconv1 shape mismatch at 'weights': weight [{}, {}], bias {}",
             pwconv1_out,
             pwconv1_in,
             pwconv1_bias.len()
@@ -562,8 +542,7 @@ fn read_convnext_layer(
     let pwconv2_bias = leaf_vector_f32(&pwconv2_tree, "biases")?;
     if pwconv2_bias.len() != depthwise_conv.cout {
         return Err(AudioError::Runtime(format!(
-            "ConvNeXt pwconv2 bias mismatch at {}: expected {}, got {}",
-            parameter_tree_path(&pwconv2_tree, "biases"),
+            "ConvNeXt pwconv2 bias mismatch at 'biases': expected {}, got {}",
             depthwise_conv.cout,
             pwconv2_bias.len()
         )));

@@ -165,7 +165,7 @@ fn get_output<
     let completed =
         command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
-    let gpu_elapsed_ms = completed.gpu_execution_time();
+    let gpu_elapsed_ms = completed.gpu_execution_time_ms().map(|ms| Duration::from_secs_f64(ms / 1000.0));
 
     (output_array.as_slice().to_vec(), host_elapsed_ms, gpu_elapsed_ms)
 }

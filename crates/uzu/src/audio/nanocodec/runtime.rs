@@ -189,11 +189,6 @@ fn build_runtime_config_from_nanocodec_audio_decoder(
     })
 }
 
-fn parse_tts_config_value(tts_config: &serde_json::Value) -> AudioResult<TtsConfig> {
-    serde_json::from_value(tts_config.clone())
-        .map_err(|err| AudioError::Runtime(format!("failed to parse TTS config: {err}")))
-}
-
 fn default_negative_slope() -> f32 {
     0.01
 }
@@ -242,10 +237,6 @@ impl NanoCodecFsqRuntimeConfig {
         }
     }
 
-    pub fn from_tts_config_value(tts_config: &serde_json::Value) -> AudioResult<Self> {
-        Self::from_tts_config(&parse_tts_config_value(tts_config)?)
-    }
-
     pub fn from_tts_config_and_model_path(
         tts_config: &TtsConfig,
         model_path: &Path,
@@ -273,13 +264,6 @@ impl NanoCodecFsqRuntimeConfig {
                 Ok(runtime)
             },
         }
-    }
-
-    pub fn from_tts_config_value_and_model_path(
-        tts_config: &serde_json::Value,
-        model_path: &Path,
-    ) -> AudioResult<Self> {
-        Self::from_tts_config_and_model_path(&parse_tts_config_value(tts_config)?, model_path)
     }
 
     fn from_runtime_config_json(parsed: RuntimeConfigJson) -> AudioResult<Self> {
@@ -430,33 +414,11 @@ impl NanoCodecFsqRuntime {
         Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config(tts_config)?))
     }
 
-    pub fn from_tts_config_value(tts_config: &serde_json::Value) -> AudioResult<Self> {
-        Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_value(tts_config)?))
-    }
-
     pub fn from_tts_config_and_model_path(
         tts_config: &TtsConfig,
         model_path: &Path,
     ) -> AudioResult<Self> {
         Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_and_model_path(tts_config, model_path)?))
-    }
-
-    pub fn from_tts_config_value_and_model_path(
-        tts_config: &serde_json::Value,
-        model_path: &Path,
-    ) -> AudioResult<Self> {
-        Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(tts_config, model_path)?))
-    }
-
-    pub fn from_tts_config_value_and_model_path_with_options(
-        tts_config: &serde_json::Value,
-        model_path: &Path,
-        options: NanoCodecFsqRuntimeOptions,
-    ) -> AudioResult<Self> {
-        Ok(Self::new_with_options(
-            NanoCodecFsqRuntimeConfig::from_tts_config_value_and_model_path(tts_config, model_path)?,
-            options,
-        ))
     }
 
     pub fn from_tts_config_and_model_path_with_options(

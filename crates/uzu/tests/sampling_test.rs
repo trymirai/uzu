@@ -186,14 +186,14 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    match completed.gpu_execution_time() {
-        Some(gpu_time) => {
+    match completed.gpu_execution_time_ms() {
+        Some(gpu_time_ms) => {
             println!(
                 "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
                 BATCH,
                 VOCAB,
                 strategy,
-                gpu_time.as_secs_f64() * 1e3,
+                gpu_time_ms,
                 host_elapsed_ms
             );
         },
@@ -545,13 +545,13 @@ fn perf_categorical_128k_vocab() {
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    match completed.gpu_execution_time() {
-        Some(gpu_time) => {
+    match completed.gpu_execution_time_ms() {
+        Some(gpu_time_ms) => {
             println!(
                 "Categorical sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
                 BATCH,
                 VOCAB,
-                gpu_time.as_secs_f64() * 1e3,
+                gpu_time_ms,
                 host_elapsed_ms
             );
         },
