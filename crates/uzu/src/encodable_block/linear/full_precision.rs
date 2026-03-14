@@ -11,7 +11,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, CommandBuffer,
-        kernel::matmul::{FullPrecisionMatmulArguments, MatmulKernel, MatmulError, MatmulKernels},
+        kernel::matmul::{MatmulArguments, MatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -140,7 +140,7 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
         self.kernel.borrow_mut().encode(
             state.context(),
             command_buffer,
-            FullPrecisionMatmulArguments {
+            MatmulArguments {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.weights_buffer.borrow().deref(),

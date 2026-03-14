@@ -1,7 +1,7 @@
 use std::{cell::RefCell, path::Path, rc::Rc};
 
 use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Context, DeviceCapabilities};
+use crate::backends::common::{Context, DeviceCapabilities, DeviceType};
 
 pub struct CpuDeviceCapabilities;
 

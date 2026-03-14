@@ -171,9 +171,9 @@ pub fn matmul_gemm<T: ArrayElement + Float>(
             p.batch_stride_a as usize,
             p.batch_stride_b as usize,
             p.batch_stride_d as usize,
-            p.lda as usize,
-            p.ldb as usize,
-            p.ldd as usize,
+            p.leading_dim_a as usize,
+            p.leading_dim_b as usize,
+            p.leading_dim_d as usize,
         );
     }
 }

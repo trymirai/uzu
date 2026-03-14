@@ -11,7 +11,7 @@ use crate::{
         Backend, CommandBuffer, Kernels,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{FullPrecisionMatmulArguments, MatmulKernel, MatmulError, MatmulKernels},
+            matmul::{MatmulArguments, MatmulKernel, MatmulError, MatmulKernels},
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable, QuantizedMatmulType,
@@ -556,7 +556,7 @@ impl<B: Backend> Embedding<B> {
                 readout.borrow_mut().encode(
                     state.context(),
                     command_buffer,
-                    FullPrecisionMatmulArguments {
+                    MatmulArguments {
                         a: input,
                         a_offset: input_offset,
                         b: weights,

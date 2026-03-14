@@ -1,8 +1,8 @@
-mod full_precision;
+mod matmul;
 pub mod matmul_arguments;
 
-pub use full_precision::{FullPrecisionMatmulArguments, MatmulKernel};
-pub use matmul_arguments::MatmulArguments;
+pub use matmul::{MatmulArguments, MatmulKernel};
+pub use matmul_arguments::QuantMatmulArguments;
 use thiserror::Error;
 
 use super::Kernels;

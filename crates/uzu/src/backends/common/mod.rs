@@ -13,7 +13,7 @@ pub use command_buffer::{
     CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
     CommandBufferPending,
 };
-pub use context::{Context, DeviceCapabilities};
+pub use context::{Context, DeviceCapabilities, DeviceType};
 pub use event::Event;
 pub use grid_size::GridSize;
 pub use kernel::Kernels;

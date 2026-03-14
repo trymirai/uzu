@@ -15,7 +15,7 @@ use super::{
     metal_extensions::{DeviceGeneration, GpuTier, LibraryPipelineExtensions},
 };
 use crate::{
-    backends::{common::Context, metal::command_buffer::MetalCommandBufferInitial},
+    backends::{common::{Context, DeviceType}, metal::command_buffer::MetalCommandBufferInitial},
     utils::ModelSize,
 };
 
@@ -107,7 +107,12 @@ impl Context for MetalContext {
 
     /// Returns the device class for performance tuning.
     fn device_type(&self) -> DeviceType {
-        self.architecture.device_class
+        match self.device_capabilities.tier {
+            GpuTier::Phone => DeviceType::Phone,
+            GpuTier::Base => DeviceType::Integrated,
+            GpuTier::Max | GpuTier::Ultra => DeviceType::Desktop,
+            GpuTier::Unknown(character) => DeviceType::Unknown(character),
+        }
     }
 
     fn debug_active(&self) -> bool {

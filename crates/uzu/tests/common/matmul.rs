@@ -6,7 +6,7 @@ use serde::Serialize;
 use uzu::{
     DataType,
     backends::{
-        common::kernel::matmul::FullPrecisionMatmulArguments,
+        common::kernel::matmul::MatmulArguments,
         metal::{Metal, MetalContext},
     },
 };
@@ -96,8 +96,8 @@ pub fn make_full_precision_arguments<'a>(
     b_buffer: &'a Retained<ProtocolObject<dyn MTLBuffer>>,
     output_buffer: &'a mut Retained<ProtocolObject<dyn MTLBuffer>>,
     shape: &TestShape,
-) -> FullPrecisionMatmulArguments<'a, Metal> {
-    FullPrecisionMatmulArguments {
+) -> MatmulArguments<'a, Metal> {
+    MatmulArguments {
         a: a_buffer,
         a_offset: 0,
         b: b_buffer,

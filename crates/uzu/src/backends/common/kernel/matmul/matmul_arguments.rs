@@ -1,7 +1,7 @@
 use crate::backends::common::Backend;
 
 #[derive(Debug)]
-pub struct MatmulArguments<'a, B: Backend> {
+pub struct QuantMatmulArguments<'a, B: Backend> {
     pub a: &'a B::Buffer,
     /// Byte offset into `a` (used for slicing the batch dimension).
     pub a_offset: u64,

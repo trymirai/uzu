@@ -13,7 +13,7 @@ use crate::{
             kernel::{
                 MatmulGemmKernel, MatmulGemmMppKernel, MatmulGemvKernel, TensorAddBiasKernel,
                 matmul::{
-                    FullPrecisionMatmulArguments,
+                    MatmulArguments,
                     MatmulKernel as MatmulKernelTrait,
                     MatmulError,
                 },
@@ -40,7 +40,7 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         command_buffer: &mut <crate::backends::metal::command_buffer::MetalCommandBuffer as CommandBuffer>::Encoding,
-        arguments: FullPrecisionMatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal>,
     ) {
         let batch = arguments.batch as i32;
         let input_dim = arguments.input_dim as i32;
@@ -83,6 +83,18 @@ impl MatmulMetalKernel {
 
         let bias_is_fused = apply_output_scale_and_accumulate && arguments.bias.is_some();
 
+        let matrix_leading_dimension = input_dim;
+        let (output_scale, output_accumulate_scale) = if apply_output_scale_and_accumulate {
+            (1.0f32, 1.0f32)
+        } else {
+            (1.0f32, 0.0f32)
+        };
+        let batch_shape = [1i32];
+        let vector_batch_stride = [0i32];
+        let matrix_batch_stride = [0i32];
+        let output_source_batch_stride = [0i32];
+        let output_source_stride = 1i32;
+
         kernel.encode(
             (matrix, matrix_offset),
             (input_vector, input_vector_offset),
@@ -90,6 +102,14 @@ impl MatmulMetalKernel {
             &mut *arguments.output,
             input_dim,
             effective_output_dimension,
+            matrix_leading_dimension,
+            output_scale,
+            output_accumulate_scale,
+            &batch_shape,
+            &vector_batch_stride,
+            &matrix_batch_stride,
+            &output_source_batch_stride,
+            output_source_stride,
             m,
             specialization.output_rows_per_threadgroup() as i32,
             command_buffer,
@@ -104,7 +124,7 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         command_buffer: &mut <crate::backends::metal::command_buffer::MetalCommandBuffer as CommandBuffer>::Encoding,
-        arguments: FullPrecisionMatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal>,
     ) {
         let m = arguments.batch as i32;
         let n = arguments.output_dim as i32;
@@ -141,7 +161,7 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         command_buffer: &mut <crate::backends::metal::command_buffer::MetalCommandBuffer as CommandBuffer>::Encoding,
-        arguments: FullPrecisionMatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal>,
     ) {
         let m = arguments.batch as i32;
         let n = arguments.output_dim as i32;
@@ -352,7 +372,7 @@ impl MatmulKernelTrait for MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         command_buffer: &mut <crate::backends::metal::command_buffer::MetalCommandBuffer as CommandBuffer>::Encoding,
-        arguments: FullPrecisionMatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal>,
     ) {
         let m = arguments.batch as i32;
         let n = arguments.output_dim as i32;
