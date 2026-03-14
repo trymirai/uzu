@@ -7,7 +7,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Bitmask) (
+PUBLIC KERNEL(Bitmask) (
     device const T* logits OPTIONAL(!in_place),
     device const uint32_t* bitmask,
     device T* processed_logits,

@@ -4,7 +4,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MlpGateActMul) (
+PUBLIC KERNEL(MlpGateActMul) (
     const device T* fused_up,
     device T* hidden,
     const constant int& h,

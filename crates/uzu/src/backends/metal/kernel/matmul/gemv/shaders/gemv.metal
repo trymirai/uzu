@@ -12,7 +12,7 @@ using namespace metal;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MatmulGemv)(
+PUBLIC KERNEL(MatmulGemv)(
     const device T* matrix,
     const device T* input_vector,
     const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),

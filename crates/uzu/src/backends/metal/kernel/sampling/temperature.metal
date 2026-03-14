@@ -6,7 +6,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Temperature) (
+PUBLIC KERNEL(Temperature) (
     device const T* logits OPTIONAL(!in_place),
     device T* processed_logits,
     constant uint& batch_size,

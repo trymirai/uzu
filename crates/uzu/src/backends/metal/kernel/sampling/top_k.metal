@@ -7,7 +7,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(TopK)(
+PUBLIC KERNEL(TopK)(
     device const T* logits OPTIONAL(!in_place),
     device T* processed_logits,
     threadgroup float shared_reduce_buffer[BLOCK_SIZE_IN_SIMDS],

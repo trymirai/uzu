@@ -5,7 +5,7 @@
 // hidden_dim]
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(PoolingCls) (
+PUBLIC KERNEL(PoolingCls) (
     const device T* input,
     device T* output,
     constant uint& seq_len,
@@ -22,7 +22,7 @@ KERNEL(PoolingCls) (
 // hidden_dim]
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(PoolingMean) (
+PUBLIC KERNEL(PoolingMean) (
     const device T* input,
     device T* output,
     constant uint& seq_len,

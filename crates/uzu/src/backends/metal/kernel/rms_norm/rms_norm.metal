@@ -12,7 +12,7 @@ VARIANTS(InputT, float, half, bfloat)
 VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
-KERNEL(RMSNorm)(
+PUBLIC KERNEL(RMSNorm)(
     const device InputT* input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* output,

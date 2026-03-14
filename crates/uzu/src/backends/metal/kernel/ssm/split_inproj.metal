@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(SplitInProj)(
+PUBLIC KERNEL(SplitInProj)(
     device const T* input,
     device T* conv_out,
     device T* z_out,

@@ -10,7 +10,7 @@ constant float NEG_INF = -INFINITY;
 
 template <typename ScalarT>
 VARIANTS(ScalarT, half, bfloat, float)
-KERNEL(MoeRouterTopK)(
+PUBLIC KERNEL(MoeRouterTopK)(
     const device ScalarT* input,
     const device ScalarT* weight,
     const device ScalarT* bias,
