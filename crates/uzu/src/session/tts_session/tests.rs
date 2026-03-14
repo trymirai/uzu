@@ -6,19 +6,6 @@ use super::{
     generate_stub_tokens, load_stub_seed, maybe_flush_pending_stream_chunk, normalize_rendered_prompt,
     semantic_token_to_code,
 };
-use crate::{
-    DataType,
-    array::ArrayContextExt,
-    audio::{AudioPcmBatch, AudioTokenPacking},
-    backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
-            kernel::RepetitionPenaltyKernel,
-        },
-        metal::Metal,
-    },
-};
 use crate::config::{TtsMessageProcessorConfig, TtsModelConfig};
 use crate::session::config::{
     TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsVocoderStreamingMode,
@@ -26,6 +13,18 @@ use crate::session::config::{
 use crate::session::parameter::{ConfigResolvableValue, SamplingMethod};
 use crate::session::tts_session::AudioDecodeStreamingMode;
 use crate::session::types::{Error, Message};
+use crate::{
+    DataType,
+    array::ArrayContextExt,
+    audio::{AudioPcmBatch, AudioTokenPacking},
+    backends::{
+        common::{
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            Context, Kernels, kernel::RepetitionPenaltyKernel,
+        },
+        metal::Metal,
+    },
+};
 
 #[test]
 fn missing_seed_file_uses_default_path() {
@@ -224,8 +223,7 @@ fn repetition_penalty_kernel_adjusts_selected_logits() {
     previous_tokens.as_slice_mut::<u32>().copy_from_slice(&previous_tokens_values);
 
     let previous_counts_values: [u32; 2] = [2, 2];
-    let mut previous_counts =
-        context.create_array(&[batch_size], DataType::U32, "repetition_penalty_counts");
+    let mut previous_counts = context.create_array(&[batch_size], DataType::U32, "repetition_penalty_counts");
     previous_counts.as_slice_mut::<u32>().copy_from_slice(&previous_counts_values);
 
     let mut command_buffer = context.create_command_buffer().expect("command buffer").start_encoding();
@@ -247,11 +245,7 @@ fn repetition_penalty_kernel_adjusts_selected_logits() {
             &mut command_buffer,
         );
     }
-    command_buffer
-        .end_encoding()
-        .submit()
-        .wait_until_completed()
-        .expect("command buffer completed");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("command buffer completed");
 
     let adjusted = logits.as_slice::<f32>();
     let expected = vec![
@@ -423,17 +417,14 @@ fn pending_stream_chunk_timing_excludes_idle_overlap_between_submit_and_flush() 
             self.pcm.take().ok_or(Error::GenerateFailed)
         }
 
-        fn resolve_with_decode_duration(
-            mut self: Box<Self>
-        ) -> Result<(AudioPcmBatch, std::time::Duration), Error> {
+        fn resolve_with_decode_duration(mut self: Box<Self>) -> Result<(AudioPcmBatch, std::time::Duration), Error> {
             let pcm = self.pcm.take().ok_or(Error::GenerateFailed)?;
             Ok((pcm, self.resolve_duration))
         }
     }
 
-    let pcm =
-        AudioPcmBatch::new(vec![0.0_f32; 2_400].into_boxed_slice(), 24_000, 1, vec![2_400].into_boxed_slice())
-            .expect("pcm");
+    let pcm = AudioPcmBatch::new(vec![0.0_f32; 2_400].into_boxed_slice(), 24_000, 1, vec![2_400].into_boxed_slice())
+        .expect("pcm");
     let mut pending_chunk = Some(PendingStreamingChunk {
         submission_decode_duration: std::time::Duration::from_millis(11),
         ready_frames: 4,

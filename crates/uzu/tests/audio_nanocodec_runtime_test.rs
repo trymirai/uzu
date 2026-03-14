@@ -1,135 +1,17 @@
 #![cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 
+mod common;
+
+use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 use uzu::audio::{
     AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, NanoCodecFsqRuntime,
-    NanoCodecFsqRuntimeConfig,
-    nanocodec::fsq::{compute_dim_base_index, fsq_decode_reference, fsq_encode_reference},
+    NanoCodecFsqRuntimeConfig, nanocodec::fsq::compute_dim_base_index,
 };
 
 fn create_runtime(output_packing: AudioTokenPacking) -> NanoCodecFsqRuntime {
     let config = NanoCodecFsqRuntimeConfig::new(24_000, 2, vec![8, 6].into_boxed_slice(), 1e-3, output_packing)
         .expect("valid runtime config");
     NanoCodecFsqRuntime::new(config)
-}
-
-fn create_runtime_with_decoder() -> NanoCodecFsqRuntime {
-    let tts_config = serde_json::json!({
-        "audio_codec": {
-            "type": "nanocodec_fsq",
-            "sample_rate": 24000,
-            "num_groups": 2,
-            "num_levels_per_group": [8, 6],
-            "output_packing": "codebook_major",
-            "decoder": {
-                "pre_conv": {
-                    "weight": {
-                        "shape": [2, 4, 1],
-                        "values": [
-                            1.0, 0.0, 0.0, 0.0,
-                            0.0, 1.0, 0.0, 0.0
-                        ]
-                    },
-                    "bias": [0.0, 0.0]
-                },
-                "stages": [{
-                    "activation_alpha": [1.0],
-                    "upsample_conv": {
-                        "weight": {
-                            "shape": [2, 1, 4],
-                            "values": [
-                                1.0, 0.0, 0.0, 0.0,
-                                1.0, 0.0, 0.0, 0.0
-                            ]
-                        },
-                        "bias": [0.0, 0.0],
-                        "stride": 2,
-                        "groups": 2
-                    }
-                }],
-                "post_activation_alpha": [1.0],
-                "post_conv": {
-                    "weight": {
-                        "shape": [1, 2, 1],
-                        "values": [1.0, 0.0]
-                    },
-                    "bias": [0.0]
-                }
-            }
-        }
-    });
-
-    NanoCodecFsqRuntime::from_tts_config_value(&tts_config).expect("runtime with decoder")
-}
-
-fn create_runtime_with_residual_decoder() -> NanoCodecFsqRuntime {
-    let tts_config = serde_json::json!({
-        "audio_codec": {
-            "type": "nanocodec_fsq",
-            "sample_rate": 24000,
-            "num_groups": 2,
-            "num_levels_per_group": [8, 6],
-            "output_packing": "codebook_major",
-            "decoder": {
-                "pre_conv": {
-                    "weight": {
-                        "shape": [2, 4, 1],
-                        "values": [
-                            1.0, 0.0, 0.0, 0.0,
-                            0.0, 1.0, 0.0, 0.0
-                        ]
-                    },
-                    "bias": [0.0, 0.0]
-                },
-                "stages": [{
-                    "activation_alpha": [1.0],
-                    "upsample_conv": {
-                        "weight": {
-                            "shape": [2, 1, 4],
-                            "values": [
-                                1.0, 0.0, 0.0, 0.0,
-                                1.0, 0.0, 0.0, 0.0
-                            ]
-                        },
-                        "bias": [0.0, 0.0],
-                        "stride": 2,
-                        "groups": 2
-                    },
-                    "res_layer": {
-                        "res_blocks": [{
-                            "res_blocks": [{
-                                "input_activation_alpha": [1.0],
-                                "input_conv": {
-                                    "weight": {
-                                        "shape": [2, 2, 1],
-                                        "values": [0.0, 0.0, 0.0, 0.0]
-                                    },
-                                    "bias": [0.0, 0.0]
-                                },
-                                "skip_activation_alpha": [1.0],
-                                "skip_conv": {
-                                    "weight": {
-                                        "shape": [2, 2, 1],
-                                        "values": [0.0, 0.0, 0.0, 0.0]
-                                    },
-                                    "bias": [0.5, 0.0]
-                                }
-                            }]
-                        }]
-                    }
-                }],
-                "post_activation_alpha": [1.0],
-                "post_conv": {
-                    "weight": {
-                        "shape": [1, 2, 1],
-                        "values": [1.0, 0.0]
-                    },
-                    "bias": [0.0]
-                }
-            }
-        }
-    });
-
-    NanoCodecFsqRuntime::from_tts_config_value(&tts_config).expect("runtime with residual decoder")
 }
 
 fn make_pcm(
@@ -301,67 +183,4 @@ fn nanocodec_runtime_encode_rejects_channel_mismatch() {
         },
         other => panic!("unexpected error variant: {other:?}"),
     }
-}
-
-#[test]
-fn nanocodec_runtime_with_decoder_scales_decode_lengths_and_channels() {
-    let runtime = create_runtime_with_decoder();
-    let tokens = AudioTokenGrid::new(
-        vec![0, 7, 11, 3, 5, 9].into_boxed_slice(),
-        1,
-        runtime.config().num_groups(),
-        3,
-        vec![2usize].into_boxed_slice(),
-        AudioTokenPacking::CodebookMajor,
-    )
-    .expect("token grid");
-
-    let decoded = runtime.decode(&tokens).expect("decode");
-    assert_eq!(decoded.channels(), 1);
-    assert_eq!(decoded.lengths(), &[4usize]);
-    assert_eq!(decoded.sample_rate(), 24_000);
-}
-
-#[test]
-fn nanocodec_runtime_with_decoder_rejects_encode() {
-    let runtime = create_runtime_with_decoder();
-    let pcm = make_pcm(1, &[2]);
-
-    let error = runtime.encode(&pcm).expect_err("encode should fail");
-    match error {
-        AudioError::Runtime(message) => {
-            assert!(message.contains("not supported"), "unexpected message: {message}");
-        },
-        other => panic!("unexpected error variant: {other:?}"),
-    }
-}
-
-#[test]
-fn nanocodec_runtime_with_residual_decoder_changes_waveform() {
-    let baseline_runtime = create_runtime_with_decoder();
-    let residual_runtime = create_runtime_with_residual_decoder();
-    let tokens = AudioTokenGrid::new(
-        vec![0, 7, 11, 3, 5, 9].into_boxed_slice(),
-        1,
-        baseline_runtime.config().num_groups(),
-        3,
-        vec![2usize].into_boxed_slice(),
-        AudioTokenPacking::CodebookMajor,
-    )
-    .expect("token grid");
-
-    let baseline = baseline_runtime.decode(&tokens).expect("baseline decode");
-    let residual = residual_runtime.decode(&tokens).expect("residual decode");
-
-    assert_eq!(baseline.sample_rate(), residual.sample_rate());
-    assert_eq!(baseline.channels(), residual.channels());
-    assert_eq!(baseline.lengths(), residual.lengths());
-
-    let max_delta = baseline
-        .samples()
-        .iter()
-        .zip(residual.samples().iter())
-        .map(|(lhs, rhs)| (lhs - rhs).abs())
-        .fold(0.0_f32, f32::max);
-    assert!(max_delta > 1e-5, "residual decoder should alter waveform");
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::TtsMessageProcessorConfig;
+use crate::utils::array_io::write_f32_slice_into_array;
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 
@@ -74,14 +75,16 @@ impl FishAudioGpuPath {
             data_type,
             "tts_codebook_embeddings_gpu",
         );
-        write_f32_slice_into_array(&mut codebook_embeddings_gpu, &codebook_embeddings.values)?;
+        write_f32_slice_into_array(&mut codebook_embeddings_gpu, &codebook_embeddings.values)
+            .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid FishAudio codebook embeddings: {err}")))?;
 
         let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
 
         let projection_weights = if let Some(projection) = fast_model_projection {
             let mut weights =
                 context.create_array(&[fast_model_dim, slow_model_dim], data_type, "tts_fast_projection_weights");
-            write_f32_slice_into_array(&mut weights, &projection.values)?;
+            write_f32_slice_into_array(&mut weights, &projection.values)
+                .map_err(|err| Error::InvalidTtsModelConfig(format!("invalid FishAudio fast projection: {err}")))?;
             Some(RefCell::new(weights))
         } else {
             None
@@ -129,12 +132,11 @@ fn validate_fishaudio_decoder_contract(
         )));
     }
 
-    let semantic_cardinality =
-        usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| {
-            Error::InvalidTtsModelConfig(format!(
-                "FishAudio semantic token range overflow: begin={semantic_token_begin_id}, end={semantic_token_end_id}"
-            ))
-        })?;
+    let semantic_cardinality = usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| {
+        Error::InvalidTtsModelConfig(format!(
+            "FishAudio semantic token range overflow: begin={semantic_token_begin_id}, end={semantic_token_end_id}"
+        ))
+    })?;
     if semantic_cardinality == 0 || semantic_cardinality != audio_semantic_cardinality {
         return Err(Error::InvalidTtsModelConfig(format!(
             "FishAudio semantic codec cardinality={semantic_cardinality} does not match audio semantic codec cardinality={audio_semantic_cardinality}"

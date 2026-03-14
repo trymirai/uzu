@@ -88,29 +88,38 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>) -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
-    let mut kernels_by_name: HashMap<Box<str>, Kernel> = HashMap::new();
+    let mut kernels: HashMap<Box<[Box<str>]>, Box<[Kernel]>> = HashMap::new();
 
     for backend_kernels in backends_kernels {
-        for (_file_path, file_kernels) in backend_kernels {
-            for kernel in file_kernels.into_vec() {
-                if let Some(cached_kernel) = kernels_by_name.get(kernel.name.as_ref()) {
-                    if cached_kernel != &kernel {
-                        bail!("{cached_kernel:?} != {kernel:?}");
-                    }
-                } else {
-                    kernels_by_name.insert(kernel.name.clone(), kernel);
+        for (file_path, file_kernels) in backend_kernels {
+            if let Some(cached_kernels) = kernels.get(&file_path) {
+                if cached_kernels != &file_kernels {
+                    bail!("{cached_kernels:?} != {file_kernels:?}");
                 }
+            } else {
+                kernels.insert(file_path, file_kernels);
             }
         }
     }
 
     let mut kernel_traits = Vec::new();
     let mut kernel_types = Vec::new();
+    let mut emitted_kernels_by_name: HashMap<Box<str>, Kernel> = HashMap::new();
 
-    for (_kernel_name, kernel) in kernels_by_name.into_iter().sorted_by_key(|(name, _kernel)| name.clone()) {
-        let (tr, ty) = traitgen(&kernel);
-        kernel_traits.push(tr);
-        kernel_types.push(ty);
+    for (_file_path, file_kernels) in kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::")) {
+        for kernel in file_kernels.into_vec() {
+            if let Some(cached_kernel) = emitted_kernels_by_name.get(kernel.name.as_ref()) {
+                if cached_kernel != &kernel {
+                    bail!("{cached_kernel:?} != {kernel:?}");
+                }
+                continue;
+            }
+
+            let (tr, ty) = traitgen(&kernel);
+            kernel_traits.push(tr);
+            kernel_types.push(ty);
+            emitted_kernels_by_name.insert(kernel.name.clone(), kernel);
+        }
     }
 
     let kernel_traits = quote! {

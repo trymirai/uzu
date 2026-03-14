@@ -1,5 +1,6 @@
-use super::*;
 use super::decoder_support::*;
+use super::*;
+use crate::backends::common::Buffer;
 
 pub(super) type MetalContext = <Metal as Backend>::Context;
 pub(super) type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
@@ -20,11 +21,11 @@ pub(super) struct TokenDecoderRunner {
     tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
     token_copy_sampled: <<Metal as Backend>::Kernels as Kernels>::TokenCopySampledKernel,
     token_copy_results: <<Metal as Backend>::Kernels as Kernels>::TokenCopyToResultsKernel,
-    async_chain_positions: Rc<RefCell<<Metal as Backend>::NativeBuffer>>,
-    async_chain_seeds: Rc<RefCell<<Metal as Backend>::NativeBuffer>>,
-    async_chain_results: Rc<RefCell<<Metal as Backend>::NativeBuffer>>,
-    async_chain_repetition_tokens: Rc<RefCell<<Metal as Backend>::NativeBuffer>>,
-    async_chain_repetition_counts: Rc<RefCell<<Metal as Backend>::NativeBuffer>>,
+    async_chain_positions: Rc<RefCell<<Metal as Backend>::Buffer>>,
+    async_chain_seeds: Rc<RefCell<<Metal as Backend>::Buffer>>,
+    async_chain_results: Rc<RefCell<<Metal as Backend>::Buffer>>,
+    async_chain_repetition_tokens: Rc<RefCell<<Metal as Backend>::Buffer>>,
+    async_chain_repetition_counts: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_capacity: usize,
     repetition_capacity: usize,
     repetition_tokens: ArrayCell<Metal>,
@@ -224,8 +225,8 @@ impl TokenDecoderRunner {
         &self,
         sampling: &TextSamplingState,
         count: u32,
-        previous_tokens: impl BufferArg<'tokens, <Metal as Backend>::NativeBuffer>,
-        previous_counts: impl BufferArg<'counts, <Metal as Backend>::NativeBuffer>,
+        previous_tokens: impl BufferArg<'tokens, <Metal as Backend>::Buffer>,
+        previous_counts: impl BufferArg<'counts, <Metal as Backend>::Buffer>,
         batch_size: u32,
         max_previous_tokens: u32,
     ) -> Result<(), Error> {
@@ -410,7 +411,11 @@ impl TokenDecoderRunner {
             self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
         ));
         for pass in 0..followup_count {
-            let token_ids = [if pass == 0 { first_token } else { 0 }];
+            let token_ids = [if pass == 0 {
+                first_token
+            } else {
+                0
+            }];
             let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
             let mut state = ForwardPassState::new_llm(
                 self.context.clone(),
@@ -898,14 +903,17 @@ impl TokenDecoderRunner {
         }
 
         self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
-            let main_input_buffer = main.buffer();
-            let main_input_buffer = main_input_buffer.borrow();
+            let main_input_buffer = {
+                let main_input_buffer = main.buffer();
+                let main_input_buffer = main_input_buffer.borrow();
+                (*main_input_buffer).clone()
+            };
             let bias_buffer = bias.buffer();
             let bias_buffer = bias_buffer.borrow();
             let main_output_buffer = main.buffer();
             let mut main_output_buffer = main_output_buffer.borrow_mut();
             self.tensor_add_scale.encode(
-                (&*main_input_buffer, main.offset()),
+                (&main_input_buffer, main.offset()),
                 &*bias_buffer,
                 (&mut *main_output_buffer, main.offset()),
                 model_dim_u32,
@@ -918,7 +926,8 @@ impl TokenDecoderRunner {
     }
 
     fn submit_and_wait_current_command_buffer(&mut self) -> Result<(), Error> {
-        let replacement = self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let replacement =
+            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
         let command_buffer = {
             let mut command_buffer = self.command_buffer.borrow_mut();
             std::mem::replace(command_buffer.deref_mut(), replacement)
@@ -948,34 +957,6 @@ fn read_sampled_token_from_sampling_output(state: &ForwardPassState<Metal>) -> R
     let tokens = output.as_slice::<u32>();
     let token = tokens.first().copied().ok_or(Error::GenerateFailed)?;
     Ok(u64::from(token))
-}
-
-pub(super) fn write_f32_slice_into_array(
-    array: &mut crate::array::Array<Metal>,
-    values: &[f32],
-) -> Result<(), Error> {
-    if array.num_elements() != values.len() {
-        return Err(Error::GenerateFailed);
-    }
-    match array.data_type() {
-        DataType::F32 => {
-            array.as_slice_mut::<f32>().copy_from_slice(values);
-            Ok(())
-        },
-        DataType::F16 => {
-            for (dst, &src) in array.as_slice_mut::<f16>().iter_mut().zip(values.iter()) {
-                *dst = f16::from_f32(src);
-            }
-            Ok(())
-        },
-        DataType::BF16 => {
-            for (dst, &src) in array.as_slice_mut::<bf16>().iter_mut().zip(values.iter()) {
-                *dst = bf16::from_f32(src);
-            }
-            Ok(())
-        },
-        _ => Err(Error::GenerateFailed),
-    }
 }
 
 impl MatrixF32 {

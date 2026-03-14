@@ -35,7 +35,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context as BackendContext, Kernels, NativeBuffer,
+            CommandBufferPending, Context as BackendContext, Kernels,
             kernel::{
                 BufferArg, EmbeddingRowsSumKernel, RepetitionPenaltyKernel, TensorAddScaleKernel, TensorCopyKernel,
                 TokenCopySampledKernel, TokenCopyToResultsKernel,
@@ -65,8 +65,8 @@ use crate::{
 };
 
 use backend_factory::load_tts_runtime;
-use decoder_support::*;
 use decoder_runtime::*;
+use decoder_support::*;
 
 const DEFAULT_STUB_SEED: u64 = 123;
 const DEFAULT_TTS_RANDOM_SEED: u64 = 123;

@@ -11,8 +11,8 @@ impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
 
     fn encode_copy_ranges(
         &self,
-        src: (&<Self::Backend as Backend>::NativeBuffer, usize),
-        dst: (&<Self::Backend as Backend>::NativeBuffer, usize),
+        src: (&<Self::Backend as Backend>::Buffer, usize),
+        dst: (&<Self::Backend as Backend>::Buffer, usize),
         size: usize,
     ) {
         let (src_buffer, src_offset) = src;
@@ -24,7 +24,7 @@ impl CopyEncoder for ProtocolObject<dyn MTLBlitCommandEncoder> {
 
     fn encode_fill(
         &self,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        dst: &<Self::Backend as Backend>::Buffer,
         range: Range<usize>,
         value: u8,
     ) {

@@ -5,6 +5,7 @@ use std::{collections::HashMap, path::PathBuf};
 use uzu::{VERSION, speculators::speculator::Speculator};
 
 pub mod assert;
+pub mod audio_nanocodec_fsq_reference;
 pub mod proptest;
 
 pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";

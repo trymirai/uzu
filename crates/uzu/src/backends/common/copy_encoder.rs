@@ -7,15 +7,15 @@ pub trait CopyEncoder {
 
     fn encode_copy_ranges(
         &self,
-        src: (&<Self::Backend as Backend>::NativeBuffer, usize),
-        dst: (&<Self::Backend as Backend>::NativeBuffer, usize),
+        src: (&<Self::Backend as Backend>::Buffer, usize),
+        dst: (&<Self::Backend as Backend>::Buffer, usize),
         size: usize,
     );
 
     fn encode_copy(
         &self,
-        src: &<Self::Backend as Backend>::NativeBuffer,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        src: &<Self::Backend as Backend>::Buffer,
+        dst: &<Self::Backend as Backend>::Buffer,
         size: usize,
     ) {
         self.encode_copy_ranges((src, 0), (dst, 0), size);
@@ -23,7 +23,7 @@ pub trait CopyEncoder {
 
     fn encode_fill(
         &self,
-        dst: &<Self::Backend as Backend>::NativeBuffer,
+        dst: &<Self::Backend as Backend>::Buffer,
         range: Range<usize>,
         value: u8,
     );

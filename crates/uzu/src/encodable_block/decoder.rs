@@ -53,9 +53,8 @@ impl<B: Backend> Decoder<B> {
         let decoder_weight_loader =
             root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
-        let embedding_weight_loader = root_weight_loader
-            .subtree(embedding_subtree)
-            .expect("Failed to get embedding subtree");
+        let embedding_weight_loader =
+            root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
         let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
 
         let embed = Embedding::new_with_parameter_trees(

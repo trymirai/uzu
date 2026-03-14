@@ -1,15 +1,15 @@
 #![cfg(all(feature = "audio-runtime", target_os = "macos"))]
 
+mod common;
+
+use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 use uzu::{
     DataType,
     array::ArrayContextExt,
-    audio::nanocodec::{
-        fsq::{fsq_decode_reference, fsq_encode_reference},
-        ops::{
-            CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-            causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
-            conv1d_reference, half_snake_reference,
-        },
+    audio::nanocodec::ops::{
+        CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
+        causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
+        conv1d_reference, half_snake_reference,
     },
     backends::{
         common::{
@@ -51,11 +51,7 @@ fn run_command_buffer(
 ) {
     let mut command_buffer = context.create_command_buffer().expect("command buffer").start_encoding();
     encode(&mut command_buffer);
-    command_buffer
-        .end_encoding()
-        .submit()
-        .wait_until_completed()
-        .expect("command buffer completed");
+    command_buffer.end_encoding().submit().wait_until_completed().expect("command buffer completed");
 }
 
 #[test]

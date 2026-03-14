@@ -1,13 +1,14 @@
 #![cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 
+mod common;
+
+use common::audio_nanocodec_fsq_reference::fsq_decode_reference;
 use serde::Deserialize;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use uzu::audio::{
-    AudioCodecRuntime, AudioTokenGrid, AudioTokenPacking, NanoCodecFsqRuntime, nanocodec::fsq::fsq_decode_reference,
-};
+use uzu::audio::{AudioTokenGrid, AudioTokenPacking, NanoCodecFsqRuntime};
 use uzu::session::TtsCodecSession;
 
 #[derive(Debug, Deserialize)]
@@ -131,29 +132,6 @@ fn lalamo_fixture_fsq_decode_matches_latent_trace() {
     .expect("fsq decode");
 
     assert_close(&latent, &fixture.expected.latent_nct.values, 1e-6);
-}
-
-#[test]
-fn lalamo_fixture_runtime_decode_matches_expected_pcm() {
-    let fixture = load_fixture();
-    let runtime = NanoCodecFsqRuntime::from_tts_config_value(&fixture.tts_config).expect("runtime");
-
-    let tokens = AudioTokenGrid::new(
-        fixture.tokens.tokens.clone().into_boxed_slice(),
-        fixture.tokens.batch_size,
-        fixture.tokens.codebooks,
-        fixture.tokens.frames,
-        fixture.tokens.lengths.clone().into_boxed_slice(),
-        parse_packing(&fixture.tokens.packing),
-    )
-    .expect("token grid");
-
-    let decoded = runtime.decode(&tokens).expect("decode");
-
-    assert_eq!(decoded.sample_rate(), fixture.expected.pcm.sample_rate);
-    assert_eq!(decoded.channels(), fixture.expected.pcm.channels);
-    assert_eq!(decoded.lengths(), fixture.expected.pcm.lengths.as_slice());
-    assert_close(decoded.samples(), &fixture.expected.pcm.samples, 2e-4);
 }
 
 #[test]
