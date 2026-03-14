@@ -3,20 +3,11 @@ use std::{env, path::Path, rc::Rc};
 use super::Backend;
 use crate::backends::common::CommandBuffer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceClass {
-    Ultra,
-    Max,
-    Pro,
-    Base,
-    IPhone,
-}
-
-impl DeviceClass {
-    pub fn is_high_end(&self) -> bool {
-        matches!(self, DeviceClass::Ultra | DeviceClass::Max)
-    }
-}
+/// Marker trait for backend-specific device capabilities.
+/// Each backend defines its own concrete type with device-specific fields.
+/// No common code should depend on specific capabilities — all device-aware
+/// decisions live in backend code.
+pub trait DeviceCapabilities {}
 
 /// Device performance class based on the last character of architecture name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,10 +26,13 @@ impl DeviceType {
 
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
+    type DeviceCapabilities: DeviceCapabilities;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 
-    fn device_class(&self) -> DeviceClass;
+    fn device_capabilities(&self) -> &Self::DeviceCapabilities;
+
+    fn recommended_async_batch_size(&self, model_path: &Path) -> usize;
 
     fn device_type(&self) -> DeviceType;
 

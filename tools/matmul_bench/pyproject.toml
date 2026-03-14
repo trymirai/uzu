@@ -1,0 +1,16 @@
+[project]
+name = "matmul-bench"
+version = "0.1.0"
+description = "Run and chart matmul kernel benchmarks"
+requires-python = ">=3.12"
+dependencies = ["matplotlib", "cattrs"]
+
+[project.scripts]
+matmul_bench = "matmul_bench.main:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/matmul_bench"]

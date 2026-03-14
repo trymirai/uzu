@@ -6,7 +6,7 @@ using namespace metal;
 constant uint THREADS_PER_TG = 256; // 8 simdgroups
 constant uint MAX_EXPERTS = 512;
 constant uint MAX_TOPK = 128;
-constant float NEG_INF = -INFINITY;
+constexpr constant float NEG_INF = -INFINITY;
 
 template <typename ScalarT>
 VARIANTS(ScalarT, half, bfloat, float)

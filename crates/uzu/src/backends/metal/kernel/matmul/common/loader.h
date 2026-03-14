@@ -13,120 +13,133 @@ namespace matmul {
 
 template <
     typename T,
-    short BROWS,
-    short BCOLS,
-    short dst_ld,
+    short BLOCK_ROWS,
+    short BLOCK_COLS,
+    short destination_leading_dimension,
     short reduction_dim,
-    short tgp_size,
+    short threadgroup_size,
     short alignment = 1,
-    short n_reads = (BCOLS * BROWS) / (tgp_size),
-    short TCOLS = BCOLS / n_reads,
-    short TROWS = tgp_size / TCOLS>
+    short num_reads = (BLOCK_COLS * BLOCK_ROWS) / (threadgroup_size),
+    short THREAD_COLS = BLOCK_COLS / num_reads,
+    short THREAD_ROWS = threadgroup_size / THREAD_COLS
+>
 struct BlockLoader {
-  UZU_MTL_CONST short n_rows = (BROWS + TROWS - 1) / TROWS;
-  UZU_MTL_CONST short vec_size = n_reads;
+  MTL_CONST short NUM_ROWS = (BLOCK_ROWS + THREAD_ROWS - 1) / THREAD_ROWS;
+  MTL_CONST short VECTOR_SIZE = num_reads;
 
-  // Leading dimension for src
-  const int src_ld;
+  // Leading dimension for source
+  const int source_leading_dimension;
   const int tile_stride;
 
   // Thread location indices
   const short thread_idx;
-  const short bi;
-  const short bj;
+  const short block_row;
+  const short block_col;
 
   // threadgroup and device memory
-  threadgroup T* dst;
-  const device T* src;
+  threadgroup T* destination;
+  const device T* source;
 
   struct alignas(alignment * sizeof(T)) ReadVector {
-    uint8_t v[sizeof(T) * vec_size];
+    uint8_t v[sizeof(T) * VECTOR_SIZE];
   };
 
   /* Constructor */
   METAL_FUNC BlockLoader(
-      const device T* src_,
-      const int src_ld_,
-      threadgroup T* dst_,
+      const device T* source_,
+      const int source_leading_dimension_,
+      threadgroup T* destination_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
   )
-      : src_ld(src_ld_), tile_stride(reduction_dim ? BCOLS : BROWS * src_ld),
-        thread_idx(simd_group_id * 32 + simd_lane_id), bi(thread_idx / TCOLS),
-        bj(vec_size * (thread_idx % TCOLS)), dst(dst_ + bi * dst_ld + bj),
-        src(src_ + bi * src_ld + bj) {}
+      : source_leading_dimension(source_leading_dimension_),
+        tile_stride(
+            reduction_dim ? BLOCK_COLS : BLOCK_ROWS * source_leading_dimension
+        ),
+        thread_idx(simd_group_id * 32 + simd_lane_id),
+        block_row(thread_idx / THREAD_COLS),
+        block_col(VECTOR_SIZE * (thread_idx % THREAD_COLS)),
+        destination(
+            destination_ + block_row * destination_leading_dimension + block_col
+        ),
+        source(source_ + block_row * source_leading_dimension + block_col) {}
 
   /* Apply operation to threadgroup without bound checking */
   template <typename UnaryOp>
   METAL_FUNC void apply_inplace_op(thread const UnaryOp& op) const {
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < BROWS; i += TROWS) {
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < vec_size; j++) {
-        dst[i * dst_ld + j] = op.apply(dst[i * dst_ld + j]);
+    PRAGMA_UNROLL
+    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      PRAGMA_UNROLL
+      for (short j = 0; j < VECTOR_SIZE; j++) {
+        destination[i * destination_leading_dimension + j] =
+            op.apply(destination[i * destination_leading_dimension + j]);
       }
     }
   }
 
   /* Load from device memory into threadgroup memory - without bound checking */
-  METAL_FUNC void load_unsafe() const {
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < BROWS; i += TROWS) {
-      *((threadgroup ReadVector*)(&dst[i * dst_ld])) =
-          *((const device ReadVector*)(&src[i * src_ld]));
+  METAL_FUNC void load_unchecked() const {
+    PRAGMA_UNROLL
+    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      *((threadgroup ReadVector*)(&destination
+                                      [i * destination_leading_dimension])) =
+          *((const device ReadVector*)(&source[i * source_leading_dimension]));
     }
   }
 
   /* Load from device memory into threadgroup memory - with bound checking */
-  METAL_FUNC void load_safe(short2 src_tile_dim) const {
-    src_tile_dim = src_tile_dim - short2(bj, bi);
+  METAL_FUNC void load_checked(short2 source_tile_dimensions) const {
+    source_tile_dimensions =
+        source_tile_dimensions - short2(block_col, block_row);
 
     // Skip loading if thread has no valid reads
-    if (src_tile_dim.x <= 0 || src_tile_dim.y <= 0) {
-      UZU_PRAGMA_UNROLL
-      for (short i = 0; i < BROWS; i += TROWS) {
-        UZU_PRAGMA_UNROLL
-        for (short j = 0; j < vec_size; j++) {
-          dst[i * dst_ld + j] = T(0);
+    if (source_tile_dimensions.x <= 0 || source_tile_dimensions.y <= 0) {
+      PRAGMA_UNROLL
+      for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+        PRAGMA_UNROLL
+        for (short j = 0; j < VECTOR_SIZE; j++) {
+          destination[i * destination_leading_dimension + j] = T(0);
         }
       }
       return;
     }
 
     // Use fast thread memory for bound checks
-    bool tmp_idx[vec_size];
-    T tmp_val[vec_size];
+    bool valid_indices[VECTOR_SIZE];
+    T temp_values[VECTOR_SIZE];
 
-    UZU_PRAGMA_UNROLL
-    for (short i = 0; i < BROWS; i += TROWS) {
-      // Make sure tmp_idx only contains valid indices
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < vec_size; j++) {
-        tmp_idx[j] = (i < src_tile_dim.y) && (j < src_tile_dim.x);
+    PRAGMA_UNROLL
+    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      // Make sure valid_indices only contains valid indices
+      PRAGMA_UNROLL
+      for (short j = 0; j < VECTOR_SIZE; j++) {
+        valid_indices[j] =
+            (i < source_tile_dimensions.y) && (j < source_tile_dimensions.x);
       }
 
-      // Read valid indices into tmp_val
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < vec_size; j++) {
-        tmp_val[j] = src[(tmp_idx[j] ? i * src_ld + j : 0)];
+      // Read valid indices into temp_values
+      PRAGMA_UNROLL
+      for (short j = 0; j < VECTOR_SIZE; j++) {
+        temp_values[j] =
+            source[(valid_indices[j] ? i * source_leading_dimension + j : 0)];
       }
 
       // Zero out unneeded values
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < vec_size; j++) {
-        tmp_val[j] = tmp_idx[j] ? tmp_val[j] : T(0);
+      PRAGMA_UNROLL
+      for (short j = 0; j < VECTOR_SIZE; j++) {
+        temp_values[j] = valid_indices[j] ? temp_values[j] : T(0);
       }
 
       // Copy values to threadgroup memory
-      UZU_PRAGMA_UNROLL
-      for (short j = 0; j < vec_size; j++) {
-        dst[i * dst_ld + j] = tmp_val[j];
+      PRAGMA_UNROLL
+      for (short j = 0; j < VECTOR_SIZE; j++) {
+        destination[i * destination_leading_dimension + j] = temp_values[j];
       }
     }
   }
 
   /* Iteration helper */
-  METAL_FUNC void next() { src += tile_stride; }
+  METAL_FUNC void next() { source += tile_stride; }
 };
 
 } // namespace matmul

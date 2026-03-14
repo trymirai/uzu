@@ -1,7 +1,7 @@
 use crate::backends::common::Backend;
 
 #[derive(Debug)]
-pub struct MatmulArguments<'a, B: Backend> {
+pub struct QuantMatmulArguments<'a, B: Backend> {
     pub a: &'a B::Buffer,
     /// Byte offset into `a` (used for slicing the batch dimension).
     pub a_offset: u64,
@@ -14,10 +14,4 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub input_dim: i32,
     /// N dimension - output_dim (cols of B, cols of D)
     pub output_dim: i32,
-    pub lda: i32,
-    pub ldb: i32,
-    pub ldd: i32,
-    /// Number of batched matrix multiplications (z-dimension)
-    pub batch_count: i32,
-    pub transpose_b: bool,
 }

@@ -11,7 +11,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, CommandBuffer,
-        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
+        kernel::matmul::{MatmulArguments, MatmulKernel, MatmulError, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -49,7 +49,7 @@ pub enum FullPrecisionLinearError<B: Backend> {
 }
 
 pub struct FullPrecisionLinear<B: Backend> {
-    kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
+    kernel: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
     bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
     weights_buffer: Rc<RefCell<B::Buffer>>,
     input_dim: usize,
@@ -111,7 +111,7 @@ impl<B: Backend> FullPrecisionLinear<B> {
             Err(_) => None,
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, precision)?;
+        let kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(context, precision)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -140,7 +140,7 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
         self.kernel.borrow_mut().encode(
             state.context(),
             command_buffer,
-            FullPrecisionMatmulArguments {
+            MatmulArguments {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.weights_buffer.borrow().deref(),

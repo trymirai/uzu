@@ -16,6 +16,7 @@ AlignAfterOpenBracket: BlockIndent
 
 # Template closing bracket on own line
 BreakTemplateDeclarations: Yes
+BreakBeforeTemplateCloser: true
 Cpp11BracedListStyle: true
 
 # Brace and pointer/reference style

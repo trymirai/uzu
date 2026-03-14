@@ -1,205 +1,99 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use half::{bf16, f16};
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use num_traits::Float;
 use uzu::{
     ArrayElement,
-    array::ArrayContextExt,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context,
-            gpu_types::GEMMParams,
-            kernel::matmul::{
-                GridSize, MatmulArguments,
-                gemm::{GemmDispatchDescriptor, GemmKernel, GemmSpecialization},
-            },
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+            kernel::matmul::MatmulArguments,
         },
-        cpu::Cpu,
+        metal::{MetalContext, kernel::matmul::MatmulMetalKernel},
     },
 };
 
 use crate::common::assert::assert_eq_float;
 
-struct Input<T: ArrayElement + Float> {
-    a: Box<[T]>,
-    b: Box<[T]>,
-    m: usize,
-    k: usize,
-    n: usize,
+fn reference_gemm<T: ArrayElement + Float>(a: &[T], b: &[T], m: usize, k: usize, n: usize) -> Vec<T> {
+    let mut output = vec![T::zero(); m * n];
+    for row in 0..m {
+        for col in 0..n {
+            let mut accumulator = 0.0f64;
+            for i in 0..k {
+                accumulator += a[row * k + i].to_f64().unwrap() * b[col * k + i].to_f64().unwrap();
+            }
+            output[row * n + col] = T::from(accumulator).unwrap();
+        }
+    }
+    output
 }
 
-fn get_test_data<T: ArrayElement + Float>(
-    m: usize,
-    k: usize,
-    n: usize,
-) -> (Input<T>, Vec<T>) {
+fn to_bytes<T: ArrayElement>(data: &[T]) -> Vec<u8> {
+    let byte_length = data.len() * std::mem::size_of::<T>();
+    let mut bytes = vec![0u8; byte_length];
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, bytes.as_mut_ptr(), byte_length);
+    }
+    bytes
+}
+
+fn read_output<T: ArrayElement + Float>(buffer: &objc2::runtime::ProtocolObject<dyn metal::MTLBuffer>, count: usize) -> Vec<T> {
+    let pointer = buffer.contents().as_ptr() as *const T;
+    unsafe { std::slice::from_raw_parts(pointer, count).to_vec() }
+}
+
+fn test_gemm<T: ArrayElement + Float + Debug + Display>(m: usize, k: usize, n: usize, tolerance: f32) {
     let a: Vec<T> = (0..m * k).map(|i| T::from(((i % 13) as f32) * 0.1 - 0.6).unwrap()).collect();
     let b: Vec<T> = (0..n * k).map(|i| T::from(((i % 17) as f32) * 0.1 - 0.8).unwrap()).collect();
+    let expected = reference_gemm(&a, &b, m, k, n);
 
-    let input = Input {
-        a: a.into_boxed_slice(),
-        b: b.into_boxed_slice(),
-        m,
-        k,
-        n,
-    };
+    let context = MetalContext::new().expect("Metal context required");
 
-    let expected = get_output::<T, Cpu>(&input);
-    (input, expected)
-}
+    let a_buffer = context.device.new_buffer_with_data(&to_bytes(&a), MTLResourceOptions::STORAGE_MODE_SHARED).unwrap();
+    let b_buffer = context.device.new_buffer_with_data(&to_bytes(&b), MTLResourceOptions::STORAGE_MODE_SHARED).unwrap();
+    let mut d_buffer = context.device.new_buffer(m * n * T::data_type().size_in_bytes(), MTLResourceOptions::STORAGE_MODE_SHARED).unwrap();
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let mut kernel = <MatmulMetalKernel as uzu::backends::common::kernel::matmul::MatmulKernel>::new(&context, T::data_type()).expect("kernel creation");
+    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
 
-    let m = input.m as i32;
-    let k = input.k as i32;
-    let n = input.n as i32;
-
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
-
-    // Pick a precompile config matching alignment requirements
-    let configs = GemmSpecialization::precompile_configs(T::data_type());
-    let base = configs[0];
-    let align_m = (m % base.block_rows) == 0;
-    let align_n = (n % base.block_cols) == 0;
-    let align_k = (k % base.block_depth) == 0;
-    // Find a config that matches alignment, or fall back to overriding the first one
-    let config = configs
-        .iter()
-        .find(|c| c.align_m == align_m && c.align_n == align_n && c.align_k == align_k)
-        .copied()
-        .unwrap_or(GemmSpecialization {
-            align_m,
-            align_n,
-            align_k,
-            ..base
-        });
-
-    let tiles_n = (n + config.block_cols - 1) / config.block_cols;
-    let tiles_m = (m + config.block_rows - 1) / config.block_rows;
-
-    let params = GEMMParams {
-        M: m,
-        N: n,
-        K: k,
-        lda: k,
-        ldb: k,
-        ldd: n,
-        tiles_n,
-        tiles_m,
-        batch_stride_a: (m as i64) * (k as i64),
-        batch_stride_b: (n as i64) * (k as i64),
-        batch_stride_d: (m as i64) * (n as i64),
-        swizzle_log: 0,
-        gemm_k_iterations_aligned: k / config.block_depth,
-        batch_ndim: 1,
-    };
-
-    let descriptor = GemmDispatchDescriptor {
-        specialization: config,
-        params,
-        threadgroups: GridSize {
-            x: tiles_n as usize,
-            y: tiles_m as usize,
-            z: 1,
+    kernel.encode_gemm(
+        &context,
+        &mut command_buffer,
+        MatmulArguments {
+            a: &a_buffer,
+            a_offset: 0,
+            b: &b_buffer,
+            output: &mut d_buffer,
+            bias: None,
+            batch: m,
+            input_dim: k,
+            output_dim: n,
         },
-    };
+    );
 
-    let mut kernel = GemmKernel::<B>::new(T::data_type()).expect("Failed to create GemmKernel");
-
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
-
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    let mut arguments = MatmulArguments {
-        a: a_ref.deref(),
-        a_offset: 0,
-        b: b_ref.deref(),
-        d: d_ref.deref_mut(),
-        bias: None,
-        batch: m,
-        input_dim: k,
-        output_dim: n,
-        lda: k,
-        ldb: k,
-        ldd: n,
-        batch_count: 1,
-        transpose_b: true,
-    };
-    kernel.encode(&context, &mut arguments, &descriptor, &mut command_buffer).expect("Failed to encode");
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    drop(d_ref);
-    d_array.as_slice().to_vec()
-}
-
-fn test<T: ArrayElement + Float + Debug + Display>(
-    m: usize,
-    k: usize,
-    n: usize,
-    eps: f32,
-) {
-    let (input, expected) = get_test_data::<T>(m, k, n);
-    for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input);
-        assert_eq_float(&expected, &output, eps, &format!("backend {}", std::any::type_name::<B>()));
-    });
-}
-
-// Aligned dimensions (divisible by common block sizes)
-#[test]
-fn test_f32_aligned() {
-    test::<f32>(64, 64, 64, 0.01);
+    let actual: Vec<T> = read_output(&d_buffer, m * n);
+    assert_eq_float(&expected, &actual, tolerance, "Metal GEMM");
 }
 
 #[test]
-fn test_f16_aligned() {
-    test::<f16>(64, 64, 64, 0.01);
-}
-
+fn test_f32_aligned() { test_gemm::<f32>(64, 64, 64, 0.01); }
 #[test]
-fn test_bf16_aligned() {
-    test::<bf16>(64, 64, 64, 0.1);
-}
-
-// Unaligned dimensions
+fn test_f16_aligned() { test_gemm::<f16>(64, 64, 64, 0.01); }
 #[test]
-fn test_f32_unaligned() {
-    test::<f32>(7, 33, 11, 0.01);
-}
-
+fn test_bf16_aligned() { test_gemm::<bf16>(64, 64, 64, 0.1); }
 #[test]
-fn test_f16_unaligned() {
-    test::<f16>(7, 33, 11, 0.01);
-}
-
+fn test_f32_unaligned() { test_gemm::<f32>(7, 33, 11, 0.01); }
 #[test]
-fn test_bf16_unaligned() {
-    test::<bf16>(7, 33, 11, 0.1);
-}
-
-// Larger matrix
+fn test_f16_unaligned() { test_gemm::<f16>(7, 33, 11, 0.01); }
 #[test]
-fn test_f32_large() {
-    test::<f32>(16, 128, 256, 0.01);
-}
-
+fn test_bf16_unaligned() { test_gemm::<bf16>(7, 33, 11, 0.1); }
 #[test]
-fn test_f16_large() {
-    test::<f16>(16, 128, 256, 0.01);
-}
-
+fn test_f32_large() { test_gemm::<f32>(16, 128, 256, 0.01); }
 #[test]
-fn test_bf16_large() {
-    test::<bf16>(16, 128, 256, 0.1);
-}
+fn test_f16_large() { test_gemm::<f16>(16, 128, 256, 0.01); }
+#[test]
+fn test_bf16_large() { test_gemm::<bf16>(16, 128, 256, 0.1); }

@@ -17,6 +17,8 @@ The rules below are CRITICAL. Each rule should be respected. Rules can only be o
 - Before using any function from an external library, agent thoroughly inspects the code or documentation for the function to ensure that it uses it correctly.
 - When encountering an error, agent never rushes to quickly fix it. Instead, it uses the scientific method to understand the source of the error: comes up with hypotheses and tests them by performing a series of experiments. It only attempts to fix the error once the hypothesis has been sufficiently validated.
 - Agent avoids creating .md files with explanations unless explicitly requested by the user.
+- When the user points out that generated code violates a coding convention or asks to change naming/style, agent first updates these rules (.cursorrules and AGENTS.md) to codify the convention, then fixes the code. This ensures the convention is enforced in all future code generation.
+- When the user points out that generated code violates a coding convention or asks to change naming/style, agent first updates these rules (.cursorrules and AGENTS.md) to codify the convention, then fixes the code. This ensures the convention is enforced in all future code generation.
 
 ## General coding guidelines
 
@@ -33,6 +35,8 @@ The rules below are CRITICAL. Each rule should be respected. Rules can only be o
 - Agent writes the code so that assumptions about invariants are as explicit as possible.
 - Agent leverages strong typing as much as possible, for example, it always uses enums instead of literals.
 - Agent uses good descriptive variable names that make it easy to understand the purpose of the variable without looking at the code that uses it.
+- Agent always uses full explicit names for variables, functions, and types. Never abbreviate: use `context` not `ctx`, `command_buffer` not `cb`, `encoder` not `enc`, `arguments` not `args`, `progress_bar` not `pb`, `buffer` not `buf`, `descriptor` not `desc`, `configuration` not `config` (unless it is an established domain term like `DecodingConfig`). Single-letter names are only acceptable for loop indices and generic type parameters.
+- Agent always uses full explicit names for variables, functions, and types. Never abbreviate: use `context` not `ctx`, `command_buffer` not `cb`, `encoder` not `enc`, `arguments` not `args`, `progress_bar` not `pb`, `buffer` not `buf`, `descriptor` not `desc`, `configuration` not `config` (unless it is an established domain term like `DecodingConfig`). Single-letter names are only acceptable for loop indices and generic type parameters.
 - Agent does not manually parse things such as JSON configs. Instead it first models a schema using types, and then uses a serialisation library.
 
 ## Testing guidelines

@@ -4,12 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-metal.workspace = true
 uzu.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sysinfo.workspace = true
 libc.workspace = true
 mach2.workspace = true
-half.workspace = true
-objc2.workspace = true

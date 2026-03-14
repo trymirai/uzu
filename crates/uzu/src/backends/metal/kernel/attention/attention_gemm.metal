@@ -17,7 +17,7 @@ struct TransformScale {
 
 template <typename T>
 METAL_FUNC T row_reduce_max(T v) {
-  // BaseMMAFrag::get_coord mapping groups lanes for a row as:
+  // BaseMMAFrag::get_coordinate mapping groups lanes for a row as:
   // {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
   v = metal::max(v, simd_shuffle_xor(v, 1));
   v = metal::max(v, simd_shuffle_xor(v, 8));
@@ -142,50 +142,50 @@ KERNEL(AttentionGemm)(
 
   // -------------------------------------------------------------------------
   // MMA tiles
-  constexpr short kFragSize = 8;
-  using AccumType = float;
-  using MMAFrag_acc_t = BaseMMAFrag<AccumType, kFragSize, kFragSize>;
+  constexpr short FRAG_SIZE = 8;
+  using AccumulatorType = float;
+  using MMAFragAccumulatorType = BaseMMAFrag<AccumulatorType, FRAG_SIZE, FRAG_SIZE>;
 
-  constexpr int kNWarps = WM * WN;
+  constexpr int NUM_WARPS = WM * WN;
   static_assert(
-      BQ >= (kNWarps * kFragSize) && BQ % (kNWarps * kFragSize) == 0,
+      BQ >= (NUM_WARPS * FRAG_SIZE) && BQ % (NUM_WARPS * FRAG_SIZE) == 0,
       "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
   );
 
   // Q seq frags per warp (we keep TQ == 1 for the 32-row block layout)
-  constexpr int TQ = BQ / (kNWarps * kFragSize);
+  constexpr int TQ = BQ / (NUM_WARPS * FRAG_SIZE);
   // KV sequence frags
-  constexpr int TK = BK / kFragSize;
+  constexpr int TK = BK / FRAG_SIZE;
   // HeadDim frags
-  constexpr int TD = BD / kFragSize;
+  constexpr int TD = BD / FRAG_SIZE;
 
   static_assert(TQ == 1, "Expected TQ == 1");
 
-  MMATile<AccumType, TQ, 1, MMAFrag_acc_t> Qtile;
-  MMATile<AccumType, 1, TK, MMAFrag_acc_t> Ktile; // represents K^T slice
-  MMATile<AccumType, TQ, TK, MMAFrag_acc_t> Stile;
-  MMATile<AccumType, 1, 1, MMAFrag_acc_t> Vtile;
-  MMATile<AccumType, TQ, TD, MMAFrag_acc_t> Otile;
+  MMATile<AccumulatorType, TQ, 1, MMAFragAccumulatorType> Qtile;
+  MMATile<AccumulatorType, 1, TK, MMAFragAccumulatorType> Ktile; // represents K^T slice
+  MMATile<AccumulatorType, TQ, TK, MMAFragAccumulatorType> Stile;
+  MMATile<AccumulatorType, 1, 1, MMAFragAccumulatorType> Vtile;
+  MMATile<AccumulatorType, TQ, TD, MMAFragAccumulatorType> Otile;
 
   Otile.clear();
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 simd_coord = MMAFrag_acc_t::get_coord(simd.lane_idx);
+  const short2 simd_coord = MMAFragAccumulatorType::get_coordinate(simd.lane_idx);
   const short sm = simd_coord.y;
   const short sn = simd_coord.x;
 
-  const short tm = kFragSize * TQ * short(simd.group_idx);
+  const short tm = FRAG_SIZE * TQ * short(simd.group_idx);
 
   // Qs is row-major [BQ, BD]
   const short Qs_offset = (tm + sm) * LDQ_tgp + sn;
-  constexpr short Qs_tile_stride = kFragSize;
+  constexpr short Qs_tile_stride = FRAG_SIZE;
 
   // Ks is row-major [BK, BD] but we load K^T by swapping strides:
   // B_str_k = 1, B_str_n = LDK_tgp => offset = sn * LDK_tgp + sm
   const short Ks_offset = sn * LDK_tgp + sm;
   constexpr short Ks_tile_stride =
-      kFragSize; // advance along head-dim (contiguous)
+      FRAG_SIZE; // advance along head-dim (contiguous)
 
   // Vs is row-major [BK, BD]
   const short Vs_offset = sm * LDV_tgp + sn;
@@ -195,21 +195,21 @@ KERNEL(AttentionGemm)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   if (!align_q && int(tgid_x) == params.nq_aligned) {
-    loader_q.load_safe(short2(BD, params.q_rem));
+    loader_q.load_checked(short2(BD, params.q_rem));
   } else {
-    loader_q.load_unsafe();
+    loader_q.load_unchecked();
   }
   loader_q.apply_inplace_op(ts);
 
   // -------------------------------------------------------------------------
   // Streaming softmax state for this row (shared across lanes in a row)
-  const AccumType neg_inf = static_cast<AccumType>(-1e9f) * M_LOG2E_F;
-  AccumType max_score = -INFINITY;
-  AccumType sum_score = AccumType(0);
+  const AccumulatorType neg_inf = static_cast<AccumulatorType>(-1e9f) * M_LOG2E_F;
+  AccumulatorType max_score = -INFINITY;
+  AccumulatorType sum_score = AccumulatorType(0);
 
   if (has_sinks) {
-    max_score = M_LOG2E_F * static_cast<AccumType>(sinks[tgid_y]);
-    sum_score = AccumType(1);
+    max_score = M_LOG2E_F * static_cast<AccumulatorType>(sinks[tgid_y]);
+    sum_score = AccumulatorType(1);
   }
 
   // Determine K block loop limit (causal can early-stop)
@@ -228,9 +228,9 @@ KERNEL(AttentionGemm)(
     // Load K block
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (!align_k && kb == params.nk_aligned) {
-      loader_k.load_safe(short2(BD, params.k_rem));
+      loader_k.load_checked(short2(BD, params.k_rem));
     } else {
-      loader_k.load_unsafe();
+      loader_k.load_unchecked();
     }
 
     // Compute S = Q @ K^T for this block
@@ -238,7 +238,7 @@ KERNEL(AttentionGemm)(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    UZU_PRAGMA_UNROLL
+    PRAGMA_UNROLL
     for (short dd = 0; dd < TD; dd++) {
       simdgroup_barrier(mem_flags::mem_none);
 
@@ -250,16 +250,16 @@ KERNEL(AttentionGemm)(
       );
 
       simdgroup_barrier(mem_flags::mem_none);
-      tile_matmad(Stile, Qtile, Ktile, Stile);
+      tile_multiply_add(Stile, Qtile, Ktile, Stile);
     }
 
     // Mask out tail keys for the last (unaligned) K block
     if (!align_k && kb == params.nk_aligned) {
       const int k_rem = params.k_rem;
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short j = 0; j < TK; j++) {
-        thread auto& frag = Stile.frag_at(0, j);
-        const int col0 = int(sn) + int(j) * kFragSize;
+        thread auto& frag = Stile.fragment_at(0, j);
+        const int col0 = int(sn) + int(j) * FRAG_SIZE;
         if (col0 >= k_rem) {
           frag[0] = neg_inf;
         }
@@ -274,10 +274,10 @@ KERNEL(AttentionGemm)(
       const int tail_blocks = (BQ + BK - 1) / BK + int(!align_k);
       const int tail_start = kb_lim - tail_blocks;
       if (kb >= tail_start) {
-        UZU_PRAGMA_UNROLL
+        PRAGMA_UNROLL
         for (short j = 0; j < TK; j++) {
-          thread auto& frag = Stile.frag_at(0, j);
-          const int col_base = kb * BK + int(sn) + int(j) * kFragSize;
+          thread auto& frag = Stile.fragment_at(0, j);
+          const int col_base = kb * BK + int(sn) + int(j) * FRAG_SIZE;
           if (q_abs < col_base) {
             frag[0] = neg_inf;
           }
@@ -293,22 +293,22 @@ KERNEL(AttentionGemm)(
       const int64_t row_stride = mask_params.m_strides[2];
       const int64_t row_base = int64_t(q_rel) * row_stride;
 
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short j = 0; j < TK; j++) {
-        thread auto& frag = Stile.frag_at(0, j);
-        const int col_base = kb * BK + int(sn) + int(j) * kFragSize;
+        thread auto& frag = Stile.fragment_at(0, j);
+        const int col_base = kb * BK + int(sn) + int(j) * FRAG_SIZE;
 
         const int k0 = col_base;
         const int k1 = col_base + 1;
 
         if (k0 < params.k_len) {
-          AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k0)]);
-          mv = metal::max(mv, static_cast<AccumType>(-1e9f));
+          AccumulatorType mv = static_cast<AccumulatorType>(mask[row_base + int64_t(k0)]);
+          mv = metal::max(mv, static_cast<AccumulatorType>(-1e9f));
           frag[0] += M_LOG2E_F * mv;
         }
         if (k1 < params.k_len) {
-          AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k1)]);
-          mv = metal::max(mv, static_cast<AccumType>(-1e9f));
+          AccumulatorType mv = static_cast<AccumulatorType>(mask[row_base + int64_t(k1)]);
+          mv = metal::max(mv, static_cast<AccumulatorType>(-1e9f));
           frag[1] += M_LOG2E_F * mv;
         }
       }
@@ -317,61 +317,61 @@ KERNEL(AttentionGemm)(
     // Load V block (overwriting K in shared memory)
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (!align_k && kb == params.nk_aligned) {
-      loader_v.load_safe(short2(BD, params.k_rem));
+      loader_v.load_checked(short2(BD, params.k_rem));
     } else {
-      loader_v.load_unsafe();
+      loader_v.load_unchecked();
     }
 
     // -----------------------------------------------------------------------
     // Streaming softmax update for this block
 
     // Row max for this block
-    AccumType block_max_local = -INFINITY;
-    UZU_PRAGMA_UNROLL
+    AccumulatorType block_max_local = -INFINITY;
+    PRAGMA_UNROLL
     for (short j = 0; j < TK; j++) {
-      const thread auto& frag = Stile.frag_at(0, j);
+      const thread auto& frag = Stile.fragment_at(0, j);
       block_max_local = metal::max(block_max_local, frag[0]);
       block_max_local = metal::max(block_max_local, frag[1]);
     }
-    const AccumType block_max = row_reduce_max(block_max_local);
+    const AccumulatorType block_max = row_reduce_max(block_max_local);
 
-    const AccumType new_max = metal::max(max_score, block_max);
-    const AccumType factor = fast::exp2(max_score - new_max);
+    const AccumulatorType new_max = metal::max(max_score, block_max);
+    const AccumulatorType factor = fast::exp2(max_score - new_max);
     max_score = new_max;
 
     // Rescale running sum
     sum_score *= factor;
 
     // exp2(S - new_max) and row sum
-    AccumType block_sum_local = AccumType(0);
-    UZU_PRAGMA_UNROLL
+    AccumulatorType block_sum_local = AccumulatorType(0);
+    PRAGMA_UNROLL
     for (short j = 0; j < TK; j++) {
-      thread auto& frag = Stile.frag_at(0, j);
+      thread auto& frag = Stile.fragment_at(0, j);
       frag[0] = fast::exp2(frag[0] - new_max);
       frag[1] = fast::exp2(frag[1] - new_max);
       block_sum_local += frag[0] + frag[1];
     }
-    const AccumType block_sum = row_reduce_sum(block_sum_local);
+    const AccumulatorType block_sum = row_reduce_sum(block_sum_local);
     sum_score += block_sum;
 
     // Rescale output accumulator
-    UZU_PRAGMA_UNROLL
+    PRAGMA_UNROLL
     for (short id = 0; id < TD; id++) {
-      thread auto& frag = Otile.frag_at(0, id);
+      thread auto& frag = Otile.fragment_at(0, id);
       frag[0] *= factor;
       frag[1] *= factor;
     }
 
     // Accumulate output: Otile += Stile * Vblock
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    UZU_PRAGMA_UNROLL
+    PRAGMA_UNROLL
     for (short id = 0; id < TD; id++) {
-      UZU_PRAGMA_UNROLL
+      PRAGMA_UNROLL
       for (short ik = 0; ik < TK; ik++) {
         IF_CONSTEXPR(BD == 128) { simdgroup_barrier(mem_flags::mem_none); }
 
-        const short kk = ik * kFragSize;
-        const short dd = id * kFragSize;
+        const short kk = ik * FRAG_SIZE;
+        const short dd = id * FRAG_SIZE;
 
         Vtile.template load<T, 1, 1, LDV_tgp, 1>(
             &Vs[Vs_offset + kk * LDV_tgp + dd]
@@ -379,11 +379,11 @@ KERNEL(AttentionGemm)(
 
         IF_CONSTEXPR(BD == 128) { simdgroup_barrier(mem_flags::mem_none); }
 
-        MMAFrag_acc_t::mma(
-            Otile.frag_at(0, id),
-            Stile.frag_at(0, ik),
-            Vtile.frag_at(0, 0),
-            Otile.frag_at(0, id)
+        MMAFragAccumulatorType::mma(
+            Otile.fragment_at(0, id),
+            Stile.fragment_at(0, ik),
+            Vtile.fragment_at(0, 0),
+            Otile.fragment_at(0, id)
         );
       }
     }
@@ -395,10 +395,10 @@ KERNEL(AttentionGemm)(
 
   // -------------------------------------------------------------------------
   // Normalize output by sum_score (avoid div-by-zero for masked-out rows)
-  const AccumType inv_sum = AccumType(1) / sum_score;
-  UZU_PRAGMA_UNROLL
+  const AccumulatorType inv_sum = AccumulatorType(1) / sum_score;
+  PRAGMA_UNROLL
   for (short id = 0; id < TD; id++) {
-    thread auto& frag = Otile.frag_at(0, id);
+    thread auto& frag = Otile.fragment_at(0, id);
     frag[0] *= inv_sum;
     frag[1] *= inv_sum;
   }
@@ -415,7 +415,7 @@ KERNEL(AttentionGemm)(
       return;
     }
 
-    Otile.template store_safe<T, 1, 1>(
+    Otile.template store_checked<T, 1, 1>(
         o,
         int(params.o_strides[2]),
         dst_tile_dims
