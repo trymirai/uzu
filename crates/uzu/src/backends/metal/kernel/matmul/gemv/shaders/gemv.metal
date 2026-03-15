@@ -283,8 +283,7 @@ PUBLIC KERNEL(MatmulGemv)(
 
   // Write outputs
   if (simdgroup_col_thread_base == 0 && thread_col_in_simdgroup == 0) {
-    device T* output_row_values =
-        output_vector + batch_row * output_dimension;
+    device T* output_row_values = output_vector + batch_row * output_dimension;
     MTL_PRAGMA_UNROLL
     for (uint output_row_offset = 0; output_row_offset < thread_out_rows;
          output_row_offset++) {
