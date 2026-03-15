@@ -24,29 +24,9 @@ typedef struct {
   int32_t ldd;
   int32_t tiles_n;
   int32_t tiles_m;
-  int64_t batch_stride_a;
-  int64_t batch_stride_b;
-  int64_t batch_stride_d;
   int32_t swizzle_log;
   int32_t gemm_k_iterations_aligned;
-  int32_t batch_ndim;
 } GEMMParams;
-
-/**Split-K GEMM parameters. */
-typedef struct {
-  int32_t M;
-  int32_t N;
-  int32_t K;
-  int32_t lda;
-  int32_t ldb;
-  int32_t ldc;
-  int32_t tiles_n;
-  int32_t tiles_m;
-  int32_t split_k_partitions;
-  int32_t split_k_partition_stride;
-  int32_t split_k_partition_size;
-  int32_t gemm_k_iterations_aligned;
-} GEMMSpiltKParams;
 
 #ifdef __METAL_VERSION__
 } // namespace matmul

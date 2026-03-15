@@ -16,7 +16,7 @@ METAL_FUNC void gemm_dispatch(
     threadgroup T* Bs,
     uint simd_lane_id,
     uint simd_group_id,
-    uint3 tid,
+    uint2 tid,
     uint3 lid
 ) {
   using gemm_kernel = GEMMKernel<T, T, BM, BN, BK, WM, WN, false, true, MN_aligned, K_aligned, float>;
@@ -28,14 +28,14 @@ METAL_FUNC void gemm_dispatch(
       warps_per_row == WM && warps_per_col == WN) { \
     if (align_m && align_n) { \
       if (align_k) \
-        gemm_dispatch<T, BM, BN, BK, WM, WN, true, true>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint3(group_x, group_y, group_z), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BM, BN, BK, WM, WN, true, true>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
       else \
-        gemm_dispatch<T, BM, BN, BK, WM, WN, true, false>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint3(group_x, group_y, group_z), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BM, BN, BK, WM, WN, true, false>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
     } else { \
       if (align_k) \
-        gemm_dispatch<T, BM, BN, BK, WM, WN, false, true>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint3(group_x, group_y, group_z), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BM, BN, BK, WM, WN, false, true>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
       else \
-        gemm_dispatch<T, BM, BN, BK, WM, WN, false, false>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint3(group_x, group_y, group_z), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BM, BN, BK, WM, WN, false, false>(a, b, d, params, a_shared, b_shared, simd.lane_idx, simd.group_idx, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
     } \
     return; \
   }
@@ -52,7 +52,6 @@ PUBLIC KERNEL(MatmulGemm)(
     const constant uzu::matmul::GEMMParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
-    const constant uint& group_count_z,
     threadgroup T a_shared[GEMM_MAX_TGP_A],
     threadgroup T b_shared[GEMM_MAX_TGP_B],
     const uint block_rows SPECIALIZE,
@@ -65,7 +64,6 @@ PUBLIC KERNEL(MatmulGemm)(
     const bool align_k SPECIALIZE,
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
-    const uint group_z GROUPS(group_count_z),
     const uint thread_x THREADS(32),
     const uint thread_y THREADS(2),
     const uint thread_z THREADS(2),

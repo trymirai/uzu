@@ -93,12 +93,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         ldd: n,
         tiles_n,
         tiles_m,
-        batch_stride_a: (m as i64) * (k as i64),
-        batch_stride_b: (n as i64) * (k as i64),
-        batch_stride_d: (m as i64) * (n as i64),
         swizzle_log: 0,
         gemm_k_iterations_aligned: k / config.block_depth,
-        batch_ndim: 1,
     };
 
     let descriptor = GemmDispatchDescriptor {
@@ -133,7 +129,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         lda: k,
         ldb: k,
         ldd: n,
-        batch_count: 1,
         transpose_b: true,
     };
     kernel.encode(&context, &mut arguments, &descriptor, &mut command_buffer).expect("Failed to encode");

@@ -146,7 +146,7 @@ struct GEMMKernel {
       threadgroup T* Bs,
       uint simd_lane_id [[thread_index_in_simdgroup]],
       uint simd_group_id [[simdgroup_index_in_threadgroup]],
-      uint3 tid [[threadgroup_position_in_grid]],
+      uint2 tid [[threadgroup_position_in_grid]],
       uint3 lid [[thread_position_in_threadgroup]]
   ) {
     // Pacifying compiler
