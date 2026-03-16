@@ -36,8 +36,8 @@ objc2-foundation = { workspace = true, optional = true }
 block2 = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
-# macos requires objc2 even on non-metal (but shouldn't)
-[target.'cfg(target_os = "macos")'.dependencies]
+# required in storage.rs
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
 
@@ -73,7 +73,7 @@ cbindgen.workspace = true
 clang-ast = { workspace = true, optional = true }
 
 [features]
-default = ["metal"]
+default = []
 
 metal = [
     "dep:clang-ast",
