@@ -126,7 +126,7 @@ impl StructuredAudioCodecGraph {
         };
         let _ = codebooks;
         flush_stage(&mut command_buffer)?;
-        x = self.apply_post_module_gpu_on_array_enqueued(
+        x = self.apply_post_module_enqueued(
             resources,
             &context,
             &mut command_buffer,
@@ -137,7 +137,7 @@ impl StructuredAudioCodecGraph {
         )?;
         flush_stage(&mut command_buffer)?;
 
-        let vocoder_graph = self.vocoder_gpu_graph(resources)?;
+        let vocoder_graph = self.vocoder_graph(resources)?;
         let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;

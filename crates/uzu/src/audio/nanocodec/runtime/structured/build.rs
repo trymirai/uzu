@@ -71,7 +71,7 @@ pub(super) fn outer_axis_view<B: Backend>(
     Ok(unsafe { Array::from_parts(array.buffer(), offset, slice_shape, array.data_type()) })
 }
 
-pub(super) fn read_conv1d_gpu_layer<B: Backend>(
+pub(super) fn read_conv1d_layer<B: Backend>(
     tree: &BackendParameterTree<'_, B>,
     data_type: DataType,
     dilation: usize,
@@ -99,7 +99,7 @@ pub(super) fn read_conv1d_gpu_layer<B: Backend>(
     })
 }
 
-pub(super) fn read_conv_transpose1d_gpu_layer<B: Backend>(
+pub(super) fn read_conv_transpose1d_layer<B: Backend>(
     tree: &BackendParameterTree<'_, B>,
     data_type: DataType,
     stride: usize,
@@ -127,7 +127,7 @@ pub(super) fn read_conv_transpose1d_gpu_layer<B: Backend>(
     })
 }
 
-pub(super) fn read_pointwise_conv_gpu_layer<B: Backend>(
+pub(super) fn read_pointwise_conv_layer<B: Backend>(
     tree: &BackendParameterTree<'_, B>,
     data_type: DataType,
     expected_out_dim: usize,
@@ -143,7 +143,7 @@ pub(super) fn read_pointwise_conv_gpu_layer<B: Backend>(
     })
 }
 
-pub(super) fn read_norm_gpu_layer<B: Backend>(
+pub(super) fn read_norm_layer<B: Backend>(
     context: &Rc<B::Context>,
     tree: &BackendParameterTree<'_, B>,
     data_type: DataType,
@@ -167,7 +167,7 @@ pub(super) fn read_norm_gpu_layer<B: Backend>(
     })
 }
 
-pub(super) fn read_convnext_gpu_layer<B: Backend>(
+pub(super) fn read_convnext_layer<B: Backend>(
     context: &Rc<B::Context>,
     tree: &BackendParameterTree<'_, B>,
     data_type: DataType,
@@ -207,7 +207,7 @@ pub(super) fn read_convnext_gpu_layer<B: Backend>(
         )));
     }
     let channels = depthwise_conv.cout;
-    let norm = read_norm_gpu_layer::<B>(
+    let norm = read_norm_layer::<B>(
         context,
         &tree.subtree("norm")?,
         data_type,
@@ -224,8 +224,8 @@ pub(super) fn read_convnext_gpu_layer<B: Backend>(
             channels, pwconv1_shape[1]
         )));
     }
-    let pwconv1 = read_pointwise_conv_gpu_layer::<B>(&tree.subtree("pwconv1")?, data_type, pwconv1_shape[0], channels)?;
-    let pwconv2 = read_pointwise_conv_gpu_layer::<B>(&tree.subtree("pwconv2")?, data_type, channels, pwconv1_shape[0])?;
+    let pwconv1 = read_pointwise_conv_layer::<B>(&tree.subtree("pwconv1")?, data_type, pwconv1_shape[0], channels)?;
+    let pwconv2 = read_pointwise_conv_layer::<B>(&tree.subtree("pwconv2")?, data_type, channels, pwconv1_shape[0])?;
     Ok(StructuredAudioConvNeXt {
         depthwise_conv,
         norm,
@@ -234,7 +234,7 @@ pub(super) fn read_convnext_gpu_layer<B: Backend>(
     })
 }
 
-pub(super) fn read_residual_unit_gpu_layer<B: Backend>(
+pub(super) fn read_residual_unit_layer<B: Backend>(
     tree: &BackendParameterTree<'_, B>,
     data_type: DataType,
     dilation: usize,
@@ -247,7 +247,7 @@ pub(super) fn read_residual_unit_gpu_layer<B: Backend>(
         }
         alpha
     };
-    let conv1 = read_conv1d_gpu_layer::<B>(&tree.subtree("conv1")?, data_type, dilation, 1)?;
+    let conv1 = read_conv1d_layer::<B>(&tree.subtree("conv1")?, data_type, dilation, 1)?;
     let snake2_alpha = {
         let snake2_tree = tree.subtree("snake2")?;
         let (shape, alpha) = read_float_array::<B, 1>(&snake2_tree, "alpha", data_type)?;
@@ -266,7 +266,7 @@ pub(super) fn read_residual_unit_gpu_layer<B: Backend>(
             snake1_alpha.shape()[0]
         )));
     }
-    let conv2 = read_conv1d_gpu_layer::<B>(&tree.subtree("conv2")?, data_type, 1, 1)?;
+    let conv2 = read_conv1d_layer::<B>(&tree.subtree("conv2")?, data_type, 1, 1)?;
     Ok(StructuredAudioResidualUnit {
         snake1_alpha,
         conv1,
@@ -275,7 +275,7 @@ pub(super) fn read_residual_unit_gpu_layer<B: Backend>(
     })
 }
 
-pub(super) fn build_vocoder_gpu_graph_from_tree<B: Backend>(
+pub(super) fn build_vocoder_graph_from_tree<B: Backend>(
     context: &Rc<B::Context>,
     root: &BackendParameterTree<'_, B>,
     config: &DescriptAudioCodecConfig,
@@ -285,8 +285,8 @@ pub(super) fn build_vocoder_gpu_graph_from_tree<B: Backend>(
     let quantizer_tree = audio_decoder_tree.subtree("quantizer")?;
     let decoder_tree = audio_decoder_tree.subtree("decoder")?;
 
-    let first_conv = read_conv1d_gpu_layer::<B>(&decoder_tree.subtree("first_conv")?, data_type, 1, 1)?;
-    let final_conv = read_conv1d_gpu_layer::<B>(&decoder_tree.subtree("final_conv")?, data_type, 1, 1)?;
+    let first_conv = read_conv1d_layer::<B>(&decoder_tree.subtree("first_conv")?, data_type, 1, 1)?;
+    let final_conv = read_conv1d_layer::<B>(&decoder_tree.subtree("final_conv")?, data_type, 1, 1)?;
     let final_snake_alpha =
         read_float_vector_exact::<B>(&decoder_tree.subtree("final_snake")?, "alpha", final_conv.cin, data_type)?;
 
@@ -294,8 +294,8 @@ pub(super) fn build_vocoder_gpu_graph_from_tree<B: Backend>(
     for (index, &stride) in config.downsample_factor.iter().rev().enumerate() {
         let block_tree = quantizer_tree.subtree("upsampler")?.subtree("blocks")?.subtree(&index.to_string())?;
         let trans_conv =
-            read_conv_transpose1d_gpu_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
-        let convnext = read_convnext_gpu_layer::<B>(
+            read_conv_transpose1d_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
+        let convnext = read_convnext_layer::<B>(
             context,
             &block_tree.subtree("convnext")?,
             data_type,
@@ -314,13 +314,13 @@ pub(super) fn build_vocoder_gpu_graph_from_tree<B: Backend>(
     for (index, &stride) in config.decoder_rates.iter().enumerate() {
         let block_tree = decoder_tree.subtree("decoder_blocks")?.subtree(&index.to_string())?;
         let trans_conv =
-            read_conv_transpose1d_gpu_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
+            read_conv_transpose1d_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
         let snake_alpha =
             read_float_vector_exact::<B>(&block_tree.subtree("snake")?, "alpha", trans_conv.cin, data_type)?;
         let channels = trans_conv.cout;
-        let res_unit1 = read_residual_unit_gpu_layer::<B>(&block_tree.subtree("res_unit1")?, data_type, 1)?;
-        let res_unit2 = read_residual_unit_gpu_layer::<B>(&block_tree.subtree("res_unit2")?, data_type, 3)?;
-        let res_unit3 = read_residual_unit_gpu_layer::<B>(&block_tree.subtree("res_unit3")?, data_type, 9)?;
+        let res_unit1 = read_residual_unit_layer::<B>(&block_tree.subtree("res_unit1")?, data_type, 1)?;
+        let res_unit2 = read_residual_unit_layer::<B>(&block_tree.subtree("res_unit2")?, data_type, 3)?;
+        let res_unit3 = read_residual_unit_layer::<B>(&block_tree.subtree("res_unit3")?, data_type, 9)?;
         if snake_alpha.shape()[0] != trans_conv.cin
             || res_unit1.conv1.cin != channels
             || res_unit2.conv1.cin != channels

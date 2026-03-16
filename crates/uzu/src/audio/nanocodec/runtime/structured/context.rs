@@ -55,7 +55,7 @@ impl StructuredAudioCodecGraph {
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
     ) -> AudioResult<usize> {
-        let vocoder = self.vocoder_gpu_graph(resources)?;
+        let vocoder = self.vocoder_graph(resources)?;
         let mut required = Self::conv1d_input_context(&vocoder.final_conv)?;
 
         for block in vocoder.decoder_blocks.iter().rev() {
@@ -132,7 +132,7 @@ impl StructuredAudioCodecGraph {
                 });
             }
         }
-        let quantizer_resources = self.quantizer_gpu_resources(resources)?;
+        let quantizer_resources = self.quantizer_resources(resources)?;
         if quantizer_resources.residual_quantizers + 1 != codebooks {
             return Err(AudioError::Runtime(format!(
                 "structured audio residual quantizer count mismatch: expected {}, got {}",

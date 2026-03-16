@@ -155,7 +155,7 @@ impl StructuredAudioCodecGraph {
         Ok(runtime)
     }
 
-    pub(super) fn build_quantizer_gpu_resources<B: Backend>(
+    pub(super) fn build_quantizer_resources<B: Backend>(
         &self,
         context: &Rc<B::Context>,
     ) -> AudioResult<FishAudioQuantizerResources<B>> {
@@ -260,19 +260,19 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    pub(super) fn quantizer_gpu_resources<B: Backend>(
+    pub(super) fn quantizer_resources<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
     ) -> AudioResult<Rc<FishAudioQuantizerResources<B>>> {
         if let Some(existing) = resources.quantizer_resources.borrow().as_ref() {
             return Ok(existing.clone());
         }
-        let created = Rc::new(self.build_quantizer_gpu_resources(resources.context())?);
+        let created = Rc::new(self.build_quantizer_resources(resources.context())?);
         *resources.quantizer_resources.borrow_mut() = Some(created.clone());
         Ok(created)
     }
 
-    pub(super) fn build_vocoder_gpu_graph<B: Backend>(
+    pub(super) fn build_vocoder_graph<B: Backend>(
         &self,
         context: &Rc<B::Context>,
     ) -> AudioResult<StructuredAudioDecoderGraph<B>> {
@@ -283,17 +283,17 @@ impl StructuredAudioCodecGraph {
             AudioError::Runtime(format!("failed to load structured audio weights '{}': {err}", self.weights_path))
         })?;
         let root = loader.tree();
-        build_vocoder_gpu_graph_from_tree::<B>(context, &root, &self.config, self.vocoder_data_type)
+        build_vocoder_graph_from_tree::<B>(context, &root, &self.config, self.vocoder_data_type)
     }
 
-    pub(super) fn vocoder_gpu_graph<B: Backend>(
+    pub(super) fn vocoder_graph<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
     ) -> AudioResult<Rc<StructuredAudioDecoderGraph<B>>> {
         if let Some(existing) = resources.vocoder_graph.borrow().as_ref() {
             return Ok(existing.clone());
         }
-        let created = Rc::new(self.build_vocoder_gpu_graph(resources.context())?);
+        let created = Rc::new(self.build_vocoder_graph(resources.context())?);
         *resources.vocoder_graph.borrow_mut() = Some(created.clone());
         Ok(created)
     }
@@ -316,7 +316,7 @@ impl StructuredAudioCodecGraph {
         Ok(())
     }
 
-    pub(super) fn apply_post_module_gpu_on_array_single_batch_enqueued<B: Backend>(
+    pub(super) fn apply_post_module_single_batch_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         _context: &Rc<B::Context>,
@@ -390,7 +390,7 @@ impl StructuredAudioCodecGraph {
         Ok(main_output)
     }
 
-    pub(super) fn apply_post_module_gpu_on_array_enqueued<B: Backend>(
+    pub(super) fn apply_post_module_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         context: &Rc<B::Context>,
@@ -414,7 +414,7 @@ impl StructuredAudioCodecGraph {
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_gpu_on_array_single_batch_enqueued(
+            return self.apply_post_module_single_batch_enqueued(
                 resources,
                 context,
                 command_buffer,
