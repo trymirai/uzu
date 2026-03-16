@@ -2,10 +2,8 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
     fs::File,
-    marker::PhantomData,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, RwLock},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -18,7 +16,7 @@ use crate::{
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
     backends::common::{
         Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferInitial, CommandBufferPending, Context, CopyEncoder, Kernels,
+        CommandBufferInitial, CommandBufferPending, Context, Kernels,
         kernel::{
             ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
             AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
@@ -54,7 +52,7 @@ pub use stream::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStream
 use profile::{AudioCaptureGuard, SubmittedDecodedPaddedAudio, push_audio_command_buffer_profile};
 pub(crate) use profile::PendingStreamPcmChunk;
 use stream::{extract_delta_from_padded_with_offset_snapshot, pack_pcm_to_padded, unpack_padded_to_pcm};
-use structured::StructuredAudioCodecGraph;
+use structured::{StructuredAudioCodecGraph, StructuredAudioRuntimeResources};
 use support::{
     DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize_to_i32,
 };
@@ -233,8 +231,8 @@ impl NanoCodecFsqRuntimeConfig {
 pub struct NanoCodecFsqRuntime<B: Backend> {
     config: NanoCodecFsqRuntimeConfig,
     options: NanoCodecFsqRuntimeOptions,
-    last_decode_profile: Arc<RwLock<Option<AudioDecodeProfile>>>,
-    _backend: PhantomData<B>,
+    last_decode_profile: RefCell<Option<AudioDecodeProfile>>,
+    structured_resources: RefCell<Option<Rc<StructuredAudioRuntimeResources<B>>>>,
 }
 
 impl<B: Backend> Clone for NanoCodecFsqRuntime<B> {
@@ -242,8 +240,8 @@ impl<B: Backend> Clone for NanoCodecFsqRuntime<B> {
         Self {
             config: self.config.clone(),
             options: self.options,
-            last_decode_profile: self.last_decode_profile.clone(),
-            _backend: PhantomData,
+            last_decode_profile: RefCell::new(self.last_decode_profile.borrow().clone()),
+            structured_resources: self.structured_resources.clone(),
         }
     }
 }
@@ -253,7 +251,6 @@ impl<B: Backend> std::fmt::Debug for NanoCodecFsqRuntime<B> {
         f.debug_struct("NanoCodecFsqRuntime")
             .field("config", &self.config)
             .field("options", &self.options)
-            .field("last_decode_profile", &self.last_decode_profile)
             .finish()
     }
 }
@@ -273,8 +270,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         Self {
             config,
             options,
-            last_decode_profile: Arc::new(RwLock::new(None)),
-            _backend: PhantomData,
+            last_decode_profile: RefCell::new(None),
+            structured_resources: RefCell::new(None),
         }
     }
 
@@ -305,7 +302,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
     }
 
     pub fn last_decode_profile(&self) -> Option<AudioDecodeProfile> {
-        self.last_decode_profile.read().ok().and_then(|profile| profile.as_ref().cloned())
+        self.last_decode_profile.borrow().clone()
     }
 
     fn validate_fishaudio_token_delta(
@@ -346,8 +343,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         &self,
         tokens: &AudioTokenGrid,
     ) -> AudioResult<DecodedPaddedAudio> {
-        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
-            *last_decode_profile = None;
+        {
+            *self.last_decode_profile.borrow_mut() = None;
         }
         if tokens.codebooks() != self.config.num_groups() {
             return Err(AudioError::Runtime(format!(
@@ -621,74 +618,17 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         B::Context::new()
             .map_err(|err| AudioError::Runtime(format!("failed to create audio context: {err}")))
     }
-}
 
-/// Backend-specific operations required for full audio codec decode support.
-///
-/// The FSQ encode/decode path is fully generic over any `Backend`. However, the
-/// structured (vocoder) decode path currently requires backend-specific GPU
-/// dispatch (command buffers, kernel caches, etc.).  Implementing this trait for
-/// a concrete backend unlocks `AudioCodecRuntime` and the streaming decode
-/// methods on `NanoCodecFsqRuntime<B>`.
-pub trait StructuredDecoderBackend: Backend + Sized {
-    fn structured_decode_padded(
-        graph: &StructuredAudioCodecGraph,
-        options: NanoCodecFsqRuntimeOptions,
-        tokens: &[u32],
-        lengths: &[usize],
-        batch_size: usize,
-        codebooks: usize,
-        frames: usize,
-    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)>;
-
-    fn structured_submit_decode_padded(
-        graph: &StructuredAudioCodecGraph,
-        options: NanoCodecFsqRuntimeOptions,
-        tokens: &[u32],
-        lengths: &[usize],
-        batch_size: usize,
-        codebooks: usize,
-        frames: usize,
-    ) -> AudioResult<SubmittedDecodedPaddedAudio<Self>>;
-
-    fn structured_streaming_decode_context_frames(
-        graph: &StructuredAudioCodecGraph,
-    ) -> AudioResult<Option<usize>>;
-}
-
-impl StructuredDecoderBackend for crate::backends::metal::Metal {
-    fn structured_decode_padded(
-        graph: &StructuredAudioCodecGraph,
-        options: NanoCodecFsqRuntimeOptions,
-        tokens: &[u32],
-        lengths: &[usize],
-        batch_size: usize,
-        codebooks: usize,
-        frames: usize,
-    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
-        graph.decode_padded(options, tokens, lengths, batch_size, codebooks, frames)
+    fn structured_resources(&self) -> AudioResult<Rc<StructuredAudioRuntimeResources<B>>> {
+        if let Some(existing) = self.structured_resources.borrow().as_ref() {
+            return Ok(existing.clone());
+        }
+        let context = Self::create_context()?;
+        let created = Rc::new(StructuredAudioRuntimeResources::new(context));
+        *self.structured_resources.borrow_mut() = Some(created.clone());
+        Ok(created)
     }
 
-    fn structured_submit_decode_padded(
-        graph: &StructuredAudioCodecGraph,
-        options: NanoCodecFsqRuntimeOptions,
-        tokens: &[u32],
-        lengths: &[usize],
-        batch_size: usize,
-        codebooks: usize,
-        frames: usize,
-    ) -> AudioResult<SubmittedDecodedPaddedAudio<Self>> {
-        graph.submit_decode_padded(options, tokens, lengths, batch_size, codebooks, frames)
-    }
-
-    fn structured_streaming_decode_context_frames(
-        graph: &StructuredAudioCodecGraph,
-    ) -> AudioResult<Option<usize>> {
-        graph.streaming_decode_context_frames()
-    }
-}
-
-impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
     fn decode_structured_stream_delta(
         &self,
         state: &mut AudioDecodeStreamState,
@@ -705,7 +645,8 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
             });
         }
 
-        let Some(context_frames) = B::structured_streaming_decode_context_frames(fishaudio)? else {
+        let resources = self.structured_resources()?;
+        let Some(context_frames) = fishaudio.streaming_decode_context_frames(resources.as_ref())? else {
             let full_grid = state.to_full_grid()?;
             let full_padded = self.decode_padded(&full_grid)?;
             state.record_last_step_stats(input_frames, 0, state.total_frames());
@@ -719,8 +660,8 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
         let batch_size = state.batch_size;
         let codebooks = state.codebooks;
         let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
-        let (decoded_window, decode_profile) = B::structured_decode_padded(
-            fishaudio,
+        let (decoded_window, decode_profile) = fishaudio.decode_padded(
+            resources.as_ref(),
             self.options,
             window_tokens,
             window_lengths,
@@ -728,8 +669,8 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
             codebooks,
             window_frames,
         )?;
-        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
-            *last_decode_profile = decode_profile;
+        {
+            *self.last_decode_profile.borrow_mut() = decode_profile;
         }
         let audio_offset_frames = window_start
             .checked_mul(fishaudio.upsample_factor)
@@ -742,8 +683,8 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
         &self,
         tokens: &AudioTokenGrid,
     ) -> AudioResult<DecodedPaddedAudio> {
-        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
-            *last_decode_profile = None;
+        {
+            *self.last_decode_profile.borrow_mut() = None;
         }
         if tokens.codebooks() != self.config.num_groups() {
             return Err(AudioError::Runtime(format!(
@@ -810,8 +751,9 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
                     }
                 }
             }
-            let (decoded, decode_profile) = B::structured_decode_padded(
-                fishaudio,
+            let resources = self.structured_resources()?;
+            let (decoded, decode_profile) = fishaudio.decode_padded(
+                resources.as_ref(),
                 self.options,
                 codebook_major.tokens(),
                 &lengths_usize,
@@ -819,9 +761,7 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
                 codebook_major.codebooks(),
                 frames,
             )?;
-            if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
-                *last_decode_profile = decode_profile;
-            }
+            *self.last_decode_profile.borrow_mut() = decode_profile;
             return Ok(decoded);
         }
 
@@ -918,7 +858,8 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
         if state.mode != AudioDecodeStreamingMode::IncrementalStateful {
             return Ok(None);
         }
-        let Some(context_frames) = B::structured_streaming_decode_context_frames(fishaudio)? else {
+        let resources = self.structured_resources()?;
+        let Some(context_frames) = fishaudio.streaming_decode_context_frames(resources.as_ref())? else {
             return Ok(None);
         };
 
@@ -935,8 +876,8 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
         let previous_audio_lengths = state.emitted_audio_lengths.clone().into_boxed_slice();
         let semantic_lengths = state.semantic_lengths.clone().into_boxed_slice();
         let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
-        let submitted = B::structured_submit_decode_padded(
-            fishaudio,
+        let submitted = fishaudio.submit_decode_padded(
+            resources.as_ref(),
             self.options,
             window_tokens,
             window_lengths,
@@ -962,7 +903,7 @@ impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
     }
 }
 
-impl<B: StructuredDecoderBackend + Send + Sync> AudioCodecRuntime for NanoCodecFsqRuntime<B> {
+impl<B: Backend> AudioCodecRuntime for NanoCodecFsqRuntime<B> {
     fn encode(
         &self,
         pcm: &AudioPcmBatch,

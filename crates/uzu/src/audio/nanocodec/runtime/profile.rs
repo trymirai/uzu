@@ -46,7 +46,7 @@ pub struct AudioDecodeProfile {
     pub trace_path: Option<PathBuf>,
 }
 
-pub(in crate::audio::nanocodec::runtime) struct SubmittedDecodedPaddedAudio<B: Backend> {
+pub struct SubmittedDecodedPaddedAudio<B: Backend> {
     pub(in crate::audio::nanocodec::runtime) output: Array<B>,
     pub(in crate::audio::nanocodec::runtime) channels: usize,
     pub(in crate::audio::nanocodec::runtime) frames: usize,
@@ -124,9 +124,7 @@ impl<B: Backend> PendingStreamPcmChunk<B> {
 
     pub(crate) fn resolve(self) -> AudioResult<AudioPcmBatch> {
         let (decoded_window, decode_profile) = self.submitted.resolve()?;
-        if let Ok(mut last_decode_profile) = self.runtime.last_decode_profile.write() {
-            *last_decode_profile = decode_profile;
-        }
+        *self.runtime.last_decode_profile.borrow_mut() = decode_profile;
         let delta = extract_delta_from_padded_with_offset_snapshot(
             &decoded_window,
             &self.previous_audio_lengths,

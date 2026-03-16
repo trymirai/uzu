@@ -69,6 +69,19 @@ impl CommandBufferEncoding for CpuCommandBuffer {
         }))
     }
 
+    fn encode_copy_ranges(
+        &mut self,
+        src: (&Box<[u8]>, usize),
+        dst: (&Box<[u8]>, usize),
+        size: usize,
+    ) {
+        let src_ptr = unsafe { src.0.as_ptr().add(src.1) };
+        let dst_ptr = unsafe { (dst.0.as_ptr() as *mut u8).add(dst.1) };
+        self.push_command(Box::new(move || unsafe {
+            std::ptr::copy(src_ptr, dst_ptr, size);
+        }))
+    }
+
     fn encode_fill(
         &mut self,
         dst: &mut Box<[u8]>,

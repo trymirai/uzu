@@ -10,6 +10,6 @@ pub use context::AudioGenerationContext;
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 pub use nanocodec::{
     AudioCommandBufferProfile, AudioDecodeProfile, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
-    NanoCodecFsqRuntimeOptions, StructuredDecoderBackend,
+    NanoCodecFsqRuntimeOptions,
 };
 pub use types::{AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking};

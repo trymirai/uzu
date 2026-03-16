@@ -17,3 +17,4 @@ use enqueue::*;
 
 // Re-export to parent (runtime.rs)
 pub(super) use shared::StructuredAudioCodecGraph;
+pub(in crate::audio::nanocodec::runtime) use fishaudio::StructuredAudioRuntimeResources;

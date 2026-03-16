@@ -1,5 +1,4 @@
 use super::*;
-use crate::backends::metal::Metal;
 
 pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
@@ -47,7 +46,7 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
     pub(super) residual_out_bias: Array<B>,
 }
 
-pub(super) struct StructuredAudioRuntimeResources<B: Backend> {
+pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<B: Backend> {
     context: Rc<B::Context>,
     pub(super) kernels_by_dtype: RefCell<HashMap<u8, Rc<StructuredAudioKernelCache<B>>>>,
     pub(super) post_module_runtime: RefCell<Option<Rc<StructuredAudioPostModuleRuntime<B>>>>,
@@ -56,7 +55,7 @@ pub(super) struct StructuredAudioRuntimeResources<B: Backend> {
 }
 
 impl<B: Backend> StructuredAudioRuntimeResources<B> {
-    pub(super) fn new(context: Rc<B::Context>) -> Self {
+    pub(in crate::audio::nanocodec::runtime) fn new(context: Rc<B::Context>) -> Self {
         Self {
             context,
             kernels_by_dtype: RefCell::new(HashMap::new()),
@@ -110,25 +109,5 @@ pub(super) fn build_structured_audio_kernels<B: Backend>(
             .map_err(|err| AudioError::Runtime(format!("failed to initialize activation kernel: {err}")))?,
         add: <B::Kernels as Kernels>::AudioAddKernel::new(context.as_ref(), data_type)
             .map_err(|err| AudioError::Runtime(format!("failed to initialize add kernel: {err}")))?,
-    })
-}
-
-thread_local! {
-    pub(super) static FISHAUDIO_RUNTIME_RESOURCES_CACHE: RefCell<HashMap<String, Rc<StructuredAudioRuntimeResources<Metal>>>> =
-        RefCell::new(HashMap::new());
-}
-
-pub(super) fn structured_audio_runtime_resources(
-    weights_path: &str,
-) -> AudioResult<Rc<StructuredAudioRuntimeResources<Metal>>> {
-    FISHAUDIO_RUNTIME_RESOURCES_CACHE.with(|cache| {
-        if let Some(existing) = cache.borrow().get(weights_path) {
-            return Ok(existing.clone());
-        }
-        let context = <Metal as Backend>::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode context: {err}")))?;
-        let created = Rc::new(StructuredAudioRuntimeResources::new(context));
-        cache.borrow_mut().insert(weights_path.to_string(), created.clone());
-        Ok(created)
     })
 }

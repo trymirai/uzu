@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DecodedPaddedAudio {
+pub struct DecodedPaddedAudio {
     pub samples: Vec<f32>,
     pub channels: usize,
     pub frames: usize,

@@ -108,21 +108,6 @@ impl MetalCommandBufferEncoding {
         blit_encoder
     }
 
-    pub(crate) fn with_compute_encoder<T>(
-        &mut self,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
-        self.ensure_compute();
-        f(self)
-    }
-
-    pub(crate) fn with_copy_encoder<T>(
-        &mut self,
-        f: impl FnOnce(&Retained<ProtocolObject<dyn MTLBlitCommandEncoder>>) -> T,
-    ) -> T {
-        let blit_encoder = self.ensure_blit();
-        f(blit_encoder)
-    }
 }
 
 impl Drop for MetalCommandBufferEncoding {
@@ -143,6 +128,15 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(src.length() >= size && dst.length() >= size);
 
         self.ensure_blit().copy_buffer_to_buffer(src, 0, dst, 0, size);
+    }
+
+    fn encode_copy_ranges(
+        &mut self,
+        src: (&Retained<ProtocolObject<dyn MTLBuffer>>, usize),
+        dst: (&Retained<ProtocolObject<dyn MTLBuffer>>, usize),
+        size: usize,
+    ) {
+        self.ensure_blit().copy_buffer_to_buffer(src.0, src.1, dst.0, dst.1, size);
     }
 
     fn encode_fill(

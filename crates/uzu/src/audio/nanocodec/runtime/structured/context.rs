@@ -1,5 +1,4 @@
 use super::*;
-use crate::backends::metal::Metal;
 
 impl StructuredAudioCodecGraph {
     fn conv1d_input_context<B: Backend>(layer: &StructuredAudioConv1d<B>) -> AudioResult<usize> {
@@ -52,9 +51,11 @@ impl StructuredAudioCodecGraph {
         Self::convtranspose_input_context(after_res1, &layer.trans_conv)
     }
 
-    fn streaming_vocoder_context_frames(&self) -> AudioResult<usize> {
-        let resources = self.runtime_resources()?;
-        let vocoder = self.vocoder_gpu_graph(resources.as_ref())?;
+    fn streaming_vocoder_context_frames<B: Backend>(
+        &self,
+        resources: &StructuredAudioRuntimeResources<B>,
+    ) -> AudioResult<usize> {
+        let vocoder = self.vocoder_gpu_graph(resources)?;
         let mut required = Self::conv1d_input_context(&vocoder.final_conv)?;
 
         for block in vocoder.decoder_blocks.iter().rev() {
@@ -82,24 +83,28 @@ impl StructuredAudioCodecGraph {
         Some(context)
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn streaming_decode_context_frames(&self) -> AudioResult<Option<usize>> {
-        let vocoder_context = self.streaming_vocoder_context_frames()?;
+    pub(in crate::audio::nanocodec::runtime) fn streaming_decode_context_frames<B: Backend>(
+        &self,
+        resources: &StructuredAudioRuntimeResources<B>,
+    ) -> AudioResult<Option<usize>> {
+        let vocoder_context = self.streaming_vocoder_context_frames(resources)?;
         let Some(post_module_context) = self.post_module_streaming_context_frames() else {
             return Ok(None);
         };
         Ok(Some(vocoder_context.max(post_module_context)))
     }
 
-    pub(super) fn decode_quantizer_to_nsc_array_on_context(
+    pub(super) fn decode_quantizer_to_nsc_array_on_context<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
+        resources: &StructuredAudioRuntimeResources<B>,
+        context: &Rc<B::Context>,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
         codebooks: usize,
         frames: usize,
         profile: &mut Option<AudioDecodeProfile>,
-    ) -> AudioResult<Array<Metal>> {
+    ) -> AudioResult<Array<B>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
                 "structured audio codebook mismatch: expected {}, got {codebooks}",
@@ -127,8 +132,7 @@ impl StructuredAudioCodecGraph {
                 });
             }
         }
-        let resources = self.runtime_resources()?;
-        let quantizer_resources = self.quantizer_gpu_resources(resources.as_ref())?;
+        let quantizer_resources = self.quantizer_gpu_resources(resources)?;
         if quantizer_resources.residual_quantizers + 1 != codebooks {
             return Err(AudioError::Runtime(format!(
                 "structured audio residual quantizer count mismatch: expected {}, got {}",

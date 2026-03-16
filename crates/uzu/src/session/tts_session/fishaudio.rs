@@ -336,33 +336,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
 }
 
 impl<B: Backend> FishAudioTextDecoderRuntime<B> {
-    fn generate_semantic_tokens(
-        &mut self,
-        text_tokens: &[u64],
-        codec_cardinality: usize,
-        seed: u64,
-        max_semantic_frames: usize,
-    ) -> Result<AudioTokenGrid, Error> {
-        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, max_semantic_frames, None)
-    }
-
-    fn generate_semantic_tokens_with_callback(
-        &mut self,
-        text_tokens: &[u64],
-        codec_cardinality: usize,
-        seed: u64,
-        max_semantic_frames: usize,
-        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
-    ) -> Result<AudioTokenGrid, Error> {
-        self.generate_semantic_tokens_internal(
-            text_tokens,
-            codec_cardinality,
-            seed,
-            max_semantic_frames,
-            Some(on_frame),
-        )
-    }
-
     fn generate_semantic_tokens_internal(
         &mut self,
         text_tokens: &[u64],
@@ -822,13 +795,7 @@ impl<B: Backend> SemanticDecoderBackend for FishAudioTextDecoderRuntime<B> {
         seed: u64,
         max_semantic_frames: usize,
     ) -> Result<AudioTokenGrid, Error> {
-        FishAudioTextDecoderRuntime::generate_semantic_tokens(
-            self,
-            text_tokens,
-            codec_cardinality,
-            seed,
-            max_semantic_frames,
-        )
+        self.generate_semantic_tokens_internal(text_tokens, codec_cardinality, seed, max_semantic_frames, None)
     }
 
     fn generate_semantic_tokens_with_callback(
@@ -839,13 +806,12 @@ impl<B: Backend> SemanticDecoderBackend for FishAudioTextDecoderRuntime<B> {
         max_semantic_frames: usize,
         on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
     ) -> Result<AudioTokenGrid, Error> {
-        FishAudioTextDecoderRuntime::generate_semantic_tokens_with_callback(
-            self,
+        self.generate_semantic_tokens_internal(
             text_tokens,
             codec_cardinality,
             seed,
             max_semantic_frames,
-            on_frame,
+            Some(on_frame),
         )
     }
 

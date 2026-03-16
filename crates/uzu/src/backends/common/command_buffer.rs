@@ -28,6 +28,13 @@ pub trait CommandBufferEncoding {
         size: usize,
     );
 
+    fn encode_copy_ranges(
+        &mut self,
+        src: (&<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer, usize),
+        dst: (&<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer, usize),
+        size: usize,
+    );
+
     fn encode_fill(
         &mut self,
         dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,

@@ -377,23 +377,29 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
         }
 
-        self.ctx.command_buffer = Rc::new(RefCell::new(
-            self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
-        ));
+        *self.ctx.command_buffer.borrow_mut() =
+            self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let encoding_parameters = EncodingParameters::new();
+        let context_rc = self.ctx.context.clone();
+        let cache_layers_rc = self.ctx.cache_layers.clone();
+        let shared_buffers_rc = self.ctx.shared_buffers.clone();
+        let positions_rc = self.ctx.async_chain_positions.clone();
+        let seeds_rc = self.ctx.async_chain_seeds.clone();
+        let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
+        let sampling_method = sampling.method();
         for pass in 0..followup_count {
             let token_ids = [if pass == 0 {
                 first_token
             } else {
                 0
             }];
-            let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
             let mut state = ForwardPassState::new_llm(
-                self.ctx.context.clone(),
+                context_rc.clone(),
                 &self.ctx.decoder_config,
                 &self.ctx.model_shape,
                 &self.ctx.scratch_buffers,
-                self.ctx.cache_layers.clone(),
-                self.ctx.shared_buffers.clone(),
+                cache_layers_rc.clone(),
+                shared_buffers_rc.clone(),
                 &token_ids,
                 &[self.next_position + pass],
                 token_bitmask,
@@ -405,14 +411,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 None,
                 pass > 0,
                 self.should_fill_attention_bias,
-                Some((self.ctx.async_chain_positions.clone(), pass)),
-                Some((self.ctx.async_chain_seeds.clone(), pass)),
+                Some((positions_rc.clone(), pass)),
+                Some((seeds_rc.clone(), pass)),
             );
             if let Some(method) = state.sampling_method_mut() {
-                *method = Some(sampling.method());
+                *method = Some(sampling_method);
             }
 
-            let encoding_parameters = EncodingParameters::new();
             {
                 let mut command_buffer = self.ctx.command_buffer.borrow_mut();
                 self.ctx.executables
@@ -432,9 +437,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     .embed
                     .encode_readout(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            }
-            {
-                let mut command_buffer = self.ctx.command_buffer.borrow_mut();
                 self.ctx.sampler
                     .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
@@ -642,7 +644,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     if let Some(mask) = self.get_two_token_vocab_mask(limit) {
                         TokenBitmaskSource::Borrowed(mask)
                     } else {
-                        let mut mask = vec![0_u32; token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?];
+                        let total_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
+                        let mut mask = vec![0_u32; total_words];
                         for token_index in 0..limit {
                             let word = token_index / 32;
                             let bit = token_index % 32;
@@ -651,7 +654,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         TokenBitmaskSource::Owned(mask)
                     }
                 } else {
-                    let mut mask = vec![0_u32; token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?];
+                    let total_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
+                    let mut mask = vec![0_u32; total_words];
                     for token_index in 0..limit {
                         let word = token_index / 32;
                         let bit = token_index % 32;
@@ -711,9 +715,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
             if matches!(embedding_injection, EmbeddingInjection::OverrideFirstRowInternal) && capture_hidden {
                 return Err(Error::GenerateFailed);
             }
-            self.ctx.command_buffer = Rc::new(RefCell::new(
-                self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
-            ));
+            *self.ctx.command_buffer.borrow_mut() =
+                self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
             {
                 let mut command_buffer = self.ctx.command_buffer.borrow_mut();
                 self.ctx.executables

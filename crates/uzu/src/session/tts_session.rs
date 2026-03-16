@@ -27,7 +27,6 @@ use crate::{
     array::{ArrayCell, ArrayContextExt},
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
-        StructuredDecoderBackend,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode},
     },
     backends::common::{

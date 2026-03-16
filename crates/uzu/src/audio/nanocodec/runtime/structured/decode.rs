@@ -1,22 +1,19 @@
 use super::*;
-use crate::backends::metal::Metal;
-
-type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
 
 impl StructuredAudioCodecGraph {
-    fn run_residual_unit_enqueued(
+    fn run_residual_unit_enqueued<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-        command_buffer: &mut MetalCommandBuffer,
-        input: &Array<Metal>,
-        unit: &StructuredAudioResidualUnit<Metal>,
+        context: &Rc<B::Context>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        input: &Array<B>,
+        unit: &StructuredAudioResidualUnit<B>,
         lengths: &[i32],
-        lengths_array: &Array<Metal>,
+        lengths_array: &Array<B>,
         batch_size: usize,
         channels: usize,
         seq_len: usize,
-        kernels: &StructuredAudioKernelCache<Metal>,
-    ) -> AudioResult<Array<Metal>> {
+        kernels: &StructuredAudioKernelCache<B>,
+    ) -> AudioResult<Array<B>> {
         let residual = input.clone();
         let x = snake1d_enqueue(context, command_buffer, input, &unit.snake1_alpha, batch_size, channels, seq_len, kernels)?;
         let x = causal_conv1d_grouped_enqueue(
@@ -46,15 +43,16 @@ impl StructuredAudioCodecGraph {
         )
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn submit_decode_padded(
+    pub(in crate::audio::nanocodec::runtime) fn submit_decode_padded<B: Backend>(
         &self,
+        resources: &StructuredAudioRuntimeResources<B>,
         runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<SubmittedDecodedPaddedAudio<Metal>> {
+    ) -> AudioResult<SubmittedDecodedPaddedAudio<B>> {
         let collect_command_buffer_profile =
             runtime_options.collect_command_buffer_profile || runtime_options.capture_single_decode;
         if batch_size == 0 || frames == 0 {
@@ -66,8 +64,7 @@ impl StructuredAudioCodecGraph {
                         .ok_or(AudioError::Runtime("structured audio length scaling overflow".to_string()))
                 })
                 .collect::<AudioResult<Vec<_>>>()?;
-            let context = <Metal as Backend>::Context::new()
-                .map_err(|err| AudioError::Runtime(format!("failed to create metal audio context: {err}")))?;
+            let context = resources.context().clone();
             return Ok(SubmittedDecodedPaddedAudio {
                 output: context.create_array(&[0], DataType::F32, "structured_audio_empty_decode_output"),
                 channels: 1,
@@ -99,7 +96,6 @@ impl StructuredAudioCodecGraph {
         } else {
             None
         };
-        let resources = self.runtime_resources()?;
         let context = if let Some(capture) = capture.as_ref() {
             capture.context()
         } else {
@@ -110,6 +106,7 @@ impl StructuredAudioCodecGraph {
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
         let quantized_nsc = self.decode_quantizer_to_nsc_array_on_context(
+            resources,
             &context,
             tokens,
             lengths,
@@ -119,9 +116,10 @@ impl StructuredAudioCodecGraph {
             &mut decode_profile,
         )?;
         x = if can_use_gpu_latent_path {
-            self.apply_post_module_gpu_on_array_single_batch(&context, &quantized_nsc, frames, &mut decode_profile)?
+            self.apply_post_module_gpu_on_array_single_batch(resources, &context, &quantized_nsc, frames, &mut decode_profile)?
         } else {
             self.apply_post_module_gpu_on_array(
+                resources,
                 &context,
                 &quantized_nsc,
                 lengths,
@@ -131,7 +129,7 @@ impl StructuredAudioCodecGraph {
             )?
         };
 
-        let vocoder_graph = self.vocoder_gpu_graph(resources.as_ref())?;
+        let vocoder_graph = self.vocoder_gpu_graph(resources)?;
         let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut command_buffer = context
             .create_command_buffer()
@@ -143,7 +141,7 @@ impl StructuredAudioCodecGraph {
         let mut command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
         let mut flush_stage = |label: String,
                                estimated_macs: Option<usize>,
-                               command_buffer: &mut MetalCommandBuffer|
+                               command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding|
          -> AudioResult<()> {
             if !(chunked_command_buffers || profile_decoder_micro_stages) {
                 return Ok(());
@@ -466,8 +464,9 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn decode_padded(
+    pub(in crate::audio::nanocodec::runtime) fn decode_padded<B: Backend>(
         &self,
+        resources: &StructuredAudioRuntimeResources<B>,
         runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
         lengths: &[usize],
@@ -475,6 +474,6 @@ impl StructuredAudioCodecGraph {
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
-        self.submit_decode_padded(runtime_options, tokens, lengths, batch_size, codebooks, frames)?.resolve()
+        self.submit_decode_padded(resources, runtime_options, tokens, lengths, batch_size, codebooks, frames)?.resolve()
     }
 }

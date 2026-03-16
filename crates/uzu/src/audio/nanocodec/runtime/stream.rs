@@ -115,9 +115,16 @@ impl AudioDecodeStreamState {
             return Ok(());
         }
 
-        let delta_codebook_major = delta_tokens.to_packing(AudioTokenPacking::CodebookMajor);
-        let delta_frames = delta_codebook_major.frames();
-        let tokens = delta_codebook_major.tokens();
+        let converted;
+        let delta_ref = if delta_tokens.packing() == AudioTokenPacking::CodebookMajor {
+            delta_tokens
+        } else {
+            converted = delta_tokens.to_packing(AudioTokenPacking::CodebookMajor);
+            &converted
+        };
+        let delta_frames = delta_ref.frames();
+        let tokens = delta_ref.tokens();
+        let delta_lengths = delta_ref.lengths();
         let target_frames = self.total_frames().saturating_add(delta_frames);
         if self.mode == AudioDecodeStreamingMode::PrefixFallback && target_frames > self.max_workspace_frames {
             return Err(AudioError::Runtime(format!(
@@ -153,7 +160,7 @@ impl AudioDecodeStreamState {
             self.stored_frame_start = self.stored_frame_start.saturating_add(evict);
         }
 
-        for (length, &delta_len) in self.semantic_lengths.iter_mut().zip(delta_codebook_major.lengths().iter()) {
+        for (length, &delta_len) in self.semantic_lengths.iter_mut().zip(delta_lengths.iter()) {
             *length = length
                 .checked_add(delta_len)
                 .ok_or(AudioError::Runtime("stream semantic length overflow".to_string()))?;
@@ -162,7 +169,7 @@ impl AudioDecodeStreamState {
         Ok(())
     }
 
-    pub(super) fn to_full_grid(&mut self) -> AudioResult<AudioTokenGrid> {
+    pub(super) fn to_full_grid(&self) -> AudioResult<AudioTokenGrid> {
         if self.stored_frame_start != 0 {
             return Err(AudioError::Runtime(format!(
                 "full-grid decode requires retained prefix, but {} frames were evicted",
@@ -181,22 +188,16 @@ impl AudioDecodeStreamState {
             .checked_mul(self.codebooks)
             .and_then(|value| value.checked_mul(total_frames))
             .ok_or(AudioError::Runtime("stream token count overflow".to_string()))?;
-        if self.flattened_tokens.capacity() < expected_tokens {
-            return Err(AudioError::Runtime(format!(
-                "stream flattened token capacity exceeded: required={expected_tokens}, capacity={}",
-                self.flattened_tokens.capacity()
-            )));
-        }
-        self.flattened_tokens.clear();
+        let mut tokens = Vec::with_capacity(expected_tokens);
         for row in &self.row_tokens {
-            self.flattened_tokens.extend_from_slice(row);
+            tokens.extend_from_slice(row);
         }
-        if self.flattened_tokens.len() != expected_tokens {
+        if tokens.len() != expected_tokens {
             return Err(AudioError::Runtime("stream flattened token count mismatch".to_string()));
         }
 
         AudioTokenGrid::new(
-            self.flattened_tokens.clone().into_boxed_slice(),
+            tokens.into_boxed_slice(),
             self.batch_size,
             self.codebooks,
             total_frames,
@@ -265,16 +266,15 @@ impl AudioDecodeStreamState {
         audio_offset_frames: usize,
         upsample_factor: usize,
     ) -> AudioResult<DecodedPaddedAudio> {
-        let previous_audio_lengths = self.emitted_audio_lengths.clone();
-        let semantic_lengths = self.semantic_lengths.clone();
         let delta = extract_delta_from_padded_with_offset_snapshot(
             full_padded,
-            &previous_audio_lengths,
-            &semantic_lengths,
+            &self.emitted_audio_lengths,
+            &self.semantic_lengths,
             audio_offset_frames,
             upsample_factor,
         )?;
-        for (index, &semantic_length) in semantic_lengths.iter().enumerate() {
+        for index in 0..self.semantic_lengths.len() {
+            let semantic_length = self.semantic_lengths[index];
             let full_audio_length = semantic_length
                 .checked_mul(upsample_factor)
                 .ok_or(AudioError::Runtime("stream audio length overflow".to_string()))?;

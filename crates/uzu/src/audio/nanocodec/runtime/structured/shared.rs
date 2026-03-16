@@ -76,7 +76,7 @@ impl SequenceLayout {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::audio::nanocodec::runtime) struct StructuredAudioCodecGraph {
+pub struct StructuredAudioCodecGraph {
     pub(in crate::audio::nanocodec::runtime) config: DescriptAudioCodecConfig,
     pub(in crate::audio::nanocodec::runtime) weights_path: String,
     pub(in crate::audio::nanocodec::runtime) codebook_size: usize,

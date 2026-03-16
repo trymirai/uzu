@@ -8,13 +8,13 @@ pub(super) struct LoadedTtsRuntime<B: Backend> {
     pub(super) message_processor_config: TtsMessageProcessorConfig,
 }
 
-pub(super) fn build_audio_decoder_backend<B: StructuredDecoderBackend>(
+pub(super) fn build_audio_decoder_backend<B: Backend + Send + Sync>(
     audio: &AudioGenerationContext<B>
 ) -> Result<Box<dyn AudioDecoderBackend>, Error> {
     Ok(Box::new(audio_backend::NanoCodecAudioDecoderBackend::new(audio.clone())))
 }
 
-pub(super) fn load_tts_runtime<B: StructuredDecoderBackend>(
+pub(super) fn load_tts_runtime<B: Backend + Send + Sync>(
     model_path: &Path,
     model_metadata: &ModelMetadata,
     options: &TtsSessionOptions,

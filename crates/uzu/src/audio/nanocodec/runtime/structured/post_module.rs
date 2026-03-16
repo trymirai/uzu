@@ -1,11 +1,6 @@
 use super::*;
-use crate::backends::metal::Metal;
 
 impl StructuredAudioCodecGraph {
-    pub(super) fn runtime_resources(&self) -> AudioResult<Rc<StructuredAudioRuntimeResources<Metal>>> {
-        structured_audio_runtime_resources(&self.weights_path)
-    }
-
     pub(super) fn apply_convnext_ncs_enqueued<B: Backend>(
         &self,
         context: &Rc<B::Context>,
@@ -330,13 +325,14 @@ impl StructuredAudioCodecGraph {
         Ok(())
     }
 
-    pub(super) fn apply_post_module_gpu_on_array_single_batch(
+    pub(super) fn apply_post_module_gpu_on_array_single_batch<B: Backend>(
         &self,
-        _context: &Rc<<Metal as Backend>::Context>,
-        latent_nsc: &Array<Metal>,
+        resources: &StructuredAudioRuntimeResources<B>,
+        _context: &Rc<B::Context>,
+        latent_nsc: &Array<B>,
         frames: usize,
         profile: &mut Option<AudioDecodeProfile>,
-    ) -> AudioResult<Array<Metal>> {
+    ) -> AudioResult<Array<B>> {
         if frames == 0 {
             return Ok(latent_nsc.clone());
         }
@@ -349,8 +345,7 @@ impl StructuredAudioCodecGraph {
             });
         }
 
-        let resources = self.runtime_resources()?;
-        let runtime = self.post_module_runtime(resources.as_ref(), frames.max(1))?;
+        let runtime = self.post_module_runtime(resources, frames.max(1))?;
         let token_ids = vec![0_u64; frames];
         let token_positions = (0..frames).collect::<Vec<_>>();
         let mut state = ForwardPassState::new_classifier(
@@ -394,13 +389,17 @@ impl StructuredAudioCodecGraph {
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?
             .start_encoding();
-        command_buffer.with_copy_encoder(|copy_encoder| {
+        {
             let latent_buffer = latent_nsc.buffer();
             let main_output_buffer = main_output.buffer();
             let latent_buffer = latent_buffer.borrow();
             let main_output_buffer = main_output_buffer.borrow();
-            copy_encoder.encode_copy(&latent_buffer, &main_output_buffer, copy_bytes);
-        });
+            command_buffer.encode_copy_ranges(
+                (&latent_buffer, latent_nsc.offset()),
+                (&main_output_buffer, main_output.offset()),
+                copy_bytes,
+            );
+        }
         Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         let command_buffer = command_buffer.end_encoding().submit();
@@ -414,15 +413,16 @@ impl StructuredAudioCodecGraph {
         Ok(main_output)
     }
 
-    pub(super) fn apply_post_module_gpu_on_array(
+    pub(super) fn apply_post_module_gpu_on_array<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-        latent_nsc: &Array<Metal>,
+        resources: &StructuredAudioRuntimeResources<B>,
+        context: &Rc<B::Context>,
+        latent_nsc: &Array<B>,
         lengths: &[usize],
         batch_size: usize,
         frames: usize,
         profile: &mut Option<AudioDecodeProfile>,
-    ) -> AudioResult<Array<Metal>> {
+    ) -> AudioResult<Array<B>> {
         if lengths.len() != batch_size {
             return Err(AudioError::InvalidTokenLengths {
                 expected_lengths: batch_size,
@@ -437,7 +437,7 @@ impl StructuredAudioCodecGraph {
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_gpu_on_array_single_batch(context, latent_nsc, frames, profile);
+            return self.apply_post_module_gpu_on_array_single_batch(resources, context, latent_nsc, frames, profile);
         }
 
         let output = context.create_array(
@@ -468,8 +468,7 @@ impl StructuredAudioCodecGraph {
         let full_copy_bytes = latent_nsc.size();
         let mut copied_output_prefix = false;
         for (active_len, batch_indices) in batch_indices_by_length {
-            let resources = self.runtime_resources()?;
-            let runtime = self.post_module_runtime(resources.as_ref(), active_len.max(1))?;
+            let runtime = self.post_module_runtime(resources, active_len.max(1))?;
             let token_ids = vec![0_u64; active_len];
             let token_positions = (0..active_len).collect::<Vec<_>>();
             let mut state = ForwardPassState::new_classifier(
@@ -511,44 +510,44 @@ impl StructuredAudioCodecGraph {
                     .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?
                     .start_encoding();
                 if !copied_output_prefix {
-                    command_buffer.with_copy_encoder(|copy_encoder| {
+                    {
                         let latent_buffer = latent_nsc.buffer();
                         let output_buffer = output.buffer();
                         let latent_buffer = latent_buffer.borrow();
                         let output_buffer = output_buffer.borrow();
-                        copy_encoder.encode_copy_ranges(
+                        command_buffer.encode_copy_ranges(
                             (&latent_buffer, latent_nsc.offset()),
                             (&output_buffer, output.offset()),
                             full_copy_bytes,
                         );
-                    });
+                    }
                     copied_output_prefix = true;
                 }
                 let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
-                command_buffer.with_copy_encoder(|copy_encoder| {
+                {
                     let source_buffer = source.buffer();
                     let main_output_buffer = main_output.buffer();
                     let source_buffer = source_buffer.borrow();
                     let main_output_buffer = main_output_buffer.borrow();
-                    copy_encoder.encode_copy_ranges(
+                    command_buffer.encode_copy_ranges(
                         (&source_buffer, source.offset()),
                         (&main_output_buffer, main_output.offset()),
                         source.size(),
                     );
-                });
+                }
                 Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
                 let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
-                command_buffer.with_copy_encoder(|copy_encoder| {
+                {
                     let main_output_buffer = main_output.buffer();
                     let destination_buffer = destination.buffer();
                     let main_output_buffer = main_output_buffer.borrow();
                     let destination_buffer = destination_buffer.borrow();
-                    copy_encoder.encode_copy_ranges(
+                    command_buffer.encode_copy_ranges(
                         (&main_output_buffer, main_output.offset()),
                         (&destination_buffer, destination.offset()),
                         destination.size(),
                     );
-                });
+                }
                 let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
                 let command_buffer = command_buffer.end_encoding().submit();
                 let wait_start = profile.is_some().then(Instant::now);

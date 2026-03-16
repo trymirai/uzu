@@ -453,7 +453,7 @@ impl SemanticDecoderBackend for StubTextDecoderRuntime {
     }
 }
 
-impl<B: StructuredDecoderBackend> TtsSession<B> {
+impl<B: Backend + Send + Sync> TtsSession<B> {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
         Self::new_with_options(model_path, TtsSessionOptions::default())
     }
