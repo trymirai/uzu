@@ -38,7 +38,7 @@ fn run_metal_matmul(
         .new_buffer(m * n * core::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let ldb = if transpose_b {
+    let leading_dim_b = if transpose_b {
         k
     } else {
         n
@@ -56,9 +56,9 @@ fn run_metal_matmul(
         batch: m as i32,
         input_dim: k as i32,
         output_dim: n as i32,
-        lda: k as i32,
-        ldb: ldb as i32,
-        ldd: n as i32,
+        leading_dimension_a: k as i32,
+        leading_dimension_b: leading_dim_b as i32,
+        leading_dimension_d: n as i32,
         transpose_b,
     };
     let descriptor =

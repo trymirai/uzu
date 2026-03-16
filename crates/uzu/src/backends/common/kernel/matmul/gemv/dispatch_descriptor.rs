@@ -95,9 +95,9 @@ impl GemvDispatchDescriptor {
 
         let input_dimension = arguments.input_dim;
         let matrix_leading_dim = if matrix_is_rhs {
-            arguments.ldb
+            arguments.leading_dimension_b
         } else {
-            arguments.lda
+            arguments.leading_dimension_a
         };
 
         let batch_rows = arguments.batch;

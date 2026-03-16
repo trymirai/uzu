@@ -62,9 +62,9 @@ impl<B: Backend<Kernels: MatmulKernels<FullPrecisionMatmulKernel = Self>>> FullP
             batch: arguments.batch as i32,
             input_dim: arguments.input_dim as i32,
             output_dim: arguments.output_dim as i32,
-            lda: arguments.input_dim as i32,
-            ldb: arguments.input_dim as i32,
-            ldd: arguments.output_dim as i32,
+            leading_dimension_a: arguments.input_dim as i32,
+            leading_dimension_b: arguments.input_dim as i32,
+            leading_dimension_d: arguments.output_dim as i32,
             transpose_b: true,
         };
 

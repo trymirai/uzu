@@ -145,7 +145,7 @@ struct ThreadgroupGemm {
   ) {
     (void)lid;
 
-    const int swizzle_stride = 1 << params->swizzle_log;
+    const int swizzle_stride = pow2(params->swizzle_log);
     const int swizzled_row_id = tid.y * swizzle_stride + (tid.x % swizzle_stride);
     const int swizzled_col_id = tid.x / swizzle_stride;
 

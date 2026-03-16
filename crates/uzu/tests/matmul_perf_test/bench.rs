@@ -46,9 +46,9 @@ pub fn make_arguments<'a>(
         batch: shape.batch as i32,
         input_dim: shape.input_dim as i32,
         output_dim: shape.output_dim as i32,
-        lda: shape.input_dim as i32,
-        ldb: shape.input_dim as i32,
-        ldd: shape.output_dim as i32,
+        leading_dimension_a: shape.input_dim as i32,
+        leading_dimension_b: shape.input_dim as i32,
+        leading_dimension_d: shape.output_dim as i32,
         transpose_b: true,
     }
 }

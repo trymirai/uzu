@@ -126,9 +126,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         batch: m,
         input_dim: k,
         output_dim: n,
-        lda: k,
-        ldb: k,
-        ldd: n,
+        leading_dimension_a: k,
+        leading_dimension_b: k,
+        leading_dimension_d: n,
         transpose_b: true,
     };
     kernel.encode(&context, &mut arguments, &descriptor, &mut command_buffer).expect("Failed to encode");
