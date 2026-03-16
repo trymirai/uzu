@@ -144,8 +144,7 @@ impl GemmSpecialization {
         data_type: DataType,
         arguments: &MatmulArguments<B>,
     ) -> Self {
-        let overall_work_elements =
-            (arguments.batch_count as i64) * (arguments.batch as i64) * (arguments.output_dim as i64);
+        let overall_work_elements = (arguments.batch as i64) * (arguments.output_dim as i64);
         let is_float32 = matches!(data_type, DataType::F32);
         let prefer_half_or_tf32 = !is_float32 || B::Context::tf32_enabled();
 
