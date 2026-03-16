@@ -3,7 +3,16 @@ use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableVal
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum SamplingMethod {
     Greedy,
+    /// Sequential multi-kernel path: bitmask → temperature → top_k → top_p → min_p → gumbel → argmax.
     Stochastic {
+        temperature: Option<f32>,
+        top_k: Option<u32>,
+        top_p: Option<f32>,
+        min_p: Option<f32>,
+    },
+    /// Unified single-pass path: all filtering and Gumbel-max in one kernel dispatch,
+    /// operating on logits loaded into private registers.
+    UnifiedStochastic {
         temperature: Option<f32>,
         top_k: Option<u32>,
         top_p: Option<f32>,
@@ -20,6 +29,8 @@ impl Default for SamplingMethod {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SamplingPolicy {
     Default,
+    /// Like `Default` but forces the unified single-pass kernel path.
+    DefaultUnified,
     Custom {
         value: SamplingMethod,
     },
@@ -36,13 +47,19 @@ impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPoli
         &self,
         config: &LanguageModelConfig,
     ) -> SamplingMethod {
-        let generation_config = &config.generation_config;
+        let g = &config.generation_config;
         match self {
             SamplingPolicy::Default => SamplingMethod::Stochastic {
-                temperature: generation_config.temperature,
-                top_k: generation_config.top_k,
-                top_p: generation_config.top_p,
-                min_p: generation_config.min_p,
+                temperature: g.temperature,
+                top_k: g.top_k,
+                top_p: g.top_p,
+                min_p: g.min_p,
+            },
+            SamplingPolicy::DefaultUnified => SamplingMethod::UnifiedStochastic {
+                temperature: g.temperature,
+                top_k: g.top_k,
+                top_p: g.top_p,
+                min_p: g.min_p,
             },
             SamplingPolicy::Custom {
                 value,

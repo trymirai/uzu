@@ -8,11 +8,11 @@ use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Text;
 use uzu::session::{
     config::RunConfig,
-    parameter::SamplingPolicy,
+    parameter::{SamplingMethod, SamplingPolicy},
     types::{Input, Output},
 };
 
-use crate::server::load_session;
+use crate::{SamplerArg, server::load_session};
 
 fn format_output(output: Output) -> String {
     let stats = &output.stats;
@@ -56,6 +56,7 @@ pub fn handle_run(
     speculator: Option<String>,
     mut message: Option<String>,
     no_thinking: bool,
+    sampler: Option<SamplerArg>,
 ) {
     let mut session = load_session(model_path, prefill_step_size, seed, speculator);
 
@@ -114,9 +115,15 @@ pub fn handle_run(
             return true;
         };
 
+        let sampling_policy = match &sampler {
+            Some(SamplerArg::Greedy) => SamplingPolicy::Custom { value: SamplingMethod::Greedy },
+            Some(SamplerArg::Stochastic) => SamplingPolicy::Default,
+            Some(SamplerArg::UnifiedStochastic) => SamplingPolicy::DefaultUnified,
+            None => SamplingPolicy::Default,
+        };
         let session_output = match session.run(
             Input::Text(input.to_string()),
-            RunConfig::new(tokens_limit as u64, !no_thinking, SamplingPolicy::Default, None),
+            RunConfig::new(tokens_limit as u64, !no_thinking, sampling_policy, None),
             Some(session_progress),
         ) {
             Ok(output) => output,

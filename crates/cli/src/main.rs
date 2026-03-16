@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use cli::handlers::{handle_bench, handle_run, handle_serve};
+use cli::{SamplerArg, handlers::{handle_bench, handle_run, handle_serve}};
 
 #[derive(Parser)]
 struct Cli {
@@ -26,6 +26,9 @@ enum Commands {
         message: Option<String>,
         #[arg(long, short)]
         no_thinking: bool,
+        /// Sampling method (default: stochastic with model's generation config)
+        #[arg(long)]
+        sampler: Option<SamplerArg>,
     },
     /// Start a server with the specified model path
     Serve {
@@ -56,8 +59,9 @@ fn main() {
             speculator,
             message,
             no_thinking,
+            sampler,
         }) => {
-            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking);
+            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking, sampler);
         },
         Some(Commands::Serve {
             model_path,
