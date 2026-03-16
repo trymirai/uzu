@@ -234,7 +234,7 @@ PUBLIC KERNEL(MatmulGemv)(
     METAL_PRAGMA_UNROLL
     for (ushort simd_shuffle_offset = (sg_thread_cols / 2);
          simd_shuffle_offset >= 1;
-         simd_shuffle_offset >>= 1) {
+         simd_shuffle_offset /= 2) {
       accumulated_values[output_row_offset] += simd_shuffle_down(
           accumulated_values[output_row_offset],
           simd_shuffle_offset

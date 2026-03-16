@@ -145,9 +145,9 @@ struct ThreadgroupGemm {
   ) {
     (void)lid;
 
-    const int swizzled_row_id = ((tid.y) << params->swizzle_log) +
-                      ((tid.x) & ((1 << params->swizzle_log) - 1));
-    const int swizzled_col_id = (tid.x) >> params->swizzle_log;
+    const int swizzle_stride = 1 << params->swizzle_log;
+    const int swizzled_row_id = tid.y * swizzle_stride + (tid.x % swizzle_stride);
+    const int swizzled_col_id = tid.x / swizzle_stride;
 
     if (params->threadgroups_per_row <= swizzled_col_id || params->threadgroups_per_column <= swizzled_row_id) {
       return;

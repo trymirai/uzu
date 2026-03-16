@@ -35,9 +35,9 @@ impl GemmDispatchDescriptor {
         let threadgroups_per_column = (m + config.block_rows - 1) / config.block_rows;
         let swizzle_log = config.swizzle_log2;
 
-        let tile_swizzle = 1 << swizzle_log;
-        let tm_swizzled = (threadgroups_per_column + tile_swizzle - 1) / tile_swizzle;
-        let tn_swizzled = threadgroups_per_row * tile_swizzle;
+        let swizzle_stride = 1_i32 << swizzle_log;
+        let tm_swizzled = (threadgroups_per_column + swizzle_stride - 1) / swizzle_stride;
+        let tn_swizzled = threadgroups_per_row * swizzle_stride;
 
         let params = GemmParams {
             M: m,
