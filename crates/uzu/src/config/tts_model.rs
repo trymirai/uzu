@@ -132,7 +132,7 @@ impl FishAudioEmbeddingConfig {
                 input_scale,
                 logit_soft_cap,
                 precision,
-            } => EmbeddingConfig::Untied {
+            } => EmbeddingConfig::Tied {
                 common: EmbeddingConfigCommon {
                     input_scale: *input_scale,
                     logit_soft_cap: *logit_soft_cap,
@@ -259,18 +259,18 @@ pub struct TtsModelConfig {
 
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 impl TtsModelConfig {
-    pub fn create_audio_generation_context_with_model_path(
+    pub fn create_audio_generation_context_with_model_path<B: crate::backends::common::Backend>(
         &self,
         model_path: &Path,
-    ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext> {
+    ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext<B>> {
         crate::audio::AudioGenerationContext::from_tts_config_and_model_path(&self.tts_config, model_path)
     }
 
-    pub fn create_audio_generation_context_with_model_path_and_options(
+    pub fn create_audio_generation_context_with_model_path_and_options<B: crate::backends::common::Backend>(
         &self,
         model_path: &Path,
         options: crate::audio::NanoCodecFsqRuntimeOptions,
-    ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext> {
+    ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext<B>> {
         crate::audio::AudioGenerationContext::from_tts_config_and_model_path_with_options(
             &self.tts_config,
             model_path,

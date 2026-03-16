@@ -7,4 +7,5 @@ pub mod runtime;
 pub use runtime::{
     AudioCommandBufferProfile, AudioDecodeProfile, AudioDecodeStepStats, AudioDecodeStreamState,
     AudioDecodeStreamingMode, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig, NanoCodecFsqRuntimeOptions,
+    StructuredDecoderBackend,
 };

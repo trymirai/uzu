@@ -1,18 +1,24 @@
 use super::*;
+use crate::backends::metal::Metal;
 
 impl StructuredAudioCodecGraph {
-    pub(super) fn apply_convnext_ncs_enqueued(
+    pub(super) fn runtime_resources(&self) -> AudioResult<Rc<StructuredAudioRuntimeResources<Metal>>> {
+        structured_audio_runtime_resources(&self.weights_path)
+    }
+
+    pub(super) fn apply_convnext_ncs_enqueued<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-        command_buffer: &mut MetalCommandBuffer,
-        input: &Array<Metal>,
-        layer: &StructuredAudioConvNeXt,
+        context: &Rc<B::Context>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        input: &Array<B>,
+        layer: &StructuredAudioConvNeXt<B>,
         lengths: &[i32],
-        lengths_array: &Array<Metal>,
+        lengths_array: &Array<B>,
         batch_size: usize,
         channels: usize,
         seq_len: usize,
-    ) -> AudioResult<Array<Metal>> {
+        kernels: &StructuredAudioKernelCache<B>,
+    ) -> AudioResult<Array<B>> {
         let residual = input.clone();
         let x = causal_conv1d_grouped_enqueue(
             context,
@@ -24,6 +30,7 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
+            kernels,
         )?;
         let x = norm_ncs_enqueue(
             context,
@@ -35,6 +42,7 @@ impl StructuredAudioCodecGraph {
             batch_size,
             channels,
             seq_len,
+            kernels,
         )?;
         let x = conv1d_pointwise_ncs_enqueue(
             context,
@@ -45,8 +53,9 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
+            kernels,
         )?;
-        let x = gelu_enqueue(context, command_buffer, &x)?;
+        let x = gelu_enqueue(context, command_buffer, &x, kernels)?;
         let x = conv1d_pointwise_ncs_enqueue(
             context,
             command_buffer,
@@ -56,15 +65,16 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
+            kernels,
         )?;
-        add_enqueue(context, command_buffer, &x, &residual)
+        add_enqueue(context, command_buffer, &x, &residual, kernels)
     }
 
-    pub(super) fn build_post_module_runtime(
+    pub(super) fn build_post_module_runtime<B: Backend>(
         &self,
-        context: Rc<<Metal as Backend>::Context>,
+        context: Rc<B::Context>,
         required_sequence_length: usize,
-    ) -> AudioResult<StructuredAudioPostModuleRuntime> {
+    ) -> AudioResult<StructuredAudioPostModuleRuntime<B>> {
         let inner_model_config = InnerModelConfig {
             embedding_config: EmbeddingConfig::Untied {
                 common: EmbeddingConfigCommon {
@@ -133,49 +143,34 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    pub(super) fn post_module_runtime_on_context(
+    pub(super) fn post_module_runtime<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
+        resources: &StructuredAudioRuntimeResources<B>,
         required_sequence_length: usize,
-    ) -> AudioResult<Rc<StructuredAudioPostModuleRuntime>> {
-        let cache_key = format!("{}::{}", self.weights_path, Rc::as_ptr(context) as usize);
-        FISHAUDIO_POST_MODULE_RUNTIME_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if let Some(runtime) = cache.get(cache_key.as_str()) {
+    ) -> AudioResult<Rc<StructuredAudioPostModuleRuntime<B>>> {
+        {
+            let cached = resources.post_module_runtime.borrow();
+            if let Some(runtime) = cached.as_ref() {
                 if runtime.max_sequence_length >= required_sequence_length.max(1) {
                     return Ok(runtime.clone());
                 }
             }
-
-            let runtime = Rc::new(self.build_post_module_runtime(context.clone(), required_sequence_length)?);
-            cache.insert(cache_key, runtime.clone());
-            Ok(runtime)
-        })
+        }
+        let runtime = Rc::new(self.build_post_module_runtime(resources.context().clone(), required_sequence_length)?);
+        *resources.post_module_runtime.borrow_mut() = Some(runtime.clone());
+        Ok(runtime)
     }
 
-    pub(super) fn decode_context(&self) -> AudioResult<Rc<<Metal as Backend>::Context>> {
-        FISHAUDIO_DECODE_CONTEXT_CACHE.with(|cache| {
-            if let Some(existing) = cache.borrow().get(&self.weights_path).cloned() {
-                return Ok(existing);
-            }
-            let created = <Metal as Backend>::Context::new()
-                .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode context: {err}")))?;
-            cache.borrow_mut().insert(self.weights_path.clone(), created.clone());
-            Ok(created)
-        })
-    }
-
-    pub(super) fn build_quantizer_gpu_resources(
+    pub(super) fn build_quantizer_gpu_resources<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<FishAudioQuantizerResources> {
+        context: &Rc<B::Context>,
+    ) -> AudioResult<FishAudioQuantizerResources<B>> {
         if self.semantic_codebook_size == 0 || self.codebook_size == 0 {
             return Err(AudioError::InvalidTokenCardinality);
         }
         let data_type = self.vocoder_data_type;
-        let kernel =
-            <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(context.as_ref(), data_type)
-                .map_err(|err| AudioError::Runtime(format!("failed to initialize quantizer decode kernel: {err}")))?;
+        let kernel = <B::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(context.as_ref(), data_type)
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize quantizer decode kernel: {err}")))?;
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
             AudioError::Runtime(format!(
                 "failed to open structured audio weights '{}': {err}",
@@ -192,7 +187,7 @@ impl StructuredAudioCodecGraph {
         let audio_decoder_tree = root.subtree("audio_decoder")?;
         let quantizer_tree = audio_decoder_tree.subtree("quantizer")?;
         let semantic_tree = quantizer_tree.subtree("semantic_quantizer")?.subtree("quantizers")?.subtree("0")?;
-        let semantic_codebook = read_float_matrix_exact(
+        let semantic_codebook = read_float_matrix_exact::<B>(
             &semantic_tree.subtree("codebook")?,
             "weights",
             self.semantic_codebook_size,
@@ -200,7 +195,7 @@ impl StructuredAudioCodecGraph {
             data_type,
         )?;
         let codebook_dim = semantic_codebook.shape()[1];
-        let semantic_out_proj = read_float_matrix_exact(
+        let semantic_out_proj = read_float_matrix_exact::<B>(
             &semantic_tree.subtree("out_proj")?,
             "weights",
             self.input_dim,
@@ -208,7 +203,7 @@ impl StructuredAudioCodecGraph {
             data_type,
         )?;
         let semantic_out_bias =
-            read_float_vector_exact(&semantic_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
+            read_float_vector_exact::<B>(&semantic_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
 
         let residual_quantizers = self.config.n_codebooks;
         let residual_count_for_shape = residual_quantizers.max(1);
@@ -232,14 +227,14 @@ impl StructuredAudioCodecGraph {
         let residual_root = quantizer_tree.subtree("quantizer")?.subtree("quantizers")?;
         for index in 0..residual_quantizers {
             let quantizer_tree = residual_root.subtree(&index.to_string())?;
-            let codebook = read_float_matrix_exact(
+            let codebook = read_float_matrix_exact::<B>(
                 &quantizer_tree.subtree("codebook")?,
                 "weights",
                 self.codebook_size,
                 codebook_dim,
                 data_type,
             )?;
-            let out_proj = read_float_matrix_exact(
+            let out_proj = read_float_matrix_exact::<B>(
                 &quantizer_tree.subtree("out_proj")?,
                 "weights",
                 self.input_dim,
@@ -247,7 +242,7 @@ impl StructuredAudioCodecGraph {
                 data_type,
             )?;
             let out_bias =
-                read_float_vector_exact(&quantizer_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
+                read_float_vector_exact::<B>(&quantizer_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
 
             let mut dst_codebook = outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim])?;
             dst_codebook.copy_from_array(&codebook);
@@ -273,25 +268,22 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    pub(super) fn quantizer_gpu_resources(
+    pub(super) fn quantizer_gpu_resources<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<Rc<FishAudioQuantizerResources>> {
-        let key = (Rc::as_ptr(context) as usize).wrapping_mul(31) ^ usize::from(structured_audio_dtype_key(self.vocoder_data_type));
-        FISHAUDIO_QUANTIZER_RESOURCES_CACHE.with(|cache| {
-            if let Some(existing) = cache.borrow().get(&key) {
-                return Ok(existing.clone());
-            }
-            let resources = Rc::new(self.build_quantizer_gpu_resources(context)?);
-            cache.borrow_mut().insert(key, resources.clone());
-            Ok(resources)
-        })
+        resources: &StructuredAudioRuntimeResources<B>,
+    ) -> AudioResult<Rc<FishAudioQuantizerResources<B>>> {
+        if let Some(existing) = resources.quantizer_resources.borrow().as_ref() {
+            return Ok(existing.clone());
+        }
+        let created = Rc::new(self.build_quantizer_gpu_resources(resources.context())?);
+        *resources.quantizer_resources.borrow_mut() = Some(created.clone());
+        Ok(created)
     }
 
-    pub(super) fn build_vocoder_gpu_graph(
+    pub(super) fn build_vocoder_gpu_graph<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<StructuredAudioDecoderGraph> {
+        context: &Rc<B::Context>,
+    ) -> AudioResult<StructuredAudioDecoderGraph<B>> {
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
             AudioError::Runtime(format!(
                 "failed to open structured audio weights '{}': {err}",
@@ -305,28 +297,25 @@ impl StructuredAudioCodecGraph {
             ))
         })?;
         let root = loader.tree();
-        build_vocoder_gpu_graph_from_tree(context, &root, &self.config, self.vocoder_data_type)
+        build_vocoder_gpu_graph_from_tree::<B>(context, &root, &self.config, self.vocoder_data_type)
     }
 
-    pub(super) fn vocoder_gpu_graph(
+    pub(super) fn vocoder_gpu_graph<B: Backend>(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<Rc<StructuredAudioDecoderGraph>> {
-        let key = (Rc::as_ptr(context) as usize).wrapping_mul(31) ^ usize::from(structured_audio_dtype_key(self.vocoder_data_type));
-        FISHAUDIO_VOCODER_GRAPH_CACHE.with(|cache| {
-            if let Some(existing) = cache.borrow().get(&key) {
-                return Ok(existing.clone());
-            }
-            let graph = Rc::new(self.build_vocoder_gpu_graph(context)?);
-            cache.borrow_mut().insert(key, graph.clone());
-            Ok(graph)
-        })
+        resources: &StructuredAudioRuntimeResources<B>,
+    ) -> AudioResult<Rc<StructuredAudioDecoderGraph<B>>> {
+        if let Some(existing) = resources.vocoder_graph.borrow().as_ref() {
+            return Ok(existing.clone());
+        }
+        let created = Rc::new(self.build_vocoder_gpu_graph(resources.context())?);
+        *resources.vocoder_graph.borrow_mut() = Some(created.clone());
+        Ok(created)
     }
 
-    pub(super) fn encode_post_module_layers(
-        runtime: &StructuredAudioPostModuleRuntime,
-        state: &mut ForwardPassState<Metal>,
-        command_buffer: &mut MetalCommandBuffer,
+    pub(super) fn encode_post_module_layers<B: Backend>(
+        runtime: &StructuredAudioPostModuleRuntime<B>,
+        state: &mut ForwardPassState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> AudioResult<()> {
         let encoding_parameters = EncodingParameters::new();
         for layer in runtime.layers.iter() {
@@ -343,7 +332,7 @@ impl StructuredAudioCodecGraph {
 
     pub(super) fn apply_post_module_gpu_on_array_single_batch(
         &self,
-        context: &Rc<<Metal as Backend>::Context>,
+        _context: &Rc<<Metal as Backend>::Context>,
         latent_nsc: &Array<Metal>,
         frames: usize,
         profile: &mut Option<AudioDecodeProfile>,
@@ -360,7 +349,8 @@ impl StructuredAudioCodecGraph {
             });
         }
 
-        let runtime = self.post_module_runtime_on_context(context, frames.max(1))?;
+        let resources = self.runtime_resources()?;
+        let runtime = self.post_module_runtime(resources.as_ref(), frames.max(1))?;
         let token_ids = vec![0_u64; frames];
         let token_positions = (0..frames).collect::<Vec<_>>();
         let mut state = ForwardPassState::new_classifier(
@@ -478,7 +468,8 @@ impl StructuredAudioCodecGraph {
         let full_copy_bytes = latent_nsc.size();
         let mut copied_output_prefix = false;
         for (active_len, batch_indices) in batch_indices_by_length {
-            let runtime = self.post_module_runtime_on_context(context, active_len.max(1))?;
+            let resources = self.runtime_resources()?;
+            let runtime = self.post_module_runtime(resources.as_ref(), active_len.max(1))?;
             let token_ids = vec![0_u64; active_len];
             let token_positions = (0..active_len).collect::<Vec<_>>();
             let mut state = ForwardPassState::new_classifier(

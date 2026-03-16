@@ -1,7 +1,11 @@
 use super::*;
 
-pub(super) type PreInjectionEncodeCallback<'a> =
-    dyn FnMut(&TokenDecoderRunner, &ForwardPassState<Metal>, &mut MetalCommandBuffer) -> Result<(), Error> + 'a;
+pub(super) type PreInjectionEncodeCallback<'a, B> = dyn FnMut(
+        &TokenDecoderRunner<B>,
+        &ForwardPassState<B>,
+        &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), Error>
+    + 'a;
 
 pub(super) enum EmbeddingInjection {
     None,
@@ -449,7 +453,7 @@ impl SemanticDecoderBackend for StubTextDecoderRuntime {
     }
 }
 
-impl TtsSession {
+impl<B: StructuredDecoderBackend> TtsSession<B> {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
         Self::new_with_options(model_path, TtsSessionOptions::default())
     }
@@ -491,7 +495,6 @@ impl TtsSession {
             return Err(Error::UnableToLoadTokenizer);
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
-        backend_factory::validate_tts_tokenizer_contract(&tokenizer, &model_metadata)?;
 
         let loaded_runtime = load_tts_runtime(&model_path, &model_metadata, &options)?;
 

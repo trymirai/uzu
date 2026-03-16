@@ -1,7 +1,8 @@
 use super::*;
+use crate::backends::metal::Metal;
 
 impl StructuredAudioCodecGraph {
-    fn conv1d_input_context(layer: &StructuredAudioConv1d) -> AudioResult<usize> {
+    fn conv1d_input_context<B: Backend>(layer: &StructuredAudioConv1d<B>) -> AudioResult<usize> {
         layer
             .kernel_size
             .checked_sub(1)
@@ -9,9 +10,9 @@ impl StructuredAudioCodecGraph {
             .ok_or(AudioError::Runtime("conv1d streaming context overflow".to_string()))
     }
 
-    fn convtranspose_input_context(
+    fn convtranspose_input_context<B: Backend>(
         output_context: usize,
-        layer: &StructuredAudioConvTranspose1d,
+        layer: &StructuredAudioConvTranspose1d<B>,
     ) -> AudioResult<usize> {
         let kernel_minus_one = layer.kernel_size.saturating_sub(1);
         let numerator = output_context
@@ -20,9 +21,9 @@ impl StructuredAudioCodecGraph {
         checked_div_ceil(numerator, layer.stride)
     }
 
-    fn residual_unit_input_context(
+    fn residual_unit_input_context<B: Backend>(
         output_context: usize,
-        layer: &StructuredAudioResidualUnit,
+        layer: &StructuredAudioResidualUnit<B>,
     ) -> AudioResult<usize> {
         let conv2 = Self::conv1d_input_context(&layer.conv2)?;
         let conv1 = Self::conv1d_input_context(&layer.conv1)?;
@@ -32,18 +33,18 @@ impl StructuredAudioCodecGraph {
             .ok_or(AudioError::Runtime("residual-unit streaming context overflow".to_string()))
     }
 
-    fn convnext_input_context(
+    fn convnext_input_context<B: Backend>(
         output_context: usize,
-        layer: &StructuredAudioConvNeXt,
+        layer: &StructuredAudioConvNeXt<B>,
     ) -> AudioResult<usize> {
         output_context
             .checked_add(Self::conv1d_input_context(&layer.depthwise_conv)?)
             .ok_or(AudioError::Runtime("convnext streaming context overflow".to_string()))
     }
 
-    fn decoder_block_input_context(
+    fn decoder_block_input_context<B: Backend>(
         output_context: usize,
-        layer: &StructuredAudioDecoderBlock,
+        layer: &StructuredAudioDecoderBlock<B>,
     ) -> AudioResult<usize> {
         let after_res3 = Self::residual_unit_input_context(output_context, &layer.res_unit3)?;
         let after_res2 = Self::residual_unit_input_context(after_res3, &layer.res_unit2)?;
@@ -51,11 +52,9 @@ impl StructuredAudioCodecGraph {
         Self::convtranspose_input_context(after_res1, &layer.trans_conv)
     }
 
-    fn streaming_vocoder_context_frames(
-        &self,
-        context: &Rc<<Metal as Backend>::Context>,
-    ) -> AudioResult<usize> {
-        let vocoder = self.vocoder_gpu_graph(context)?;
+    fn streaming_vocoder_context_frames(&self) -> AudioResult<usize> {
+        let resources = self.runtime_resources()?;
+        let vocoder = self.vocoder_gpu_graph(resources.as_ref())?;
         let mut required = Self::conv1d_input_context(&vocoder.final_conv)?;
 
         for block in vocoder.decoder_blocks.iter().rev() {
@@ -84,8 +83,7 @@ impl StructuredAudioCodecGraph {
     }
 
     pub(in crate::audio::nanocodec::runtime) fn streaming_decode_context_frames(&self) -> AudioResult<Option<usize>> {
-        let context = self.decode_context()?;
-        let vocoder_context = self.streaming_vocoder_context_frames(&context)?;
+        let vocoder_context = self.streaming_vocoder_context_frames()?;
         let Some(post_module_context) = self.post_module_streaming_context_frames() else {
             return Ok(None);
         };
@@ -129,7 +127,8 @@ impl StructuredAudioCodecGraph {
                 });
             }
         }
-        let quantizer_resources = self.quantizer_gpu_resources(context)?;
+        let resources = self.runtime_resources()?;
+        let quantizer_resources = self.quantizer_gpu_resources(resources.as_ref())?;
         if quantizer_resources.residual_quantizers + 1 != codebooks {
             return Err(AudioError::Runtime(format!(
                 "structured audio residual quantizer count mismatch: expected {}, got {}",
@@ -191,28 +190,26 @@ impl StructuredAudioCodecGraph {
         let residual_out_bias_buffer = residual_out_bias_buffer.borrow();
         let output_buffer = output.buffer();
         let mut output_buffer = output_buffer.borrow_mut();
-        command_buffer.with_compute_encoder(|compute_encoder| {
-            quantizer_resources.kernel.encode(
-                &*tokens_buffer,
-                &*lengths_buffer,
-                &*semantic_codebook_buffer,
-                &*semantic_out_proj_buffer,
-                &*semantic_out_bias_buffer,
-                &*residual_codebooks_buffer,
-                &*residual_out_proj_buffer,
-                &*residual_out_bias_buffer,
-                &mut *output_buffer,
-                batch_i32,
-                codebooks_i32,
-                frames_i32,
-                input_dim_i32,
-                codebook_dim_i32,
-                residual_quantizers_i32,
-                semantic_cardinality_i32,
-                residual_cardinality_i32,
-                compute_encoder,
-            );
-        });
+        quantizer_resources.kernel.encode(
+            &*tokens_buffer,
+            &*lengths_buffer,
+            &*semantic_codebook_buffer,
+            &*semantic_out_proj_buffer,
+            &*semantic_out_bias_buffer,
+            &*residual_codebooks_buffer,
+            &*residual_out_proj_buffer,
+            &*residual_out_bias_buffer,
+            &mut *output_buffer,
+            batch_i32,
+            codebooks_i32,
+            frames_i32,
+            input_dim_i32,
+            codebook_dim_i32,
+            residual_quantizers_i32,
+            semantic_cardinality_i32,
+            residual_cardinality_i32,
+            &mut command_buffer,
+        );
         let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
         let command_buffer = command_buffer.end_encoding().submit();
         let wait_start = profile.is_some().then(Instant::now);

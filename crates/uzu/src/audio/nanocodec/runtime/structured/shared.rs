@@ -8,10 +8,10 @@ pub(super) fn checked_add_usize(
     a.checked_add(b).ok_or_else(|| AudioError::Runtime(format!("{label} overflow")))
 }
 
-pub(super) fn conv1d_estimated_macs(
+pub(super) fn conv1d_estimated_macs<B: Backend>(
     batch_size: usize,
     seq_len: usize,
-    layer: &StructuredAudioConv1d,
+    layer: &StructuredAudioConv1d<B>,
 ) -> AudioResult<usize> {
     let cin_per_group = layer
         .cin
@@ -20,10 +20,10 @@ pub(super) fn conv1d_estimated_macs(
     checked_product(&[batch_size, seq_len, layer.cout, cin_per_group, layer.kernel_size])
 }
 
-pub(super) fn convtranspose_estimated_macs(
+pub(super) fn convtranspose_estimated_macs<B: Backend>(
     batch_size: usize,
     seq_len_in: usize,
-    layer: &StructuredAudioConvTranspose1d,
+    layer: &StructuredAudioConvTranspose1d<B>,
 ) -> AudioResult<usize> {
     let cout_per_group = layer
         .cout
@@ -32,23 +32,23 @@ pub(super) fn convtranspose_estimated_macs(
     checked_product(&[batch_size, seq_len_in, layer.cin, cout_per_group, layer.kernel_size])
 }
 
-pub(super) fn residual_unit_estimated_macs(
+pub(super) fn residual_unit_estimated_macs<B: Backend>(
     batch_size: usize,
     seq_len: usize,
-    unit: &StructuredAudioResidualUnit,
+    unit: &StructuredAudioResidualUnit<B>,
 ) -> AudioResult<usize> {
     let conv1 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv1)?;
     let conv2 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv2)?;
     checked_add_usize(conv1, conv2, "residual-unit estimated MACs")
 }
 
-pub(super) fn array_batch_view(
-    array: &Array<Metal>,
+pub(super) fn array_batch_view<B: Backend>(
+    array: &Array<B>,
     batch_index: usize,
     frames: usize,
     channels: usize,
     active_frames: usize,
-) -> AudioResult<Array<Metal>> {
+) -> AudioResult<Array<B>> {
     let batch_stride_bytes = size_for_shape(&[frames, channels], array.data_type());
     let batch_offset = batch_index
         .checked_mul(batch_stride_bytes)
@@ -88,9 +88,9 @@ pub(in crate::audio::nanocodec::runtime) struct StructuredAudioCodecGraph {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioConv1d {
-    pub(super) weight: Array<Metal>,
-    pub(super) bias: Array<Metal>,
+pub(super) struct StructuredAudioConv1d<B: Backend> {
+    pub(super) weight: Array<B>,
+    pub(super) bias: Array<B>,
     pub(super) cin: usize,
     pub(super) cout: usize,
     pub(super) kernel_size: usize,
@@ -99,9 +99,9 @@ pub(super) struct StructuredAudioConv1d {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioConvTranspose1d {
-    pub(super) weight: Array<Metal>,
-    pub(super) bias: Array<Metal>,
+pub(super) struct StructuredAudioConvTranspose1d<B: Backend> {
+    pub(super) weight: Array<B>,
+    pub(super) bias: Array<B>,
     pub(super) cin: usize,
     pub(super) cout: usize,
     pub(super) kernel_size: usize,
@@ -110,51 +110,51 @@ pub(super) struct StructuredAudioConvTranspose1d {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioPointwiseConv {
-    pub(super) weight: Array<Metal>,
-    pub(super) bias: Array<Metal>,
+pub(super) struct StructuredAudioPointwiseConv<B: Backend> {
+    pub(super) weight: Array<B>,
+    pub(super) bias: Array<B>,
     pub(super) cin: usize,
     pub(super) cout: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioNorm {
-    pub(super) scales: Array<Metal>,
-    pub(super) bias: Array<Metal>,
+pub(super) struct StructuredAudioNorm<B: Backend> {
+    pub(super) scales: Array<B>,
+    pub(super) bias: Array<B>,
     pub(super) epsilon: f32,
     pub(super) subtract_mean: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioConvNeXt {
-    pub(super) depthwise_conv: StructuredAudioConv1d,
-    pub(super) norm: StructuredAudioNorm,
-    pub(super) pwconv1: StructuredAudioPointwiseConv,
-    pub(super) pwconv2: StructuredAudioPointwiseConv,
+pub(super) struct StructuredAudioConvNeXt<B: Backend> {
+    pub(super) depthwise_conv: StructuredAudioConv1d<B>,
+    pub(super) norm: StructuredAudioNorm<B>,
+    pub(super) pwconv1: StructuredAudioPointwiseConv<B>,
+    pub(super) pwconv2: StructuredAudioPointwiseConv<B>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioResidualUnit {
-    pub(super) snake1_alpha: Array<Metal>,
-    pub(super) conv1: StructuredAudioConv1d,
-    pub(super) snake2_alpha: Array<Metal>,
-    pub(super) conv2: StructuredAudioConv1d,
+pub(super) struct StructuredAudioResidualUnit<B: Backend> {
+    pub(super) snake1_alpha: Array<B>,
+    pub(super) conv1: StructuredAudioConv1d<B>,
+    pub(super) snake2_alpha: Array<B>,
+    pub(super) conv2: StructuredAudioConv1d<B>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioDecoderBlock {
-    pub(super) snake_alpha: Array<Metal>,
-    pub(super) trans_conv: StructuredAudioConvTranspose1d,
-    pub(super) res_unit1: StructuredAudioResidualUnit,
-    pub(super) res_unit2: StructuredAudioResidualUnit,
-    pub(super) res_unit3: StructuredAudioResidualUnit,
+pub(super) struct StructuredAudioDecoderBlock<B: Backend> {
+    pub(super) snake_alpha: Array<B>,
+    pub(super) trans_conv: StructuredAudioConvTranspose1d<B>,
+    pub(super) res_unit1: StructuredAudioResidualUnit<B>,
+    pub(super) res_unit2: StructuredAudioResidualUnit<B>,
+    pub(super) res_unit3: StructuredAudioResidualUnit<B>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructuredAudioDecoderGraph {
-    pub(super) first_conv: StructuredAudioConv1d,
-    pub(super) upsample_blocks: Vec<(StructuredAudioConvTranspose1d, StructuredAudioConvNeXt)>,
-    pub(super) decoder_blocks: Vec<StructuredAudioDecoderBlock>,
-    pub(super) final_snake_alpha: Array<Metal>,
-    pub(super) final_conv: StructuredAudioConv1d,
+pub(super) struct StructuredAudioDecoderGraph<B: Backend> {
+    pub(super) first_conv: StructuredAudioConv1d<B>,
+    pub(super) upsample_blocks: Vec<(StructuredAudioConvTranspose1d<B>, StructuredAudioConvNeXt<B>)>,
+    pub(super) decoder_blocks: Vec<StructuredAudioDecoderBlock<B>>,
+    pub(super) final_snake_alpha: Array<B>,
+    pub(super) final_conv: StructuredAudioConv1d<B>,
 }

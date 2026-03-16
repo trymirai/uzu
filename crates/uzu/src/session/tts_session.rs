@@ -27,20 +27,18 @@ use crate::{
     array::{ArrayCell, ArrayContextExt},
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
+        StructuredDecoderBackend,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode},
     },
-    backends::{
-        common::{
-            Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context as BackendContext, Kernels,
-            kernel::{
-                EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel,
-                TokenCopySampledKernel, TokenCopyToResultsKernel,
-                kv_cache_update::KVCacheUpdate,
-                matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
-            },
+    backends::common::{
+        Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+        CommandBufferPending, Context as BackendContext, Kernels,
+        kernel::{
+            EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel,
+            TokenCopySampledKernel, TokenCopyToResultsKernel,
+            kv_cache_update::KVCacheUpdate,
+            matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
         },
-        metal::Metal,
     },
     config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
     encodable_block::{Decoder, EncodingParameters, Sampling as GpuSampling},
@@ -103,13 +101,13 @@ pub(super) struct AdaptiveChunkController {
     pub(super) current_chunk_frames: usize,
 }
 
-pub struct TtsSession {
+pub struct TtsSession<B: Backend> {
     #[allow(dead_code)]
     model_path: PathBuf,
     #[allow(dead_code)]
     model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
-    audio: AudioGenerationContext,
+    audio: AudioGenerationContext<B>,
     audio_decoder: Box<dyn AudioDecoderBackend>,
     message_processor_config: TtsMessageProcessorConfig,
     text_decoder: RefCell<Box<dyn SemanticDecoderBackend>>,
@@ -217,11 +215,11 @@ impl PendingAudioChunkBackend for ImmediatePendingAudioChunk {
     }
 }
 
-struct NanoCodecPendingAudioChunk {
-    inner: Option<crate::audio::nanocodec::runtime::PendingStreamPcmChunk>,
+struct NanoCodecPendingAudioChunk<B: Backend> {
+    inner: Option<crate::audio::nanocodec::runtime::PendingStreamPcmChunk<B>>,
 }
 
-impl PendingAudioChunkBackend for NanoCodecPendingAudioChunk {
+impl<B: Backend> PendingAudioChunkBackend for NanoCodecPendingAudioChunk<B> {
     fn is_ready(&self) -> bool {
         self.inner.as_ref().is_none_or(|pending| pending.is_ready())
     }

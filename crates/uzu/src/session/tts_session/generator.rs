@@ -1,6 +1,6 @@
 use super::*;
 
-impl TtsSession {
+impl<B: StructuredDecoderBackend> TtsSession<B> {
     pub fn synthesize(
         &self,
         input: Input,

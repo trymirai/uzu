@@ -69,6 +69,8 @@ pub trait CommandBufferExecutable {
 pub trait CommandBufferPending {
     type CommandBuffer: CommandBuffer<Pending = Self>;
 
+    fn is_completed(&self) -> bool;
+
     fn wait_until_completed(
         self
     ) -> Result<

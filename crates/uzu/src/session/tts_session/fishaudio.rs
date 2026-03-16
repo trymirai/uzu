@@ -4,10 +4,10 @@ use crate::config::TtsMessageProcessorConfig;
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 
-pub(super) struct FishAudioTextDecoderRuntime {
-    slow_runner: TokenDecoderRunner,
-    fast_runner: Option<TokenDecoderRunner>,
-    gpu_path: FishAudioGpuPath,
+pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
+    slow_runner: TokenDecoderRunner<B>,
+    fast_runner: Option<TokenDecoderRunner<B>>,
+    gpu_path: FishAudioGpuPath<B>,
     runtime_config: TextDecoderRuntimeConfig,
     semantic_token_begin_id: i64,
     semantic_token_end_id: i64,
@@ -27,21 +27,59 @@ pub(super) struct FishAudioTextDecoderRuntime {
     instrumentation: RunnerInstrumentation,
 }
 
-struct FishAudioGpuPath {
-    embedding_rows_sum: <<Metal as Backend>::Kernels as Kernels>::EmbeddingRowsSumKernel,
-    projection: <<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel,
-    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
-    codebook_embeddings: ArrayCell<Metal>,
-    codebook_row_indices: ArrayCell<Metal>,
-    projection_weights: Option<ArrayCell<Metal>>,
+struct FishAudioGpuPath<B: Backend> {
+    embedding_rows_sum: <B::Kernels as Kernels>::EmbeddingRowsSumKernel,
+    projection: <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel,
+    tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
+    codebook_embeddings: ArrayCell<B>,
+    codebook_row_indices: ArrayCell<B>,
+    projection_weights: Option<ArrayCell<B>>,
 }
 
-impl FishAudioGpuPath {
-    fn new(
-        context: &MetalContext,
+impl<B: Backend> FishAudioGpuPath<B> {
+    fn load(
+        context: &B::Context,
+        parameter_tree: &crate::parameters::ParameterTree<B::Context>,
+        config: &crate::config::FishAudioTextDecoderConfig,
         data_type: DataType,
-        codebook_embeddings: Array<Metal>,
-        fast_model_projection: Option<Array<Metal>>,
+    ) -> Result<Self, Error> {
+        let codebook_embeddings = load_float_tensor_array(
+            parameter_tree,
+            "text_decoder.codebook_embeddings.weights",
+            [
+                config.codebook_size.checked_mul(config.num_codebooks).ok_or(Error::UnableToLoadConfig)?,
+                config.slow_model_dim,
+            ],
+            data_type,
+        )?;
+        let fast_model_projection = if config.fast_model_projection_config.is_some() {
+            Some(load_float_tensor_array(
+                parameter_tree,
+                "text_decoder.fast_model_projection.weights",
+                [config.fast_model_dim, config.slow_model_dim],
+                data_type,
+            )?)
+        } else {
+            None
+        };
+
+        Self::new(
+            context,
+            data_type,
+            codebook_embeddings,
+            fast_model_projection,
+            config.num_codebooks,
+            config.codebook_size,
+            config.slow_model_dim,
+            config.fast_model_dim,
+        )
+    }
+
+    fn new(
+        context: &B::Context,
+        data_type: DataType,
+        codebook_embeddings: Array<B>,
+        fast_model_projection: Option<Array<B>>,
         num_codebooks: usize,
         codebook_size: usize,
         slow_model_dim: usize,
@@ -60,15 +98,12 @@ impl FishAudioGpuPath {
         }
 
         let embedding_rows_sum =
-            <<Metal as Backend>::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
+            <B::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
                 .map_err(unable_to_create_context)?;
         let projection =
-            <<<Metal as Backend>::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(
-                context,
-                data_type,
-            )
-            .map_err(unable_to_create_context)?;
-        let tensor_copy = <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
+            <<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(context, data_type)
+                .map_err(unable_to_create_context)?;
+        let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
             .map_err(unable_to_create_context)?;
         let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
 
@@ -83,12 +118,12 @@ impl FishAudioGpuPath {
     }
 }
 
-fn load_float_tensor_array(
-    parameter_tree: &crate::parameters::ParameterTree<MetalContext>,
+fn load_float_tensor_array<B: Backend>(
+    parameter_tree: &crate::parameters::ParameterTree<B::Context>,
     key: &str,
     expected_shape: [usize; 2],
     target_data_type: DataType,
-) -> Result<Array<Metal>, Error> {
+) -> Result<Array<B>, Error> {
     let array = parameter_tree.leaf_array(key).map_err(|_| Error::UnableToLoadWeights)?;
     if array.shape() != expected_shape {
         return Err(Error::UnableToLoadConfig);
@@ -168,9 +203,9 @@ pub(super) fn validate_fishaudio_message_processor_config(config: &TtsMessagePro
     Ok(())
 }
 
-pub(super) fn build_fishaudio_text_decoder_runtime(
+pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     config: &crate::config::FishAudioTextDecoderConfig,
-    audio: &AudioGenerationContext,
+    audio: &AudioGenerationContext<B>,
     model_path: &Path,
     runtime_config: &TextDecoderRuntimeConfig,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
@@ -226,7 +261,7 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
 
     let slow_decoder_config = Rc::new(slow_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
     let fast_decoder_config = Rc::new(fast_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
-    let text_decoder_context = MetalContext::new().map_err(unable_to_create_context)?;
+    let text_decoder_context = B::Context::new().map_err(unable_to_create_context)?;
 
     let slow_runner = TokenDecoderRunner::new_with_context(
         text_decoder_context.clone(),
@@ -266,42 +301,17 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
         ParameterLoader::new(&weights_file, text_decoder_context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
     let root_weights = loader.tree();
 
-    let codebook_embeddings = load_float_tensor_array(
-        &root_weights,
-        "text_decoder.codebook_embeddings.weights",
-        [
-            config.codebook_size.checked_mul(config.num_codebooks).ok_or(Error::UnableToLoadConfig)?,
-            config.slow_model_dim,
-        ],
-        activation_data_type,
-    )?;
-
-    let fast_model_projection = if config.fast_model_projection_config.is_some() {
-        Some(load_float_tensor_array(
-            &root_weights,
-            "text_decoder.fast_model_projection.weights",
-            [config.fast_model_dim, config.slow_model_dim],
-            activation_data_type,
-        )?)
-    } else {
-        None
-    };
-
     let apply_semantic_sampling_mask =
         runtime_config.force_semantic_sampling_mask.unwrap_or(!matches!(activation_data_type, DataType::F32));
 
-    let gpu_path = FishAudioGpuPath::new(
+    let gpu_path = FishAudioGpuPath::load(
         text_decoder_context.as_ref(),
+        &root_weights,
+        config,
         activation_data_type,
-        codebook_embeddings,
-        fast_model_projection,
-        config.num_codebooks,
-        config.codebook_size,
-        config.slow_model_dim,
-        config.fast_model_dim,
     )?;
 
-    Ok(Box::new(FishAudioTextDecoderRuntime {
+    Ok(Box::new(FishAudioTextDecoderRuntime::<B> {
         slow_runner,
         fast_runner,
         gpu_path,
@@ -325,7 +335,7 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
     }))
 }
 
-impl FishAudioTextDecoderRuntime {
+impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     fn generate_semantic_tokens(
         &mut self,
         text_tokens: &[u64],
@@ -385,51 +395,9 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::UnableToLoadConfig);
         }
 
-        self.instrumentation = RunnerInstrumentation::default();
-        self.slow_runner.reset();
-        self.slow_runner.clear_instrumentation();
-        if let Some(fast_runner) = self.fast_runner.as_mut() {
-            fast_runner.clear_instrumentation();
-        }
+        self.reset_generation_state();
         let mut sampling = TextSamplingState::from_config(seed, &self.runtime_config.sampling);
-        let semantic_sampling_mask_row: Option<&[u32]> = if self.apply_semantic_sampling_mask {
-            Some(&self.semantic_sampling_mask_row)
-        } else {
-            None
-        };
-        let semantic_sampling_mask_without_im_end_row: Option<&[u32]> = if self.apply_semantic_sampling_mask {
-            Some(&self.semantic_sampling_mask_without_im_end_row)
-        } else {
-            None
-        };
-        let initial_sampling_row = if let Some(mask_row) = semantic_sampling_mask_row {
-            if self.runtime_config.min_frames_before_im_end > 0 {
-                semantic_sampling_mask_without_im_end_row.ok_or(Error::GenerateFailed)?
-            } else {
-                mask_row
-            }
-        } else {
-            &[]
-        };
-        let prefill_step_size = text_decoder_prefill_step_size(&self.runtime_config, self.max_seq_len);
-        if text_tokens.len() > prefill_step_size {
-            for chunk in text_tokens[..text_tokens.len() - prefill_step_size].chunks(prefill_step_size) {
-                self.slow_runner.prefill_without_sampling(chunk)?;
-            }
-        }
-        let prefill_tail_start = text_tokens.len().saturating_sub(prefill_step_size);
-        let prefill_tail = &text_tokens[prefill_tail_start..];
-        let prefill_mask = if initial_sampling_row.is_empty() {
-            None
-        } else {
-            Some(expand_token_mask_for_sampling_row(initial_sampling_row, prefill_tail.len())?)
-        };
-        let mut current_semantic_token = self.slow_runner.decode_next_token_with_hidden_capture(
-            prefill_tail,
-            EmbeddingInjection::None,
-            &mut sampling,
-            prefill_mask.as_deref(),
-        )?;
+        let mut current_semantic_token = self.decode_initial_semantic_token(text_tokens, &mut sampling)?;
         let post_scale = if self.scale_codebook_embeddings {
             Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
         } else {
@@ -447,16 +415,7 @@ impl FishAudioTextDecoderRuntime {
             self.current_codes_scratch = vec![0_u32; self.num_codebooks];
         }
 
-        if self.num_codebooks > 1 {
-            let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
-            if fast_vocab_limit == 0 {
-                return Err(Error::UnableToLoadConfig);
-            }
-            if let Some(fast_runner) = self.fast_runner.as_mut() {
-                fast_runner.prepare_single_token_vocab_mask(fast_vocab_limit)?;
-                fast_runner.prepare_two_token_vocab_mask(fast_vocab_limit)?;
-            }
-        }
+        self.prepare_fast_runner_masks(residual_token_upper_bound)?;
 
         for _step in 0..max_new_tokens {
             if current_semantic_token as i64 == self.im_end_token_id {
@@ -472,119 +431,22 @@ impl FishAudioTextDecoderRuntime {
             self.current_codes_scratch[0] = first_code;
 
             if self.num_codebooks > 1 {
-                let (slow_runner, fast_runner_opt, gpu_path) =
-                    (&mut self.slow_runner, &mut self.fast_runner, &mut self.gpu_path);
-                let slow_hidden_capture = &slow_runner.single_hidden_capture;
-                let slow_model_dim = self.slow_model_dim;
-                let fast_model_dim = self.fast_model_dim;
-                let Some(fast_runner) = fast_runner_opt.as_mut() else {
-                    return Err(Error::GenerateFailed);
-                };
-
-                fast_runner.reset();
-                let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
-                let mut pre_projection =
-                    |runner: &TokenDecoderRunner,
-                     _state: &ForwardPassState<Metal>,
-                     command_buffer: &mut MetalCommandBuffer| {
-                        Self::encode_project_slow_hidden_to_fast_on(
-                            runner.context().as_ref(),
-                            gpu_path,
-                            slow_hidden_capture,
-                            &runner.single_override_embedding,
-                            slow_model_dim,
-                            fast_model_dim,
-                            command_buffer,
-                        )
-                    };
-                let mut fast_token = fast_runner.decode_next_step(
-                    &[0, u64::from(first_code)],
-                    EmbeddingInjection::OverrideFirstRowInternal,
-                    Some(fast_vocab_limit),
+                self.decode_residual_codebooks_for_frame(
+                    first_code,
+                    residual_token_upper_bound,
                     &mut sampling,
-                    None,
-                    false,
-                    Some(&mut pre_projection),
+                    &mut by_codebook,
                 )?;
-                if self.num_codebooks > 1 {
-                    let clamped =
-                        u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                            .map_err(|_| Error::GenerateFailed)?;
-                    by_codebook[1].push(clamped);
-                    self.current_codes_scratch[1] = clamped;
-                    fast_token = u64::from(clamped);
-                }
-
-                let followup_count = self.num_codebooks.saturating_sub(2);
-                if followup_count > 0 {
-                    let mut record_followup = |relative_index: usize, sampled: u64| -> Result<(), Error> {
-                        let codebook_index = relative_index + 2;
-                        let clamped =
-                            u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                                .map_err(|_| Error::GenerateFailed)?;
-                        by_codebook[codebook_index].push(clamped);
-                        self.current_codes_scratch[codebook_index] = clamped;
-                        Ok(())
-                    };
-                    match self.runtime_config.followup_strategy {
-                        TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
-                            fast_token,
-                            followup_count,
-                            Some(fast_vocab_limit),
-                            &mut sampling,
-                            &mut record_followup,
-                        )?,
-                        TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
-                            fast_token,
-                            followup_count,
-                            Some(fast_vocab_limit),
-                            &mut sampling,
-                            &mut record_followup,
-                        )?,
-                    }
-                }
             }
 
             if let Some(callback) = on_frame.as_mut() {
                 callback(&self.current_codes_scratch)?;
             }
-            let (slow_runner, gpu_path) = (&mut self.slow_runner, &mut self.gpu_path);
-            let current_codes = self.current_codes_scratch.as_slice();
-            let num_codebooks = self.num_codebooks;
-            let codebook_size = self.codebook_size;
-            let slow_model_dim = self.slow_model_dim;
-            let mut pre_codebook_sum =
-                |runner: &TokenDecoderRunner,
-                 _state: &ForwardPassState<Metal>,
-                 command_buffer: &mut MetalCommandBuffer| {
-                    Self::encode_slow_codebook_sum_from_codes_on(
-                        gpu_path,
-                        &runner.single_override_embedding,
-                        current_codes,
-                        num_codebooks,
-                        codebook_size,
-                        slow_model_dim,
-                        command_buffer,
-                    )
-                };
-            let sampled_frames = by_codebook[0].len();
-            let slow_sampling_mask = if self.apply_semantic_sampling_mask {
-                if sampled_frames < self.runtime_config.min_frames_before_im_end {
-                    semantic_sampling_mask_without_im_end_row
-                } else {
-                    semantic_sampling_mask_row
-                }
-            } else {
-                None
-            };
-            current_semantic_token = slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
-                &[current_semantic_token],
-                EmbeddingInjection::AddPreloaded {
-                    post_scale,
-                },
+            current_semantic_token = self.advance_slow_semantic_token(
+                current_semantic_token,
+                post_scale,
                 &mut sampling,
-                slow_sampling_mask,
-                Some(&mut pre_codebook_sum),
+                by_codebook[0].len(),
             )?;
         }
 
@@ -595,15 +457,207 @@ impl FishAudioTextDecoderRuntime {
             self.instrumentation.host_waits += fast.host_waits;
         }
 
+        self.finish_semantic_grid(&by_codebook)
+    }
+
+    fn reset_generation_state(&mut self) {
+        self.instrumentation = RunnerInstrumentation::default();
+        self.slow_runner.reset();
+        self.slow_runner.clear_instrumentation();
+        if let Some(fast_runner) = self.fast_runner.as_mut() {
+            fast_runner.clear_instrumentation();
+        }
+    }
+
+    fn decode_initial_semantic_token(
+        &mut self,
+        text_tokens: &[u64],
+        sampling: &mut TextSamplingState,
+    ) -> Result<u64, Error> {
+        let slow_runner = &mut self.slow_runner;
+        let initial_sampling_row = if self.apply_semantic_sampling_mask {
+            if self.runtime_config.min_frames_before_im_end > 0 {
+                self.semantic_sampling_mask_without_im_end_row.as_ref()
+            } else {
+                self.semantic_sampling_mask_row.as_ref()
+            }
+        } else {
+            &[]
+        };
+        let prefill_step_size = text_decoder_prefill_step_size(&self.runtime_config, self.max_seq_len);
+        if text_tokens.len() > prefill_step_size {
+            for chunk in text_tokens[..text_tokens.len() - prefill_step_size].chunks(prefill_step_size) {
+                slow_runner.prefill_without_sampling(chunk)?;
+            }
+        }
+        let prefill_tail_start = text_tokens.len().saturating_sub(prefill_step_size);
+        let prefill_tail = &text_tokens[prefill_tail_start..];
+        let prefill_mask = if initial_sampling_row.is_empty() {
+            None
+        } else {
+            Some(expand_token_mask_for_sampling_row(initial_sampling_row, prefill_tail.len())?)
+        };
+        slow_runner.decode_next_token_with_hidden_capture(
+            prefill_tail,
+            EmbeddingInjection::None,
+            sampling,
+            prefill_mask.as_deref(),
+        )
+    }
+
+    fn prepare_fast_runner_masks(
+        &mut self,
+        residual_token_upper_bound: usize,
+    ) -> Result<(), Error> {
+        if self.num_codebooks <= 1 {
+            return Ok(());
+        }
+        let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+        if fast_vocab_limit == 0 {
+            return Err(Error::UnableToLoadConfig);
+        }
+        if let Some(fast_runner) = self.fast_runner.as_mut() {
+            fast_runner.prepare_single_token_vocab_mask(fast_vocab_limit)?;
+            fast_runner.prepare_two_token_vocab_mask(fast_vocab_limit)?;
+        }
+        Ok(())
+    }
+
+    fn decode_residual_codebooks_for_frame(
+        &mut self,
+        first_code: u32,
+        residual_token_upper_bound: usize,
+        sampling: &mut TextSamplingState,
+        by_codebook: &mut [Vec<u32>],
+    ) -> Result<(), Error> {
+        let (slow_runner, fast_runner_opt, gpu_path) =
+            (&mut self.slow_runner, &mut self.fast_runner, &mut self.gpu_path);
+        let slow_hidden_capture = &slow_runner.single_hidden_capture;
+        let slow_model_dim = self.slow_model_dim;
+        let fast_model_dim = self.fast_model_dim;
+        let Some(fast_runner) = fast_runner_opt.as_mut() else {
+            return Err(Error::GenerateFailed);
+        };
+
+        fast_runner.reset();
+        let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+        let mut pre_projection =
+            |runner: &TokenDecoderRunner<B>,
+             _state: &ForwardPassState<B>,
+             command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+                Self::encode_project_slow_hidden_to_fast_on(
+                    runner.context().as_ref(),
+                    gpu_path,
+                    slow_hidden_capture,
+                    &runner.single_override_embedding,
+                    slow_model_dim,
+                    fast_model_dim,
+                    command_buffer,
+                )
+            };
+        let mut fast_token = fast_runner.decode_next_step(
+            &[0, u64::from(first_code)],
+            EmbeddingInjection::OverrideFirstRowInternal,
+            Some(fast_vocab_limit),
+            sampling,
+            None,
+            false,
+            Some(&mut pre_projection),
+        )?;
+        let clamped =
+            u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                .map_err(|_| Error::GenerateFailed)?;
+        by_codebook[1].push(clamped);
+        self.current_codes_scratch[1] = clamped;
+        fast_token = u64::from(clamped);
+
+        let followup_count = self.num_codebooks.saturating_sub(2);
+        if followup_count > 0 {
+            let mut record_followup = |relative_index: usize, sampled: u64| -> Result<(), Error> {
+                let codebook_index = relative_index + 2;
+                let clamped =
+                    u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                        .map_err(|_| Error::GenerateFailed)?;
+                by_codebook[codebook_index].push(clamped);
+                self.current_codes_scratch[codebook_index] = clamped;
+                Ok(())
+            };
+            match self.runtime_config.followup_strategy {
+                TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
+                    fast_token,
+                    followup_count,
+                    Some(fast_vocab_limit),
+                    sampling,
+                    &mut record_followup,
+                )?,
+                TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
+                    fast_token,
+                    followup_count,
+                    Some(fast_vocab_limit),
+                    sampling,
+                    &mut record_followup,
+                )?,
+            }
+        }
+        Ok(())
+    }
+
+    fn advance_slow_semantic_token(
+        &mut self,
+        current_semantic_token: u64,
+        post_scale: Option<f32>,
+        sampling: &mut TextSamplingState,
+        sampled_frames: usize,
+    ) -> Result<u64, Error> {
+        let (slow_runner, gpu_path) = (&mut self.slow_runner, &mut self.gpu_path);
+        let current_codes = self.current_codes_scratch.as_slice();
+        let num_codebooks = self.num_codebooks;
+        let codebook_size = self.codebook_size;
+        let slow_model_dim = self.slow_model_dim;
+        let mut pre_codebook_sum =
+            |runner: &TokenDecoderRunner<B>,
+             _state: &ForwardPassState<B>,
+             command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+                Self::encode_slow_codebook_sum_from_codes_on(
+                    gpu_path,
+                    &runner.single_override_embedding,
+                    current_codes,
+                    num_codebooks,
+                    codebook_size,
+                    slow_model_dim,
+                    command_buffer,
+                )
+            };
+        let slow_sampling_mask = if self.apply_semantic_sampling_mask {
+            if sampled_frames < self.runtime_config.min_frames_before_im_end {
+                Some(self.semantic_sampling_mask_without_im_end_row.as_ref())
+            } else {
+                Some(self.semantic_sampling_mask_row.as_ref())
+            }
+        } else {
+            None
+        };
+        slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
+            &[current_semantic_token],
+            EmbeddingInjection::AddPreloaded { post_scale },
+            sampling,
+            slow_sampling_mask,
+            Some(&mut pre_codebook_sum),
+        )
+    }
+
+    fn finish_semantic_grid(
+        &self,
+        by_codebook: &[Vec<u32>],
+    ) -> Result<AudioTokenGrid, Error> {
         let frames = by_codebook.first().map_or(0, Vec::len);
         let mut tokens = Vec::with_capacity(self.num_codebooks * frames);
-        for codebook_tokens in &by_codebook {
+        for codebook_tokens in by_codebook {
             if codebook_tokens.len() != frames {
                 return Err(Error::GenerateFailed);
             }
             tokens.extend_from_slice(codebook_tokens);
         }
-
         AudioTokenGrid::new(
             tokens.into_boxed_slice(),
             1,
@@ -616,13 +670,13 @@ impl FishAudioTextDecoderRuntime {
     }
 
     fn encode_project_slow_hidden_to_fast_on(
-        context: &MetalContext,
-        gpu_path: &mut FishAudioGpuPath,
-        slow_hidden_capture: &ArrayCell<Metal>,
-        output_embedding: &ArrayCell<Metal>,
+        context: &B::Context,
+        gpu_path: &mut FishAudioGpuPath<B>,
+        slow_hidden_capture: &ArrayCell<B>,
+        output_embedding: &ArrayCell<B>,
         slow_model_dim: usize,
         fast_model_dim: usize,
-        command_buffer: &mut MetalCommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), Error> {
         let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
 
@@ -637,28 +691,26 @@ impl FishAudioTextDecoderRuntime {
                 return Err(Error::GenerateFailed);
             }
 
-            command_buffer.with_compute_encoder(|encoder| {
-                let hidden_buffer = hidden.buffer();
-                let weights_buffer = weights.buffer();
-                let output_buffer = output.buffer();
-                let hidden_buffer = hidden_buffer.borrow();
-                let weights_buffer = weights_buffer.borrow();
-                let mut output_buffer = output_buffer.borrow_mut();
-                gpu_path.projection.encode(
-                    context,
-                    encoder,
-                    FullPrecisionMatmulArguments {
-                        a: &hidden_buffer,
-                        a_offset: hidden.offset(),
-                        b: &weights_buffer,
-                        output: &mut output_buffer,
-                        bias: None,
-                        batch: 1,
-                        input_dim: slow_model_dim,
-                        output_dim: fast_model_dim,
-                    },
-                );
-            });
+            let hidden_buffer = hidden.buffer();
+            let weights_buffer = weights.buffer();
+            let output_buffer = output.buffer();
+            let hidden_buffer = hidden_buffer.borrow();
+            let weights_buffer = weights_buffer.borrow();
+            let mut output_buffer = output_buffer.borrow_mut();
+            gpu_path.projection.encode(
+                context,
+                command_buffer,
+                FullPrecisionMatmulArguments {
+                    a: &hidden_buffer,
+                    a_offset: hidden.offset(),
+                    b: &weights_buffer,
+                    output: &mut output_buffer,
+                    bias: None,
+                    batch: 1,
+                    input_dim: slow_model_dim,
+                    output_dim: fast_model_dim,
+                },
+            );
             return Ok(());
         }
 
@@ -671,29 +723,27 @@ impl FishAudioTextDecoderRuntime {
         if hidden.shape() != [1, slow_model_dim] || output.shape() != [1, fast_model_dim] {
             return Err(Error::GenerateFailed);
         }
-        command_buffer.with_compute_encoder(|encoder| {
-            let hidden_buffer = hidden.buffer();
-            let hidden_buffer = hidden_buffer.borrow();
-            let output_buffer = output.buffer();
-            let mut output_buffer = output_buffer.borrow_mut();
-            gpu_path.tensor_copy.encode(
-                (&*hidden_buffer, hidden.offset()),
-                (&mut *output_buffer, output.offset()),
-                model_dim_u32,
-                encoder,
-            );
-        });
+        let hidden_buffer = hidden.buffer();
+        let hidden_buffer = hidden_buffer.borrow();
+        let output_buffer = output.buffer();
+        let mut output_buffer = output_buffer.borrow_mut();
+        gpu_path.tensor_copy.encode(
+            (&*hidden_buffer, hidden.offset()),
+            (&mut *output_buffer, output.offset()),
+            model_dim_u32,
+            command_buffer,
+        );
         Ok(())
     }
 
     fn encode_slow_codebook_sum_from_codes_on(
-        gpu_path: &mut FishAudioGpuPath,
-        slow_sum_embedding: &ArrayCell<Metal>,
+        gpu_path: &mut FishAudioGpuPath<B>,
+        slow_sum_embedding: &ArrayCell<B>,
         current_codes: &[u32],
         num_codebooks: usize,
         codebook_size: usize,
         slow_model_dim: usize,
-        command_buffer: &mut MetalCommandBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), Error> {
         if current_codes.len() != num_codebooks {
             return Err(Error::GenerateFailed);
@@ -737,23 +787,21 @@ impl FishAudioTextDecoderRuntime {
             return Err(Error::GenerateFailed);
         }
 
-        command_buffer.with_compute_encoder(|encoder| {
-            let codebook_row_indices_buffer = codebook_row_indices.buffer();
-            let codebook_row_indices_buffer = codebook_row_indices_buffer.borrow();
-            let codebook_embeddings_buffer = codebook_embeddings.buffer();
-            let codebook_embeddings_buffer = codebook_embeddings_buffer.borrow();
-            let slow_sum_buffer = slow_sum.buffer();
-            let mut slow_sum_buffer = slow_sum_buffer.borrow_mut();
-            gpu_path.embedding_rows_sum.encode(
-                (&*codebook_row_indices_buffer, codebook_row_indices.offset()),
-                (&*codebook_embeddings_buffer, codebook_embeddings.offset()),
-                (&mut *slow_sum_buffer, slow_sum.offset()),
-                num_codebooks_u32,
-                total_vocab_u32,
-                slow_model_dim_u32,
-                encoder,
-            );
-        });
+        let codebook_row_indices_buffer = codebook_row_indices.buffer();
+        let codebook_row_indices_buffer = codebook_row_indices_buffer.borrow();
+        let codebook_embeddings_buffer = codebook_embeddings.buffer();
+        let codebook_embeddings_buffer = codebook_embeddings_buffer.borrow();
+        let slow_sum_buffer = slow_sum.buffer();
+        let mut slow_sum_buffer = slow_sum_buffer.borrow_mut();
+        gpu_path.embedding_rows_sum.encode(
+            (&*codebook_row_indices_buffer, codebook_row_indices.offset()),
+            (&*codebook_embeddings_buffer, codebook_embeddings.offset()),
+            (&mut *slow_sum_buffer, slow_sum.offset()),
+            num_codebooks_u32,
+            total_vocab_u32,
+            slow_model_dim_u32,
+            command_buffer,
+        );
         Ok(())
     }
 
@@ -762,7 +810,7 @@ impl FishAudioTextDecoderRuntime {
     }
 }
 
-impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
+impl<B: Backend> SemanticDecoderBackend for FishAudioTextDecoderRuntime<B> {
     fn default_seed(&self) -> u64 {
         DEFAULT_TTS_RANDOM_SEED
     }

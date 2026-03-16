@@ -1,17 +1,17 @@
 use super::*;
 
-pub(super) struct NanoCodecAudioDecoderBackend {
-    audio: AudioGenerationContext,
+pub(super) struct NanoCodecAudioDecoderBackend<B: StructuredDecoderBackend> {
+    audio: AudioGenerationContext<B>,
     codec_cardinality: usize,
 }
 
-pub(super) struct NanoCodecAudioDecoderStream {
-    audio: AudioGenerationContext,
+pub(super) struct NanoCodecAudioDecoderStream<B: StructuredDecoderBackend> {
+    audio: AudioGenerationContext<B>,
     state: Option<AudioDecodeStreamState>,
 }
 
-impl NanoCodecAudioDecoderBackend {
-    pub(super) fn new(audio: AudioGenerationContext) -> Self {
+impl<B: StructuredDecoderBackend> NanoCodecAudioDecoderBackend<B> {
+    pub(super) fn new(audio: AudioGenerationContext<B>) -> Self {
         let codec_cardinality = audio.codec_cardinality();
         Self {
             audio,
@@ -20,7 +20,7 @@ impl NanoCodecAudioDecoderBackend {
     }
 }
 
-impl AudioDecoderBackend for NanoCodecAudioDecoderBackend {
+impl<B: StructuredDecoderBackend> AudioDecoderBackend for NanoCodecAudioDecoderBackend<B> {
     fn codec_cardinality(&self) -> usize {
         self.codec_cardinality
     }
@@ -59,7 +59,7 @@ impl AudioDecoderBackend for NanoCodecAudioDecoderBackend {
     }
 }
 
-impl AudioDecoderStreamBackend for NanoCodecAudioDecoderStream {
+impl<B: StructuredDecoderBackend> AudioDecoderStreamBackend for NanoCodecAudioDecoderStream<B> {
     fn decode_step(
         &mut self,
         new_tokens: &AudioTokenGrid,

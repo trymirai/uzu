@@ -1,20 +1,20 @@
-#![cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+#![cfg(feature = "audio-runtime")]
 
 use std::{path::Path, rc::Rc};
 
 use super::{AudioResult, NanoCodecFsqRuntime, NanoCodecFsqRuntimeOptions};
-use crate::config::TtsConfig;
+use crate::{backends::common::Backend, config::TtsConfig};
 
 #[derive(Clone)]
-pub struct AudioGenerationContext {
-    runtime: Rc<NanoCodecFsqRuntime>,
+pub struct AudioGenerationContext<B: Backend> {
+    runtime: Rc<NanoCodecFsqRuntime<B>>,
     codec_cardinality: usize,
     semantic_codec_cardinality: Option<usize>,
     num_codebooks: usize,
     sample_rate: u32,
 }
 
-impl AudioGenerationContext {
+impl<B: Backend> AudioGenerationContext<B> {
     pub fn from_tts_config_and_model_path(
         tts_config: &TtsConfig,
         model_path: &Path,
@@ -32,7 +32,7 @@ impl AudioGenerationContext {
         )?)
     }
 
-    fn with_runtime(runtime: NanoCodecFsqRuntime) -> AudioResult<Self> {
+    fn with_runtime(runtime: NanoCodecFsqRuntime<B>) -> AudioResult<Self> {
         let codec_cardinality = usize::try_from(runtime.config().codec_cardinality())
             .map_err(|_| super::AudioError::Runtime("audio codec cardinality exceeds usize".to_string()))?;
         Ok(Self {
@@ -44,7 +44,7 @@ impl AudioGenerationContext {
         })
     }
 
-    pub fn runtime(&self) -> &NanoCodecFsqRuntime {
+    pub fn runtime(&self) -> &NanoCodecFsqRuntime<B> {
         self.runtime.as_ref()
     }
 

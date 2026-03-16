@@ -1,65 +1,24 @@
 use super::*;
 use crate::config::{ModelType, TtsModelConfig, TtsTextDecoderConfig};
 
-pub(super) struct LoadedTtsRuntime {
-    pub(super) audio: AudioGenerationContext,
+pub(super) struct LoadedTtsRuntime<B: Backend> {
+    pub(super) audio: AudioGenerationContext<B>,
     pub(super) audio_decoder: Box<dyn AudioDecoderBackend>,
     pub(super) text_decoder: Box<dyn SemanticDecoderBackend>,
     pub(super) message_processor_config: TtsMessageProcessorConfig,
 }
 
-pub(super) fn build_audio_decoder_backend(
-    audio: &AudioGenerationContext
+pub(super) fn build_audio_decoder_backend<B: StructuredDecoderBackend>(
+    audio: &AudioGenerationContext<B>
 ) -> Result<Box<dyn AudioDecoderBackend>, Error> {
     Ok(Box::new(audio_backend::NanoCodecAudioDecoderBackend::new(audio.clone())))
 }
 
-pub(super) fn validate_tts_tokenizer_contract(
-    tokenizer: &Tokenizer,
-    model_metadata: &ModelMetadata,
-) -> Result<(), Error> {
-    let Some(tts_model_config) = model_metadata.model_config.as_tts() else {
-        return Ok(());
-    };
-
-    let crate::config::TtsTextDecoderConfig::FishAudioTextDecoderConfig {
-        config,
-    } = &tts_model_config.tts_config.text_decoder_config
-    else {
-        return Ok(());
-    };
-
-    let expected_pairs = [
-        ("<|im_end|>".to_string(), config.im_end_token_id),
-        ("<|semantic:0|>".to_string(), config.semantic_token_begin_id),
-        (
-            format!("<|semantic:{}|>", config.codebook_size.saturating_sub(1)),
-            config.semantic_token_end_id,
-        ),
-    ];
-
-    for (token, expected_id) in expected_pairs {
-        let Some(actual_id) = tokenizer.token_to_id(token.as_str()) else {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "tokenizer missing required FishAudio token '{token}'"
-            )));
-        };
-
-        if i64::from(actual_id) != expected_id {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "tokenizer token id mismatch for '{token}': expected {expected_id}, got {actual_id}"
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-pub(super) fn load_tts_runtime(
+pub(super) fn load_tts_runtime<B: StructuredDecoderBackend>(
     model_path: &Path,
     model_metadata: &ModelMetadata,
     options: &TtsSessionOptions,
-) -> Result<LoadedTtsRuntime, Error> {
+) -> Result<LoadedTtsRuntime<B>, Error> {
     if model_metadata.model_type != ModelType::TtsModel {
         return Err(Error::InvalidTtsModelConfig(format!(
             "expected model_type={:?}, got {:?}",
@@ -73,7 +32,7 @@ pub(super) fn load_tts_runtime(
         .as_tts()
         .ok_or_else(|| Error::InvalidTtsModelConfig("missing TTS model config".to_string()))?
         .clone();
-    let audio = tts_model_config
+    let audio: AudioGenerationContext<B> = tts_model_config
         .create_audio_generation_context_with_model_path_and_options(model_path, options.audio_runtime)?;
     let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, model_path, options)?;
     let audio_decoder = build_audio_decoder_backend(&audio)?;
@@ -119,9 +78,9 @@ fn validate_stub_text_decoder_contract(
     Ok(())
 }
 
-pub(super) fn build_text_decoder_backend(
+pub(super) fn build_text_decoder_backend<B: Backend>(
     tts_model_config: &TtsModelConfig,
-    audio: &AudioGenerationContext,
+    audio: &AudioGenerationContext<B>,
     model_path: &Path,
     options: &TtsSessionOptions,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {

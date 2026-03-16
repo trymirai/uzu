@@ -228,6 +228,10 @@ impl MetalCommandBufferPending {
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
+    fn is_completed(&self) -> bool {
+        matches!(self.command_buffer.status(), MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error)
+    }
+
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
         self.command_buffer.wait_until_completed();
 

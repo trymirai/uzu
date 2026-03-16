@@ -3,12 +3,15 @@
 mod common;
 
 use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
-use uzu::audio::{
-    AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, NanoCodecFsqRuntime,
-    NanoCodecFsqRuntimeConfig, nanocodec::fsq::compute_dim_base_index,
+use uzu::{
+    audio::{
+        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, NanoCodecFsqRuntime,
+        NanoCodecFsqRuntimeConfig, nanocodec::fsq::compute_dim_base_index,
+    },
+    backends::metal::Metal,
 };
 
-fn create_runtime(output_packing: AudioTokenPacking) -> NanoCodecFsqRuntime {
+fn create_runtime(output_packing: AudioTokenPacking) -> NanoCodecFsqRuntime<Metal> {
     let config = NanoCodecFsqRuntimeConfig::new(24_000, 2, vec![8, 6].into_boxed_slice(), 1e-3, output_packing)
         .expect("valid runtime config");
     NanoCodecFsqRuntime::new(config)

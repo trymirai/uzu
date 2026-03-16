@@ -46,19 +46,19 @@ pub struct AudioDecodeProfile {
     pub trace_path: Option<PathBuf>,
 }
 
-pub(in crate::audio::nanocodec::runtime) struct SubmittedDecodedPaddedAudio {
-    pub(in crate::audio::nanocodec::runtime) output: Array<Metal>,
+pub(in crate::audio::nanocodec::runtime) struct SubmittedDecodedPaddedAudio<B: Backend> {
+    pub(in crate::audio::nanocodec::runtime) output: Array<B>,
     pub(in crate::audio::nanocodec::runtime) channels: usize,
     pub(in crate::audio::nanocodec::runtime) frames: usize,
     pub(in crate::audio::nanocodec::runtime) lengths: Vec<usize>,
-    pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<MetalPendingCommandBuffer>,
+    pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<<B::CommandBuffer as CommandBuffer>::Pending>,
     pub(in crate::audio::nanocodec::runtime) final_command_label: Option<String>,
     pub(in crate::audio::nanocodec::runtime) final_cpu_encode_ms: f64,
     pub(in crate::audio::nanocodec::runtime) decode_profile: Option<AudioDecodeProfile>,
-    pub(in crate::audio::nanocodec::runtime) capture: Option<AudioCaptureGuard>,
+    pub(in crate::audio::nanocodec::runtime) capture: Option<AudioCaptureGuard<B>>,
 }
 
-impl SubmittedDecodedPaddedAudio {
+impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
     pub(in crate::audio::nanocodec::runtime) fn is_ready(&self) -> bool {
         self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
     }
@@ -103,9 +103,9 @@ impl SubmittedDecodedPaddedAudio {
     }
 }
 
-pub(crate) struct PendingStreamPcmChunk {
-    pub(in crate::audio::nanocodec::runtime) runtime: NanoCodecFsqRuntime,
-    pub(in crate::audio::nanocodec::runtime) submitted: SubmittedDecodedPaddedAudio,
+pub(crate) struct PendingStreamPcmChunk<B: Backend> {
+    pub(in crate::audio::nanocodec::runtime) runtime: NanoCodecFsqRuntime<B>,
+    pub(in crate::audio::nanocodec::runtime) submitted: SubmittedDecodedPaddedAudio<B>,
     pub(in crate::audio::nanocodec::runtime) previous_audio_lengths: Box<[usize]>,
     pub(in crate::audio::nanocodec::runtime) semantic_lengths: Box<[usize]>,
     pub(in crate::audio::nanocodec::runtime) audio_offset_frames: usize,
@@ -113,7 +113,7 @@ pub(crate) struct PendingStreamPcmChunk {
     pub(in crate::audio::nanocodec::runtime) step_stats: AudioDecodeStepStats,
 }
 
-impl PendingStreamPcmChunk {
+impl<B: Backend> PendingStreamPcmChunk<B> {
     pub(crate) fn is_ready(&self) -> bool {
         self.submitted.is_ready()
     }
@@ -138,16 +138,16 @@ impl PendingStreamPcmChunk {
     }
 }
 
-pub(in crate::audio::nanocodec::runtime) struct AudioCaptureGuard {
-    context: Rc<<Metal as Backend>::Context>,
+pub(in crate::audio::nanocodec::runtime) struct AudioCaptureGuard<B: Backend> {
+    context: Rc<B::Context>,
     trace_path: PathBuf,
     active: bool,
 }
 
-impl AudioCaptureGuard {
+impl<B: Backend> AudioCaptureGuard<B> {
     pub(in crate::audio::nanocodec::runtime) fn start() -> AudioResult<Self> {
-        <Metal as Backend>::Context::enable_capture();
-        let context = <Metal as Backend>::Context::new()
+        B::Context::enable_capture();
+        let context = B::Context::new()
             .map_err(|err| AudioError::Runtime(format!("failed to create capture context: {err}")))?;
         let timestamp =
             SystemTime::now().duration_since(UNIX_EPOCH).map_err(|err| AudioError::Runtime(err.to_string()))?;
@@ -164,7 +164,7 @@ impl AudioCaptureGuard {
         })
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn context(&self) -> Rc<<Metal as Backend>::Context> {
+    pub(in crate::audio::nanocodec::runtime) fn context(&self) -> Rc<B::Context> {
         Rc::clone(&self.context)
     }
 
@@ -179,7 +179,7 @@ impl AudioCaptureGuard {
     }
 }
 
-impl Drop for AudioCaptureGuard {
+impl<B: Backend> Drop for AudioCaptureGuard<B> {
     fn drop(&mut self) {
         if self.active {
             let _ = self.context.stop_capture();
@@ -191,7 +191,7 @@ impl Drop for AudioCaptureGuard {
 pub(in crate::audio::nanocodec::runtime) fn push_audio_command_buffer_profile(
     profile: &mut Option<AudioDecodeProfile>,
     label: impl Into<String>,
-    command_buffer: &MetalCompletedCommandBuffer,
+    command_buffer: &impl CommandBufferCompleted,
     cpu_encode_ms: f64,
     cpu_wait_ms: f64,
     estimated_macs: Option<usize>,

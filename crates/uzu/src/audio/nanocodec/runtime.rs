@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
     fs::File,
+    marker::PhantomData,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, RwLock},
@@ -15,18 +16,15 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
-    backends::{
-        common::{
-            Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-            CommandBufferInitial, CommandBufferPending, Context, CopyEncoder, Kernels,
-            kernel::{
-                ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
-                AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
-                AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
-                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
-            },
+    backends::common::{
+        Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferInitial, CommandBufferPending, Context, CopyEncoder, Kernels,
+        kernel::{
+            ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
+            AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
+            AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
+            AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
         },
-        metal::Metal,
     },
     config::{
         ConfigDataType, DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
@@ -60,10 +58,6 @@ use structured::StructuredAudioCodecGraph;
 use support::{
     DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize_to_i32,
 };
-
-type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
-type MetalPendingCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Pending;
-type MetalCompletedCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Completed;
 
 fn default_eps() -> f32 {
     1e-3
@@ -236,14 +230,35 @@ impl NanoCodecFsqRuntimeConfig {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NanoCodecFsqRuntime {
+pub struct NanoCodecFsqRuntime<B: Backend> {
     config: NanoCodecFsqRuntimeConfig,
     options: NanoCodecFsqRuntimeOptions,
     last_decode_profile: Arc<RwLock<Option<AudioDecodeProfile>>>,
+    _backend: PhantomData<B>,
 }
 
-impl NanoCodecFsqRuntime {
+impl<B: Backend> Clone for NanoCodecFsqRuntime<B> {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            options: self.options,
+            last_decode_profile: self.last_decode_profile.clone(),
+            _backend: PhantomData,
+        }
+    }
+}
+
+impl<B: Backend> std::fmt::Debug for NanoCodecFsqRuntime<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NanoCodecFsqRuntime")
+            .field("config", &self.config)
+            .field("options", &self.options)
+            .field("last_decode_profile", &self.last_decode_profile)
+            .finish()
+    }
+}
+
+impl<B: Backend> NanoCodecFsqRuntime<B> {
     pub fn new(config: NanoCodecFsqRuntimeConfig) -> Self {
         Self::new_with_options(config, NanoCodecFsqRuntimeOptions::default())
     }
@@ -253,12 +268,13 @@ impl NanoCodecFsqRuntime {
         options: NanoCodecFsqRuntimeOptions,
     ) -> Self {
         if options.capture_single_decode {
-            <Metal as Backend>::Context::enable_capture();
+            B::Context::enable_capture();
         }
         Self {
             config,
             options,
             last_decode_profile: Arc::new(RwLock::new(None)),
+            _backend: PhantomData,
         }
     }
 
@@ -326,55 +342,7 @@ impl NanoCodecFsqRuntime {
         Ok(())
     }
 
-    fn decode_structured_stream_delta(
-        &self,
-        state: &mut AudioDecodeStreamState,
-        fishaudio: &StructuredAudioCodecGraph,
-        input_frames: usize,
-    ) -> AudioResult<DecodedPaddedAudio> {
-        if state.total_frames() == 0 {
-            state.record_last_step_stats(input_frames, 0, 0);
-            return Ok(DecodedPaddedAudio {
-                samples: Vec::new(),
-                channels: 1,
-                frames: 0,
-                lengths: vec![0usize; state.batch_size],
-            });
-        }
-
-        let Some(context_frames) = fishaudio.streaming_decode_context_frames()? else {
-            let full_grid = state.to_full_grid()?;
-            let full_padded = self.decode_padded(&full_grid)?;
-            state.record_last_step_stats(input_frames, 0, state.total_frames());
-            return state.extract_delta_from_padded_with_offset(&full_padded, 0, fishaudio.upsample_factor);
-        };
-        let mut window_start = state.total_frames();
-        for &emitted in &state.emitted_semantic_lengths {
-            window_start = window_start.min(emitted.saturating_sub(context_frames));
-        }
-        let window_end = state.total_frames();
-        let batch_size = state.batch_size;
-        let codebooks = state.codebooks;
-        let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
-        let (decoded_window, decode_profile) = fishaudio.decode_padded(
-            self.options,
-            window_tokens,
-            window_lengths,
-            batch_size,
-            codebooks,
-            window_frames,
-        )?;
-        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
-            *last_decode_profile = decode_profile;
-        }
-        let audio_offset_frames = window_start
-            .checked_mul(fishaudio.upsample_factor)
-            .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;
-        state.record_last_step_stats(input_frames, window_start, window_frames);
-        state.extract_delta_from_padded_with_offset(&decoded_window, audio_offset_frames, fishaudio.upsample_factor)
-    }
-
-    fn decode_padded(
+    fn fsq_decode_padded(
         &self,
         tokens: &AudioTokenGrid,
     ) -> AudioResult<DecodedPaddedAudio> {
@@ -393,6 +361,401 @@ impl NanoCodecFsqRuntime {
         let frames = tokens.frames();
         let lengths_usize = tokens.lengths().to_vec();
         let lengths_i32 = convert_lengths_to_i32(&lengths_usize, frames)?;
+
+        if batch_size == 0 || frames == 0 {
+            return Ok(DecodedPaddedAudio {
+                samples: Vec::new(),
+                channels: self.config.channels(),
+                frames: 0,
+                lengths: lengths_usize,
+            });
+        }
+
+        let codebook_major = tokens.to_packing(AudioTokenPacking::CodebookMajor);
+
+        let mut tokens_i32 = vec![0_i32; codebook_major.tokens().len()];
+        for (index, &token) in codebook_major.tokens().iter().enumerate() {
+            if token >= self.config.codec_cardinality() {
+                return Err(AudioError::InvalidCodecToken {
+                    token,
+                    cardinality: self.config.codec_cardinality(),
+                });
+            }
+            if token > i32::MAX as u32 {
+                return Err(AudioError::Runtime(format!("token at index {index} exceeds i32 kernel range: {token}")));
+            }
+            tokens_i32[index] = token as i32;
+        }
+
+        let context = Self::create_context()?;
+        let kernel = <B::Kernels as Kernels>::AudioFsqDecodeKernel::new(&context, DataType::F32)
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize fsq decode kernel: {err}")))?;
+
+        let mut tokens_array = context.create_array(
+            &[batch_size, self.config.num_groups(), frames],
+            DataType::I32,
+            "nanocodec_fsq_decode_tokens",
+        );
+        tokens_array.as_slice_mut::<i32>().copy_from_slice(&tokens_i32);
+
+        let mut lengths_array = context.create_array(&[batch_size], DataType::I32, "nanocodec_fsq_decode_lengths");
+        lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
+
+        let output = context.create_array(
+            &[batch_size, self.config.channels(), frames],
+            DataType::F32,
+            "nanocodec_fsq_decode_output",
+        );
+
+        let mut command_buffer = context
+            .create_command_buffer()
+            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
+            .start_encoding();
+
+        let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
+        let frames_i32 = usize_to_i32(frames, "frames")?;
+        let codebook_dim_i32 = usize_to_i32(self.config.codebook_dim_per_group(), "codebook_dim_per_group")?;
+        let batch_size_i32 = usize_to_i32(batch_size, "batch_size")?;
+        {
+            let tokens_buffer = tokens_array.buffer();
+            let tokens_buffer = tokens_buffer.borrow();
+            let output_buffer = output.buffer();
+            let mut output_buffer = output_buffer.borrow_mut();
+            let lengths_buffer = lengths_array.buffer();
+            let lengths_buffer = lengths_buffer.borrow();
+
+            kernel.encode(
+                &*tokens_buffer,
+                &mut *output_buffer,
+                &*lengths_buffer,
+                num_groups_i32,
+                frames_i32,
+                codebook_dim_i32,
+                self.config.num_levels_per_group(),
+                self.config.dim_base_index(),
+                batch_size_i32,
+                &mut command_buffer,
+            );
+        }
+
+        let command_buffer = command_buffer.end_encoding().submit();
+        command_buffer
+            .wait_until_completed()
+            .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
+
+        Ok(DecodedPaddedAudio {
+            samples: output.as_slice::<f32>().to_vec(),
+            channels: self.config.channels(),
+            frames,
+            lengths: lengths_usize,
+        })
+    }
+
+    fn fsq_encode(
+        &self,
+        pcm: &AudioPcmBatch,
+    ) -> AudioResult<AudioTokenGrid> {
+        if pcm.sample_rate() != self.config.sample_rate() {
+            return Err(AudioError::Runtime(format!(
+                "pcm sample-rate mismatch: expected {}, got {}",
+                self.config.sample_rate(),
+                pcm.sample_rate()
+            )));
+        }
+
+        let (padded_input, lengths_usize, lengths_i32, frames) = pack_pcm_to_padded(pcm, self.config.channels())?;
+        let batch_size = pcm.batch_size();
+
+        if batch_size == 0 || frames == 0 {
+            let empty_tokens = Vec::<u32>::new().into_boxed_slice();
+            let grid = AudioTokenGrid::new(
+                empty_tokens,
+                batch_size,
+                self.config.num_groups(),
+                frames,
+                lengths_usize.into_boxed_slice(),
+                self.config.output_packing(),
+            )?;
+            return Ok(grid);
+        }
+
+        let context = Self::create_context()?;
+        let kernel = <B::Kernels as Kernels>::AudioFsqEncodeKernel::new(&context, DataType::F32)
+            .map_err(|err| AudioError::Runtime(format!("failed to initialize fsq encode kernel: {err}")))?;
+
+        let mut input = context.create_array(
+            &[batch_size, self.config.channels(), frames],
+            DataType::F32,
+            "nanocodec_fsq_encode_input",
+        );
+        input.as_slice_mut::<f32>().copy_from_slice(&padded_input);
+
+        let mut lengths = context.create_array(&[batch_size], DataType::I32, "nanocodec_fsq_encode_lengths");
+        lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
+
+        let tokens = context.create_array(
+            &[batch_size, self.config.num_groups(), frames],
+            DataType::I32,
+            "nanocodec_fsq_encode_tokens",
+        );
+
+        let mut command_buffer = context
+            .create_command_buffer()
+            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
+            .start_encoding();
+
+        let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
+        let frames_i32 = usize_to_i32(frames, "frames")?;
+        let codebook_dim_i32 = usize_to_i32(self.config.codebook_dim_per_group(), "codebook_dim_per_group")?;
+        let batch_size_i32 = usize_to_i32(batch_size, "batch_size")?;
+        {
+            let input_buffer = input.buffer();
+            let input_buffer = input_buffer.borrow();
+            let tokens_buffer = tokens.buffer();
+            let mut tokens_buffer = tokens_buffer.borrow_mut();
+            let lengths_buffer = lengths.buffer();
+            let lengths_buffer = lengths_buffer.borrow();
+
+            kernel.encode(
+                &*input_buffer,
+                &mut *tokens_buffer,
+                &*lengths_buffer,
+                num_groups_i32,
+                frames_i32,
+                codebook_dim_i32,
+                self.config.num_levels_per_group(),
+                self.config.dim_base_index(),
+                self.config.eps(),
+                batch_size_i32,
+                &mut command_buffer,
+            );
+        }
+
+        let command_buffer = command_buffer.end_encoding().submit();
+        command_buffer
+            .wait_until_completed()
+            .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
+
+        let mut tokens_u32 = vec![0_u32; tokens.num_elements()];
+        for (index, &token) in tokens.as_slice::<i32>().iter().enumerate() {
+            if token < 0 {
+                return Err(AudioError::Runtime(format!(
+                    "fsq encode returned negative token at index {index}: {token}"
+                )));
+            }
+
+            let token_u32 = token as u32;
+            if token_u32 >= self.config.codec_cardinality() {
+                return Err(AudioError::InvalidCodecToken {
+                    token: token_u32,
+                    cardinality: self.config.codec_cardinality(),
+                });
+            }
+            tokens_u32[index] = token_u32;
+        }
+
+        let codebook_major = AudioTokenGrid::new(
+            tokens_u32.into_boxed_slice(),
+            batch_size,
+            self.config.num_groups(),
+            frames,
+            lengths_usize.into_boxed_slice(),
+            AudioTokenPacking::CodebookMajor,
+        )?;
+
+        Ok(codebook_major.to_packing(self.config.output_packing()))
+    }
+
+    pub fn begin_decode_stream(
+        &self,
+        batch_size: usize,
+        codebooks: usize,
+    ) -> AudioResult<AudioDecodeStreamState> {
+        self.begin_decode_stream_with_options(batch_size, codebooks, AudioDecodeStreamingMode::IncrementalStateful, 256)
+    }
+
+    pub fn begin_decode_stream_with_options(
+        &self,
+        batch_size: usize,
+        codebooks: usize,
+        mode: AudioDecodeStreamingMode,
+        max_workspace_frames: usize,
+    ) -> AudioResult<AudioDecodeStreamState> {
+        if codebooks != self.config.num_groups() {
+            return Err(AudioError::Runtime(format!(
+                "stream codebook mismatch: expected {}, got {}",
+                self.config.num_groups(),
+                codebooks
+            )));
+        }
+        AudioDecodeStreamState::new(batch_size, codebooks, max_workspace_frames, mode)
+    }
+
+    pub(crate) fn decoded_padded_to_pcm_batch(
+        &self,
+        decoded: &DecodedPaddedAudio,
+    ) -> AudioResult<AudioPcmBatch> {
+        let samples = unpack_padded_to_pcm(
+            &decoded.samples,
+            decoded.lengths.len(),
+            decoded.channels,
+            decoded.frames,
+            &decoded.lengths,
+        )?;
+        AudioPcmBatch::new(
+            samples.into_boxed_slice(),
+            self.config.sample_rate(),
+            decoded.channels,
+            decoded.lengths.clone().into_boxed_slice(),
+        )
+    }
+
+    pub fn end_decode_stream(
+        &self,
+        _state: AudioDecodeStreamState,
+    ) -> AudioResult<()> {
+        Ok(())
+    }
+
+    fn create_context() -> AudioResult<Rc<B::Context>> {
+        B::Context::new()
+            .map_err(|err| AudioError::Runtime(format!("failed to create audio context: {err}")))
+    }
+}
+
+/// Backend-specific operations required for full audio codec decode support.
+///
+/// The FSQ encode/decode path is fully generic over any `Backend`. However, the
+/// structured (vocoder) decode path currently requires backend-specific GPU
+/// dispatch (command buffers, kernel caches, etc.).  Implementing this trait for
+/// a concrete backend unlocks `AudioCodecRuntime` and the streaming decode
+/// methods on `NanoCodecFsqRuntime<B>`.
+pub trait StructuredDecoderBackend: Backend + Sized {
+    fn structured_decode_padded(
+        graph: &StructuredAudioCodecGraph,
+        options: NanoCodecFsqRuntimeOptions,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)>;
+
+    fn structured_submit_decode_padded(
+        graph: &StructuredAudioCodecGraph,
+        options: NanoCodecFsqRuntimeOptions,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<SubmittedDecodedPaddedAudio<Self>>;
+
+    fn structured_streaming_decode_context_frames(
+        graph: &StructuredAudioCodecGraph,
+    ) -> AudioResult<Option<usize>>;
+}
+
+impl StructuredDecoderBackend for crate::backends::metal::Metal {
+    fn structured_decode_padded(
+        graph: &StructuredAudioCodecGraph,
+        options: NanoCodecFsqRuntimeOptions,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+        graph.decode_padded(options, tokens, lengths, batch_size, codebooks, frames)
+    }
+
+    fn structured_submit_decode_padded(
+        graph: &StructuredAudioCodecGraph,
+        options: NanoCodecFsqRuntimeOptions,
+        tokens: &[u32],
+        lengths: &[usize],
+        batch_size: usize,
+        codebooks: usize,
+        frames: usize,
+    ) -> AudioResult<SubmittedDecodedPaddedAudio<Self>> {
+        graph.submit_decode_padded(options, tokens, lengths, batch_size, codebooks, frames)
+    }
+
+    fn structured_streaming_decode_context_frames(
+        graph: &StructuredAudioCodecGraph,
+    ) -> AudioResult<Option<usize>> {
+        graph.streaming_decode_context_frames()
+    }
+}
+
+impl<B: StructuredDecoderBackend> NanoCodecFsqRuntime<B> {
+    fn decode_structured_stream_delta(
+        &self,
+        state: &mut AudioDecodeStreamState,
+        fishaudio: &StructuredAudioCodecGraph,
+        input_frames: usize,
+    ) -> AudioResult<DecodedPaddedAudio> {
+        if state.total_frames() == 0 {
+            state.record_last_step_stats(input_frames, 0, 0);
+            return Ok(DecodedPaddedAudio {
+                samples: Vec::new(),
+                channels: 1,
+                frames: 0,
+                lengths: vec![0usize; state.batch_size],
+            });
+        }
+
+        let Some(context_frames) = B::structured_streaming_decode_context_frames(fishaudio)? else {
+            let full_grid = state.to_full_grid()?;
+            let full_padded = self.decode_padded(&full_grid)?;
+            state.record_last_step_stats(input_frames, 0, state.total_frames());
+            return state.extract_delta_from_padded_with_offset(&full_padded, 0, fishaudio.upsample_factor);
+        };
+        let mut window_start = state.total_frames();
+        for &emitted in &state.emitted_semantic_lengths {
+            window_start = window_start.min(emitted.saturating_sub(context_frames));
+        }
+        let window_end = state.total_frames();
+        let batch_size = state.batch_size;
+        let codebooks = state.codebooks;
+        let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
+        let (decoded_window, decode_profile) = B::structured_decode_padded(
+            fishaudio,
+            self.options,
+            window_tokens,
+            window_lengths,
+            batch_size,
+            codebooks,
+            window_frames,
+        )?;
+        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
+            *last_decode_profile = decode_profile;
+        }
+        let audio_offset_frames = window_start
+            .checked_mul(fishaudio.upsample_factor)
+            .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;
+        state.record_last_step_stats(input_frames, window_start, window_frames);
+        state.extract_delta_from_padded_with_offset(&decoded_window, audio_offset_frames, fishaudio.upsample_factor)
+    }
+
+    pub(crate) fn decode_padded(
+        &self,
+        tokens: &AudioTokenGrid,
+    ) -> AudioResult<DecodedPaddedAudio> {
+        if let Ok(mut last_decode_profile) = self.last_decode_profile.write() {
+            *last_decode_profile = None;
+        }
+        if tokens.codebooks() != self.config.num_groups() {
+            return Err(AudioError::Runtime(format!(
+                "token codebook mismatch: expected {}, got {}",
+                self.config.num_groups(),
+                tokens.codebooks()
+            )));
+        }
+
+        let batch_size = tokens.batch_size();
+        let frames = tokens.frames();
+        let lengths_usize = tokens.lengths().to_vec();
 
         if batch_size == 0 || frames == 0 {
             let channels = if self.config.structured_decoder().is_some() {
@@ -447,7 +810,8 @@ impl NanoCodecFsqRuntime {
                     }
                 }
             }
-            let (decoded, decode_profile) = fishaudio.decode_padded(
+            let (decoded, decode_profile) = B::structured_decode_padded(
+                fishaudio,
                 self.options,
                 codebook_major.tokens(),
                 &lengths_usize,
@@ -461,109 +825,7 @@ impl NanoCodecFsqRuntime {
             return Ok(decoded);
         }
 
-        let mut tokens_i32 = vec![0_i32; codebook_major.tokens().len()];
-        for (index, &token) in codebook_major.tokens().iter().enumerate() {
-            if token >= self.config.codec_cardinality() {
-                return Err(AudioError::InvalidCodecToken {
-                    token,
-                    cardinality: self.config.codec_cardinality(),
-                });
-            }
-            if token > i32::MAX as u32 {
-                return Err(AudioError::Runtime(format!("token at index {index} exceeds i32 kernel range: {token}")));
-            }
-            tokens_i32[index] = token as i32;
-        }
-
-        let context = Self::create_context()?;
-        let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqDecodeKernel::new(&context, DataType::F32)
-            .map_err(|err| AudioError::Runtime(format!("failed to initialize fsq decode kernel: {err}")))?;
-
-        let mut tokens_array = context.create_array(
-            &[batch_size, self.config.num_groups(), frames],
-            DataType::I32,
-            "nanocodec_fsq_decode_tokens",
-        );
-        tokens_array.as_slice_mut::<i32>().copy_from_slice(&tokens_i32);
-
-        let mut lengths_array = context.create_array(&[batch_size], DataType::I32, "nanocodec_fsq_decode_lengths");
-        lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
-
-        let output = context.create_array(
-            &[batch_size, self.config.channels(), frames],
-            DataType::F32,
-            "nanocodec_fsq_decode_output",
-        );
-
-        let mut command_buffer = context
-            .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
-            .start_encoding();
-
-        let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
-        let frames_i32 = usize_to_i32(frames, "frames")?;
-        let codebook_dim_i32 = usize_to_i32(self.config.codebook_dim_per_group(), "codebook_dim_per_group")?;
-        let batch_size_i32 = usize_to_i32(batch_size, "batch_size")?;
-        {
-            let tokens_buffer = tokens_array.buffer();
-            let tokens_buffer = tokens_buffer.borrow();
-            let output_buffer = output.buffer();
-            let mut output_buffer = output_buffer.borrow_mut();
-            let lengths_buffer = lengths_array.buffer();
-            let lengths_buffer = lengths_buffer.borrow();
-
-            command_buffer.with_compute_encoder(|compute_encoder| {
-                kernel.encode(
-                    &*tokens_buffer,
-                    &mut *output_buffer,
-                    &*lengths_buffer,
-                    num_groups_i32,
-                    frames_i32,
-                    codebook_dim_i32,
-                    self.config.num_levels_per_group(),
-                    self.config.dim_base_index(),
-                    batch_size_i32,
-                    compute_encoder,
-                );
-            });
-        }
-
-        let command_buffer = command_buffer.end_encoding().submit();
-        command_buffer
-            .wait_until_completed()
-            .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
-
-        Ok(DecodedPaddedAudio {
-            samples: output.as_slice::<f32>().to_vec(),
-            channels: self.config.channels(),
-            frames,
-            lengths: lengths_usize,
-        })
-    }
-
-    pub fn begin_decode_stream(
-        &self,
-        batch_size: usize,
-        codebooks: usize,
-    ) -> AudioResult<AudioDecodeStreamState> {
-        self.begin_decode_stream_with_options(batch_size, codebooks, AudioDecodeStreamingMode::IncrementalStateful, 256)
-    }
-
-    pub fn begin_decode_stream_with_options(
-        &self,
-        batch_size: usize,
-        codebooks: usize,
-        mode: AudioDecodeStreamingMode,
-        max_workspace_frames: usize,
-    ) -> AudioResult<AudioDecodeStreamState> {
-        if codebooks != self.config.num_groups() {
-            return Err(AudioError::Runtime(format!(
-                "stream codebook mismatch: expected {}, got {}",
-                self.config.num_groups(),
-                codebooks
-            )));
-        }
-        AudioDecodeStreamState::new(batch_size, codebooks, max_workspace_frames, mode)
+        self.fsq_decode_padded(tokens)
     }
 
     pub(crate) fn decode_stream_step(
@@ -618,7 +880,7 @@ impl NanoCodecFsqRuntime {
 
         state.append_delta(new_tokens)?;
         let full_grid = state.to_full_grid()?;
-        let full_padded = self.decode_padded(&full_grid)?;
+        let full_padded = self.fsq_decode_padded(&full_grid)?;
         state.record_last_step_stats(new_tokens.frames(), 0, state.total_frames());
         state.extract_delta_from_padded_with_offset(&full_padded, 0, 1)
     }
@@ -628,7 +890,7 @@ impl NanoCodecFsqRuntime {
         state: &mut AudioDecodeStreamState,
         new_tokens: &AudioTokenGrid,
         is_final: bool,
-    ) -> AudioResult<Option<PendingStreamPcmChunk>> {
+    ) -> AudioResult<Option<PendingStreamPcmChunk<B>>> {
         if is_final || !self.options.async_stream_delivery_enabled() {
             return Ok(None);
         }
@@ -656,7 +918,7 @@ impl NanoCodecFsqRuntime {
         if state.mode != AudioDecodeStreamingMode::IncrementalStateful {
             return Ok(None);
         }
-        let Some(context_frames) = fishaudio.streaming_decode_context_frames()? else {
+        let Some(context_frames) = B::structured_streaming_decode_context_frames(fishaudio)? else {
             return Ok(None);
         };
 
@@ -673,7 +935,8 @@ impl NanoCodecFsqRuntime {
         let previous_audio_lengths = state.emitted_audio_lengths.clone().into_boxed_slice();
         let semantic_lengths = state.semantic_lengths.clone().into_boxed_slice();
         let (window_tokens, window_lengths, window_frames) = state.flatten_window(window_start, window_end)?;
-        let submitted = fishaudio.submit_decode_padded(
+        let submitted = B::structured_submit_decode_padded(
+            fishaudio,
             self.options,
             window_tokens,
             window_lengths,
@@ -697,40 +960,9 @@ impl NanoCodecFsqRuntime {
             step_stats: state.last_step_stats(),
         }))
     }
-
-    pub(crate) fn decoded_padded_to_pcm_batch(
-        &self,
-        decoded: &DecodedPaddedAudio,
-    ) -> AudioResult<AudioPcmBatch> {
-        let samples = unpack_padded_to_pcm(
-            &decoded.samples,
-            decoded.lengths.len(),
-            decoded.channels,
-            decoded.frames,
-            &decoded.lengths,
-        )?;
-        AudioPcmBatch::new(
-            samples.into_boxed_slice(),
-            self.config.sample_rate(),
-            decoded.channels,
-            decoded.lengths.clone().into_boxed_slice(),
-        )
-    }
-
-    pub fn end_decode_stream(
-        &self,
-        _state: AudioDecodeStreamState,
-    ) -> AudioResult<()> {
-        Ok(())
-    }
-
-    fn create_context() -> AudioResult<Rc<<Metal as Backend>::Context>> {
-        <Metal as Backend>::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create metal audio context: {err}")))
-    }
 }
 
-impl AudioCodecRuntime for NanoCodecFsqRuntime {
+impl<B: StructuredDecoderBackend + Send + Sync> AudioCodecRuntime for NanoCodecFsqRuntime<B> {
     fn encode(
         &self,
         pcm: &AudioPcmBatch,
@@ -738,118 +970,7 @@ impl AudioCodecRuntime for NanoCodecFsqRuntime {
         if self.config.structured_decoder().is_some() {
             return Err(AudioError::Runtime("encode is not supported when a decoder graph is configured".to_string()));
         }
-
-        if pcm.sample_rate() != self.config.sample_rate() {
-            return Err(AudioError::Runtime(format!(
-                "pcm sample-rate mismatch: expected {}, got {}",
-                self.config.sample_rate(),
-                pcm.sample_rate()
-            )));
-        }
-
-        let (padded_input, lengths_usize, lengths_i32, frames) = pack_pcm_to_padded(pcm, self.config.channels())?;
-        let batch_size = pcm.batch_size();
-
-        if batch_size == 0 || frames == 0 {
-            let empty_tokens = Vec::<u32>::new().into_boxed_slice();
-            let grid = AudioTokenGrid::new(
-                empty_tokens,
-                batch_size,
-                self.config.num_groups(),
-                frames,
-                lengths_usize.into_boxed_slice(),
-                self.config.output_packing(),
-            )?;
-            return Ok(grid);
-        }
-
-        let context = Self::create_context()?;
-        let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqEncodeKernel::new(&context, DataType::F32)
-            .map_err(|err| AudioError::Runtime(format!("failed to initialize fsq encode kernel: {err}")))?;
-
-        let mut input = context.create_array(
-            &[batch_size, self.config.channels(), frames],
-            DataType::F32,
-            "nanocodec_fsq_encode_input",
-        );
-        input.as_slice_mut::<f32>().copy_from_slice(&padded_input);
-
-        let mut lengths = context.create_array(&[batch_size], DataType::I32, "nanocodec_fsq_encode_lengths");
-        lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
-
-        let tokens = context.create_array(
-            &[batch_size, self.config.num_groups(), frames],
-            DataType::I32,
-            "nanocodec_fsq_encode_tokens",
-        );
-
-        let mut command_buffer = context
-            .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
-            .start_encoding();
-
-        let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
-        let frames_i32 = usize_to_i32(frames, "frames")?;
-        let codebook_dim_i32 = usize_to_i32(self.config.codebook_dim_per_group(), "codebook_dim_per_group")?;
-        let batch_size_i32 = usize_to_i32(batch_size, "batch_size")?;
-        {
-            let input_buffer = input.buffer();
-            let input_buffer = input_buffer.borrow();
-            let tokens_buffer = tokens.buffer();
-            let mut tokens_buffer = tokens_buffer.borrow_mut();
-            let lengths_buffer = lengths.buffer();
-            let lengths_buffer = lengths_buffer.borrow();
-
-            command_buffer.with_compute_encoder(|compute_encoder| {
-                kernel.encode(
-                    &*input_buffer,
-                    &mut *tokens_buffer,
-                    &*lengths_buffer,
-                    num_groups_i32,
-                    frames_i32,
-                    codebook_dim_i32,
-                    self.config.num_levels_per_group(),
-                    self.config.dim_base_index(),
-                    self.config.eps(),
-                    batch_size_i32,
-                    compute_encoder,
-                );
-            });
-        }
-
-        let command_buffer = command_buffer.end_encoding().submit();
-        command_buffer
-            .wait_until_completed()
-            .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
-
-        let mut tokens_u32 = vec![0_u32; tokens.num_elements()];
-        for (index, &token) in tokens.as_slice::<i32>().iter().enumerate() {
-            if token < 0 {
-                return Err(AudioError::Runtime(format!(
-                    "fsq encode returned negative token at index {index}: {token}"
-                )));
-            }
-
-            let token_u32 = token as u32;
-            if token_u32 >= self.config.codec_cardinality() {
-                return Err(AudioError::InvalidCodecToken {
-                    token: token_u32,
-                    cardinality: self.config.codec_cardinality(),
-                });
-            }
-            tokens_u32[index] = token_u32;
-        }
-
-        let codebook_major = AudioTokenGrid::new(
-            tokens_u32.into_boxed_slice(),
-            batch_size,
-            self.config.num_groups(),
-            frames,
-            lengths_usize.into_boxed_slice(),
-            AudioTokenPacking::CodebookMajor,
-        )?;
-
-        Ok(codebook_major.to_packing(self.config.output_packing()))
+        self.fsq_encode(pcm)
     }
 
     fn decode(

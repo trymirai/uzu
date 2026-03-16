@@ -2,99 +2,36 @@ use super::decoder_support::*;
 use super::*;
 use crate::backends::common::Buffer;
 
-pub(super) type MetalContext = <Metal as Backend>::Context;
-pub(super) type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
-
-struct TokenDecoderContext {
-    context: Rc<MetalContext>,
-    command_buffer: Rc<RefCell<MetalCommandBuffer>>,
-    cache_layers: Rc<RefCell<CacheLayers<Metal>>>,
-    shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
-    scratch_buffers: ScratchBuffers<Metal>,
-    model_shape: ModelShape,
-    decoder_config: Rc<crate::config::DecoderConfig>,
-    executables: Decoder<Metal>,
-    sampler: GpuSampling<Metal>,
-    kv_cache_update: KVCacheUpdate<Metal>,
-    token_copy_sampled: <<Metal as Backend>::Kernels as Kernels>::TokenCopySampledKernel,
-    token_copy_results: <<Metal as Backend>::Kernels as Kernels>::TokenCopyToResultsKernel,
-    async_chain_positions: Rc<RefCell<<Metal as Backend>::Buffer>>,
-    async_chain_seeds: Rc<RefCell<<Metal as Backend>::Buffer>>,
-    async_chain_results: Rc<RefCell<<Metal as Backend>::Buffer>>,
-    async_chain_capacity: usize,
+struct TokenDecoderLoadedModel<B: Backend> {
+    shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    scratch_buffers: ScratchBuffers<B>,
+    executables: Decoder<B>,
+    sampler: GpuSampling<B>,
+    token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
+    token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
 }
 
-impl TokenDecoderContext {
-    pub(super) fn context(&self) -> &Rc<MetalContext> {
-        &self.context
-    }
-
-    pub(super) fn decoder_config(&self) -> &Rc<crate::config::DecoderConfig> {
-        &self.decoder_config
-    }
-
-    pub(super) fn model_shape(&self) -> &ModelShape {
-        &self.model_shape
-    }
-}
-
-pub(super) struct TokenDecoderRunner {
-    ctx: TokenDecoderContext,
-    pub(super) single_hidden_capture: ArrayCell<Metal>,
-    pub(super) single_override_embedding: ArrayCell<Metal>,
-    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
-    tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
-    single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
-    two_token_vocab_masks: HashMap<usize, Box<[u32]>>,
-    should_fill_attention_bias: bool,
-    next_position: usize,
-    instrumentation: RunnerInstrumentation,
-}
-
-impl TokenDecoderRunner {
-    pub(super) fn context(&self) -> &Rc<MetalContext> {
-        self.ctx.context()
-    }
-
-    pub(super) fn new_with_context(
-        context: Rc<MetalContext>,
+impl<B: Backend> TokenDecoderLoadedModel<B> {
+    fn load(
+        context: &Rc<B::Context>,
         model_path: &Path,
-        decoder_config: Rc<crate::config::DecoderConfig>,
+        decoder_config: &Rc<crate::config::DecoderConfig>,
+        model_shape: &ModelShape,
         transformer_subtree: &str,
         embedding_subtree: &str,
         readout_subtree: &str,
-        runtime_config: &TextDecoderRuntimeConfig,
+        max_prefix_length: usize,
+        max_suffix_length: usize,
     ) -> Result<Self, Error> {
-        let command_buffer = Rc::new(RefCell::new(
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
-        ));
-
-        let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let max_prefix_length = decoder_config.context_length;
-        let max_suffix_length = text_decoder_prefill_step_size(runtime_config, decoder_config.context_length).max(32);
-        let should_fill_attention_bias =
-            model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
-        let activation_data_type = model_shape.activation_data_type();
-
         let weights_path = model_path.join("model.safetensors");
         let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
-        {
-            let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
-            let mut shared_buffers = shared_buffers.borrow_mut();
-            if let Some(global_rope) = &mut shared_buffers.global_rope {
-                global_rope.update_data(&transformer_tree, "global_rope");
-            }
-            if let Some(local_rope) = &mut shared_buffers.local_rope {
-                local_rope.update_data(&transformer_tree, "local_rope");
-            }
-        }
-
+        let shared_buffers =
+            TokenDecoderContext::<B>::build_shared_buffers(context, decoder_config, model_shape, &root_loader_view, transformer_subtree)?;
         let scratch_buffers =
-            ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
+            ScratchBuffers::new(context.as_ref(), decoder_config, model_shape, max_prefix_length, max_suffix_length);
         let executables = Decoder::new_with_subtrees(
             context.clone(),
             decoder_config.clone(),
@@ -107,75 +44,214 @@ impl TokenDecoderRunner {
         let sampler =
             GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
                 .map_err(unable_to_create_context)?;
-        let tensor_copy =
-            <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
-                .map_err(unable_to_create_context)?;
-        let tensor_add_scale =
-            <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
-                .map_err(unable_to_create_context)?;
         let token_copy_sampled =
-            <<Metal as Backend>::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref())
+            <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref())
                 .map_err(unable_to_create_context)?;
         let token_copy_results =
-            <<Metal as Backend>::Kernels as Kernels>::TokenCopyToResultsKernel::new(context.as_ref())
+            <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(context.as_ref())
                 .map_err(unable_to_create_context)?;
-        let async_chain_capacity = max_suffix_length.max(1);
-        let async_chain_positions = Rc::new(RefCell::new(
-            context
-                .create_buffer(async_chain_capacity * std::mem::size_of::<i32>())
-                .map_err(unable_to_create_context)?,
-        ));
-        let async_chain_seeds = Rc::new(RefCell::new(
-            context
-                .create_buffer(async_chain_capacity * std::mem::size_of::<u64>())
-                .map_err(unable_to_create_context)?,
-        ));
-        let async_chain_results = Rc::new(RefCell::new(
-            context
-                .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
-                .map_err(unable_to_create_context)?,
-        ));
-        let single_hidden_capture = RefCell::new(context.create_array(
-            &[1, decoder_config.model_dim],
-            activation_data_type,
-            "tts_single_hidden_capture",
-        ));
-        let single_override_embedding = RefCell::new(context.create_array(
-            &[1, decoder_config.model_dim],
-            activation_data_type,
-            "tts_single_override_embedding",
-        ));
 
+        Ok(Self {
+            shared_buffers,
+            scratch_buffers,
+            executables,
+            sampler,
+            token_copy_sampled,
+            token_copy_results,
+        })
+    }
+}
+
+struct TokenDecoderContext<B: Backend> {
+    context: Rc<B::Context>,
+    command_buffer: Rc<RefCell<<B::CommandBuffer as CommandBuffer>::Encoding>>,
+    cache_layers: Rc<RefCell<CacheLayers<B>>>,
+    shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    scratch_buffers: ScratchBuffers<B>,
+    model_shape: ModelShape,
+    decoder_config: Rc<crate::config::DecoderConfig>,
+    executables: Decoder<B>,
+    sampler: GpuSampling<B>,
+    kv_cache_update: KVCacheUpdate<B>,
+    token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
+    token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
+    async_chain_positions: Rc<RefCell<B::Buffer>>,
+    async_chain_seeds: Rc<RefCell<B::Buffer>>,
+    async_chain_results: Rc<RefCell<B::Buffer>>,
+    async_chain_capacity: usize,
+}
+
+impl<B: Backend> TokenDecoderContext<B> {
+    pub(super) fn context(&self) -> &Rc<B::Context> {
+        &self.context
+    }
+
+    fn new(
+        context: Rc<B::Context>,
+        model_path: &Path,
+        decoder_config: Rc<crate::config::DecoderConfig>,
+        transformer_subtree: &str,
+        embedding_subtree: &str,
+        readout_subtree: &str,
+        runtime_config: &TextDecoderRuntimeConfig,
+    ) -> Result<(Self, DataType, bool), Error> {
+        let command_buffer = Rc::new(RefCell::new(
+            context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
+        ));
+        let model_shape = ModelShape::from_decoder_config(&decoder_config);
+        let max_prefix_length = decoder_config.context_length;
+        let max_suffix_length = text_decoder_prefill_step_size(runtime_config, decoder_config.context_length).max(32);
+        let should_fill_attention_bias =
+            model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
+        let activation_data_type = model_shape.activation_data_type();
+        let loaded_model = TokenDecoderLoadedModel::<B>::load(
+            &context,
+            model_path,
+            &decoder_config,
+            &model_shape,
+            transformer_subtree,
+            embedding_subtree,
+            readout_subtree,
+            max_prefix_length,
+            max_suffix_length,
+        )?;
+        let async_chain_capacity = max_suffix_length.max(1);
+        let (async_chain_positions, async_chain_seeds, async_chain_results) =
+            Self::build_async_chain_buffers(&context, async_chain_capacity)?;
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
             &model_shape,
             max_prefix_length,
             max_suffix_length,
         )));
-
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
         let kv_cache_update = KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
             .map_err(unable_to_create_context)?;
 
-        Ok(Self {
-            ctx: TokenDecoderContext {
+        Ok((
+            Self {
                 context,
                 command_buffer,
                 cache_layers,
-                shared_buffers,
-                scratch_buffers,
+                shared_buffers: loaded_model.shared_buffers,
+                scratch_buffers: loaded_model.scratch_buffers,
                 model_shape,
                 decoder_config,
-                executables,
-                sampler,
+                executables: loaded_model.executables,
+                sampler: loaded_model.sampler,
                 kv_cache_update,
-                token_copy_sampled,
-                token_copy_results,
+                token_copy_sampled: loaded_model.token_copy_sampled,
+                token_copy_results: loaded_model.token_copy_results,
                 async_chain_positions,
                 async_chain_seeds,
                 async_chain_results,
                 async_chain_capacity,
             },
+            activation_data_type,
+            should_fill_attention_bias,
+        ))
+    }
+
+    fn build_shared_buffers(
+        context: &Rc<B::Context>,
+        decoder_config: &Rc<crate::config::DecoderConfig>,
+        model_shape: &ModelShape,
+        root_loader_view: &crate::parameters::ParameterTree<B::Context>,
+        transformer_subtree: &str,
+    ) -> Result<Rc<RefCell<SharedBuffers<B>>>, Error> {
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), decoder_config, model_shape)));
+        let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
+        let mut shared_buffers_borrow = shared_buffers.borrow_mut();
+        if let Some(global_rope) = &mut shared_buffers_borrow.global_rope {
+            global_rope.update_data(&transformer_tree, "global_rope");
+        }
+        if let Some(local_rope) = &mut shared_buffers_borrow.local_rope {
+            local_rope.update_data(&transformer_tree, "local_rope");
+        }
+        drop(shared_buffers_borrow);
+        Ok(shared_buffers)
+    }
+
+    fn build_async_chain_buffers(
+        context: &Rc<B::Context>,
+        async_chain_capacity: usize,
+    ) -> Result<(Rc<RefCell<B::Buffer>>, Rc<RefCell<B::Buffer>>, Rc<RefCell<B::Buffer>>), Error> {
+        let positions = Rc::new(RefCell::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<i32>())
+                .map_err(unable_to_create_context)?,
+        ));
+        let seeds = Rc::new(RefCell::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<u64>())
+                .map_err(unable_to_create_context)?,
+        ));
+        let results = Rc::new(RefCell::new(
+            context
+                .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
+                .map_err(unable_to_create_context)?,
+        ));
+        Ok((positions, seeds, results))
+    }
+}
+
+pub(super) struct TokenDecoderRunner<B: Backend> {
+    ctx: TokenDecoderContext<B>,
+    pub(super) single_hidden_capture: ArrayCell<B>,
+    pub(super) single_override_embedding: ArrayCell<B>,
+    tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
+    tensor_add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
+    single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
+    two_token_vocab_masks: HashMap<usize, Box<[u32]>>,
+    should_fill_attention_bias: bool,
+    next_position: usize,
+    instrumentation: RunnerInstrumentation,
+}
+
+impl<B: Backend> TokenDecoderRunner<B> {
+    pub(super) fn context(&self) -> &Rc<B::Context> {
+        self.ctx.context()
+    }
+
+    pub(super) fn new_with_context(
+        context: Rc<B::Context>,
+        model_path: &Path,
+        decoder_config: Rc<crate::config::DecoderConfig>,
+        transformer_subtree: &str,
+        embedding_subtree: &str,
+        readout_subtree: &str,
+        runtime_config: &TextDecoderRuntimeConfig,
+    ) -> Result<Self, Error> {
+        let (ctx, activation_data_type, should_fill_attention_bias) = TokenDecoderContext::new(
+            context,
+            model_path,
+            decoder_config,
+            transformer_subtree,
+            embedding_subtree,
+            readout_subtree,
+            runtime_config,
+        )?;
+        let context: Rc<B::Context> = Rc::clone(ctx.context());
+        let model_dim = ctx.decoder_config.model_dim;
+        let tensor_copy =
+            <B::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
+                .map_err(unable_to_create_context)?;
+        let tensor_add_scale =
+            <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
+                .map_err(unable_to_create_context)?;
+        let single_hidden_capture = RefCell::new(context.create_array(
+            &[1, model_dim],
+            activation_data_type,
+            "tts_single_hidden_capture",
+        ));
+        let single_override_embedding = RefCell::new(context.create_array(
+            &[1, model_dim],
+            activation_data_type,
+            "tts_single_override_embedding",
+        ));
+
+        Ok(Self {
+            ctx,
             single_hidden_capture,
             single_override_embedding,
             tensor_copy,
@@ -221,7 +297,7 @@ impl TokenDecoderRunner {
         embedding_injection: EmbeddingInjection,
         sampling: &mut TextSamplingState,
         precomputed_token_bitmask: Option<&[u32]>,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
     ) -> Result<u64, Error> {
         self.decode_next_step(
             token_ids,
@@ -370,20 +446,21 @@ impl TokenDecoderRunner {
             let token_ids_binding = self.ctx.scratch_buffers.token_ids.borrow();
             let token_ids_buffer = token_ids_binding.buffer();
 
-            self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+            {
+                let mut cb = self.ctx.command_buffer.borrow_mut();
                 let sampling_output_buffer = sampling_output_buffer.borrow();
                 let mut token_ids_buffer = token_ids_buffer.borrow_mut();
                 if pass + 1 < followup_count {
-                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, encoder);
+                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, &mut *cb);
                 }
                 let results_offset = pass * std::mem::size_of::<u32>();
                 let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
                 self.ctx.token_copy_results.encode(
                     &*sampling_output_buffer,
                     (&mut *results_buffer, results_offset),
-                    encoder,
+                    &mut *cb,
                 );
-            });
+            }
 
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(
                 &[0],
@@ -488,7 +565,7 @@ impl TokenDecoderRunner {
         sampling: &mut TextSamplingState,
         precomputed_token_bitmask: Option<&[u32]>,
         capture_hidden: bool,
-        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_>>,
+        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
     ) -> Result<u64, Error> {
         objc2::rc::autoreleasepool(|_| {
             if token_ids.is_empty() {
@@ -693,7 +770,7 @@ impl TokenDecoderRunner {
 
     fn encode_capture_last_hidden_into_single_buffer(
         &self,
-        state: &ForwardPassState<Metal>,
+        state: &ForwardPassState<B>,
         token_count: usize,
     ) -> Result<(), Error> {
         if token_count == 0 {
@@ -714,20 +791,21 @@ impl TokenDecoderRunner {
             return Err(Error::GenerateFailed);
         }
 
-        self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+        {
+            let mut cb = self.ctx.command_buffer.borrow_mut();
             let main_buffer = main.buffer();
             let main_buffer = main_buffer.borrow();
             let capture_buffer = capture.buffer();
             let mut capture_buffer = capture_buffer.borrow_mut();
-            self.tensor_copy.encode((&*main_buffer, src_offset), &mut *capture_buffer, model_dim_u32, encoder);
-        });
+            self.tensor_copy.encode((&*main_buffer, src_offset), &mut *capture_buffer, model_dim_u32, &mut *cb);
+        }
         Ok(())
     }
 
     fn encode_override_first_row_from_device(
         &self,
-        state: &ForwardPassState<Metal>,
-        override_embedding: &ArrayCell<Metal>,
+        state: &ForwardPassState<B>,
+        override_embedding: &ArrayCell<B>,
     ) -> Result<(), Error> {
         let model_dim = self.ctx.decoder_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
@@ -738,7 +816,8 @@ impl TokenDecoderRunner {
             return Err(Error::GenerateFailed);
         }
 
-        self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+        {
+            let mut cb = self.ctx.command_buffer.borrow_mut();
             let override_buffer = override_embedding.buffer();
             let override_buffer = override_buffer.borrow();
             let main_buffer = main.buffer();
@@ -747,15 +826,15 @@ impl TokenDecoderRunner {
                 (&*override_buffer, override_embedding.offset()),
                 (&mut *main_buffer, main.offset()),
                 model_dim_u32,
-                encoder,
+                &mut *cb,
             );
-        });
+        }
         Ok(())
     }
 
     fn encode_add_scale_from_single_bias(
         &self,
-        state: &ForwardPassState<Metal>,
+        state: &ForwardPassState<B>,
         token_count: usize,
         scale: f32,
     ) -> Result<(), Error> {
@@ -774,26 +853,24 @@ impl TokenDecoderRunner {
             return Err(Error::GenerateFailed);
         }
 
-        self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
-            let main_input_buffer = {
-                let main_input_buffer = main.buffer();
-                let main_input_buffer = main_input_buffer.borrow();
-                (*main_input_buffer).clone()
-            };
+        {
+            let mut cb = self.ctx.command_buffer.borrow_mut();
             let bias_buffer = bias.buffer();
             let bias_buffer = bias_buffer.borrow();
             let main_output_buffer = main.buffer();
             let mut main_output_buffer = main_output_buffer.borrow_mut();
+            // TensorAddScale is elementwise, so in-place read/write aliasing is valid here.
+            let main_input_buffer: &B::Buffer = unsafe { &*((&*main_output_buffer as *const B::Buffer)) };
             self.tensor_add_scale.encode(
-                (&main_input_buffer, main.offset()),
+                (main_input_buffer, main.offset()),
                 &*bias_buffer,
                 (&mut *main_output_buffer, main.offset()),
                 model_dim_u32,
                 total_len_u32,
                 scale,
-                encoder,
+                &mut *cb,
             );
-        });
+        }
         Ok(())
     }
 
@@ -823,7 +900,7 @@ impl TokenDecoderRunner {
     }
 }
 
-fn read_sampled_token_from_sampling_output(state: &ForwardPassState<Metal>) -> Result<u64, Error> {
+fn read_sampled_token_from_sampling_output<B: Backend>(state: &ForwardPassState<B>) -> Result<u64, Error> {
     let output = state.sampling_output().ok_or(Error::GenerateFailed)?;
     let output = output.borrow();
     let tokens = output.as_slice::<u32>();

@@ -1,4 +1,7 @@
 use super::*;
+use crate::backends::metal::Metal;
+
+type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
 
 impl StructuredAudioCodecGraph {
     fn run_residual_unit_enqueued(
@@ -6,15 +9,16 @@ impl StructuredAudioCodecGraph {
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &mut MetalCommandBuffer,
         input: &Array<Metal>,
-        unit: &StructuredAudioResidualUnit,
+        unit: &StructuredAudioResidualUnit<Metal>,
         lengths: &[i32],
         lengths_array: &Array<Metal>,
         batch_size: usize,
         channels: usize,
         seq_len: usize,
+        kernels: &StructuredAudioKernelCache<Metal>,
     ) -> AudioResult<Array<Metal>> {
         let residual = input.clone();
-        let x = snake1d_enqueue(context, command_buffer, input, &unit.snake1_alpha, batch_size, channels, seq_len)?;
+        let x = snake1d_enqueue(context, command_buffer, input, &unit.snake1_alpha, batch_size, channels, seq_len, kernels)?;
         let x = causal_conv1d_grouped_enqueue(
             context,
             command_buffer,
@@ -25,8 +29,9 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
+            kernels,
         )?;
-        let x = snake1d_enqueue(context, command_buffer, &x, &unit.snake2_alpha, batch_size, channels, seq_len)?;
+        let x = snake1d_enqueue(context, command_buffer, &x, &unit.snake2_alpha, batch_size, channels, seq_len, kernels)?;
         causal_conv1d_grouped_residual_enqueue(
             context,
             command_buffer,
@@ -37,6 +42,7 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
+            kernels,
         )
     }
 
@@ -48,7 +54,7 @@ impl StructuredAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<SubmittedDecodedPaddedAudio> {
+    ) -> AudioResult<SubmittedDecodedPaddedAudio<Metal>> {
         let collect_command_buffer_profile =
             runtime_options.collect_command_buffer_profile || runtime_options.capture_single_decode;
         if batch_size == 0 || frames == 0 {
@@ -93,10 +99,11 @@ impl StructuredAudioCodecGraph {
         } else {
             None
         };
+        let resources = self.runtime_resources()?;
         let context = if let Some(capture) = capture.as_ref() {
             capture.context()
         } else {
-            self.decode_context()?
+            resources.context().clone()
         };
 
         let can_use_gpu_latent_path = batch_size == 1 && lengths.first().copied() == Some(frames);
@@ -124,7 +131,8 @@ impl StructuredAudioCodecGraph {
             )?
         };
 
-        let vocoder_graph = self.vocoder_gpu_graph(&context)?;
+        let vocoder_graph = self.vocoder_gpu_graph(resources.as_ref())?;
+        let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}")))?
@@ -200,6 +208,7 @@ impl StructuredAudioCodecGraph {
                 next_frames,
                 x_layout,
                 &next_lengths_array,
+                &kernels,
             )
             .map_err(|err| {
                 AudioError::Runtime(format!(
@@ -222,6 +231,7 @@ impl StructuredAudioCodecGraph {
                     batch_size,
                     trans_conv.cout,
                     next_frames,
+                    &kernels,
                 )
                 .map_err(|err| {
                     AudioError::Runtime(format!("structured audio upsample block {block_index} convnext failed: {err}"))
@@ -251,6 +261,7 @@ impl StructuredAudioCodecGraph {
             &lengths_array,
             batch_size,
             current_frames,
+            &kernels,
         )?;
         current_channels = vocoder_graph.first_conv.cout;
         flush_stage(
@@ -274,6 +285,7 @@ impl StructuredAudioCodecGraph {
                 batch_size,
                 current_channels,
                 current_frames,
+                &kernels,
             )?;
 
             let next_frames = current_frames
@@ -294,6 +306,7 @@ impl StructuredAudioCodecGraph {
                 next_frames,
                 SequenceLayout::Ncs,
                 &next_lengths_array,
+                &kernels,
             )?;
             let trans_conv_estimated_macs =
                 convtranspose_estimated_macs(batch_size, current_frames, &block.trans_conv)?;
@@ -337,6 +350,7 @@ impl StructuredAudioCodecGraph {
                 batch_size,
                 current_channels,
                 current_frames,
+                &kernels,
             )?;
             if profile_decoder_micro_stages {
                 flush_stage(
@@ -365,6 +379,7 @@ impl StructuredAudioCodecGraph {
                 batch_size,
                 current_channels,
                 current_frames,
+                &kernels,
             )?;
             if profile_decoder_micro_stages || (chunked_command_buffers && active_elements >= micro_flush_min_elements)
             {
@@ -384,6 +399,7 @@ impl StructuredAudioCodecGraph {
                 batch_size,
                 current_channels,
                 current_frames,
+                &kernels,
             )?;
             flush_stage(
                 if profile_decoder_micro_stages {
@@ -408,6 +424,7 @@ impl StructuredAudioCodecGraph {
             batch_size,
             current_channels,
             current_frames,
+            &kernels,
         )?;
         x = causal_conv1d_grouped_enqueue(
             &context,
@@ -419,8 +436,9 @@ impl StructuredAudioCodecGraph {
             &lengths_array,
             batch_size,
             current_frames,
+            &kernels,
         )?;
-        x = tanh_enqueue(&context, &mut command_buffer, &x)?;
+        x = tanh_enqueue(&context, &mut command_buffer, &x, &kernels)?;
 
         let final_cpu_encode_ms =
             command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
