@@ -28,8 +28,13 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers =
-            TokenDecoderContext::<B>::build_shared_buffers(context, decoder_config, model_shape, &root_loader_view, transformer_subtree)?;
+        let shared_buffers = TokenDecoderContext::<B>::build_shared_buffers(
+            context,
+            decoder_config,
+            model_shape,
+            &root_loader_view,
+            transformer_subtree,
+        )?;
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), decoder_config, model_shape, max_prefix_length, max_suffix_length);
         let executables = Decoder::new_with_subtrees(
@@ -45,11 +50,9 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
                 .map_err(unable_to_create_context)?;
         let token_copy_sampled =
-            <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref())
-                .map_err(unable_to_create_context)?;
-        let token_copy_results =
-            <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(context.as_ref())
-                .map_err(unable_to_create_context)?;
+            <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref()).map_err(unable_to_create_context)?;
+        let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(context.as_ref())
+            .map_err(unable_to_create_context)?;
 
         Ok(Self {
             shared_buffers,
@@ -233,22 +236,15 @@ impl<B: Backend> TokenDecoderRunner<B> {
         )?;
         let context: Rc<B::Context> = Rc::clone(ctx.context());
         let model_dim = ctx.decoder_config.model_dim;
-        let tensor_copy =
-            <B::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
-                .map_err(unable_to_create_context)?;
+        let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
+            .map_err(unable_to_create_context)?;
         let tensor_add_scale =
             <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(unable_to_create_context)?;
-        let single_hidden_capture = RefCell::new(context.create_array(
-            &[1, model_dim],
-            activation_data_type,
-            "tts_single_hidden_capture",
-        ));
-        let single_override_embedding = RefCell::new(context.create_array(
-            &[1, model_dim],
-            activation_data_type,
-            "tts_single_override_embedding",
-        ));
+        let single_hidden_capture =
+            RefCell::new(context.create_array(&[1, model_dim], activation_data_type, "tts_single_hidden_capture"));
+        let single_override_embedding =
+            RefCell::new(context.create_array(&[1, model_dim], activation_data_type, "tts_single_override_embedding"));
 
         Ok(Self {
             ctx,
@@ -420,7 +416,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
             {
                 let mut command_buffer = self.ctx.command_buffer.borrow_mut();
-                self.ctx.executables
+                self.ctx
+                    .executables
                     .embed
                     .encode_lookup(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
@@ -429,15 +426,18 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 }
-                self.ctx.executables
+                self.ctx
+                    .executables
                     .norm
                     .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                self.ctx.executables
+                self.ctx
+                    .executables
                     .embed
                     .encode_readout(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                self.ctx.sampler
+                self.ctx
+                    .sampler
                     .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
@@ -719,7 +719,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
             {
                 let mut command_buffer = self.ctx.command_buffer.borrow_mut();
-                self.ctx.executables
+                self.ctx
+                    .executables
                     .embed
                     .encode_lookup(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
@@ -746,15 +747,18 @@ impl<B: Backend> TokenDecoderRunner<B> {
             if capture_hidden {
                 self.encode_capture_last_hidden_into_single_buffer(&state, token_count)?;
             }
-            self.ctx.executables
+            self.ctx
+                .executables
                 .norm
                 .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.ctx.executables
+            self.ctx
+                .executables
                 .embed
                 .encode_readout(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.ctx.sampler
+            self.ctx
+                .sampler
                 .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(
@@ -863,7 +867,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let main_output_buffer = main.buffer();
             let mut main_output_buffer = main_output_buffer.borrow_mut();
             // TensorAddScale is elementwise, so in-place read/write aliasing is valid here.
-            let main_input_buffer: &B::Buffer = unsafe { &*((&*main_output_buffer as *const B::Buffer)) };
+            let main_input_buffer: &B::Buffer = unsafe { &*(&*main_output_buffer as *const B::Buffer) };
             self.tensor_add_scale.encode(
                 (main_input_buffer, main.offset()),
                 &*bias_buffer,

@@ -23,8 +23,7 @@ pub(super) struct StructuredAudioKernelCache<B: Backend> {
     pub(super) causal_conv1d: <B::Kernels as Kernels>::AudioCausalConv1dKernel,
     pub(super) causal_conv1d_grouped: <B::Kernels as Kernels>::AudioCausalConv1dGroupedKernel,
     pub(super) causal_conv1d_grouped_residual: <B::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel,
-    pub(super) causal_conv_transpose1d_causal_pad:
-        <B::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel,
+    pub(super) causal_conv_transpose1d_causal_pad: <B::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel,
     pub(super) conv1d: <B::Kernels as Kernels>::AudioConv1dKernel,
     pub(super) norm_ncs: <B::Kernels as Kernels>::AudioNormNcsKernel,
     pub(super) activation: <B::Kernels as Kernels>::ActivationKernel,
@@ -92,15 +91,21 @@ pub(super) fn build_structured_audio_kernels<B: Backend>(
             .map_err(|err| AudioError::Runtime(format!("failed to initialize snake1d kernel: {err}")))?,
         causal_conv1d: <B::Kernels as Kernels>::AudioCausalConv1dKernel::new(context.as_ref(), data_type)
             .map_err(|err| AudioError::Runtime(format!("failed to initialize causal conv1d kernel: {err}")))?,
-        causal_conv1d_grouped: <B::Kernels as Kernels>::AudioCausalConv1dGroupedKernel::new(context.as_ref(), data_type)
-            .map_err(|err| AudioError::Runtime(format!("failed to initialize grouped causal conv1d kernel: {err}")))?,
-        causal_conv1d_grouped_residual:
-            <B::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel::new(context.as_ref(), data_type).map_err(
-                |err| AudioError::Runtime(format!("failed to initialize grouped residual conv1d kernel: {err}")),
-            )?,
-        causal_conv_transpose1d_causal_pad:
-            <B::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(context.as_ref(), data_type)
-                .map_err(|err| AudioError::Runtime(format!("failed to initialize causal transpose-conv kernel: {err}")))?,
+        causal_conv1d_grouped: <B::Kernels as Kernels>::AudioCausalConv1dGroupedKernel::new(
+            context.as_ref(),
+            data_type,
+        )
+        .map_err(|err| AudioError::Runtime(format!("failed to initialize grouped causal conv1d kernel: {err}")))?,
+        causal_conv1d_grouped_residual: <B::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel::new(
+            context.as_ref(),
+            data_type,
+        )
+        .map_err(|err| AudioError::Runtime(format!("failed to initialize grouped residual conv1d kernel: {err}")))?,
+        causal_conv_transpose1d_causal_pad: <B::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(
+            context.as_ref(),
+            data_type,
+        )
+        .map_err(|err| AudioError::Runtime(format!("failed to initialize causal transpose-conv kernel: {err}")))?,
         conv1d: <B::Kernels as Kernels>::AudioConv1dKernel::new(context.as_ref(), data_type)
             .map_err(|err| AudioError::Runtime(format!("failed to initialize conv1d kernel: {err}")))?,
         norm_ncs: <B::Kernels as Kernels>::AudioNormNcsKernel::new(context.as_ref(), data_type)

@@ -62,8 +62,12 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create embedding");
 
-        let (layers, norm) =
-            Self::build_transformer_layers_and_norm(context, decoder_config.clone(), root_weight_loader, transformer_subtree);
+        let (layers, norm) = Self::build_transformer_layers_and_norm(
+            context,
+            decoder_config.clone(),
+            root_weight_loader,
+            transformer_subtree,
+        );
 
         Self {
             embed,

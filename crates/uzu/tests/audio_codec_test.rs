@@ -17,8 +17,8 @@ use uzu::{
             CommandBufferPending, Context, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
-                AudioCausalConvTranspose1dKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
-                AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel,
+                AudioCausalConvTranspose1dKernel, AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel,
+                AudioHalfSnakeKernel, AudioNormNcsKernel,
             },
         },
         metal::Metal,

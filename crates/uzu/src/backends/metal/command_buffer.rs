@@ -107,7 +107,6 @@ impl MetalCommandBufferEncoding {
         };
         blit_encoder
     }
-
 }
 
 impl Drop for MetalCommandBufferEncoding {

@@ -78,9 +78,7 @@ fn validate_descript_audio_codec_config(
         || !cfg.decoder_config.decoder_block_config.causal
         || !cfg.decoder_config.decoder_block_config.res_unit_config.causal
     {
-        return Err(AudioError::Runtime(
-            "non-causal DescriptAudioCodec decoder export is not supported".to_string(),
-        ));
+        return Err(AudioError::Runtime("non-causal DescriptAudioCodec decoder export is not supported".to_string()));
     }
     if !cfg.decoder_config.conv_config.has_biases
         || !cfg.decoder_config.decoder_block_config.trans_conv_config.has_biases

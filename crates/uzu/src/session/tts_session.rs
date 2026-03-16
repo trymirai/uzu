@@ -33,8 +33,8 @@ use crate::{
         Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
         CommandBufferPending, Context as BackendContext, Kernels,
         kernel::{
-            EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel,
-            TokenCopySampledKernel, TokenCopyToResultsKernel,
+            EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
+            TokenCopyToResultsKernel,
             kv_cache_update::KVCacheUpdate,
             matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
         },

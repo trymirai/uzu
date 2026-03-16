@@ -80,7 +80,6 @@ pub(super) fn normalize_rendered_prompt(
     rendered
 }
 
-
 impl AdaptiveChunkController {
     pub(super) fn new(config: &TtsRunConfig) -> Self {
         Self {
@@ -349,11 +348,8 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
         count_in_loop: bool,
         config: &TtsRunConfig,
     ) -> Result<(), Error> {
-        let should_flush = self
-            .pending_chunk
-            .as_ref()
-            .map(|pending| force || pending.chunk.is_ready())
-            .unwrap_or(false);
+        let should_flush =
+            self.pending_chunk.as_ref().map(|pending| force || pending.chunk.is_ready()).unwrap_or(false);
         if !should_flush {
             return Ok(());
         }

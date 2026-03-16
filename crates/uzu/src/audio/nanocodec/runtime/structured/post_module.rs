@@ -81,10 +81,9 @@ impl StructuredAudioCodecGraph {
             transformer_config: self.config.quantizer_config.post_module_config.clone(),
             vocab_size: 1,
         };
-        let decoder_config =
-            Rc::new(inner_model_config.to_decoder_config().map_err(|_| {
-                AudioError::Runtime("failed to build structured audio post_module decoder config".to_string())
-            })?);
+        let decoder_config = Rc::new(inner_model_config.to_decoder_config().map_err(|_| {
+            AudioError::Runtime("failed to build structured audio post_module decoder config".to_string())
+        })?);
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
@@ -167,16 +166,10 @@ impl StructuredAudioCodecGraph {
         let kernel = <B::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(context.as_ref(), data_type)
             .map_err(|err| AudioError::Runtime(format!("failed to initialize quantizer decode kernel: {err}")))?;
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
-            AudioError::Runtime(format!(
-                "failed to open structured audio weights '{}': {err}",
-                self.weights_path
-            ))
+            AudioError::Runtime(format!("failed to open structured audio weights '{}': {err}", self.weights_path))
         })?;
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|err| {
-            AudioError::Runtime(format!(
-                "failed to load structured audio weights '{}': {err}",
-                self.weights_path
-            ))
+            AudioError::Runtime(format!("failed to load structured audio weights '{}': {err}", self.weights_path))
         })?;
         let root = loader.tree();
         let audio_decoder_tree = root.subtree("audio_decoder")?;
@@ -236,8 +229,12 @@ impl StructuredAudioCodecGraph {
                 codebook_dim,
                 data_type,
             )?;
-            let out_bias =
-                read_float_vector_exact::<B>(&quantizer_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
+            let out_bias = read_float_vector_exact::<B>(
+                &quantizer_tree.subtree("out_proj")?,
+                "biases",
+                self.input_dim,
+                data_type,
+            )?;
 
             let mut dst_codebook = outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim])?;
             dst_codebook.copy_from_array(&codebook);
@@ -280,16 +277,10 @@ impl StructuredAudioCodecGraph {
         context: &Rc<B::Context>,
     ) -> AudioResult<StructuredAudioDecoderGraph<B>> {
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
-            AudioError::Runtime(format!(
-                "failed to open structured audio weights '{}': {err}",
-                self.weights_path
-            ))
+            AudioError::Runtime(format!("failed to open structured audio weights '{}': {err}", self.weights_path))
         })?;
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|err| {
-            AudioError::Runtime(format!(
-                "failed to load structured audio weights '{}': {err}",
-                self.weights_path
-            ))
+            AudioError::Runtime(format!("failed to load structured audio weights '{}': {err}", self.weights_path))
         })?;
         let root = loader.tree();
         build_vocoder_gpu_graph_from_tree::<B>(context, &root, &self.config, self.vocoder_data_type)
@@ -566,5 +557,4 @@ impl StructuredAudioCodecGraph {
 
         Ok(output)
     }
-
 }

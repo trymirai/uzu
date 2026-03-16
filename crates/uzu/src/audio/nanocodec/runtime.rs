@@ -18,10 +18,10 @@ use crate::{
         Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferInitial, CommandBufferPending, Context, Kernels,
         kernel::{
-            ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
-            AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
-            AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
-            AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
+            ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dGroupedResidualKernel,
+            AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel,
+            AudioFsqDecodeKernel, AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel,
+            AudioQuantizerDecodeKernel,
         },
     },
     config::{
@@ -35,9 +35,7 @@ use crate::{
         state::{ArrayId, ForwardPassState, SharedBuffers},
     },
     parameters::ParameterLoader,
-    utils::array_io::{
-        read_array_to_f32_vec, write_i32_slice_into_array,
-    },
+    utils::array_io::{read_array_to_f32_vec, write_i32_slice_into_array},
 };
 
 mod loaders;
@@ -47,15 +45,13 @@ mod structured;
 mod support;
 
 use loaders::load_audio_runtime_from_tts_config;
+pub(crate) use profile::PendingStreamPcmChunk;
+use profile::{AudioCaptureGuard, SubmittedDecodedPaddedAudio, push_audio_command_buffer_profile};
 pub use profile::{AudioCommandBufferProfile, AudioDecodeProfile, NanoCodecFsqRuntimeOptions};
 pub use stream::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode};
-use profile::{AudioCaptureGuard, SubmittedDecodedPaddedAudio, push_audio_command_buffer_profile};
-pub(crate) use profile::PendingStreamPcmChunk;
 use stream::{extract_delta_from_padded_with_offset_snapshot, pack_pcm_to_padded, unpack_padded_to_pcm};
 use structured::{StructuredAudioCodecGraph, StructuredAudioRuntimeResources};
-use support::{
-    DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize_to_i32,
-};
+use support::{DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize_to_i32};
 
 fn default_eps() -> f32 {
     1e-3
@@ -247,11 +243,11 @@ impl<B: Backend> Clone for NanoCodecFsqRuntime<B> {
 }
 
 impl<B: Backend> std::fmt::Debug for NanoCodecFsqRuntime<B> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NanoCodecFsqRuntime")
-            .field("config", &self.config)
-            .field("options", &self.options)
-            .finish()
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct("NanoCodecFsqRuntime").field("config", &self.config).field("options", &self.options).finish()
     }
 }
 
@@ -615,8 +611,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
     }
 
     fn create_context() -> AudioResult<Rc<B::Context>> {
-        B::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create audio context: {err}")))
+        B::Context::new().map_err(|err| AudioError::Runtime(format!("failed to create audio context: {err}")))
     }
 
     fn structured_resources(&self) -> AudioResult<Rc<StructuredAudioRuntimeResources<B>>> {

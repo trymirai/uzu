@@ -63,7 +63,9 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
         self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn resolve(mut self) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+    pub(in crate::audio::nanocodec::runtime) fn resolve(
+        mut self
+    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
         if let Some(command_buffer) = self.final_command_buffer.take() {
             let wait_start = self.decode_profile.is_some().then(Instant::now);
             let command_buffer = command_buffer.wait_until_completed().map_err(|err| {
@@ -145,8 +147,8 @@ pub(in crate::audio::nanocodec::runtime) struct AudioCaptureGuard<B: Backend> {
 impl<B: Backend> AudioCaptureGuard<B> {
     pub(in crate::audio::nanocodec::runtime) fn start() -> AudioResult<Self> {
         B::Context::enable_capture();
-        let context = B::Context::new()
-            .map_err(|err| AudioError::Runtime(format!("failed to create capture context: {err}")))?;
+        let context =
+            B::Context::new().map_err(|err| AudioError::Runtime(format!("failed to create capture context: {err}")))?;
         let timestamp =
             SystemTime::now().duration_since(UNIX_EPOCH).map_err(|err| AudioError::Runtime(err.to_string()))?;
         let trace_path = std::env::current_dir()

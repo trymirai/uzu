@@ -97,14 +97,14 @@ impl<B: Backend> FishAudioGpuPath<B> {
             return Err(Error::UnableToLoadConfig);
         }
 
-        let embedding_rows_sum =
-            <B::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
-                .map_err(unable_to_create_context)?;
-        let projection =
-            <<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(context, data_type)
-                .map_err(unable_to_create_context)?;
-        let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)
+        let embedding_rows_sum = <B::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
             .map_err(unable_to_create_context)?;
+        let projection = <<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(
+            context, data_type,
+        )
+        .map_err(unable_to_create_context)?;
+        let tensor_copy =
+            <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
         let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
 
         Ok(Self {
@@ -304,12 +304,7 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     let apply_semantic_sampling_mask =
         runtime_config.force_semantic_sampling_mask.unwrap_or(!matches!(activation_data_type, DataType::F32));
 
-    let gpu_path = FishAudioGpuPath::load(
-        text_decoder_context.as_ref(),
-        &root_weights,
-        config,
-        activation_data_type,
-    )?;
+    let gpu_path = FishAudioGpuPath::load(text_decoder_context.as_ref(), &root_weights, config, activation_data_type)?;
 
     Ok(Box::new(FishAudioTextDecoderRuntime::<B> {
         slow_runner,
@@ -537,9 +532,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             false,
             Some(&mut pre_projection),
         )?;
-        let clamped =
-            u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                .map_err(|_| Error::GenerateFailed)?;
+        let clamped = u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
+            .map_err(|_| Error::GenerateFailed)?;
         by_codebook[1].push(clamped);
         self.current_codes_scratch[1] = clamped;
         fast_token = u64::from(clamped);
@@ -548,9 +542,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         if followup_count > 0 {
             let mut record_followup = |relative_index: usize, sampled: u64| -> Result<(), Error> {
                 let codebook_index = relative_index + 2;
-                let clamped =
-                    u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                        .map_err(|_| Error::GenerateFailed)?;
+                let clamped = u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                    .map_err(|_| Error::GenerateFailed)?;
                 by_codebook[codebook_index].push(clamped);
                 self.current_codes_scratch[codebook_index] = clamped;
                 Ok(())
@@ -612,7 +605,9 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         };
         slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
             &[current_semantic_token],
-            EmbeddingInjection::AddPreloaded { post_scale },
+            EmbeddingInjection::AddPreloaded {
+                post_scale,
+            },
             sampling,
             slow_sampling_mask,
             Some(&mut pre_codebook_sum),

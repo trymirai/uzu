@@ -15,7 +15,16 @@ impl StructuredAudioCodecGraph {
         kernels: &StructuredAudioKernelCache<B>,
     ) -> AudioResult<Array<B>> {
         let residual = input.clone();
-        let x = snake1d_enqueue(context, command_buffer, input, &unit.snake1_alpha, batch_size, channels, seq_len, kernels)?;
+        let x = snake1d_enqueue(
+            context,
+            command_buffer,
+            input,
+            &unit.snake1_alpha,
+            batch_size,
+            channels,
+            seq_len,
+            kernels,
+        )?;
         let x = causal_conv1d_grouped_enqueue(
             context,
             command_buffer,
@@ -28,7 +37,8 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = snake1d_enqueue(context, command_buffer, &x, &unit.snake2_alpha, batch_size, channels, seq_len, kernels)?;
+        let x =
+            snake1d_enqueue(context, command_buffer, &x, &unit.snake2_alpha, batch_size, channels, seq_len, kernels)?;
         causal_conv1d_grouped_residual_enqueue(
             context,
             command_buffer,
@@ -116,7 +126,13 @@ impl StructuredAudioCodecGraph {
             &mut decode_profile,
         )?;
         x = if can_use_gpu_latent_path {
-            self.apply_post_module_gpu_on_array_single_batch(resources, &context, &quantized_nsc, frames, &mut decode_profile)?
+            self.apply_post_module_gpu_on_array_single_batch(
+                resources,
+                &context,
+                &quantized_nsc,
+                frames,
+                &mut decode_profile,
+            )?
         } else {
             self.apply_post_module_gpu_on_array(
                 resources,
@@ -133,7 +149,9 @@ impl StructuredAudioCodecGraph {
         let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut command_buffer = context
             .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}")))?
+            .map_err(|err| {
+                AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}"))
+            })?
             .start_encoding();
         let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
         let chunked_command_buffers = runtime_options.chunked_command_buffers;
@@ -150,7 +168,9 @@ impl StructuredAudioCodecGraph {
                 command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             let next_command_buffer = context
                 .create_command_buffer()
-                .map_err(|err| AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}")))?
+                .map_err(|err| {
+                    AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}"))
+                })?
                 .start_encoding();
             let submitted = std::mem::replace(command_buffer, next_command_buffer).end_encoding().submit();
             if decode_profile.is_some() {
@@ -174,8 +194,7 @@ impl StructuredAudioCodecGraph {
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
-        let mut lengths_array =
-            context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_a");
+        let mut lengths_array = context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_a");
         write_i32_slice_into_array(&mut lengths_array, &lengths_i32)
             .map_err(|err| AudioError::Runtime(format!("structured_audio_lengths_a: {err}")))?;
         let mut next_lengths_array =
@@ -445,10 +464,9 @@ impl StructuredAudioCodecGraph {
         let out_lengths = lengths_i32
             .into_iter()
             .map(|length| {
-                usize::try_from(length)
-                    .map_err(|_| {
-                        AudioError::Runtime("structured audio decoder produced invalid negative length".to_string())
-                    })
+                usize::try_from(length).map_err(|_| {
+                    AudioError::Runtime("structured audio decoder produced invalid negative length".to_string())
+                })
             })
             .collect::<AudioResult<Vec<_>>>()?;
         Ok(SubmittedDecodedPaddedAudio {
