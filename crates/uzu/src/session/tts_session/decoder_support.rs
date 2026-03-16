@@ -314,92 +314,100 @@ pub(super) fn accumulate_audio_decode_step_stats(
     *max_decoded_window_frames = (*max_decoded_window_frames).max(step.decoded_window_frames);
 }
 
-pub(super) fn maybe_flush_pending_stream_chunk<F>(
-    pending_chunk: &mut Option<PendingStreamingChunk>,
-    force: bool,
-    count_in_loop: bool,
-    on_chunk: &mut F,
-    callback_seconds: &mut f64,
-    audio_decode_seconds_in_loop: &mut f64,
-    audio_decode_seconds: &mut f64,
-    output_samples: &mut Vec<f32>,
-    output_frames: &mut usize,
-    output_sample_rate: &mut u32,
-    output_channels: &mut usize,
-    emitted_chunks: &mut usize,
-    first_emit_pending: &mut bool,
-    first_chunk_seconds: &mut Option<f64>,
-    first_chunk_frames: &mut usize,
-    stream_start: Instant,
-    startup_target_frames: &mut usize,
-    startup_cap_frames: usize,
-    chunk_controller: &mut AdaptiveChunkController,
-    config: &TtsRunConfig,
-    audio_decode_calls: &mut usize,
-    audio_input_frames: &mut usize,
-    audio_decoded_window_frames: &mut usize,
-    audio_max_decoded_window_frames: &mut usize,
-) -> Result<(), Error>
-where
-    F: FnMut(&AudioPcmBatch),
-{
-    let should_flush = pending_chunk.as_ref().map(|pending| force || pending.chunk.is_ready()).unwrap_or(false);
-    if !should_flush {
-        return Ok(());
-    }
+pub(super) struct StreamingSynthesisState<'a, F: FnMut(&AudioPcmBatch)> {
+    pub(super) on_chunk: &'a mut F,
+    pub(super) pending_chunk: Option<PendingStreamingChunk>,
+    pub(super) callback_seconds: f64,
+    pub(super) audio_decode_seconds_in_loop: f64,
+    pub(super) audio_decode_seconds: f64,
+    pub(super) output_samples: Vec<f32>,
+    pub(super) output_frames: usize,
+    pub(super) output_sample_rate: u32,
+    pub(super) output_channels: usize,
+    pub(super) emitted_chunks: usize,
+    pub(super) first_emit_pending: bool,
+    pub(super) first_chunk_seconds: Option<f64>,
+    pub(super) first_chunk_frames: usize,
+    pub(super) stream_start: Instant,
+    pub(super) startup_target_frames: usize,
+    pub(super) startup_cap_frames: usize,
+    pub(super) chunk_controller: AdaptiveChunkController,
+    pub(super) audio_decode_calls: usize,
+    pub(super) audio_input_frames: usize,
+    pub(super) audio_decoded_window_frames: usize,
+    pub(super) audio_max_decoded_window_frames: usize,
+}
 
-    let pending = pending_chunk.take().ok_or(Error::GenerateFailed)?;
-    accumulate_audio_decode_step_stats(
-        audio_decode_calls,
-        audio_input_frames,
-        audio_decoded_window_frames,
-        audio_max_decoded_window_frames,
-        pending.chunk.step_stats(),
-    );
-    let (partial_pcm, resolve_decode_duration) = pending.chunk.resolve_with_decode_duration()?;
-    let decode_elapsed = pending.submission_decode_duration.saturating_add(resolve_decode_duration);
-    if count_in_loop {
-        *audio_decode_seconds_in_loop += decode_elapsed.as_secs_f64();
-    }
-    *audio_decode_seconds += decode_elapsed.as_secs_f64();
-
-    let partial_sample_rate = partial_pcm.sample_rate();
-    let callback_start = Instant::now();
-    let emitted_frames = if partial_pcm.lengths().len() == 1 {
-        partial_pcm.lengths()[0]
-    } else {
-        return Err(Error::GenerateFailed);
-    };
-    if emitted_frames > 0 {
-        on_chunk(&partial_pcm);
-    }
-    *callback_seconds += callback_start.elapsed().as_secs_f64();
-    chunk_controller.observe(pending.ready_frames, decode_elapsed, pending.next_chunk_frames);
-
-    if emitted_frames > 0 {
-        chunk_controller.adapt_up_for_realtime(
-            config,
-            pending.ready_frames,
-            partial_sample_rate,
-            decode_elapsed,
-            emitted_frames,
-        );
-        output_samples.extend_from_slice(partial_pcm.samples());
-        *output_frames = (*output_frames).saturating_add(emitted_frames);
-        *output_sample_rate = partial_pcm.sample_rate();
-        *output_channels = partial_pcm.channels();
-        *emitted_chunks = (*emitted_chunks).saturating_add(1);
-        if *first_emit_pending {
-            *first_emit_pending = false;
-            *first_chunk_seconds = Some(stream_start.elapsed().as_secs_f64());
-            *first_chunk_frames = emitted_frames;
-            chunk_controller.promote_to_max_chunk(config);
+impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
+    pub(super) fn maybe_flush_pending(
+        &mut self,
+        force: bool,
+        count_in_loop: bool,
+        config: &TtsRunConfig,
+    ) -> Result<(), Error> {
+        let should_flush = self
+            .pending_chunk
+            .as_ref()
+            .map(|pending| force || pending.chunk.is_ready())
+            .unwrap_or(false);
+        if !should_flush {
+            return Ok(());
         }
-    } else if *first_emit_pending {
-        *startup_target_frames = next_startup_target_frames(*startup_target_frames, startup_cap_frames);
-    }
 
-    Ok(())
+        let pending = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+        accumulate_audio_decode_step_stats(
+            &mut self.audio_decode_calls,
+            &mut self.audio_input_frames,
+            &mut self.audio_decoded_window_frames,
+            &mut self.audio_max_decoded_window_frames,
+            pending.chunk.step_stats(),
+        );
+        let (partial_pcm, resolve_decode_duration) = pending.chunk.resolve_with_decode_duration()?;
+        let decode_elapsed = pending.submission_decode_duration.saturating_add(resolve_decode_duration);
+        if count_in_loop {
+            self.audio_decode_seconds_in_loop += decode_elapsed.as_secs_f64();
+        }
+        self.audio_decode_seconds += decode_elapsed.as_secs_f64();
+
+        let partial_sample_rate = partial_pcm.sample_rate();
+        let callback_start = Instant::now();
+        let emitted_frames = if partial_pcm.lengths().len() == 1 {
+            partial_pcm.lengths()[0]
+        } else {
+            return Err(Error::GenerateFailed);
+        };
+        if emitted_frames > 0 {
+            (self.on_chunk)(&partial_pcm);
+        }
+        self.callback_seconds += callback_start.elapsed().as_secs_f64();
+        self.chunk_controller.observe(pending.ready_frames, decode_elapsed, pending.next_chunk_frames);
+
+        if emitted_frames > 0 {
+            self.chunk_controller.adapt_up_for_realtime(
+                config,
+                pending.ready_frames,
+                partial_sample_rate,
+                decode_elapsed,
+                emitted_frames,
+            );
+            self.output_samples.extend_from_slice(partial_pcm.samples());
+            self.output_frames = self.output_frames.saturating_add(emitted_frames);
+            self.output_sample_rate = partial_pcm.sample_rate();
+            self.output_channels = partial_pcm.channels();
+            self.emitted_chunks = self.emitted_chunks.saturating_add(1);
+            if self.first_emit_pending {
+                self.first_emit_pending = false;
+                self.first_chunk_seconds = Some(self.stream_start.elapsed().as_secs_f64());
+                self.first_chunk_frames = emitted_frames;
+                self.chunk_controller.promote_to_max_chunk(config);
+            }
+        } else if self.first_emit_pending {
+            self.startup_target_frames =
+                next_startup_target_frames(self.startup_target_frames, self.startup_cap_frames);
+        }
+
+        Ok(())
+    }
 }
 
 impl SemanticDecoderBackend for StubTextDecoderRuntime {
@@ -483,7 +491,7 @@ impl TtsSession {
             return Err(Error::UnableToLoadTokenizer);
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
-        validate_tts_tokenizer_contract(&tokenizer, &model_metadata)?;
+        backend_factory::validate_tts_tokenizer_contract(&tokenizer, &model_metadata)?;
 
         let loaded_runtime = load_tts_runtime(&model_path, &model_metadata, &options)?;
 
@@ -528,47 +536,6 @@ impl TtsSession {
             self.message_processor_config.drop_initial_newline,
         ))
     }
-}
-
-fn validate_tts_tokenizer_contract(
-    tokenizer: &Tokenizer,
-    model_metadata: &ModelMetadata,
-) -> Result<(), Error> {
-    let Some(tts_model_config) = model_metadata.model_config.as_tts() else {
-        return Ok(());
-    };
-
-    let crate::config::TtsTextDecoderConfig::FishAudioTextDecoderConfig {
-        config,
-    } = &tts_model_config.tts_config.text_decoder_config
-    else {
-        return Ok(());
-    };
-
-    let expected_pairs = [
-        ("<|im_end|>".to_string(), config.im_end_token_id),
-        ("<|semantic:0|>".to_string(), config.semantic_token_begin_id),
-        (
-            format!("<|semantic:{}|>", config.codebook_size.saturating_sub(1)),
-            config.semantic_token_end_id,
-        ),
-    ];
-
-    for (token, expected_id) in expected_pairs {
-        let Some(actual_id) = tokenizer.token_to_id(token.as_str()) else {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "tokenizer missing required FishAudio token '{token}'"
-            )));
-        };
-
-        if i64::from(actual_id) != expected_id {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "tokenizer token id mismatch for '{token}': expected {expected_id}, got {actual_id}"
-            )));
-        }
-    }
-
-    Ok(())
 }
 
 pub(super) fn semantic_token_to_code(

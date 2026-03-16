@@ -245,28 +245,33 @@ impl TtsSession {
             audio_decode_streaming_mode(config),
             config.max_stream_workspace_frames,
         )?;
-        let mut emitted_chunks = 0usize;
-        let mut callback_seconds = 0.0_f64;
-        let mut audio_decode_seconds_in_loop = 0.0_f64;
-        let mut audio_decode_seconds = 0.0_f64;
         let mut last_decoded_frames = 0usize;
-        let mut first_chunk_seconds = None::<f64>;
-        let mut first_chunk_frames = 0usize;
-        let mut first_emit_pending = true;
-        let mut output_samples = Vec::<f32>::new();
-        let mut output_frames = 0usize;
-        let mut output_sample_rate = self.audio_decoder.sample_rate();
-        let mut output_channels = 1usize;
-        let mut chunk_controller = AdaptiveChunkController::new(config);
-        let mut pending_chunk = None::<PendingStreamingChunk>;
-        let mut audio_decode_calls = 0usize;
-        let mut audio_input_frames = 0usize;
-        let mut audio_decoded_window_frames = 0usize;
-        let mut audio_max_decoded_window_frames = 0usize;
-        let stream_start = Instant::now();
         let startup_cap_frames = config.max_chunk_frames.max(config.min_chunk_frames.max(1));
         let initial_chunk_frames = config.initial_chunk_frames.max(1).min(startup_cap_frames);
-        let mut startup_target_frames = initial_chunk_frames;
+
+        let mut ss = StreamingSynthesisState {
+            on_chunk: &mut on_chunk,
+            pending_chunk: None,
+            callback_seconds: 0.0,
+            audio_decode_seconds_in_loop: 0.0,
+            audio_decode_seconds: 0.0,
+            output_samples: Vec::new(),
+            output_frames: 0,
+            output_sample_rate: self.audio_decoder.sample_rate(),
+            output_channels: 1,
+            emitted_chunks: 0,
+            first_emit_pending: true,
+            first_chunk_seconds: None,
+            first_chunk_frames: 0,
+            stream_start: Instant::now(),
+            startup_target_frames: initial_chunk_frames,
+            startup_cap_frames,
+            chunk_controller: AdaptiveChunkController::new(config),
+            audio_decode_calls: 0,
+            audio_input_frames: 0,
+            audio_decoded_window_frames: 0,
+            audio_max_decoded_window_frames: 0,
+        };
 
         let semantic_start = Instant::now();
         let semantic_tokens = self.generate_semantic_tokens_with_callback(
@@ -274,127 +279,52 @@ impl TtsSession {
             seed,
             config.max_semantic_frames,
             &mut |codes| {
-                maybe_flush_pending_stream_chunk(
-                    &mut pending_chunk,
-                    false,
-                    true,
-                    &mut on_chunk,
-                    &mut callback_seconds,
-                    &mut audio_decode_seconds_in_loop,
-                    &mut audio_decode_seconds,
-                    &mut output_samples,
-                    &mut output_frames,
-                    &mut output_sample_rate,
-                    &mut output_channels,
-                    &mut emitted_chunks,
-                    &mut first_emit_pending,
-                    &mut first_chunk_seconds,
-                    &mut first_chunk_frames,
-                    stream_start,
-                    &mut startup_target_frames,
-                    startup_cap_frames,
-                    &mut chunk_controller,
-                    config,
-                    &mut audio_decode_calls,
-                    &mut audio_input_frames,
-                    &mut audio_decoded_window_frames,
-                    &mut audio_max_decoded_window_frames,
-                )?;
+                ss.maybe_flush_pending(false, true, config)?;
                 streamed_tokens.push_frame(codes)?;
                 let ready_frames = streamed_tokens.frames().saturating_sub(last_decoded_frames);
-                let adaptive_target_frames = chunk_controller.target_frames(config);
-                let target_frames = if first_emit_pending {
-                    startup_target_frames
+                let adaptive_target_frames = ss.chunk_controller.target_frames(config);
+                let target_frames = if ss.first_emit_pending {
+                    ss.startup_target_frames
                 } else {
                     adaptive_target_frames
                 };
-                if ready_frames >= target_frames && pending_chunk.is_none() {
+                if ready_frames >= target_frames && ss.pending_chunk.is_none() {
                     let partial_grid = streamed_tokens.to_grid_range(last_decoded_frames, streamed_tokens.frames())?;
                     last_decoded_frames = streamed_tokens.frames();
-                    let pending_next_chunk_frames = if first_emit_pending {
+                    let pending_next_chunk_frames = if ss.first_emit_pending {
                         adaptive_target_frames
                     } else {
                         target_frames
                     };
                     let decode_start = Instant::now();
                     let pending_audio_chunk = audio_stream.decode_step_pending(&partial_grid, false)?;
-                    pending_chunk = Some(PendingStreamingChunk {
+                    ss.pending_chunk = Some(PendingStreamingChunk {
                         submission_decode_duration: decode_start.elapsed(),
                         ready_frames,
                         next_chunk_frames: pending_next_chunk_frames,
                         chunk: pending_audio_chunk,
                     });
-                    maybe_flush_pending_stream_chunk(
-                        &mut pending_chunk,
-                        false,
-                        true,
-                        &mut on_chunk,
-                        &mut callback_seconds,
-                        &mut audio_decode_seconds_in_loop,
-                        &mut audio_decode_seconds,
-                        &mut output_samples,
-                        &mut output_frames,
-                        &mut output_sample_rate,
-                        &mut output_channels,
-                        &mut emitted_chunks,
-                        &mut first_emit_pending,
-                        &mut first_chunk_seconds,
-                        &mut first_chunk_frames,
-                        stream_start,
-                        &mut startup_target_frames,
-                        startup_cap_frames,
-                        &mut chunk_controller,
-                        config,
-                        &mut audio_decode_calls,
-                        &mut audio_input_frames,
-                        &mut audio_decoded_window_frames,
-                        &mut audio_max_decoded_window_frames,
-                    )?;
+                    ss.maybe_flush_pending(false, true, config)?;
                 }
                 Ok(())
             },
         )?;
         let semantic_loop_seconds = semantic_start.elapsed().as_secs_f64();
 
-        maybe_flush_pending_stream_chunk(
-            &mut pending_chunk,
-            true,
-            false,
-            &mut on_chunk,
-            &mut callback_seconds,
-            &mut audio_decode_seconds_in_loop,
-            &mut audio_decode_seconds,
-            &mut output_samples,
-            &mut output_frames,
-            &mut output_sample_rate,
-            &mut output_channels,
-            &mut emitted_chunks,
-            &mut first_emit_pending,
-            &mut first_chunk_seconds,
-            &mut first_chunk_frames,
-            stream_start,
-            &mut startup_target_frames,
-            startup_cap_frames,
-            &mut chunk_controller,
-            config,
-            &mut audio_decode_calls,
-            &mut audio_input_frames,
-            &mut audio_decoded_window_frames,
-            &mut audio_max_decoded_window_frames,
-        )?;
+        ss.maybe_flush_pending(true, false, config)?;
 
         if last_decoded_frames < semantic_tokens.frames() {
             let final_decode_start = Instant::now();
             let final_delta_grid = streamed_tokens.to_grid_range(last_decoded_frames, semantic_tokens.frames())?;
             let final_pcm = audio_stream.decode_step(&final_delta_grid, true)?;
             accumulate_audio_decode_step_stats(
-                &mut audio_decode_calls,
-                &mut audio_input_frames,
-                &mut audio_decoded_window_frames,
-                &mut audio_max_decoded_window_frames,
+                &mut ss.audio_decode_calls,
+                &mut ss.audio_input_frames,
+                &mut ss.audio_decoded_window_frames,
+                &mut ss.audio_max_decoded_window_frames,
                 audio_stream.last_step_stats(),
             );
-            audio_decode_seconds += final_decode_start.elapsed().as_secs_f64();
+            ss.audio_decode_seconds += final_decode_start.elapsed().as_secs_f64();
             let callback_start = Instant::now();
             let emitted_frames = if final_pcm.lengths().len() == 1 {
                 final_pcm.lengths()[0]
@@ -402,48 +332,54 @@ impl TtsSession {
                 return Err(Error::GenerateFailed);
             };
             if emitted_frames > 0 {
-                on_chunk(&final_pcm);
+                (ss.on_chunk)(&final_pcm);
             }
-            callback_seconds += callback_start.elapsed().as_secs_f64();
+            ss.callback_seconds += callback_start.elapsed().as_secs_f64();
             if emitted_frames > 0 {
-                output_samples.extend_from_slice(final_pcm.samples());
-                output_frames = output_frames.saturating_add(emitted_frames);
-                output_sample_rate = final_pcm.sample_rate();
-                output_channels = final_pcm.channels();
-                emitted_chunks += 1;
-                if first_emit_pending {
-                    first_chunk_seconds = Some(stream_start.elapsed().as_secs_f64());
-                    first_chunk_frames = emitted_frames;
+                ss.output_samples.extend_from_slice(final_pcm.samples());
+                ss.output_frames = ss.output_frames.saturating_add(emitted_frames);
+                ss.output_sample_rate = final_pcm.sample_rate();
+                ss.output_channels = final_pcm.channels();
+                ss.emitted_chunks += 1;
+                if ss.first_emit_pending {
+                    ss.first_chunk_seconds = Some(ss.stream_start.elapsed().as_secs_f64());
+                    ss.first_chunk_frames = emitted_frames;
                 }
             }
         }
         let semantic_decode_seconds =
-            (semantic_loop_seconds - audio_decode_seconds_in_loop - callback_seconds).max(0.0);
+            (semantic_loop_seconds - ss.audio_decode_seconds_in_loop - ss.callback_seconds).max(0.0);
         audio_stream.finish()?;
 
+        let stats = TtsExecutionStats {
+            semantic_decode_seconds,
+            audio_decode_seconds: ss.audio_decode_seconds,
+            callback_seconds: ss.callback_seconds,
+            first_chunk_seconds: ss.first_chunk_seconds.unwrap_or(0.0),
+            command_buffers_submitted: 0,
+            host_waits: 0,
+            semantic_frames: semantic_tokens.frames(),
+            first_chunk_frames: ss.first_chunk_frames,
+            emitted_chunks: ss.emitted_chunks,
+            audio_decode_calls: ss.audio_decode_calls,
+            audio_input_frames: ss.audio_input_frames,
+            audio_decoded_window_frames: ss.audio_decoded_window_frames,
+            audio_max_decoded_window_frames: ss.audio_max_decoded_window_frames,
+        };
+
         let full_pcm = AudioPcmBatch::new(
-            output_samples.into_boxed_slice(),
-            output_sample_rate,
-            output_channels,
-            vec![output_frames].into_boxed_slice(),
+            ss.output_samples.into_boxed_slice(),
+            ss.output_sample_rate,
+            ss.output_channels,
+            vec![ss.output_frames].into_boxed_slice(),
         )
         .map_err(Error::from)?;
 
         let instrumentation = self.take_text_decoder_instrumentation();
         self.record_last_execution_stats(TtsExecutionStats {
-            semantic_decode_seconds,
-            audio_decode_seconds,
-            callback_seconds,
-            first_chunk_seconds: first_chunk_seconds.unwrap_or(0.0),
             command_buffers_submitted: instrumentation.command_buffers_submitted,
             host_waits: instrumentation.host_waits,
-            semantic_frames: semantic_tokens.frames(),
-            first_chunk_frames,
-            emitted_chunks,
-            audio_decode_calls,
-            audio_input_frames,
-            audio_decoded_window_frames,
-            audio_max_decoded_window_frames,
+            ..stats
         });
 
         Ok(full_pcm)

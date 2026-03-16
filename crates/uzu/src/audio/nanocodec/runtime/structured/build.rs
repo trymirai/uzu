@@ -1,6 +1,8 @@
-type MetalParameterTree<'loader> = crate::parameters::ParameterTree<'loader, <Metal as Backend>::Context>;
+use super::*;
 
-fn read_float_array<const RANK: usize>(
+pub(super) type MetalParameterTree<'loader> = crate::parameters::ParameterTree<'loader, <Metal as Backend>::Context>;
+
+pub(super) fn read_float_array<const RANK: usize>(
     tree: &MetalParameterTree<'_>,
     name: &str,
     expected_data_type: DataType,
@@ -23,7 +25,7 @@ fn read_float_array<const RANK: usize>(
     Ok((dims, array))
 }
 
-fn read_float_vector_exact(
+pub(super) fn read_float_vector_exact(
     tree: &MetalParameterTree<'_>,
     name: &str,
     expected_len: usize,
@@ -39,7 +41,7 @@ fn read_float_vector_exact(
     Ok(array)
 }
 
-fn read_float_matrix_exact(
+pub(super) fn read_float_matrix_exact(
     tree: &MetalParameterTree<'_>,
     name: &str,
     expected_rows: usize,
@@ -56,7 +58,7 @@ fn read_float_matrix_exact(
     Ok(array)
 }
 
-fn outer_axis_view(
+pub(super) fn outer_axis_view(
     array: &Array<Metal>,
     index: usize,
     slice_shape: &[usize],
@@ -69,7 +71,7 @@ fn outer_axis_view(
     Ok(unsafe { Array::from_parts(array.buffer(), offset, slice_shape, array.data_type()) })
 }
 
-fn read_conv1d_gpu_layer(
+pub(super) fn read_conv1d_gpu_layer(
     tree: &MetalParameterTree<'_>,
     data_type: DataType,
     dilation: usize,
@@ -97,7 +99,7 @@ fn read_conv1d_gpu_layer(
     })
 }
 
-fn read_conv_transpose1d_gpu_layer(
+pub(super) fn read_conv_transpose1d_gpu_layer(
     tree: &MetalParameterTree<'_>,
     data_type: DataType,
     stride: usize,
@@ -125,7 +127,7 @@ fn read_conv_transpose1d_gpu_layer(
     })
 }
 
-fn read_pointwise_conv_gpu_layer(
+pub(super) fn read_pointwise_conv_gpu_layer(
     tree: &MetalParameterTree<'_>,
     data_type: DataType,
     expected_out_dim: usize,
@@ -141,7 +143,7 @@ fn read_pointwise_conv_gpu_layer(
     })
 }
 
-fn read_norm_gpu_layer(
+pub(super) fn read_norm_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     tree: &MetalParameterTree<'_>,
     data_type: DataType,
@@ -165,7 +167,7 @@ fn read_norm_gpu_layer(
     })
 }
 
-fn read_convnext_gpu_layer(
+pub(super) fn read_convnext_gpu_layer(
     context: &Rc<<Metal as Backend>::Context>,
     tree: &MetalParameterTree<'_>,
     data_type: DataType,
@@ -232,7 +234,7 @@ fn read_convnext_gpu_layer(
     })
 }
 
-fn read_residual_unit_gpu_layer(
+pub(super) fn read_residual_unit_gpu_layer(
     tree: &MetalParameterTree<'_>,
     data_type: DataType,
     dilation: usize,
@@ -273,7 +275,7 @@ fn read_residual_unit_gpu_layer(
     })
 }
 
-fn build_vocoder_gpu_graph_from_tree(
+pub(super) fn build_vocoder_gpu_graph_from_tree(
     context: &Rc<<Metal as Backend>::Context>,
     root: &MetalParameterTree<'_>,
     config: &DescriptAudioCodecConfig,

@@ -45,17 +45,25 @@ use crate::{
 };
 
 mod loaders;
+mod profile;
+mod stream;
+mod structured;
+mod support;
 
 use loaders::load_audio_runtime_from_tts_config;
-include!("runtime/profile.rs");
-include!("runtime/stream.rs");
-include!("runtime/structured.rs");
+pub use profile::{AudioCommandBufferProfile, AudioDecodeProfile, NanoCodecFsqRuntimeOptions};
+pub use stream::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode};
+use profile::{AudioCaptureGuard, SubmittedDecodedPaddedAudio, push_audio_command_buffer_profile};
+pub(crate) use profile::PendingStreamPcmChunk;
+use stream::{extract_delta_from_padded_with_offset_snapshot, pack_pcm_to_padded, unpack_padded_to_pcm};
+use structured::StructuredAudioCodecGraph;
+use support::{
+    DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize_to_i32,
+};
 
 type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
 type MetalPendingCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Pending;
 type MetalCompletedCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Completed;
-
-include!("runtime/support.rs");
 
 fn default_eps() -> f32 {
     1e-3

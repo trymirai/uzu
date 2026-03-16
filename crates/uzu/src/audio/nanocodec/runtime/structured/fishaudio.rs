@@ -1,4 +1,6 @@
-fn structured_audio_dtype_key(data_type: DataType) -> u8 {
+use super::*;
+
+pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
         DataType::F16 => 1,
         DataType::BF16 => 2,
@@ -6,58 +8,58 @@ fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     }
 }
 
-struct StructuredAudioPostModuleRuntime {
-    context: Rc<<Metal as Backend>::Context>,
-    model_shape: ModelShape,
-    scratch_buffers: ScratchBuffers<Metal>,
-    shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
-    layers: Box<[LayerExecutables<Metal>]>,
-    output_norm: RMSNorm<Metal>,
-    max_sequence_length: usize,
+pub(super) struct StructuredAudioPostModuleRuntime {
+    pub(super) context: Rc<<Metal as Backend>::Context>,
+    pub(super) model_shape: ModelShape,
+    pub(super) scratch_buffers: ScratchBuffers<Metal>,
+    pub(super) shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
+    pub(super) layers: Box<[LayerExecutables<Metal>]>,
+    pub(super) output_norm: RMSNorm<Metal>,
+    pub(super) max_sequence_length: usize,
 }
 
-struct StructuredAudioKernelCache {
-    half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel,
-    causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel,
-    causal_conv1d_grouped: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel,
-    causal_conv1d_grouped_residual: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel,
-    causal_conv_transpose1d_causal_pad:
+pub(super) struct StructuredAudioKernelCache {
+    pub(super) half_snake: <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel,
+    pub(super) causal_conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel,
+    pub(super) causal_conv1d_grouped: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedKernel,
+    pub(super) causal_conv1d_grouped_residual: <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dGroupedResidualKernel,
+    pub(super) causal_conv_transpose1d_causal_pad:
         <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel,
-    conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel,
-    norm_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel,
-    activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel,
-    add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel,
+    pub(super) conv1d: <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel,
+    pub(super) norm_ncs: <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel,
+    pub(super) activation: <<Metal as Backend>::Kernels as Kernels>::ActivationKernel,
+    pub(super) add: <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel,
 }
 
-struct FishAudioQuantizerResources {
-    data_type: DataType,
-    codebook_dim: usize,
-    residual_quantizers: usize,
-    semantic_cardinality: usize,
-    residual_cardinality: usize,
-    kernel: <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel,
-    semantic_codebook: Array<Metal>,
-    semantic_out_proj: Array<Metal>,
-    semantic_out_bias: Array<Metal>,
-    residual_codebooks: Array<Metal>,
-    residual_out_proj: Array<Metal>,
-    residual_out_bias: Array<Metal>,
+pub(super) struct FishAudioQuantizerResources {
+    pub(super) data_type: DataType,
+    pub(super) codebook_dim: usize,
+    pub(super) residual_quantizers: usize,
+    pub(super) semantic_cardinality: usize,
+    pub(super) residual_cardinality: usize,
+    pub(super) kernel: <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel,
+    pub(super) semantic_codebook: Array<Metal>,
+    pub(super) semantic_out_proj: Array<Metal>,
+    pub(super) semantic_out_bias: Array<Metal>,
+    pub(super) residual_codebooks: Array<Metal>,
+    pub(super) residual_out_proj: Array<Metal>,
+    pub(super) residual_out_bias: Array<Metal>,
 }
 
 thread_local! {
-    static FISHAUDIO_POST_MODULE_RUNTIME_CACHE: RefCell<HashMap<String, Rc<StructuredAudioPostModuleRuntime>>> =
+    pub(super) static FISHAUDIO_POST_MODULE_RUNTIME_CACHE: RefCell<HashMap<String, Rc<StructuredAudioPostModuleRuntime>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_DECODE_CONTEXT_CACHE: RefCell<HashMap<String, Rc<<Metal as Backend>::Context>>> =
+    pub(super) static FISHAUDIO_DECODE_CONTEXT_CACHE: RefCell<HashMap<String, Rc<<Metal as Backend>::Context>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioKernelCache>>> =
+    pub(super) static FISHAUDIO_KERNEL_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioKernelCache>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioDecoderGraph>>> =
+    pub(super) static FISHAUDIO_VOCODER_GRAPH_CACHE: RefCell<HashMap<usize, Rc<StructuredAudioDecoderGraph>>> =
         RefCell::new(HashMap::new());
-    static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerResources>>> =
+    pub(super) static FISHAUDIO_QUANTIZER_RESOURCES_CACHE: RefCell<HashMap<usize, Rc<FishAudioQuantizerResources>>> =
         RefCell::new(HashMap::new());
 }
 
-fn structured_audio_kernels(
+pub(super) fn structured_audio_kernels(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
 ) -> AudioResult<Rc<StructuredAudioKernelCache>> {

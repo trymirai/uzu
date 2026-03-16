@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioDecodeStreamingMode {
     IncrementalStateful,
@@ -14,23 +16,23 @@ pub struct AudioDecodeStepStats {
 
 #[derive(Debug, Clone)]
 pub struct AudioDecodeStreamState {
-    batch_size: usize,
-    codebooks: usize,
+    pub(super) batch_size: usize,
+    pub(super) codebooks: usize,
     max_workspace_frames: usize,
-    mode: AudioDecodeStreamingMode,
+    pub(super) mode: AudioDecodeStreamingMode,
     stored_frame_start: usize,
     total_frames_generated: usize,
     row_tokens: Vec<Vec<u32>>,
     flattened_tokens: Vec<u32>,
     window_lengths: Vec<usize>,
-    semantic_lengths: Vec<usize>,
-    emitted_semantic_lengths: Vec<usize>,
-    emitted_audio_lengths: Vec<usize>,
+    pub(super) semantic_lengths: Vec<usize>,
+    pub(super) emitted_semantic_lengths: Vec<usize>,
+    pub(super) emitted_audio_lengths: Vec<usize>,
     last_step_stats: AudioDecodeStepStats,
 }
 
 impl AudioDecodeStreamState {
-    fn new(
+    pub(super) fn new(
         batch_size: usize,
         codebooks: usize,
         max_workspace_frames: usize,
@@ -75,7 +77,7 @@ impl AudioDecodeStreamState {
         })
     }
 
-    fn total_frames(&self) -> usize {
+    pub(super) fn total_frames(&self) -> usize {
         self.total_frames_generated
     }
 
@@ -91,7 +93,7 @@ impl AudioDecodeStreamState {
         self.stored_frame_start.saturating_add(self.stored_frames())
     }
 
-    fn append_delta(
+    pub(super) fn append_delta(
         &mut self,
         delta_tokens: &AudioTokenGrid,
     ) -> AudioResult<()> {
@@ -160,7 +162,7 @@ impl AudioDecodeStreamState {
         Ok(())
     }
 
-    fn to_full_grid(&mut self) -> AudioResult<AudioTokenGrid> {
+    pub(super) fn to_full_grid(&mut self) -> AudioResult<AudioTokenGrid> {
         if self.stored_frame_start != 0 {
             return Err(AudioError::Runtime(format!(
                 "full-grid decode requires retained prefix, but {} frames were evicted",
@@ -203,7 +205,7 @@ impl AudioDecodeStreamState {
         )
     }
 
-    fn flatten_window(
+    pub(super) fn flatten_window(
         &mut self,
         start_frame: usize,
         end_frame: usize,
@@ -257,7 +259,7 @@ impl AudioDecodeStreamState {
         Ok((&self.flattened_tokens, &self.window_lengths, window_frames))
     }
 
-    fn extract_delta_from_padded_with_offset(
+    pub(super) fn extract_delta_from_padded_with_offset(
         &mut self,
         full_padded: &DecodedPaddedAudio,
         audio_offset_frames: usize,
@@ -282,7 +284,7 @@ impl AudioDecodeStreamState {
         Ok(delta)
     }
 
-    fn mark_submitted_audio_window(
+    pub(super) fn mark_submitted_audio_window(
         &mut self,
         semantic_lengths: &[usize],
         upsample_factor: usize,
@@ -304,7 +306,7 @@ impl AudioDecodeStreamState {
         Ok(())
     }
 
-    fn record_last_step_stats(
+    pub(super) fn record_last_step_stats(
         &mut self,
         input_frames: usize,
         decoded_window_start_frame: usize,
@@ -319,7 +321,7 @@ impl AudioDecodeStreamState {
     }
 }
 
-fn extract_delta_from_padded_with_offset_snapshot(
+pub(super) fn extract_delta_from_padded_with_offset_snapshot(
     full_padded: &DecodedPaddedAudio,
     previous_audio_lengths: &[usize],
     semantic_lengths: &[usize],
@@ -392,7 +394,7 @@ fn extract_delta_from_padded_with_offset_snapshot(
     })
 }
 
-fn pack_pcm_to_padded(
+pub(super) fn pack_pcm_to_padded(
     pcm: &AudioPcmBatch,
     expected_channels: usize,
 ) -> AudioResult<(Vec<f32>, Vec<usize>, Vec<i32>, usize)> {
@@ -435,7 +437,7 @@ fn pack_pcm_to_padded(
     Ok((padded, lengths, lengths_i32, frames))
 }
 
-fn unpack_padded_to_pcm(
+pub(super) fn unpack_padded_to_pcm(
     padded: &[f32],
     batch_size: usize,
     channels: usize,

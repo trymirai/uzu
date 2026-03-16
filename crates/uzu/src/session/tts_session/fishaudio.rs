@@ -392,21 +392,21 @@ impl FishAudioTextDecoderRuntime {
             fast_runner.clear_instrumentation();
         }
         let mut sampling = TextSamplingState::from_config(seed, &self.runtime_config.sampling);
-        let semantic_sampling_mask_row = if self.apply_semantic_sampling_mask {
-            Some(self.semantic_sampling_mask_row.clone())
+        let semantic_sampling_mask_row: Option<&[u32]> = if self.apply_semantic_sampling_mask {
+            Some(&self.semantic_sampling_mask_row)
         } else {
             None
         };
-        let semantic_sampling_mask_without_im_end_row = if self.apply_semantic_sampling_mask {
-            Some(self.semantic_sampling_mask_without_im_end_row.clone())
+        let semantic_sampling_mask_without_im_end_row: Option<&[u32]> = if self.apply_semantic_sampling_mask {
+            Some(&self.semantic_sampling_mask_without_im_end_row)
         } else {
             None
         };
-        let initial_sampling_row = if let Some(mask_row) = semantic_sampling_mask_row.as_ref() {
+        let initial_sampling_row = if let Some(mask_row) = semantic_sampling_mask_row {
             if self.runtime_config.min_frames_before_im_end > 0 {
-                semantic_sampling_mask_without_im_end_row.as_deref().ok_or(Error::GenerateFailed)?
+                semantic_sampling_mask_without_im_end_row.ok_or(Error::GenerateFailed)?
             } else {
-                mask_row.as_ref()
+                mask_row
             }
         } else {
             &[]
@@ -488,7 +488,7 @@ impl FishAudioTextDecoderRuntime {
                      _state: &ForwardPassState<Metal>,
                      command_buffer: &mut MetalCommandBuffer| {
                         Self::encode_project_slow_hidden_to_fast_on(
-                            runner.context.as_ref(),
+                            runner.context().as_ref(),
                             gpu_path,
                             slow_hidden_capture,
                             &runner.single_override_embedding,
@@ -570,9 +570,9 @@ impl FishAudioTextDecoderRuntime {
             let sampled_frames = by_codebook[0].len();
             let slow_sampling_mask = if self.apply_semantic_sampling_mask {
                 if sampled_frames < self.runtime_config.min_frames_before_im_end {
-                    semantic_sampling_mask_without_im_end_row.as_deref()
+                    semantic_sampling_mask_without_im_end_row
                 } else {
-                    semantic_sampling_mask_row.as_deref()
+                    semantic_sampling_mask_row
                 }
             } else {
                 None

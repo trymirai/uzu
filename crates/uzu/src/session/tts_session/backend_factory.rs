@@ -14,6 +14,47 @@ pub(super) fn build_audio_decoder_backend(
     Ok(Box::new(audio_backend::NanoCodecAudioDecoderBackend::new(audio.clone())))
 }
 
+pub(super) fn validate_tts_tokenizer_contract(
+    tokenizer: &Tokenizer,
+    model_metadata: &ModelMetadata,
+) -> Result<(), Error> {
+    let Some(tts_model_config) = model_metadata.model_config.as_tts() else {
+        return Ok(());
+    };
+
+    let crate::config::TtsTextDecoderConfig::FishAudioTextDecoderConfig {
+        config,
+    } = &tts_model_config.tts_config.text_decoder_config
+    else {
+        return Ok(());
+    };
+
+    let expected_pairs = [
+        ("<|im_end|>".to_string(), config.im_end_token_id),
+        ("<|semantic:0|>".to_string(), config.semantic_token_begin_id),
+        (
+            format!("<|semantic:{}|>", config.codebook_size.saturating_sub(1)),
+            config.semantic_token_end_id,
+        ),
+    ];
+
+    for (token, expected_id) in expected_pairs {
+        let Some(actual_id) = tokenizer.token_to_id(token.as_str()) else {
+            return Err(Error::InvalidTtsModelConfig(format!(
+                "tokenizer missing required FishAudio token '{token}'"
+            )));
+        };
+
+        if i64::from(actual_id) != expected_id {
+            return Err(Error::InvalidTtsModelConfig(format!(
+                "tokenizer token id mismatch for '{token}': expected {expected_id}, got {actual_id}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 pub(super) fn load_tts_runtime(
     model_path: &Path,
     model_metadata: &ModelMetadata,

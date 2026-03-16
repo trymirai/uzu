@@ -1,4 +1,6 @@
-fn checked_add_usize(
+use super::*;
+
+pub(super) fn checked_add_usize(
     a: usize,
     b: usize,
     label: &str,
@@ -6,7 +8,7 @@ fn checked_add_usize(
     a.checked_add(b).ok_or_else(|| AudioError::Runtime(format!("{label} overflow")))
 }
 
-fn conv1d_estimated_macs(
+pub(super) fn conv1d_estimated_macs(
     batch_size: usize,
     seq_len: usize,
     layer: &StructuredAudioConv1d,
@@ -18,7 +20,7 @@ fn conv1d_estimated_macs(
     checked_product(&[batch_size, seq_len, layer.cout, cin_per_group, layer.kernel_size])
 }
 
-fn convtranspose_estimated_macs(
+pub(super) fn convtranspose_estimated_macs(
     batch_size: usize,
     seq_len_in: usize,
     layer: &StructuredAudioConvTranspose1d,
@@ -30,7 +32,7 @@ fn convtranspose_estimated_macs(
     checked_product(&[batch_size, seq_len_in, layer.cin, cout_per_group, layer.kernel_size])
 }
 
-fn residual_unit_estimated_macs(
+pub(super) fn residual_unit_estimated_macs(
     batch_size: usize,
     seq_len: usize,
     unit: &StructuredAudioResidualUnit,
@@ -40,7 +42,7 @@ fn residual_unit_estimated_macs(
     checked_add_usize(conv1, conv2, "residual-unit estimated MACs")
 }
 
-fn array_batch_view(
+pub(super) fn array_batch_view(
     array: &Array<Metal>,
     batch_index: usize,
     frames: usize,
@@ -59,13 +61,13 @@ fn array_batch_view(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SequenceLayout {
+pub(super) enum SequenceLayout {
     Ncs,
     Nsc,
 }
 
 impl SequenceLayout {
-    fn as_i32(self) -> i32 {
+    pub(super) fn as_i32(self) -> i32 {
         match self {
             Self::Ncs => 0,
             Self::Nsc => 1,
@@ -74,85 +76,85 @@ impl SequenceLayout {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct StructuredAudioCodecGraph {
-    config: DescriptAudioCodecConfig,
-    weights_path: String,
-    codebook_size: usize,
-    semantic_codebook_size: usize,
-    input_dim: usize,
-    total_codebooks: usize,
-    upsample_factor: usize,
-    vocoder_data_type: DataType,
+pub(in crate::audio::nanocodec::runtime) struct StructuredAudioCodecGraph {
+    pub(in crate::audio::nanocodec::runtime) config: DescriptAudioCodecConfig,
+    pub(in crate::audio::nanocodec::runtime) weights_path: String,
+    pub(in crate::audio::nanocodec::runtime) codebook_size: usize,
+    pub(in crate::audio::nanocodec::runtime) semantic_codebook_size: usize,
+    pub(in crate::audio::nanocodec::runtime) input_dim: usize,
+    pub(in crate::audio::nanocodec::runtime) total_codebooks: usize,
+    pub(in crate::audio::nanocodec::runtime) upsample_factor: usize,
+    pub(in crate::audio::nanocodec::runtime) vocoder_data_type: DataType,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioConv1d {
-    weight: Array<Metal>,
-    bias: Array<Metal>,
-    cin: usize,
-    cout: usize,
-    kernel_size: usize,
-    dilation: usize,
-    groups: usize,
+pub(super) struct StructuredAudioConv1d {
+    pub(super) weight: Array<Metal>,
+    pub(super) bias: Array<Metal>,
+    pub(super) cin: usize,
+    pub(super) cout: usize,
+    pub(super) kernel_size: usize,
+    pub(super) dilation: usize,
+    pub(super) groups: usize,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioConvTranspose1d {
-    weight: Array<Metal>,
-    bias: Array<Metal>,
-    cin: usize,
-    cout: usize,
-    kernel_size: usize,
-    stride: usize,
-    groups: usize,
+pub(super) struct StructuredAudioConvTranspose1d {
+    pub(super) weight: Array<Metal>,
+    pub(super) bias: Array<Metal>,
+    pub(super) cin: usize,
+    pub(super) cout: usize,
+    pub(super) kernel_size: usize,
+    pub(super) stride: usize,
+    pub(super) groups: usize,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioPointwiseConv {
-    weight: Array<Metal>,
-    bias: Array<Metal>,
-    cin: usize,
-    cout: usize,
+pub(super) struct StructuredAudioPointwiseConv {
+    pub(super) weight: Array<Metal>,
+    pub(super) bias: Array<Metal>,
+    pub(super) cin: usize,
+    pub(super) cout: usize,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioNorm {
-    scales: Array<Metal>,
-    bias: Array<Metal>,
-    epsilon: f32,
-    subtract_mean: bool,
+pub(super) struct StructuredAudioNorm {
+    pub(super) scales: Array<Metal>,
+    pub(super) bias: Array<Metal>,
+    pub(super) epsilon: f32,
+    pub(super) subtract_mean: bool,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioConvNeXt {
-    depthwise_conv: StructuredAudioConv1d,
-    norm: StructuredAudioNorm,
-    pwconv1: StructuredAudioPointwiseConv,
-    pwconv2: StructuredAudioPointwiseConv,
+pub(super) struct StructuredAudioConvNeXt {
+    pub(super) depthwise_conv: StructuredAudioConv1d,
+    pub(super) norm: StructuredAudioNorm,
+    pub(super) pwconv1: StructuredAudioPointwiseConv,
+    pub(super) pwconv2: StructuredAudioPointwiseConv,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioResidualUnit {
-    snake1_alpha: Array<Metal>,
-    conv1: StructuredAudioConv1d,
-    snake2_alpha: Array<Metal>,
-    conv2: StructuredAudioConv1d,
+pub(super) struct StructuredAudioResidualUnit {
+    pub(super) snake1_alpha: Array<Metal>,
+    pub(super) conv1: StructuredAudioConv1d,
+    pub(super) snake2_alpha: Array<Metal>,
+    pub(super) conv2: StructuredAudioConv1d,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioDecoderBlock {
-    snake_alpha: Array<Metal>,
-    trans_conv: StructuredAudioConvTranspose1d,
-    res_unit1: StructuredAudioResidualUnit,
-    res_unit2: StructuredAudioResidualUnit,
-    res_unit3: StructuredAudioResidualUnit,
+pub(super) struct StructuredAudioDecoderBlock {
+    pub(super) snake_alpha: Array<Metal>,
+    pub(super) trans_conv: StructuredAudioConvTranspose1d,
+    pub(super) res_unit1: StructuredAudioResidualUnit,
+    pub(super) res_unit2: StructuredAudioResidualUnit,
+    pub(super) res_unit3: StructuredAudioResidualUnit,
 }
 
 #[derive(Debug, Clone)]
-struct StructuredAudioDecoderGraph {
-    first_conv: StructuredAudioConv1d,
-    upsample_blocks: Vec<(StructuredAudioConvTranspose1d, StructuredAudioConvNeXt)>,
-    decoder_blocks: Vec<StructuredAudioDecoderBlock>,
-    final_snake_alpha: Array<Metal>,
-    final_conv: StructuredAudioConv1d,
+pub(super) struct StructuredAudioDecoderGraph {
+    pub(super) first_conv: StructuredAudioConv1d,
+    pub(super) upsample_blocks: Vec<(StructuredAudioConvTranspose1d, StructuredAudioConvNeXt)>,
+    pub(super) decoder_blocks: Vec<StructuredAudioDecoderBlock>,
+    pub(super) final_snake_alpha: Array<Metal>,
+    pub(super) final_conv: StructuredAudioConv1d,
 }

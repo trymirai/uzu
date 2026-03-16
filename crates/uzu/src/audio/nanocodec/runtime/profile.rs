@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NanoCodecFsqRuntimeOptions {
     pub collect_command_buffer_profile: bool,
@@ -20,7 +22,7 @@ impl Default for NanoCodecFsqRuntimeOptions {
 }
 
 impl NanoCodecFsqRuntimeOptions {
-    fn async_stream_delivery_enabled(self) -> bool {
+    pub(super) fn async_stream_delivery_enabled(self) -> bool {
         !(self.collect_command_buffer_profile || self.capture_single_decode)
     }
 }
@@ -44,24 +46,24 @@ pub struct AudioDecodeProfile {
     pub trace_path: Option<PathBuf>,
 }
 
-struct SubmittedDecodedPaddedAudio {
-    output: Array<Metal>,
-    channels: usize,
-    frames: usize,
-    lengths: Vec<usize>,
-    final_command_buffer: Option<MetalPendingCommandBuffer>,
-    final_command_label: Option<String>,
-    final_cpu_encode_ms: f64,
-    decode_profile: Option<AudioDecodeProfile>,
-    capture: Option<AudioCaptureGuard>,
+pub(in crate::audio::nanocodec::runtime) struct SubmittedDecodedPaddedAudio {
+    pub(in crate::audio::nanocodec::runtime) output: Array<Metal>,
+    pub(in crate::audio::nanocodec::runtime) channels: usize,
+    pub(in crate::audio::nanocodec::runtime) frames: usize,
+    pub(in crate::audio::nanocodec::runtime) lengths: Vec<usize>,
+    pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<MetalPendingCommandBuffer>,
+    pub(in crate::audio::nanocodec::runtime) final_command_label: Option<String>,
+    pub(in crate::audio::nanocodec::runtime) final_cpu_encode_ms: f64,
+    pub(in crate::audio::nanocodec::runtime) decode_profile: Option<AudioDecodeProfile>,
+    pub(in crate::audio::nanocodec::runtime) capture: Option<AudioCaptureGuard>,
 }
 
 impl SubmittedDecodedPaddedAudio {
-    fn is_ready(&self) -> bool {
+    pub(in crate::audio::nanocodec::runtime) fn is_ready(&self) -> bool {
         self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
     }
 
-    fn resolve(mut self) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+    pub(in crate::audio::nanocodec::runtime) fn resolve(mut self) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
         if let Some(command_buffer) = self.final_command_buffer.take() {
             let wait_start = self.decode_profile.is_some().then(Instant::now);
             let command_buffer = command_buffer.wait_until_completed().map_err(|err| {
@@ -102,13 +104,13 @@ impl SubmittedDecodedPaddedAudio {
 }
 
 pub(crate) struct PendingStreamPcmChunk {
-    runtime: NanoCodecFsqRuntime,
-    submitted: SubmittedDecodedPaddedAudio,
-    previous_audio_lengths: Box<[usize]>,
-    semantic_lengths: Box<[usize]>,
-    audio_offset_frames: usize,
-    upsample_factor: usize,
-    step_stats: AudioDecodeStepStats,
+    pub(in crate::audio::nanocodec::runtime) runtime: NanoCodecFsqRuntime,
+    pub(in crate::audio::nanocodec::runtime) submitted: SubmittedDecodedPaddedAudio,
+    pub(in crate::audio::nanocodec::runtime) previous_audio_lengths: Box<[usize]>,
+    pub(in crate::audio::nanocodec::runtime) semantic_lengths: Box<[usize]>,
+    pub(in crate::audio::nanocodec::runtime) audio_offset_frames: usize,
+    pub(in crate::audio::nanocodec::runtime) upsample_factor: usize,
+    pub(in crate::audio::nanocodec::runtime) step_stats: AudioDecodeStepStats,
 }
 
 impl PendingStreamPcmChunk {
@@ -136,14 +138,14 @@ impl PendingStreamPcmChunk {
     }
 }
 
-struct AudioCaptureGuard {
+pub(in crate::audio::nanocodec::runtime) struct AudioCaptureGuard {
     context: Rc<<Metal as Backend>::Context>,
     trace_path: PathBuf,
     active: bool,
 }
 
 impl AudioCaptureGuard {
-    fn start() -> AudioResult<Self> {
+    pub(in crate::audio::nanocodec::runtime) fn start() -> AudioResult<Self> {
         <Metal as Backend>::Context::enable_capture();
         let context = <Metal as Backend>::Context::new()
             .map_err(|err| AudioError::Runtime(format!("failed to create capture context: {err}")))?;
@@ -162,11 +164,11 @@ impl AudioCaptureGuard {
         })
     }
 
-    fn context(&self) -> Rc<<Metal as Backend>::Context> {
+    pub(in crate::audio::nanocodec::runtime) fn context(&self) -> Rc<<Metal as Backend>::Context> {
         Rc::clone(&self.context)
     }
 
-    fn stop(&mut self) -> AudioResult<PathBuf> {
+    pub(in crate::audio::nanocodec::runtime) fn stop(&mut self) -> AudioResult<PathBuf> {
         if self.active {
             self.context
                 .stop_capture()
@@ -186,7 +188,7 @@ impl Drop for AudioCaptureGuard {
     }
 }
 
-fn push_audio_command_buffer_profile(
+pub(in crate::audio::nanocodec::runtime) fn push_audio_command_buffer_profile(
     profile: &mut Option<AudioDecodeProfile>,
     label: impl Into<String>,
     command_buffer: &MetalCompletedCommandBuffer,

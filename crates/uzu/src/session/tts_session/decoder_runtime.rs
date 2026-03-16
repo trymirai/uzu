@@ -5,8 +5,8 @@ use crate::backends::common::Buffer;
 pub(super) type MetalContext = <Metal as Backend>::Context;
 pub(super) type MetalCommandBuffer = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
 
-pub(super) struct TokenDecoderRunner {
-    pub(super) context: Rc<MetalContext>,
+struct TokenDecoderContext {
+    context: Rc<MetalContext>,
     command_buffer: Rc<RefCell<MetalCommandBuffer>>,
     cache_layers: Rc<RefCell<CacheLayers<Metal>>>,
     shared_buffers: Rc<RefCell<SharedBuffers<Metal>>>,
@@ -16,16 +16,34 @@ pub(super) struct TokenDecoderRunner {
     executables: Decoder<Metal>,
     sampler: GpuSampling<Metal>,
     kv_cache_update: KVCacheUpdate<Metal>,
-    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
-    tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
     token_copy_sampled: <<Metal as Backend>::Kernels as Kernels>::TokenCopySampledKernel,
     token_copy_results: <<Metal as Backend>::Kernels as Kernels>::TokenCopyToResultsKernel,
     async_chain_positions: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_seeds: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_results: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_capacity: usize,
+}
+
+impl TokenDecoderContext {
+    pub(super) fn context(&self) -> &Rc<MetalContext> {
+        &self.context
+    }
+
+    pub(super) fn decoder_config(&self) -> &Rc<crate::config::DecoderConfig> {
+        &self.decoder_config
+    }
+
+    pub(super) fn model_shape(&self) -> &ModelShape {
+        &self.model_shape
+    }
+}
+
+pub(super) struct TokenDecoderRunner {
+    ctx: TokenDecoderContext,
     pub(super) single_hidden_capture: ArrayCell<Metal>,
     pub(super) single_override_embedding: ArrayCell<Metal>,
+    tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
+    tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
     two_token_vocab_masks: HashMap<usize, Box<[u32]>>,
     should_fill_attention_bias: bool,
@@ -34,6 +52,10 @@ pub(super) struct TokenDecoderRunner {
 }
 
 impl TokenDecoderRunner {
+    pub(super) fn context(&self) -> &Rc<MetalContext> {
+        self.ctx.context()
+    }
+
     pub(super) fn new_with_context(
         context: Rc<MetalContext>,
         model_path: &Path,
@@ -136,26 +158,28 @@ impl TokenDecoderRunner {
             .map_err(unable_to_create_context)?;
 
         Ok(Self {
-            context,
-            command_buffer,
-            cache_layers,
-            shared_buffers,
-            scratch_buffers,
-            model_shape,
-            decoder_config,
-            executables,
-            sampler,
-            kv_cache_update,
-            tensor_copy,
-            tensor_add_scale,
-            token_copy_sampled,
-            token_copy_results,
-            async_chain_positions,
-            async_chain_seeds,
-            async_chain_results,
-            async_chain_capacity,
+            ctx: TokenDecoderContext {
+                context,
+                command_buffer,
+                cache_layers,
+                shared_buffers,
+                scratch_buffers,
+                model_shape,
+                decoder_config,
+                executables,
+                sampler,
+                kv_cache_update,
+                token_copy_sampled,
+                token_copy_results,
+                async_chain_positions,
+                async_chain_seeds,
+                async_chain_results,
+                async_chain_capacity,
+            },
             single_hidden_capture,
             single_override_embedding,
+            tensor_copy,
+            tensor_add_scale,
             single_token_vocab_masks: HashMap::new(),
             two_token_vocab_masks: HashMap::new(),
             should_fill_attention_bias,
@@ -165,7 +189,7 @@ impl TokenDecoderRunner {
     }
 
     pub(super) fn reset(&mut self) {
-        self.cache_layers.borrow_mut().clear();
+        self.ctx.cache_layers.borrow_mut().clear();
         self.next_position = 0;
     }
 
@@ -232,13 +256,13 @@ impl TokenDecoderRunner {
             return Ok(());
         }
 
-        if followup_count > self.async_chain_capacity {
+        if followup_count > self.ctx.async_chain_capacity {
             return Err(Error::GenerateFailed);
         }
 
         let vocab_mask_limit = if let Some(limit_raw) = vocab_limit {
-            let limit = limit_raw.min(self.decoder_config.vocab_size);
-            if limit == 0 || limit >= self.decoder_config.vocab_size {
+            let limit = limit_raw.min(self.ctx.decoder_config.vocab_size);
+            if limit == 0 || limit >= self.ctx.decoder_config.vocab_size {
                 None
             } else {
                 self.prepare_two_token_vocab_mask(limit)?;
@@ -250,7 +274,7 @@ impl TokenDecoderRunner {
         };
 
         {
-            let positions_borrow = self.async_chain_positions.borrow();
+            let positions_borrow = self.ctx.async_chain_positions.borrow();
             let positions_ptr = positions_borrow.cpu_ptr().as_ptr() as *mut i32;
             for pass in 0..followup_count {
                 unsafe {
@@ -260,7 +284,7 @@ impl TokenDecoderRunner {
         }
 
         {
-            let seeds_borrow = self.async_chain_seeds.borrow();
+            let seeds_borrow = self.ctx.async_chain_seeds.borrow();
             let seeds_ptr = seeds_borrow.cpu_ptr().as_ptr() as *mut u64;
             if !matches!(sampling.method(), SamplingMethod::Greedy) {
                 for pass in 0..followup_count {
@@ -277,8 +301,8 @@ impl TokenDecoderRunner {
             }
         }
 
-        self.command_buffer = Rc::new(RefCell::new(
-            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
+        self.ctx.command_buffer = Rc::new(RefCell::new(
+            self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
         ));
         for pass in 0..followup_count {
             let token_ids = [if pass == 0 {
@@ -288,12 +312,12 @@ impl TokenDecoderRunner {
             }];
             let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
             let mut state = ForwardPassState::new_llm(
-                self.context.clone(),
-                &self.decoder_config,
-                &self.model_shape,
-                &self.scratch_buffers,
-                self.cache_layers.clone(),
-                self.shared_buffers.clone(),
+                self.ctx.context.clone(),
+                &self.ctx.decoder_config,
+                &self.ctx.model_shape,
+                &self.ctx.scratch_buffers,
+                self.ctx.cache_layers.clone(),
+                self.ctx.shared_buffers.clone(),
                 &token_ids,
                 &[self.next_position + pass],
                 token_bitmask,
@@ -305,8 +329,8 @@ impl TokenDecoderRunner {
                 None,
                 pass > 0,
                 self.should_fill_attention_bias,
-                Some((self.async_chain_positions.clone(), pass)),
-                Some((self.async_chain_seeds.clone(), pass)),
+                Some((self.ctx.async_chain_positions.clone(), pass)),
+                Some((self.ctx.async_chain_seeds.clone(), pass)),
             );
             if let Some(method) = state.sampling_method_mut() {
                 *method = Some(sampling.method());
@@ -314,28 +338,28 @@ impl TokenDecoderRunner {
 
             let encoding_parameters = EncodingParameters::new();
             {
-                let mut command_buffer = self.command_buffer.borrow_mut();
-                self.executables
+                let mut command_buffer = self.ctx.command_buffer.borrow_mut();
+                self.ctx.executables
                     .embed
                     .encode_lookup(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                for layer in self.executables.layers.iter() {
+                for layer in self.ctx.executables.layers.iter() {
                     layer
                         .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 }
-                self.executables
+                self.ctx.executables
                     .norm
                     .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                self.executables
+                self.ctx.executables
                     .embed
                     .encode_readout(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
             {
-                let mut command_buffer = self.command_buffer.borrow_mut();
-                self.sampler
+                let mut command_buffer = self.ctx.command_buffer.borrow_mut();
+                self.ctx.sampler
                     .encode(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
@@ -343,37 +367,37 @@ impl TokenDecoderRunner {
             let sampling_output = state.sampling_output().ok_or(Error::GenerateFailed)?;
             let sampling_output_binding = sampling_output.borrow();
             let sampling_output_buffer = sampling_output_binding.buffer();
-            let token_ids_binding = self.scratch_buffers.token_ids.borrow();
+            let token_ids_binding = self.ctx.scratch_buffers.token_ids.borrow();
             let token_ids_buffer = token_ids_binding.buffer();
 
-            self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+            self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
                 let sampling_output_buffer = sampling_output_buffer.borrow();
                 let mut token_ids_buffer = token_ids_buffer.borrow_mut();
                 if pass + 1 < followup_count {
-                    self.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, encoder);
+                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, encoder);
                 }
                 let results_offset = pass * std::mem::size_of::<u32>();
-                let mut results_buffer = self.async_chain_results.borrow_mut();
-                self.token_copy_results.encode(
+                let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
+                self.ctx.token_copy_results.encode(
                     &*sampling_output_buffer,
                     (&mut *results_buffer, results_offset),
                     encoder,
                 );
             });
 
-            self.cache_layers.borrow_mut().update_after_acceptance(
+            self.ctx.cache_layers.borrow_mut().update_after_acceptance(
                 &[0],
                 None,
-                self.command_buffer.borrow_mut().deref_mut(),
-                &self.kv_cache_update,
+                self.ctx.command_buffer.borrow_mut().deref_mut(),
+                &self.ctx.kv_cache_update,
             );
-            self.cache_layers.borrow_mut().register_accepted_tokens(&[self.next_position + pass]);
+            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&[self.next_position + pass]);
         }
 
         self.next_position = self.next_position.saturating_add(followup_count);
         self.submit_and_wait_current_command_buffer()?;
 
-        let results_borrow = self.async_chain_results.borrow();
+        let results_borrow = self.ctx.async_chain_results.borrow();
         let results_ptr = results_borrow.cpu_ptr().as_ptr() as *const u32;
         for pass in 0..followup_count {
             let sampled = unsafe { *results_ptr.add(pass) };
@@ -402,14 +426,14 @@ impl TokenDecoderRunner {
         &mut self,
         vocab_limit: usize,
     ) -> Result<(), Error> {
-        let limit = vocab_limit.min(self.decoder_config.vocab_size);
-        if limit == 0 || limit >= self.decoder_config.vocab_size {
+        let limit = vocab_limit.min(self.ctx.decoder_config.vocab_size);
+        if limit == 0 || limit >= self.ctx.decoder_config.vocab_size {
             return Ok(());
         }
         if self.single_token_vocab_masks.contains_key(&limit) {
             return Ok(());
         }
-        let row_words = self.decoder_config.vocab_size.div_ceil(32);
+        let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
         let mut mask = vec![0_u32; row_words];
         for token_index in 0..limit {
             let word = token_index / 32;
@@ -424,14 +448,14 @@ impl TokenDecoderRunner {
         &mut self,
         vocab_limit: usize,
     ) -> Result<(), Error> {
-        let limit = vocab_limit.min(self.decoder_config.vocab_size);
-        if limit == 0 || limit >= self.decoder_config.vocab_size {
+        let limit = vocab_limit.min(self.ctx.decoder_config.vocab_size);
+        if limit == 0 || limit >= self.ctx.decoder_config.vocab_size {
             return Ok(());
         }
         if self.two_token_vocab_masks.contains_key(&limit) {
             return Ok(());
         }
-        let row_words = self.decoder_config.vocab_size.div_ceil(32);
+        let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
         let mut mask = vec![0_u32; row_words.checked_mul(2).ok_or(Error::GenerateFailed)?];
         for token_index in 0..limit {
             let word = token_index / 32;
@@ -511,7 +535,7 @@ impl TokenDecoderRunner {
                 Owned(Vec<u32>),
             }
 
-            let row_words = self.decoder_config.vocab_size.div_ceil(32);
+            let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
             let token_bitmask_source = if let Some(mask) = precomputed_token_bitmask {
                 let expected_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
                 if mask.len() != expected_words {
@@ -519,11 +543,11 @@ impl TokenDecoderRunner {
                 }
                 TokenBitmaskSource::Borrowed(mask)
             } else if let Some(limit_raw) = vocab_limit {
-                let limit = limit_raw.min(self.decoder_config.vocab_size);
+                let limit = limit_raw.min(self.ctx.decoder_config.vocab_size);
                 if limit == 0 {
                     return Err(Error::GenerateFailed);
                 }
-                if limit >= self.decoder_config.vocab_size {
+                if limit >= self.ctx.decoder_config.vocab_size {
                     TokenBitmaskSource::None
                 } else if token_count == 1 {
                     if let Some(mask) = self.get_single_token_vocab_mask(limit) {
@@ -569,12 +593,12 @@ impl TokenDecoderRunner {
             };
 
             let mut state = ForwardPassState::new_llm(
-                self.context.clone(),
-                &self.decoder_config,
-                &self.model_shape,
-                &self.scratch_buffers,
-                self.cache_layers.clone(),
-                self.shared_buffers.clone(),
+                self.ctx.context.clone(),
+                &self.ctx.decoder_config,
+                &self.ctx.model_shape,
+                &self.ctx.scratch_buffers,
+                self.ctx.cache_layers.clone(),
+                self.ctx.shared_buffers.clone(),
                 token_ids,
                 positions,
                 token_bitmask,
@@ -610,12 +634,12 @@ impl TokenDecoderRunner {
             if matches!(embedding_injection, EmbeddingInjection::OverrideFirstRowInternal) && capture_hidden {
                 return Err(Error::GenerateFailed);
             }
-            self.command_buffer = Rc::new(RefCell::new(
-                self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
+            self.ctx.command_buffer = Rc::new(RefCell::new(
+                self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
             ));
             {
-                let mut command_buffer = self.command_buffer.borrow_mut();
-                self.executables
+                let mut command_buffer = self.ctx.command_buffer.borrow_mut();
+                self.ctx.executables
                     .embed
                     .encode_lookup(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
@@ -634,34 +658,34 @@ impl TokenDecoderRunner {
                     self.encode_override_first_row_from_device(&state, &self.single_override_embedding)?;
                 },
             }
-            for layer in self.executables.layers.iter() {
+            for layer in self.ctx.executables.layers.iter() {
                 layer
-                    .encode(&mut state, &encoding_parameters, self.command_buffer.borrow_mut().deref_mut())
+                    .encode(&mut state, &encoding_parameters, self.ctx.command_buffer.borrow_mut().deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
             if capture_hidden {
                 self.encode_capture_last_hidden_into_single_buffer(&state, token_count)?;
             }
-            self.executables
+            self.ctx.executables
                 .norm
-                .encode(&mut state, self.command_buffer.borrow_mut().deref_mut())
+                .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.executables
+            self.ctx.executables
                 .embed
-                .encode_readout(&mut state, self.command_buffer.borrow_mut().deref_mut())
+                .encode_readout(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.sampler
-                .encode(&mut state, self.command_buffer.borrow_mut().deref_mut())
+            self.ctx.sampler
+                .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.cache_layers.borrow_mut().update_after_acceptance(
+            self.ctx.cache_layers.borrow_mut().update_after_acceptance(
                 accepted_suffix_indices,
                 None,
-                self.command_buffer.borrow_mut().deref_mut(),
-                &self.kv_cache_update,
+                self.ctx.command_buffer.borrow_mut().deref_mut(),
+                &self.ctx.kv_cache_update,
             );
             self.submit_and_wait_current_command_buffer()?;
             let token = read_sampled_token_from_sampling_output(&state)?;
-            self.cache_layers.borrow_mut().register_accepted_tokens(positions);
+            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(positions);
             self.next_position = self.next_position.saturating_add(token_count);
             Ok(token)
         })
@@ -675,7 +699,7 @@ impl TokenDecoderRunner {
         if token_count == 0 {
             return Err(Error::GenerateFailed);
         }
-        let model_dim = self.decoder_config.model_dim;
+        let model_dim = self.ctx.decoder_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
         let main = state.arrays(&[ArrayId::Main])[0].clone();
         let main = main.borrow();
@@ -690,7 +714,7 @@ impl TokenDecoderRunner {
             return Err(Error::GenerateFailed);
         }
 
-        self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+        self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             let main_buffer = main.buffer();
             let main_buffer = main_buffer.borrow();
             let capture_buffer = capture.buffer();
@@ -705,7 +729,7 @@ impl TokenDecoderRunner {
         state: &ForwardPassState<Metal>,
         override_embedding: &ArrayCell<Metal>,
     ) -> Result<(), Error> {
-        let model_dim = self.decoder_config.model_dim;
+        let model_dim = self.ctx.decoder_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
         let main = state.arrays(&[ArrayId::Main])[0].clone();
         let main = main.borrow();
@@ -714,7 +738,7 @@ impl TokenDecoderRunner {
             return Err(Error::GenerateFailed);
         }
 
-        self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+        self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             let override_buffer = override_embedding.buffer();
             let override_buffer = override_buffer.borrow();
             let main_buffer = main.buffer();
@@ -738,7 +762,7 @@ impl TokenDecoderRunner {
         if token_count == 0 {
             return Err(Error::GenerateFailed);
         }
-        let model_dim = self.decoder_config.model_dim;
+        let model_dim = self.ctx.decoder_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| Error::GenerateFailed)?;
         let total_len = token_count.checked_mul(model_dim).ok_or(Error::GenerateFailed)?;
         let total_len_u32 = u32::try_from(total_len).map_err(|_| Error::GenerateFailed)?;
@@ -750,7 +774,7 @@ impl TokenDecoderRunner {
             return Err(Error::GenerateFailed);
         }
 
-        self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
+        self.ctx.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
             let main_input_buffer = {
                 let main_input_buffer = main.buffer();
                 let main_input_buffer = main_input_buffer.borrow();
@@ -775,9 +799,9 @@ impl TokenDecoderRunner {
 
     fn submit_and_wait_current_command_buffer(&mut self) -> Result<(), Error> {
         let replacement =
-            self.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+            self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
         let command_buffer = {
-            let mut command_buffer = self.command_buffer.borrow_mut();
+            let mut command_buffer = self.ctx.command_buffer.borrow_mut();
             std::mem::replace(command_buffer.deref_mut(), replacement)
         };
         self.instrumentation.command_buffers_submitted += 1;

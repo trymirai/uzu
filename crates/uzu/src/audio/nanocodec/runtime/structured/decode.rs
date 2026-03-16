@@ -1,3 +1,5 @@
+use super::*;
+
 impl StructuredAudioCodecGraph {
     fn run_residual_unit_enqueued(
         &self,
@@ -38,7 +40,7 @@ impl StructuredAudioCodecGraph {
         )
     }
 
-    fn submit_decode_padded(
+    pub(in crate::audio::nanocodec::runtime) fn submit_decode_padded(
         &self,
         runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
@@ -446,7 +448,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn decode_padded(
+    pub(in crate::audio::nanocodec::runtime) fn decode_padded(
         &self,
         runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],

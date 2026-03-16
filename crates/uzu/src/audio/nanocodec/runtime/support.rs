@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DecodedPaddedAudio {
     pub samples: Vec<f32>,
@@ -6,21 +8,21 @@ pub(crate) struct DecodedPaddedAudio {
     pub lengths: Vec<usize>,
 }
 
-fn checked_product(values: &[usize]) -> AudioResult<usize> {
+pub(in crate::audio::nanocodec::runtime) fn checked_product(values: &[usize]) -> AudioResult<usize> {
     values
         .iter()
         .try_fold(1usize, |acc, &value| acc.checked_mul(value))
         .ok_or(AudioError::Runtime("dimension product overflow".to_string()))
 }
 
-fn usize_to_i32(
+pub(in crate::audio::nanocodec::runtime) fn usize_to_i32(
     value: usize,
     name: &str,
 ) -> AudioResult<i32> {
     i32::try_from(value).map_err(|_| AudioError::Runtime(format!("{name} exceeds i32 range")))
 }
 
-fn convert_lengths_to_i32(
+pub(in crate::audio::nanocodec::runtime) fn convert_lengths_to_i32(
     lengths: &[usize],
     frames: usize,
 ) -> AudioResult<Vec<i32>> {
@@ -37,7 +39,7 @@ fn convert_lengths_to_i32(
     Ok(out)
 }
 
-fn checked_mul_i32(
+pub(in crate::audio::nanocodec::runtime) fn checked_mul_i32(
     value: i32,
     mul: usize,
 ) -> AudioResult<i32> {
@@ -47,7 +49,7 @@ fn checked_mul_i32(
         .ok_or(AudioError::Runtime("scaled length overflow".to_string()))
 }
 
-fn checked_div_ceil(
+pub(in crate::audio::nanocodec::runtime) fn checked_div_ceil(
     numerator: usize,
     denominator: usize,
 ) -> AudioResult<usize> {
@@ -61,7 +63,7 @@ fn checked_div_ceil(
         .map(|value| value / denominator)
 }
 
-fn scale_lengths_i32_in_place(
+pub(in crate::audio::nanocodec::runtime) fn scale_lengths_i32_in_place(
     source: &[i32],
     destination: &mut [i32],
     factor: usize,

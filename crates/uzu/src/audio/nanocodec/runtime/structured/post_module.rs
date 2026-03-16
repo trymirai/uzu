@@ -1,5 +1,7 @@
+use super::*;
+
 impl StructuredAudioCodecGraph {
-    fn apply_convnext_ncs_enqueued(
+    pub(super) fn apply_convnext_ncs_enqueued(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
         command_buffer: &mut MetalCommandBuffer,
@@ -58,7 +60,7 @@ impl StructuredAudioCodecGraph {
         add_enqueue(context, command_buffer, &x, &residual)
     }
 
-    fn build_post_module_runtime(
+    pub(super) fn build_post_module_runtime(
         &self,
         context: Rc<<Metal as Backend>::Context>,
         required_sequence_length: usize,
@@ -131,7 +133,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn post_module_runtime_on_context(
+    pub(super) fn post_module_runtime_on_context(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
         required_sequence_length: usize,
@@ -151,7 +153,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn decode_context(&self) -> AudioResult<Rc<<Metal as Backend>::Context>> {
+    pub(super) fn decode_context(&self) -> AudioResult<Rc<<Metal as Backend>::Context>> {
         FISHAUDIO_DECODE_CONTEXT_CACHE.with(|cache| {
             if let Some(existing) = cache.borrow().get(&self.weights_path).cloned() {
                 return Ok(existing);
@@ -163,7 +165,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn build_quantizer_gpu_resources(
+    pub(super) fn build_quantizer_gpu_resources(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<FishAudioQuantizerResources> {
@@ -271,7 +273,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn quantizer_gpu_resources(
+    pub(super) fn quantizer_gpu_resources(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<Rc<FishAudioQuantizerResources>> {
@@ -286,7 +288,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn build_vocoder_gpu_graph(
+    pub(super) fn build_vocoder_gpu_graph(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<StructuredAudioDecoderGraph> {
@@ -306,7 +308,7 @@ impl StructuredAudioCodecGraph {
         build_vocoder_gpu_graph_from_tree(context, &root, &self.config, self.vocoder_data_type)
     }
 
-    fn vocoder_gpu_graph(
+    pub(super) fn vocoder_gpu_graph(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<Rc<StructuredAudioDecoderGraph>> {
@@ -321,7 +323,7 @@ impl StructuredAudioCodecGraph {
         })
     }
 
-    fn encode_post_module_layers(
+    pub(super) fn encode_post_module_layers(
         runtime: &StructuredAudioPostModuleRuntime,
         state: &mut ForwardPassState<Metal>,
         command_buffer: &mut MetalCommandBuffer,
@@ -339,7 +341,7 @@ impl StructuredAudioCodecGraph {
         Ok(())
     }
 
-    fn apply_post_module_gpu_on_array_single_batch(
+    pub(super) fn apply_post_module_gpu_on_array_single_batch(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
         latent_nsc: &Array<Metal>,
@@ -422,7 +424,7 @@ impl StructuredAudioCodecGraph {
         Ok(main_output)
     }
 
-    fn apply_post_module_gpu_on_array(
+    pub(super) fn apply_post_module_gpu_on_array(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
         latent_nsc: &Array<Metal>,

@@ -1,4 +1,6 @@
-fn snake1d_enqueue(
+use super::*;
+
+pub(super) fn snake1d_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -59,7 +61,7 @@ fn snake1d_enqueue(
     Ok(output)
 }
 
-fn causal_conv1d_grouped_enqueue(
+pub(super) fn causal_conv1d_grouped_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -179,7 +181,7 @@ fn causal_conv1d_grouped_enqueue(
     Ok(output)
 }
 
-fn causal_conv1d_grouped_residual_enqueue(
+pub(super) fn causal_conv1d_grouped_residual_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -278,7 +280,7 @@ fn causal_conv1d_grouped_residual_enqueue(
     Ok(output)
 }
 
-fn causal_conv_transpose1d_causal_pad_enqueue(
+pub(super) fn causal_conv_transpose1d_causal_pad_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -376,7 +378,7 @@ fn causal_conv_transpose1d_causal_pad_enqueue(
     Ok(output)
 }
 
-fn conv1d_pointwise_ncs_enqueue(
+pub(super) fn conv1d_pointwise_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -461,7 +463,7 @@ fn conv1d_pointwise_ncs_enqueue(
     Ok(output)
 }
 
-fn norm_ncs_enqueue(
+pub(super) fn norm_ncs_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -543,7 +545,7 @@ fn norm_ncs_enqueue(
     Ok(output)
 }
 
-fn gelu_enqueue(
+pub(super) fn gelu_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,
@@ -564,7 +566,7 @@ fn gelu_enqueue(
     Ok(output)
 }
 
-fn add_enqueue(
+pub(super) fn add_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     a: &Array<Metal>,
@@ -600,7 +602,7 @@ fn add_enqueue(
     Ok(output)
 }
 
-fn tanh_enqueue(
+pub(super) fn tanh_enqueue(
     context: &Rc<<Metal as Backend>::Context>,
     command_buffer: &mut MetalCommandBuffer,
     input: &Array<Metal>,

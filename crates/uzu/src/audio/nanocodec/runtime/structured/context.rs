@@ -1,3 +1,5 @@
+use super::*;
+
 impl StructuredAudioCodecGraph {
     fn conv1d_input_context(layer: &StructuredAudioConv1d) -> AudioResult<usize> {
         layer
@@ -81,7 +83,7 @@ impl StructuredAudioCodecGraph {
         Some(context)
     }
 
-    fn streaming_decode_context_frames(&self) -> AudioResult<Option<usize>> {
+    pub(in crate::audio::nanocodec::runtime) fn streaming_decode_context_frames(&self) -> AudioResult<Option<usize>> {
         let context = self.decode_context()?;
         let vocoder_context = self.streaming_vocoder_context_frames(&context)?;
         let Some(post_module_context) = self.post_module_streaming_context_frames() else {
@@ -90,7 +92,7 @@ impl StructuredAudioCodecGraph {
         Ok(Some(vocoder_context.max(post_module_context)))
     }
 
-    fn decode_quantizer_to_nsc_array_on_context(
+    pub(super) fn decode_quantizer_to_nsc_array_on_context(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
         tokens: &[u32],
