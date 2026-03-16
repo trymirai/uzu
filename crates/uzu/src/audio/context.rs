@@ -2,7 +2,7 @@
 
 use std::{path::Path, rc::Rc};
 
-use super::{AudioResult, NanoCodecFsqRuntime, NanoCodecFsqRuntimeOptions};
+use super::{AudioResult, NanoCodecFsqRuntime};
 use crate::{backends::common::Backend, config::TtsConfig};
 
 #[derive(Clone)]
@@ -20,16 +20,6 @@ impl<B: Backend> AudioGenerationContext<B> {
         model_path: &Path,
     ) -> AudioResult<Self> {
         Self::with_runtime(NanoCodecFsqRuntime::from_tts_config_and_model_path(tts_config, model_path)?)
-    }
-
-    pub fn from_tts_config_and_model_path_with_options(
-        tts_config: &TtsConfig,
-        model_path: &Path,
-        options: NanoCodecFsqRuntimeOptions,
-    ) -> AudioResult<Self> {
-        Self::with_runtime(NanoCodecFsqRuntime::from_tts_config_and_model_path_with_options(
-            tts_config, model_path, options,
-        )?)
     }
 
     fn with_runtime(runtime: NanoCodecFsqRuntime<B>) -> AudioResult<Self> {

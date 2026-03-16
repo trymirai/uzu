@@ -265,16 +265,4 @@ impl TtsModelConfig {
     ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext<B>> {
         crate::audio::AudioGenerationContext::from_tts_config_and_model_path(&self.tts_config, model_path)
     }
-
-    pub fn create_audio_generation_context_with_model_path_and_options<B: crate::backends::common::Backend>(
-        &self,
-        model_path: &Path,
-        options: crate::audio::NanoCodecFsqRuntimeOptions,
-    ) -> crate::audio::AudioResult<crate::audio::AudioGenerationContext<B>> {
-        crate::audio::AudioGenerationContext::from_tts_config_and_model_path_with_options(
-            &self.tts_config,
-            model_path,
-            options,
-        )
-    }
 }

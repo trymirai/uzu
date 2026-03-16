@@ -1,9 +1,9 @@
 use super::*;
 
 pub(super) fn snake1d_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
+    output: Array<B>,
     alpha: &Array<B>,
     batch_size: usize,
     channels: usize,
@@ -32,7 +32,6 @@ pub(super) fn snake1d_enqueue<B: Backend>(
             alpha.data_type()
         )));
     }
-    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "structured_audio_snake_output");
 
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
@@ -59,18 +58,13 @@ pub(super) fn snake1d_enqueue<B: Backend>(
     Ok(output)
 }
 
-pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+fn validate_grouped_conv_params<B: Backend>(
     input: &Array<B>,
     layer: &StructuredAudioConv1d<B>,
-    input_layout: SequenceLayout,
     lengths: &[i32],
-    lengths_array: &Array<B>,
     batch_size: usize,
     seq_len: usize,
-    kernels: &StructuredAudioKernelCache<B>,
-) -> AudioResult<Array<B>> {
+) -> AudioResult<()> {
     if lengths.len() != batch_size {
         return Err(AudioError::InvalidTokenLengths {
             expected_lengths: batch_size,
@@ -106,8 +100,22 @@ pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
     if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
         return Err(AudioError::Runtime("causal conv1d dtype mismatch".to_string()));
     }
-    let output =
-        context.create_array(&[batch_size, layer.cout, seq_len], data_type, "structured_audio_causal_conv1d_output");
+    Ok(())
+}
+
+pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
+    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    input: &Array<B>,
+    output: Array<B>,
+    layer: &StructuredAudioConv1d<B>,
+    input_layout: SequenceLayout,
+    lengths: &[i32],
+    lengths_array: &Array<B>,
+    batch_size: usize,
+    seq_len: usize,
+    kernels: &StructuredAudioKernelCache<B>,
+) -> AudioResult<Array<B>> {
+    validate_grouped_conv_params(input, layer, lengths, batch_size, seq_len)?;
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
@@ -176,10 +184,10 @@ pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
 }
 
 pub(super) fn causal_conv1d_grouped_residual_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
     residual: &Array<B>,
+    output: Array<B>,
     layer: &StructuredAudioConv1d<B>,
     lengths: &[i32],
     lengths_array: &Array<B>,
@@ -187,37 +195,7 @@ pub(super) fn causal_conv1d_grouped_residual_enqueue<B: Backend>(
     seq_len: usize,
     kernels: &StructuredAudioKernelCache<B>,
 ) -> AudioResult<Array<B>> {
-    if lengths.len() != batch_size {
-        return Err(AudioError::InvalidTokenLengths {
-            expected_lengths: batch_size,
-            actual_lengths: lengths.len(),
-        });
-    }
-    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-    let expected_weight_shape = [layer.cout, layer.cin / layer.groups, layer.kernel_size];
-    if layer.weight.shape() != expected_weight_shape {
-        return Err(AudioError::Runtime(format!(
-            "causal conv1d weight shape mismatch: expected {:?}, got {:?}",
-            expected_weight_shape,
-            layer.weight.shape()
-        )));
-    }
-    if layer.bias.shape() != [layer.cout] {
-        return Err(AudioError::Runtime(format!(
-            "causal conv1d bias shape mismatch: expected [{}], got {:?}",
-            layer.cout,
-            layer.bias.shape()
-        )));
-    }
-    let expected_input = checked_product(&[batch_size, layer.cin, seq_len])?;
-    if input.num_elements() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.num_elements(),
-        });
-    }
+    validate_grouped_conv_params(input, layer, lengths, batch_size, seq_len)?;
     let expected_residual = checked_product(&[batch_size, layer.cout, seq_len])?;
     if residual.num_elements() != expected_residual {
         return Err(AudioError::InvalidTokenShape {
@@ -233,12 +211,9 @@ pub(super) fn causal_conv1d_grouped_residual_enqueue<B: Backend>(
     let groups_i32 = usize_to_i32(layer.groups, "groups")?;
     let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
     let data_type = input.data_type();
-    if residual.data_type() != data_type || layer.weight.data_type() != data_type || layer.bias.data_type() != data_type
-    {
+    if residual.data_type() != data_type {
         return Err(AudioError::Runtime("causal conv1d residual dtype mismatch".to_string()));
     }
-    let output =
-        context.create_array(&[batch_size, layer.cout, seq_len], data_type, "structured_audio_causal_conv1d_output");
 
     let input_buffer = input.buffer();
     let input_buffer = input_buffer.borrow();
@@ -273,9 +248,9 @@ pub(super) fn causal_conv1d_grouped_residual_enqueue<B: Backend>(
 }
 
 pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
+    output: Array<B>,
     layer: &StructuredAudioConvTranspose1d<B>,
     lengths: &[i32],
     batch_size: usize,
@@ -321,11 +296,6 @@ pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
     if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
         return Err(AudioError::Runtime("causal transpose dtype mismatch".to_string()));
     }
-    let output = context.create_array(
-        &[batch_size, layer.cout, seq_len_out],
-        data_type,
-        "structured_audio_causal_conv_transpose_output",
-    );
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
@@ -369,9 +339,9 @@ pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
 }
 
 pub(super) fn conv1d_pointwise_ncs_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
+    output: Array<B>,
     layer: &StructuredAudioPointwiseConv<B>,
     lengths: &[i32],
     lengths_array: &Array<B>,
@@ -413,7 +383,6 @@ pub(super) fn conv1d_pointwise_ncs_enqueue<B: Backend>(
     if layer.weight.data_type() != data_type || layer.bias.data_type() != data_type {
         return Err(AudioError::Runtime("pointwise conv dtype mismatch".to_string()));
     }
-    let output = context.create_array(&[batch_size, layer.cout, seq_len], data_type, "structured_audio_pwconv_output");
 
     let cin_i32 = usize_to_i32(layer.cin, "cin")?;
     let cout_i32 = usize_to_i32(layer.cout, "cout")?;
@@ -452,9 +421,9 @@ pub(super) fn conv1d_pointwise_ncs_enqueue<B: Backend>(
 }
 
 pub(super) fn norm_ncs_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
+    output: Array<B>,
     norm: &StructuredAudioNorm<B>,
     lengths: &[i32],
     lengths_array: &Array<B>,
@@ -494,7 +463,6 @@ pub(super) fn norm_ncs_enqueue<B: Backend>(
     if norm.scales.data_type() != data_type || norm.bias.data_type() != data_type {
         return Err(AudioError::Runtime("norm dtype mismatch".to_string()));
     }
-    let output = context.create_array(&[batch_size, channels, seq_len], data_type, "structured_audio_norm_output");
 
     let channels_i32 = usize_to_i32(channels, "channels")?;
     let seq_len_i32 = usize_to_i32(seq_len, "seq_len")?;
@@ -532,13 +500,11 @@ pub(super) fn norm_ncs_enqueue<B: Backend>(
 }
 
 pub(super) fn gelu_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
+    output: Array<B>,
     kernels: &StructuredAudioKernelCache<B>,
 ) -> AudioResult<Array<B>> {
-    let data_type = input.data_type();
-    let output = context.create_array(input.shape(), data_type, "structured_audio_gelu_output");
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
     let gelu_id = 1_u32;
@@ -551,10 +517,10 @@ pub(super) fn gelu_enqueue<B: Backend>(
 }
 
 pub(super) fn add_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     a: &Array<B>,
     b: &Array<B>,
+    output: Array<B>,
     kernels: &StructuredAudioKernelCache<B>,
 ) -> AudioResult<Array<B>> {
     if a.num_elements() != b.num_elements() {
@@ -571,8 +537,6 @@ pub(super) fn add_enqueue<B: Backend>(
             b.data_type()
         )));
     }
-    let data_type = a.data_type();
-    let output = context.create_array(a.shape(), data_type, "structured_audio_add_out");
     let n_i32 = usize_to_i32(a.num_elements(), "n")?;
     let a_buffer = a.buffer();
     let a_buffer = a_buffer.borrow();
@@ -585,13 +549,11 @@ pub(super) fn add_enqueue<B: Backend>(
 }
 
 pub(super) fn tanh_enqueue<B: Backend>(
-    context: &Rc<B::Context>,
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     input: &Array<B>,
+    output: Array<B>,
     kernels: &StructuredAudioKernelCache<B>,
 ) -> AudioResult<Array<B>> {
-    let data_type = input.data_type();
-    let output = context.create_array(input.shape(), data_type, "structured_audio_tanh_output");
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
     let tanh_id = 2_u32;

@@ -45,12 +45,82 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
     pub(super) residual_out_bias: Array<B>,
 }
 
+/// Ping-pong scratch pool for the sequential decode pipeline.
+///
+/// At any point in the pipeline at most two data buffers are live (the current
+/// input and the current output). `next_scratch` alternates between two slots,
+/// re-using a buffer when its `Rc` strong-count shows it is exclusively owned
+/// by the pool and it is large enough. When a residual connection keeps an
+/// extra reference alive, a fresh buffer is allocated transparently.
+pub(super) struct DecodeWorkspace<B: Backend> {
+    slots: [RefCell<Option<Rc<RefCell<B::Buffer>>>>; 2],
+    toggle: Cell<bool>,
+}
+
+impl<B: Backend> DecodeWorkspace<B> {
+    fn new() -> Self {
+        Self {
+            slots: [RefCell::new(None), RefCell::new(None)],
+            toggle: Cell::new(false),
+        }
+    }
+
+    /// Return a scratch [`Array`] backed by the next slot in the ping-pong
+    /// pair. The underlying GPU buffer is reused when possible.
+    pub(super) fn next_scratch(
+        &self,
+        context: &B::Context,
+        shape: &[usize],
+        data_type: DataType,
+        label: &str,
+    ) -> Array<B> {
+        let idx = usize::from(self.toggle.get());
+        self.toggle.set(!self.toggle.get());
+
+        let needed = size_for_shape(shape, data_type);
+        let mut slot = self.slots[idx].borrow_mut();
+
+        // Try to reuse the existing buffer if nobody else holds a reference
+        // and it is large enough.
+        if let Some(buf_rc) = slot.as_ref() {
+            if Rc::strong_count(buf_rc) == 1 && buf_rc.borrow().length() >= needed {
+                let array = unsafe {
+                    Array::from_parts(buf_rc.clone(), 0, shape, data_type)
+                };
+                return array;
+            }
+        }
+
+        // Allocate a fresh buffer and cache it.
+        let mut buffer = context.create_buffer(needed).expect("Failed to create scratch buffer");
+        buffer.set_label(Some(label));
+        let buf_rc = Rc::new(RefCell::new(buffer));
+        *slot = Some(buf_rc.clone());
+        unsafe {
+            Array::from_parts(buf_rc, 0, shape, data_type)
+        }
+    }
+
+    /// Clear both scratch slots, forcing the next call to allocate fresh
+    /// buffers. This must be called after submitting a command buffer that
+    /// references scratch intermediates so that the in-flight GPU work is
+    /// not corrupted by a subsequent decode pass reusing the same buffers.
+    pub(super) fn reset(&self) {
+        *self.slots[0].borrow_mut() = None;
+        *self.slots[1].borrow_mut() = None;
+        self.toggle.set(false);
+    }
+}
+
 pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<B: Backend> {
     context: Rc<B::Context>,
     pub(super) kernels_by_dtype: RefCell<HashMap<u8, Rc<StructuredAudioKernelCache<B>>>>,
     pub(super) post_module_runtime: RefCell<Option<Rc<StructuredAudioPostModuleRuntime<B>>>>,
     pub(super) vocoder_graph: RefCell<Option<Rc<StructuredAudioDecoderGraph<B>>>>,
     pub(super) quantizer_resources: RefCell<Option<Rc<FishAudioQuantizerResources<B>>>>,
+    token_staging: RefCell<Option<Array<B>>>,
+    length_staging: RefCell<Option<Array<B>>>,
+    pub(super) decode_workspace: DecodeWorkspace<B>,
 }
 
 impl<B: Backend> StructuredAudioRuntimeResources<B> {
@@ -61,11 +131,23 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
             post_module_runtime: RefCell::new(None),
             vocoder_graph: RefCell::new(None),
             quantizer_resources: RefCell::new(None),
+            token_staging: RefCell::new(None),
+            length_staging: RefCell::new(None),
+            decode_workspace: DecodeWorkspace::new(),
         }
     }
 
     pub(super) fn context(&self) -> &Rc<B::Context> {
         &self.context
+    }
+
+    /// Reset the decode workspace and staging arrays so that subsequent
+    /// decode passes allocate fresh buffers. Call this after submitting a
+    /// command buffer whose encoded work references the current buffers.
+    pub(in crate::audio::nanocodec::runtime) fn reset_for_pending(&self) {
+        self.decode_workspace.reset();
+        *self.token_staging.borrow_mut() = None;
+        *self.length_staging.borrow_mut() = None;
     }
 
     pub(super) fn kernels(
@@ -79,6 +161,30 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
         let created = Rc::new(build_structured_audio_kernels(&self.context, data_type)?);
         self.kernels_by_dtype.borrow_mut().insert(key, created.clone());
         Ok(created)
+    }
+
+    pub(super) fn token_staging(&self, min_elements: usize) -> Array<B> {
+        let mut slot = self.token_staging.borrow_mut();
+        if let Some(existing) = slot.as_ref() {
+            if existing.num_elements() >= min_elements {
+                return existing.clone();
+            }
+        }
+        let array = self.context.create_array(&[min_elements], DataType::U32, "quantizer_token_staging");
+        *slot = Some(array.clone());
+        array
+    }
+
+    pub(super) fn length_staging(&self, min_elements: usize) -> Array<B> {
+        let mut slot = self.length_staging.borrow_mut();
+        if let Some(existing) = slot.as_ref() {
+            if existing.num_elements() >= min_elements {
+                return existing.clone();
+            }
+        }
+        let array = self.context.create_array(&[min_elements], DataType::I32, "quantizer_length_staging");
+        *slot = Some(array.clone());
+        array
     }
 }
 

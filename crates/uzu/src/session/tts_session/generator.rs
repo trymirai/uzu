@@ -77,7 +77,6 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                     let mut stream = self.audio_decoder.begin_stream(
                         semantic_tokens.batch_size(),
                         semantic_tokens.codebooks(),
-                        audio_decode_streaming_mode(config),
                         config.max_stream_workspace_frames,
                     )?;
 
@@ -242,7 +241,6 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         let mut audio_stream = self.audio_decoder.begin_stream(
             1,
             self.audio_decoder.num_codebooks(),
-            audio_decode_streaming_mode(config),
             config.max_stream_workspace_frames,
         )?;
         let mut last_decoded_frames = 0usize;

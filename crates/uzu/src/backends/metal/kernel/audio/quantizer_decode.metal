@@ -5,7 +5,7 @@ using namespace metal;
 
 template <typename T>
 void quantizer_decode(
-    device const int* tokens,           // [B, K, T]
+    device const uint* tokens,          // [B, K, T]
     device const int* lengths,          // [B]
     device const T* semantic_codebook,  // [semantic_cardinality, codebook_dim]
     device const T* semantic_out_proj,  // [input_dim, codebook_dim]
@@ -40,8 +40,8 @@ void quantizer_decode(
   }
 
   const uint token_base = (b * (uint)total_codebooks) * (uint)seq_len + t;
-  int semantic_token = tokens[token_base];
-  semantic_token = clamp(semantic_token, 0, semantic_cardinality - 1);
+  uint semantic_token = tokens[token_base];
+  semantic_token = min(semantic_token, (uint)(semantic_cardinality - 1));
 
   float acc = float(semantic_out_bias[d]);
   const uint semantic_code_base = (uint)semantic_token * (uint)codebook_dim;
@@ -53,8 +53,8 @@ void quantizer_decode(
 
   for (int r = 0; r < residual_quantizers; ++r) {
     const uint token_idx = token_base + (uint)(r + 1) * (uint)seq_len;
-    int residual_token = tokens[token_idx];
-    residual_token = clamp(residual_token, 0, residual_cardinality - 1);
+    uint residual_token = tokens[token_idx];
+    residual_token = min(residual_token, (uint)(residual_cardinality - 1));
 
     const uint bias_idx = (uint)r * (uint)input_dim + d;
     acc += float(residual_out_bias[bias_idx]);
@@ -76,7 +76,7 @@ void quantizer_decode(
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(AudioQuantizerDecode)(
-    device const int* tokens,
+    device const uint* tokens,
     device const int* lengths,
     device const T* semantic_codebook,
     device const T* semantic_out_proj,

@@ -33,7 +33,7 @@ pub(super) fn load_tts_runtime<B: Backend + Send + Sync>(
         .ok_or_else(|| Error::InvalidTtsModelConfig("missing TTS model config".to_string()))?
         .clone();
     let audio: AudioGenerationContext<B> = tts_model_config
-        .create_audio_generation_context_with_model_path_and_options(model_path, options.audio_runtime)?;
+        .create_audio_generation_context_with_model_path(model_path)?;
     let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, model_path, options)?;
     let audio_decoder = build_audio_decoder_backend(&audio)?;
     let message_processor_config = tts_model_config.message_processor_config.clone();

@@ -1,20 +1,5 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NanoCodecFsqRuntimeOptions {
-    pub chunked_command_buffers: bool,
-    pub micro_flush_min_elements: usize,
-}
-
-impl Default for NanoCodecFsqRuntimeOptions {
-    fn default() -> Self {
-        Self {
-            chunked_command_buffers: true,
-            micro_flush_min_elements: 8_000_000,
-        }
-    }
-}
-
 pub struct SubmittedDecodedPaddedAudio<B: Backend> {
     pub(in crate::audio::nanocodec::runtime) output: Array<B>,
     pub(in crate::audio::nanocodec::runtime) channels: usize,

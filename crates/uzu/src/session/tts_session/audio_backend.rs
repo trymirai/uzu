@@ -44,13 +44,12 @@ impl<B: Backend + Send + Sync> AudioDecoderBackend for NanoCodecAudioDecoderBack
         &self,
         batch_size: usize,
         codebooks: usize,
-        mode: AudioDecodeStreamingMode,
         max_workspace_frames: usize,
     ) -> Result<Box<dyn AudioDecoderStreamBackend>, Error> {
         let state = self
             .audio
             .runtime()
-            .begin_decode_stream_with_options(batch_size, codebooks, mode, max_workspace_frames)
+            .begin_decode_stream_with_options(batch_size, codebooks, max_workspace_frames)
             .map_err(Error::from)?;
         Ok(Box::new(NanoCodecAudioDecoderStream {
             audio: self.audio.clone(),

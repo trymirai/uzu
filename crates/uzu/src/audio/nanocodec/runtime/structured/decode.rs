@@ -3,7 +3,7 @@ use super::*;
 impl StructuredAudioCodecGraph {
     fn run_residual_unit_enqueued<B: Backend>(
         &self,
-        context: &Rc<B::Context>,
+        resources: &StructuredAudioRuntimeResources<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         input: &Array<B>,
         unit: &StructuredAudioResidualUnit<B>,
@@ -14,11 +14,15 @@ impl StructuredAudioCodecGraph {
         seq_len: usize,
         kernels: &StructuredAudioKernelCache<B>,
     ) -> AudioResult<Array<B>> {
+        let ws = &resources.decode_workspace;
+        let ctx = resources.context();
+        let data_type = input.data_type();
+
         let residual = input.clone();
         let x = snake1d_enqueue(
-            context,
             command_buffer,
             input,
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_snake1"),
             &unit.snake1_alpha,
             batch_size,
             channels,
@@ -26,9 +30,9 @@ impl StructuredAudioCodecGraph {
             kernels,
         )?;
         let x = causal_conv1d_grouped_enqueue(
-            context,
             command_buffer,
             &x,
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_conv1"),
             &unit.conv1,
             SequenceLayout::Ncs,
             lengths,
@@ -37,13 +41,21 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x =
-            snake1d_enqueue(context, command_buffer, &x, &unit.snake2_alpha, batch_size, channels, seq_len, kernels)?;
+        let x = snake1d_enqueue(
+            command_buffer,
+            &x,
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_snake2"),
+            &unit.snake2_alpha,
+            batch_size,
+            channels,
+            seq_len,
+            kernels,
+        )?;
         causal_conv1d_grouped_residual_enqueue(
-            context,
             command_buffer,
             &x,
             &residual,
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_conv2"),
             &unit.conv2,
             lengths,
             lengths_array,
@@ -56,7 +68,6 @@ impl StructuredAudioCodecGraph {
     pub(in crate::audio::nanocodec::runtime) fn submit_decode_padded<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
@@ -90,14 +101,14 @@ impl StructuredAudioCodecGraph {
             })
             .collect::<AudioResult<Vec<_>>>()?;
         let context = resources.context().clone();
-        let chunked_command_buffers = runtime_options.chunked_command_buffers;
-        let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
         let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| {
                 AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}"))
             })?
             .start_encoding();
+
+        let ws = &resources.decode_workspace;
 
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
@@ -111,21 +122,7 @@ impl StructuredAudioCodecGraph {
             codebooks,
             frames,
         )?;
-        let flush_stage = |command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| -> AudioResult<()> {
-            if !chunked_command_buffers {
-                return Ok(());
-            }
-            let next_command_buffer = context
-                .create_command_buffer()
-                .map_err(|err| {
-                    AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}"))
-                })?
-                .start_encoding();
-            std::mem::replace(command_buffer, next_command_buffer).end_encoding().submit();
-            Ok(())
-        };
         let _ = codebooks;
-        flush_stage(&mut command_buffer)?;
         x = self.apply_post_module_enqueued(
             resources,
             &context,
@@ -135,7 +132,6 @@ impl StructuredAudioCodecGraph {
             batch_size,
             frames,
         )?;
-        flush_stage(&mut command_buffer)?;
 
         let vocoder_graph = self.vocoder_graph(resources)?;
         let kernels = resources.kernels(self.vocoder_data_type)?;
@@ -147,6 +143,8 @@ impl StructuredAudioCodecGraph {
             .map_err(|err| AudioError::Runtime(format!("structured_audio_lengths_a: {err}")))?;
         let mut next_lengths_array =
             context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_b");
+
+        let data_type = x.data_type();
 
         for (block_index, (trans_conv, convnext)) in vocoder_graph.upsample_blocks.iter().enumerate() {
             if trans_conv.cin != current_channels {
@@ -163,9 +161,9 @@ impl StructuredAudioCodecGraph {
                 .map_err(|err| AudioError::Runtime(format!("structured_audio_upsample_lengths: {err}")))?;
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
-                &context,
                 &mut command_buffer,
                 &x,
+                ws.next_scratch(&context, &[batch_size, trans_conv.cout, next_frames], data_type, "up_tconv"),
                 trans_conv,
                 &next_lengths_i32,
                 batch_size,
@@ -187,7 +185,7 @@ impl StructuredAudioCodecGraph {
             })?;
             x = self
                 .apply_convnext_ncs_enqueued(
-                    &context,
+                    resources,
                     &mut command_buffer,
                     &x,
                     convnext,
@@ -201,7 +199,6 @@ impl StructuredAudioCodecGraph {
                 .map_err(|err| {
                     AudioError::Runtime(format!("structured audio upsample block {block_index} convnext failed: {err}"))
                 })?;
-            flush_stage(&mut command_buffer)?;
 
             x_layout = SequenceLayout::Ncs;
             current_frames = next_frames;
@@ -217,9 +214,9 @@ impl StructuredAudioCodecGraph {
             )));
         }
         x = causal_conv1d_grouped_enqueue(
-            &context,
             &mut command_buffer,
             &x,
+            ws.next_scratch(&context, &[batch_size, vocoder_graph.first_conv.cout, current_frames], data_type, "dec_first_conv"),
             &vocoder_graph.first_conv,
             x_layout,
             &lengths_i32,
@@ -229,8 +226,6 @@ impl StructuredAudioCodecGraph {
             &kernels,
         )?;
         current_channels = vocoder_graph.first_conv.cout;
-        let _ = conv1d_estimated_macs(batch_size, current_frames, &vocoder_graph.first_conv)?;
-        flush_stage(&mut command_buffer)?;
 
         for (_block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
             if block.trans_conv.cin != current_channels {
@@ -240,9 +235,9 @@ impl StructuredAudioCodecGraph {
                 )));
             }
             x = snake1d_enqueue(
-                &context,
                 &mut command_buffer,
                 &x,
+                ws.next_scratch(&context, &[batch_size, current_channels, current_frames], data_type, "dec_snake"),
                 &block.snake_alpha,
                 batch_size,
                 current_channels,
@@ -258,9 +253,9 @@ impl StructuredAudioCodecGraph {
                 .map_err(|err| AudioError::Runtime(format!("structured_audio_decoder_block_lengths: {err}")))?;
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
-                &context,
                 &mut command_buffer,
                 &x,
+                ws.next_scratch(&context, &[batch_size, block.trans_conv.cout, next_frames], data_type, "dec_tconv"),
                 &block.trans_conv,
                 &next_lengths_i32,
                 batch_size,
@@ -270,32 +265,14 @@ impl StructuredAudioCodecGraph {
                 &next_lengths_array,
                 &kernels,
             )?;
-            let trans_conv_estimated_macs =
-                convtranspose_estimated_macs(batch_size, current_frames, &block.trans_conv)?;
 
             current_frames = next_frames;
             current_channels = block.trans_conv.cout;
             std::mem::swap(&mut lengths_i32, &mut next_lengths_i32);
             std::mem::swap(&mut lengths_array, &mut next_lengths_array);
-            let active_elements = batch_size
-                .checked_mul(current_channels)
-                .and_then(|value| value.checked_mul(current_frames))
-                .ok_or(AudioError::Runtime("structured audio decoder element count overflow".to_string()))?;
-            let res1_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit1)?;
-            let res2_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit2)?;
-            let res3_estimated_macs = residual_unit_estimated_macs(batch_size, current_frames, &block.res_unit3)?;
-            let block_total_estimated_macs = checked_add_usize(
-                checked_add_usize(
-                    checked_add_usize(trans_conv_estimated_macs, res1_estimated_macs, "decoder block estimated MACs")?,
-                    res2_estimated_macs,
-                    "decoder block estimated MACs",
-                )?,
-                res3_estimated_macs,
-                "decoder block estimated MACs",
-            )?;
 
             x = self.run_residual_unit_enqueued(
-                &context,
+                resources,
                 &mut command_buffer,
                 &x,
                 &block.res_unit1,
@@ -306,16 +283,8 @@ impl StructuredAudioCodecGraph {
                 current_frames,
                 &kernels,
             )?;
-            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
-                let _ = checked_add_usize(
-                    trans_conv_estimated_macs,
-                    res1_estimated_macs,
-                    "decoder block res1 estimated MACs",
-                )?;
-                flush_stage(&mut command_buffer)?;
-            }
             x = self.run_residual_unit_enqueued(
-                &context,
+                resources,
                 &mut command_buffer,
                 &x,
                 &block.res_unit2,
@@ -326,11 +295,8 @@ impl StructuredAudioCodecGraph {
                 current_frames,
                 &kernels,
             )?;
-            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
-                flush_stage(&mut command_buffer)?;
-            }
             x = self.run_residual_unit_enqueued(
-                &context,
+                resources,
                 &mut command_buffer,
                 &x,
                 &block.res_unit3,
@@ -341,15 +307,12 @@ impl StructuredAudioCodecGraph {
                 current_frames,
                 &kernels,
             )?;
-            let _ = res3_estimated_macs;
-            let _ = block_total_estimated_macs;
-            flush_stage(&mut command_buffer)?;
         }
 
         x = snake1d_enqueue(
-            &context,
             &mut command_buffer,
             &x,
+            ws.next_scratch(&context, &[batch_size, current_channels, current_frames], data_type, "final_snake"),
             &vocoder_graph.final_snake_alpha,
             batch_size,
             current_channels,
@@ -357,9 +320,9 @@ impl StructuredAudioCodecGraph {
             &kernels,
         )?;
         x = causal_conv1d_grouped_enqueue(
-            &context,
             &mut command_buffer,
             &x,
+            ws.next_scratch(&context, &[batch_size, vocoder_graph.final_conv.cout, current_frames], data_type, "final_conv"),
             &vocoder_graph.final_conv,
             SequenceLayout::Ncs,
             &lengths_i32,
@@ -368,7 +331,14 @@ impl StructuredAudioCodecGraph {
             current_frames,
             &kernels,
         )?;
-        x = tanh_enqueue(&context, &mut command_buffer, &x, &kernels)?;
+        // The final output is returned and held by the caller, so allocate a
+        // fresh array instead of using a scratch buffer.
+        x = tanh_enqueue(
+            &mut command_buffer,
+            &x,
+            context.create_array(x.shape(), data_type, "structured_audio_tanh_output"),
+            &kernels,
+        )?;
 
         let final_command_buffer = Some(command_buffer.end_encoding().submit());
         let out_lengths = lengths_i32
@@ -391,13 +361,12 @@ impl StructuredAudioCodecGraph {
     pub(in crate::audio::nanocodec::runtime) fn decode_padded<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        runtime_options: NanoCodecFsqRuntimeOptions,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<DecodedPaddedAudio> {
-        self.submit_decode_padded(resources, runtime_options, tokens, lengths, batch_size, codebooks, frames)?.resolve()
+        self.submit_decode_padded(resources, tokens, lengths, batch_size, codebooks, frames)?.resolve()
     }
 }

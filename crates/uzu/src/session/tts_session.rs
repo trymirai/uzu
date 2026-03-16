@@ -27,7 +27,7 @@ use crate::{
     array::{ArrayCell, ArrayContextExt},
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
-        nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode},
+        nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
     },
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
@@ -50,8 +50,8 @@ use crate::{
     parameters::{ParameterLoader, read_safetensors_metadata},
     session::{
         config::{
-            TextDecoderFollowupStrategy, TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig,
-            TtsSessionOptions, TtsVocoderStreamingMode,
+            TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig,
+            TtsSessionOptions,
         },
         parameter::{ConfigResolvableValue, SamplingMethod, SamplingProcessingOrder},
         types::{Error, Input},
@@ -152,7 +152,6 @@ trait AudioDecoderBackend {
         &self,
         batch_size: usize,
         codebooks: usize,
-        mode: AudioDecodeStreamingMode,
         max_workspace_frames: usize,
     ) -> Result<Box<dyn AudioDecoderStreamBackend>, Error>;
 }

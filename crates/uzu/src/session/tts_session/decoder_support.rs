@@ -182,13 +182,6 @@ pub(super) fn next_startup_target_frames(
     current_target_frames.max(1).saturating_mul(2).min(startup_cap_frames)
 }
 
-pub(super) fn audio_decode_streaming_mode(config: &TtsRunConfig) -> AudioDecodeStreamingMode {
-    match config.vocoder_streaming_mode {
-        TtsVocoderStreamingMode::IncrementalStateful => AudioDecodeStreamingMode::IncrementalStateful,
-        TtsVocoderStreamingMode::PrefixFallback => AudioDecodeStreamingMode::PrefixFallback,
-    }
-}
-
 pub(super) struct StreamingTokenAccumulator {
     by_codebook: Vec<Vec<u32>>,
 }

@@ -5,12 +5,6 @@ pub enum TtsChunkPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TtsVocoderStreamingMode {
-    IncrementalStateful,
-    PrefixFallback,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsNonStreamingMode {
     FullDecode,
     ChunkedIfNeeded,
@@ -19,7 +13,6 @@ pub enum TtsNonStreamingMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TtsRunConfig {
     pub streaming_enabled: bool,
-    pub vocoder_streaming_mode: TtsVocoderStreamingMode,
     pub target_emit_latency_ms: u32,
     pub initial_chunk_frames: usize,
     pub min_chunk_frames: usize,
@@ -58,13 +51,6 @@ impl TtsRunConfig {
         if self.max_stream_workspace_frames < self.max_chunk_frames {
             return Err("max_stream_workspace_frames must be greater than or equal to max_chunk_frames");
         }
-        if self.vocoder_streaming_mode == TtsVocoderStreamingMode::PrefixFallback
-            && self.max_stream_workspace_frames < self.max_semantic_frames
-        {
-            return Err(
-                "max_stream_workspace_frames must be greater than or equal to max_semantic_frames in PrefixFallback mode",
-            );
-        }
         Ok(())
     }
 
@@ -83,7 +69,6 @@ impl Default for TtsRunConfig {
     fn default() -> Self {
         Self {
             streaming_enabled: true,
-            vocoder_streaming_mode: TtsVocoderStreamingMode::IncrementalStateful,
             target_emit_latency_ms: 80,
             initial_chunk_frames: 1,
             min_chunk_frames: 16,
@@ -125,13 +110,12 @@ impl Default for TtsPerformanceConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{TtsChunkPolicy, TtsNonStreamingMode, TtsPerformanceConfig, TtsRunConfig, TtsVocoderStreamingMode};
+    use super::{TtsChunkPolicy, TtsNonStreamingMode, TtsPerformanceConfig, TtsRunConfig};
 
     #[test]
     fn default_run_config_matches_production_defaults() {
         let config = TtsRunConfig::default();
         assert!(config.streaming_enabled);
-        assert_eq!(config.vocoder_streaming_mode, TtsVocoderStreamingMode::IncrementalStateful);
         assert_eq!(config.target_emit_latency_ms, 80);
         assert_eq!(config.initial_chunk_frames, 1);
         assert_eq!(config.min_chunk_frames, 16);
@@ -196,30 +180,6 @@ mod tests {
             ..TtsRunConfig::default()
         };
         assert!(invalid.validate_stream_decode().is_err());
-    }
-
-    #[test]
-    fn run_config_validation_rejects_prefix_fallback_workspace_smaller_than_semantic_cap() {
-        let invalid = TtsRunConfig {
-            vocoder_streaming_mode: TtsVocoderStreamingMode::PrefixFallback,
-            max_stream_workspace_frames: 256,
-            max_semantic_frames: 512,
-            ..TtsRunConfig::default()
-        };
-        assert!(invalid.validate_stream_decode().is_err());
-    }
-
-    #[test]
-    fn full_decode_prefix_fallback_does_not_require_full_stream_workspace() {
-        let config = TtsRunConfig {
-            streaming_enabled: false,
-            non_streaming_mode: TtsNonStreamingMode::FullDecode,
-            vocoder_streaming_mode: TtsVocoderStreamingMode::PrefixFallback,
-            max_stream_workspace_frames: 256,
-            max_semantic_frames: 512,
-            ..TtsRunConfig::default()
-        };
-        assert!(config.validate().is_ok());
     }
 
     #[test]

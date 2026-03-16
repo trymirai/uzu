@@ -3,7 +3,6 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioDecodeStreamingMode {
     IncrementalStateful,
-    PrefixFallback,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -19,7 +18,6 @@ pub struct AudioDecodeStreamState {
     pub(super) batch_size: usize,
     pub(super) codebooks: usize,
     max_workspace_frames: usize,
-    pub(super) mode: AudioDecodeStreamingMode,
     stored_frame_start: usize,
     total_frames_generated: usize,
     row_tokens: Vec<Vec<u32>>,
@@ -36,7 +34,6 @@ impl AudioDecodeStreamState {
         batch_size: usize,
         codebooks: usize,
         max_workspace_frames: usize,
-        mode: AudioDecodeStreamingMode,
     ) -> AudioResult<Self> {
         if batch_size == 0 {
             return Err(AudioError::Runtime("stream state batch_size must be > 0".to_string()));
@@ -60,7 +57,6 @@ impl AudioDecodeStreamState {
             batch_size,
             codebooks,
             max_workspace_frames,
-            mode,
             stored_frame_start: 0,
             total_frames_generated: 0,
             row_tokens,
@@ -126,12 +122,6 @@ impl AudioDecodeStreamState {
         let tokens = delta_ref.tokens();
         let delta_lengths = delta_ref.lengths();
         let target_frames = self.total_frames().saturating_add(delta_frames);
-        if self.mode == AudioDecodeStreamingMode::PrefixFallback && target_frames > self.max_workspace_frames {
-            return Err(AudioError::Runtime(format!(
-                "stream workspace exceeded: target_frames={target_frames}, max_workspace_frames={}",
-                self.max_workspace_frames
-            )));
-        }
 
         for batch in 0..self.batch_size {
             for codebook in 0..self.codebooks {

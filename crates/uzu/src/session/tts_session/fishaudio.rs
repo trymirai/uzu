@@ -528,22 +528,13 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                 self.current_codes_scratch[codebook_index] = clamped;
                 Ok(())
             };
-            match self.runtime_config.followup_strategy {
-                TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
-                    fast_token,
-                    followup_count,
-                    Some(fast_vocab_limit),
-                    sampling,
-                    &mut record_followup,
-                )?,
-                TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
-                    fast_token,
-                    followup_count,
-                    Some(fast_vocab_limit),
-                    sampling,
-                    &mut record_followup,
-                )?,
-            }
+            fast_runner.decode_followup_tokens_batched(
+                fast_token,
+                followup_count,
+                Some(fast_vocab_limit),
+                sampling,
+                &mut record_followup,
+            )?;
         }
         Ok(())
     }

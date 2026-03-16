@@ -1,47 +1,5 @@
 use super::*;
 
-pub(super) fn checked_add_usize(
-    a: usize,
-    b: usize,
-    label: &str,
-) -> AudioResult<usize> {
-    a.checked_add(b).ok_or_else(|| AudioError::Runtime(format!("{label} overflow")))
-}
-
-pub(super) fn conv1d_estimated_macs<B: Backend>(
-    batch_size: usize,
-    seq_len: usize,
-    layer: &StructuredAudioConv1d<B>,
-) -> AudioResult<usize> {
-    let cin_per_group = layer
-        .cin
-        .checked_div(layer.groups)
-        .ok_or_else(|| AudioError::Runtime("invalid grouped conv channel count".to_string()))?;
-    checked_product(&[batch_size, seq_len, layer.cout, cin_per_group, layer.kernel_size])
-}
-
-pub(super) fn convtranspose_estimated_macs<B: Backend>(
-    batch_size: usize,
-    seq_len_in: usize,
-    layer: &StructuredAudioConvTranspose1d<B>,
-) -> AudioResult<usize> {
-    let cout_per_group = layer
-        .cout
-        .checked_div(layer.groups)
-        .ok_or_else(|| AudioError::Runtime("invalid grouped transpose-conv channel count".to_string()))?;
-    checked_product(&[batch_size, seq_len_in, layer.cin, cout_per_group, layer.kernel_size])
-}
-
-pub(super) fn residual_unit_estimated_macs<B: Backend>(
-    batch_size: usize,
-    seq_len: usize,
-    unit: &StructuredAudioResidualUnit<B>,
-) -> AudioResult<usize> {
-    let conv1 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv1)?;
-    let conv2 = conv1d_estimated_macs(batch_size, seq_len, &unit.conv2)?;
-    checked_add_usize(conv1, conv2, "residual-unit estimated MACs")
-}
-
 pub(super) fn array_batch_view<B: Backend>(
     array: &Array<B>,
     batch_index: usize,

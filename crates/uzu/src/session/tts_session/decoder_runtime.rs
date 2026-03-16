@@ -306,16 +306,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         )
     }
 
-    pub(super) fn decode_next_token(
-        &mut self,
-        token_ids: &[u64],
-        embedding_injection: EmbeddingInjection,
-        vocab_limit: Option<usize>,
-        sampling: &mut TextSamplingState,
-    ) -> Result<u64, Error> {
-        self.decode_next_step(token_ids, embedding_injection, vocab_limit, sampling, None, false, None)
-    }
-
     pub(super) fn decode_followup_tokens_batched(
         &mut self,
         first_token: u64,
@@ -485,22 +475,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         Ok(())
     }
 
-    pub(super) fn decode_followup_tokens_sequential(
-        &mut self,
-        mut previous_token: u64,
-        followup_count: usize,
-        vocab_limit: Option<usize>,
-        sampling: &mut TextSamplingState,
-        mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        for pass in 0..followup_count {
-            let sampled = self.decode_next_token(&[previous_token], EmbeddingInjection::None, vocab_limit, sampling)?;
-            on_token(pass, sampled)?;
-            previous_token = sampled;
-        }
-        Ok(())
-    }
-
     pub(super) fn prepare_single_token_vocab_mask(
         &mut self,
         vocab_limit: usize,
@@ -654,14 +628,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         TokenBitmaskSource::Owned(mask)
                     }
                 } else {
-                    let total_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
-                    let mut mask = vec![0_u32; total_words];
-                    for token_index in 0..limit {
-                        let word = token_index / 32;
-                        let bit = token_index % 32;
-                        mask[sampling_start * row_words + word] |= 1_u32 << bit;
-                    }
-                    TokenBitmaskSource::Owned(mask)
+                    // token_count > 2 with vocab_limit requires a precomputed bitmask;
+                    // silently dropping the limit would produce incorrect sampling.
+                    return Err(Error::GenerateFailed);
                 }
             } else {
                 TokenBitmaskSource::None

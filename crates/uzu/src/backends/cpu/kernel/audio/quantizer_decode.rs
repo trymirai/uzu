@@ -7,7 +7,7 @@ use crate::ArrayElement;
 #[kernel(AudioQuantizerDecode)]
 #[variants(T, f32, f16, bf16)]
 pub fn audio_quantizer_decode<T: ArrayElement + Float>(
-    #[allow(unused)] tokens: *const i32,
+    #[allow(unused)] tokens: *const u32,
     #[allow(unused)] lengths: *const i32,
     #[allow(unused)] semantic_codebook: *const T,
     #[allow(unused)] semantic_out_proj: *const T,

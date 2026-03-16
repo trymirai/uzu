@@ -141,21 +141,12 @@ impl StructuredAudioCodecGraph {
             )));
         }
 
-        let tokens_i32 = tokens
-            .iter()
-            .copied()
-            .map(|token| {
-                i32::try_from(token).map_err(|_| AudioError::Runtime(format!("token id out of i32 range: {token}")))
-            })
-            .collect::<AudioResult<Vec<_>>>()?;
         let lengths_i32 = convert_lengths_to_i32(lengths, frames)?;
 
-        let mut tokens_array =
-            context.create_array(&[batch_size, codebooks, frames], DataType::I32, "structured_audio_quantizer_tokens");
-        tokens_array.as_slice_mut::<i32>().copy_from_slice(&tokens_i32);
-        let mut lengths_array =
-            context.create_array(&[batch_size], DataType::I32, "structured_audio_quantizer_lengths");
-        lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
+        let mut tokens_array = resources.token_staging(batch_size * codebooks * frames);
+        tokens_array.as_slice_mut::<u32>()[..tokens.len()].copy_from_slice(tokens);
+        let mut lengths_array = resources.length_staging(batch_size);
+        lengths_array.as_slice_mut::<i32>()[..lengths_i32.len()].copy_from_slice(&lengths_i32);
 
         let output = context.create_array(
             &[batch_size, frames, self.input_dim],

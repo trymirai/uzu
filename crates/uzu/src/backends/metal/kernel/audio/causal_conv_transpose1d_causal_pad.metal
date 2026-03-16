@@ -3,6 +3,8 @@
 
 using namespace metal;
 
+constant uint AUDIO_TIME_TILE = 4;
+
 // Input layout for causal_conv_transpose1d_causal_pad:
 // 0 = NCS ([B, Cin, Tin]), 1 = NSC ([B, Tin, Cin]).
 constant int AUDIO_LAYOUT_NCS = 0;
@@ -31,7 +33,7 @@ void causal_conv_transpose1d_causal_pad(
     const constant int& input_layout,
     const uint3 gid
 ) {
-  const uint t_out = gid.x;
+  const uint t_out = gid.x * AUDIO_TIME_TILE;
   const uint oc = gid.y;
   const uint b = gid.z;
 
@@ -45,10 +47,20 @@ void causal_conv_transpose1d_causal_pad(
   }
 
   const int len_b = lengths ? lengths[b] : seq_len_out;
-  const uint out_idx = (b * (uint)cout + oc) * (uint)seq_len_out + t_out;
-  if ((int)t_out >= len_b) {
-    output[out_idx] = (T)0;
+  const uint out_base = (b * (uint)cout + oc) * (uint)seq_len_out + t_out;
+  int lane_count = seq_len_out - (int)t_out;
+  if (lane_count > (int)AUDIO_TIME_TILE) {
+    lane_count = (int)AUDIO_TIME_TILE;
+  }
+  if (lane_count <= 0) {
     return;
+  }
+  int valid_count = len_b - (int)t_out;
+  if (valid_count > lane_count) {
+    valid_count = lane_count;
+  }
+  if (valid_count < 0) {
+    valid_count = 0;
   }
 
   const int cout_per_group = cout / groups;
@@ -62,83 +74,280 @@ void causal_conv_transpose1d_causal_pad(
       (seq_len_in > 0) ? (((seq_len_in - 1) * stride) + 1) : 0;
   const int left_pad = kernel_size - 1;
   const bool fast_two_tap = (kernel_size == (stride * 2));
-  const int q = (int)t_out / stride;
-  const int r = (int)t_out % stride;
-  const int k_q_minus_one = (stride - 1) - r;
-  const int k_q = (kernel_size - 1) - r;
 
-  float acc = float(bias[oc]);
-  if (input_layout == AUDIO_LAYOUT_NCS) {
-    for (int ic = ic_begin; ic < ic_end; ++ic) {
-      const uint in_base = (b * (uint)cin + (uint)ic) * (uint)seq_len_in;
-      const uint w_base =
-          ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
-          (uint)kernel_size;
-      if (fast_two_tap) {
-        if (q > 0 && q - 1 < seq_len_in) {
-          acc += float(input[in_base + (uint)(q - 1)]) *
-                 float(weight[w_base + (uint)k_q_minus_one]);
-        }
-        if (q >= 0 && q < seq_len_in) {
-          acc += float(input[in_base + (uint)q]) *
-                 float(weight[w_base + (uint)k_q]);
-        }
-      } else {
-        for (int k = 0; k < kernel_size; ++k) {
-          const int expanded_time = (int)t_out + k - left_pad;
-          if (expanded_time < 0 || expanded_time >= seq_len_expanded) {
-            continue;
-          }
-          if ((expanded_time % stride) != 0) {
-            continue;
-          }
+  const float bias_value = float(bias[oc]);
+  float acc0 = bias_value;
+  float acc1 = bias_value;
+  float acc2 = bias_value;
+  float acc3 = bias_value;
 
-          const int src_time = expanded_time / stride;
-          if (src_time < 0 || src_time >= seq_len_in) {
-            continue;
+  // Process each lane that is valid (within sequence length)
+  if (valid_count > 0) {
+    if (input_layout == AUDIO_LAYOUT_NCS) {
+      for (int ic = ic_begin; ic < ic_end; ++ic) {
+        const uint in_base = (b * (uint)cin + (uint)ic) * (uint)seq_len_in;
+        const uint w_base =
+            ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
+            (uint)kernel_size;
+        if (fast_two_tap) {
+          // Lane 0
+          if (valid_count > 0) {
+            const int t0 = (int)t_out;
+            const int q0 = t0 / stride;
+            const int r0 = t0 % stride;
+            const int k_q0_minus_one = (stride - 1) - r0;
+            const int k_q0 = (kernel_size - 1) - r0;
+            if (q0 > 0 && q0 - 1 < seq_len_in) {
+              acc0 += float(input[in_base + (uint)(q0 - 1)]) *
+                     float(weight[w_base + (uint)k_q0_minus_one]);
+            }
+            if (q0 >= 0 && q0 < seq_len_in) {
+              acc0 += float(input[in_base + (uint)q0]) *
+                     float(weight[w_base + (uint)k_q0]);
+            }
           }
-          acc += float(input[in_base + (uint)src_time]) *
-                 float(weight[w_base + (uint)k]);
+          // Lane 1
+          if (valid_count > 1) {
+            const int t1 = (int)t_out + 1;
+            const int q1 = t1 / stride;
+            const int r1 = t1 % stride;
+            const int k_q1_minus_one = (stride - 1) - r1;
+            const int k_q1 = (kernel_size - 1) - r1;
+            if (q1 > 0 && q1 - 1 < seq_len_in) {
+              acc1 += float(input[in_base + (uint)(q1 - 1)]) *
+                     float(weight[w_base + (uint)k_q1_minus_one]);
+            }
+            if (q1 >= 0 && q1 < seq_len_in) {
+              acc1 += float(input[in_base + (uint)q1]) *
+                     float(weight[w_base + (uint)k_q1]);
+            }
+          }
+          // Lane 2
+          if (valid_count > 2) {
+            const int t2 = (int)t_out + 2;
+            const int q2 = t2 / stride;
+            const int r2 = t2 % stride;
+            const int k_q2_minus_one = (stride - 1) - r2;
+            const int k_q2 = (kernel_size - 1) - r2;
+            if (q2 > 0 && q2 - 1 < seq_len_in) {
+              acc2 += float(input[in_base + (uint)(q2 - 1)]) *
+                     float(weight[w_base + (uint)k_q2_minus_one]);
+            }
+            if (q2 >= 0 && q2 < seq_len_in) {
+              acc2 += float(input[in_base + (uint)q2]) *
+                     float(weight[w_base + (uint)k_q2]);
+            }
+          }
+          // Lane 3
+          if (valid_count > 3) {
+            const int t3 = (int)t_out + 3;
+            const int q3 = t3 / stride;
+            const int r3 = t3 % stride;
+            const int k_q3_minus_one = (stride - 1) - r3;
+            const int k_q3 = (kernel_size - 1) - r3;
+            if (q3 > 0 && q3 - 1 < seq_len_in) {
+              acc3 += float(input[in_base + (uint)(q3 - 1)]) *
+                     float(weight[w_base + (uint)k_q3_minus_one]);
+            }
+            if (q3 >= 0 && q3 < seq_len_in) {
+              acc3 += float(input[in_base + (uint)q3]) *
+                     float(weight[w_base + (uint)k_q3]);
+            }
+          }
+        } else {
+          for (int k = 0; k < kernel_size; ++k) {
+            const float w = float(weight[w_base + (uint)k]);
+            // Lane 0
+            if (valid_count > 0) {
+              const int expanded_time0 = (int)t_out + k - left_pad;
+              if (expanded_time0 >= 0 && expanded_time0 < seq_len_expanded &&
+                  (expanded_time0 % stride) == 0) {
+                const int src_time0 = expanded_time0 / stride;
+                if (src_time0 >= 0 && src_time0 < seq_len_in) {
+                  acc0 += float(input[in_base + (uint)src_time0]) * w;
+                }
+              }
+            }
+            // Lane 1
+            if (valid_count > 1) {
+              const int expanded_time1 = (int)t_out + 1 + k - left_pad;
+              if (expanded_time1 >= 0 && expanded_time1 < seq_len_expanded &&
+                  (expanded_time1 % stride) == 0) {
+                const int src_time1 = expanded_time1 / stride;
+                if (src_time1 >= 0 && src_time1 < seq_len_in) {
+                  acc1 += float(input[in_base + (uint)src_time1]) * w;
+                }
+              }
+            }
+            // Lane 2
+            if (valid_count > 2) {
+              const int expanded_time2 = (int)t_out + 2 + k - left_pad;
+              if (expanded_time2 >= 0 && expanded_time2 < seq_len_expanded &&
+                  (expanded_time2 % stride) == 0) {
+                const int src_time2 = expanded_time2 / stride;
+                if (src_time2 >= 0 && src_time2 < seq_len_in) {
+                  acc2 += float(input[in_base + (uint)src_time2]) * w;
+                }
+              }
+            }
+            // Lane 3
+            if (valid_count > 3) {
+              const int expanded_time3 = (int)t_out + 3 + k - left_pad;
+              if (expanded_time3 >= 0 && expanded_time3 < seq_len_expanded &&
+                  (expanded_time3 % stride) == 0) {
+                const int src_time3 = expanded_time3 / stride;
+                if (src_time3 >= 0 && src_time3 < seq_len_in) {
+                  acc3 += float(input[in_base + (uint)src_time3]) * w;
+                }
+              }
+            }
+          }
         }
       }
-    }
-  } else {
-    for (int ic = ic_begin; ic < ic_end; ++ic) {
-      const uint w_base =
-          ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
-          (uint)kernel_size;
-      if (fast_two_tap) {
-        if (q > 0 && q - 1 < seq_len_in) {
-          const uint in_idx = (b * (uint)seq_len_in + (uint)(q - 1)) * (uint)cin + (uint)ic;
-          acc += float(input[in_idx]) * float(weight[w_base + (uint)k_q_minus_one]);
-        }
-        if (q >= 0 && q < seq_len_in) {
-          const uint in_idx = (b * (uint)seq_len_in + (uint)q) * (uint)cin + (uint)ic;
-          acc += float(input[in_idx]) * float(weight[w_base + (uint)k_q]);
-        }
-      } else {
-        for (int k = 0; k < kernel_size; ++k) {
-          const int expanded_time = (int)t_out + k - left_pad;
-          if (expanded_time < 0 || expanded_time >= seq_len_expanded) {
-            continue;
+    } else {
+      // NSC layout
+      for (int ic = ic_begin; ic < ic_end; ++ic) {
+        const uint w_base =
+            ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
+            (uint)kernel_size;
+        if (fast_two_tap) {
+          // Lane 0
+          if (valid_count > 0) {
+            const int t0 = (int)t_out;
+            const int q0 = t0 / stride;
+            const int r0 = t0 % stride;
+            const int k_q0_minus_one = (stride - 1) - r0;
+            const int k_q0 = (kernel_size - 1) - r0;
+            if (q0 > 0 && q0 - 1 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)(q0 - 1)) * (uint)cin + (uint)ic;
+              acc0 += float(input[in_idx]) * float(weight[w_base + (uint)k_q0_minus_one]);
+            }
+            if (q0 >= 0 && q0 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)q0) * (uint)cin + (uint)ic;
+              acc0 += float(input[in_idx]) * float(weight[w_base + (uint)k_q0]);
+            }
           }
-          if ((expanded_time % stride) != 0) {
-            continue;
+          // Lane 1
+          if (valid_count > 1) {
+            const int t1 = (int)t_out + 1;
+            const int q1 = t1 / stride;
+            const int r1 = t1 % stride;
+            const int k_q1_minus_one = (stride - 1) - r1;
+            const int k_q1 = (kernel_size - 1) - r1;
+            if (q1 > 0 && q1 - 1 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)(q1 - 1)) * (uint)cin + (uint)ic;
+              acc1 += float(input[in_idx]) * float(weight[w_base + (uint)k_q1_minus_one]);
+            }
+            if (q1 >= 0 && q1 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)q1) * (uint)cin + (uint)ic;
+              acc1 += float(input[in_idx]) * float(weight[w_base + (uint)k_q1]);
+            }
           }
-
-          const int src_time = expanded_time / stride;
-          if (src_time < 0 || src_time >= seq_len_in) {
-            continue;
+          // Lane 2
+          if (valid_count > 2) {
+            const int t2 = (int)t_out + 2;
+            const int q2 = t2 / stride;
+            const int r2 = t2 % stride;
+            const int k_q2_minus_one = (stride - 1) - r2;
+            const int k_q2 = (kernel_size - 1) - r2;
+            if (q2 > 0 && q2 - 1 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)(q2 - 1)) * (uint)cin + (uint)ic;
+              acc2 += float(input[in_idx]) * float(weight[w_base + (uint)k_q2_minus_one]);
+            }
+            if (q2 >= 0 && q2 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)q2) * (uint)cin + (uint)ic;
+              acc2 += float(input[in_idx]) * float(weight[w_base + (uint)k_q2]);
+            }
           }
-          const uint in_idx =
-              (b * (uint)seq_len_in + (uint)src_time) * (uint)cin + (uint)ic;
-          acc += float(input[in_idx]) * float(weight[w_base + (uint)k]);
+          // Lane 3
+          if (valid_count > 3) {
+            const int t3 = (int)t_out + 3;
+            const int q3 = t3 / stride;
+            const int r3 = t3 % stride;
+            const int k_q3_minus_one = (stride - 1) - r3;
+            const int k_q3 = (kernel_size - 1) - r3;
+            if (q3 > 0 && q3 - 1 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)(q3 - 1)) * (uint)cin + (uint)ic;
+              acc3 += float(input[in_idx]) * float(weight[w_base + (uint)k_q3_minus_one]);
+            }
+            if (q3 >= 0 && q3 < seq_len_in) {
+              const uint in_idx = (b * (uint)seq_len_in + (uint)q3) * (uint)cin + (uint)ic;
+              acc3 += float(input[in_idx]) * float(weight[w_base + (uint)k_q3]);
+            }
+          }
+        } else {
+          for (int k = 0; k < kernel_size; ++k) {
+            const float w = float(weight[w_base + (uint)k]);
+            // Lane 0
+            if (valid_count > 0) {
+              const int expanded_time0 = (int)t_out + k - left_pad;
+              if (expanded_time0 >= 0 && expanded_time0 < seq_len_expanded &&
+                  (expanded_time0 % stride) == 0) {
+                const int src_time0 = expanded_time0 / stride;
+                if (src_time0 >= 0 && src_time0 < seq_len_in) {
+                  const uint in_idx =
+                      (b * (uint)seq_len_in + (uint)src_time0) * (uint)cin + (uint)ic;
+                  acc0 += float(input[in_idx]) * w;
+                }
+              }
+            }
+            // Lane 1
+            if (valid_count > 1) {
+              const int expanded_time1 = (int)t_out + 1 + k - left_pad;
+              if (expanded_time1 >= 0 && expanded_time1 < seq_len_expanded &&
+                  (expanded_time1 % stride) == 0) {
+                const int src_time1 = expanded_time1 / stride;
+                if (src_time1 >= 0 && src_time1 < seq_len_in) {
+                  const uint in_idx =
+                      (b * (uint)seq_len_in + (uint)src_time1) * (uint)cin + (uint)ic;
+                  acc1 += float(input[in_idx]) * w;
+                }
+              }
+            }
+            // Lane 2
+            if (valid_count > 2) {
+              const int expanded_time2 = (int)t_out + 2 + k - left_pad;
+              if (expanded_time2 >= 0 && expanded_time2 < seq_len_expanded &&
+                  (expanded_time2 % stride) == 0) {
+                const int src_time2 = expanded_time2 / stride;
+                if (src_time2 >= 0 && src_time2 < seq_len_in) {
+                  const uint in_idx =
+                      (b * (uint)seq_len_in + (uint)src_time2) * (uint)cin + (uint)ic;
+                  acc2 += float(input[in_idx]) * w;
+                }
+              }
+            }
+            // Lane 3
+            if (valid_count > 3) {
+              const int expanded_time3 = (int)t_out + 3 + k - left_pad;
+              if (expanded_time3 >= 0 && expanded_time3 < seq_len_expanded &&
+                  (expanded_time3 % stride) == 0) {
+                const int src_time3 = expanded_time3 / stride;
+                if (src_time3 >= 0 && src_time3 < seq_len_in) {
+                  const uint in_idx =
+                      (b * (uint)seq_len_in + (uint)src_time3) * (uint)cin + (uint)ic;
+                  acc3 += float(input[in_idx]) * w;
+                }
+              }
+            }
+          }
         }
       }
     }
   }
 
-  output[out_idx] = (T)acc;
+  if (lane_count > 0) {
+    output[out_base] = valid_count > 0 ? (T)acc0 : (T)0;
+  }
+  if (lane_count > 1) {
+    output[out_base + 1] = valid_count > 1 ? (T)acc1 : (T)0;
+  }
+  if (lane_count > 2) {
+    output[out_base + 2] = valid_count > 2 ? (T)acc2 : (T)0;
+  }
+  if (lane_count > 3) {
+    output[out_base + 3] = valid_count > 3 ? (T)acc3 : (T)0;
+  }
 }
 
 template <typename T>
@@ -158,7 +367,7 @@ PUBLIC KERNEL(AudioCausalConvTranspose1dCausalPad)(
     const constant int& groups,
     const constant int& input_layout,
     const constant int& batch_size,
-    uint t_out AXIS(seq_len_out, 32),
+    uint t_out AXIS((seq_len_out + 3) / 4, 32),
     uint oc AXIS(cout, 1),
     uint b AXIS(batch_size, 1)
 ) {
