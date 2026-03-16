@@ -8,7 +8,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(Gumbel) (
+PUBLIC KERNEL(Gumbel) (
     device const T* logits OPTIONAL(!in_place),
     device const uint64_t* batch_seeds,
     device T* processed_logits,

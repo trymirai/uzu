@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(ShortConvPack)(
+PUBLIC KERNEL(ShortConvPack)(
     device const T* state_in,
     device const T* in_proj,
     device T* padded,
@@ -34,7 +34,7 @@ KERNEL(ShortConvPack)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(ShortConvPrefill)(
+PUBLIC KERNEL(ShortConvPrefill)(
     device const T* padded,
     device const T* in_proj,
     device const T* w,
@@ -95,7 +95,7 @@ KERNEL(ShortConvPrefill)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(ShortConvDecode)(
+PUBLIC KERNEL(ShortConvDecode)(
     device const T* in_proj,
     device const T* w,
     device const T* b OPTIONAL(has_bias),
@@ -154,7 +154,7 @@ KERNEL(ShortConvDecode)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(ShortConvTrie)(
+PUBLIC KERNEL(ShortConvTrie)(
     device const T* in_proj,
     device const T* w,
     device const T* b OPTIONAL(has_bias),

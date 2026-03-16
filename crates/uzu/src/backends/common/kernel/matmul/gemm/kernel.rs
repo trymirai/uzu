@@ -75,8 +75,6 @@ impl<B: Backend> GemmKernel<B> {
             .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.x))?;
         let group_count_y = u32::try_from(dispatch_descriptor.threadgroups.y)
             .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.y))?;
-        let group_count_z = u32::try_from(dispatch_descriptor.threadgroups.z)
-            .map_err(|_| MatmulError::<B>::ThreadgroupOverflow(dispatch_descriptor.threadgroups.z))?;
 
         let pipeline = self.get_or_create_kernel(context, config)?;
         pipeline.encode(
@@ -86,7 +84,6 @@ impl<B: Backend> GemmKernel<B> {
             std::slice::from_ref(&dispatch_descriptor.params),
             group_count_x,
             group_count_y,
-            group_count_z,
             command_buffer,
         );
 

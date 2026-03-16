@@ -9,7 +9,7 @@ enum QuantizationMode : uint {
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(QuantizedEmbeddingLookup) (
+PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     const device uint64_t* token_ids,   // [batch_size]
     const device uint8_t* weights,      // [vocab_size, model_dim/packing_divisor] packed
     const device T* scales,             // [vocab_size, num_groups]

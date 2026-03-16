@@ -12,7 +12,7 @@ void swap(device T* buffer, const uint sourceIdx, const uint destIdx) {
 
 template <typename T>
 VARIANTS(T, float, bfloat, half)
-KERNEL(KVCacheUpdate) (
+PUBLIC KERNEL(KVCacheUpdate) (
     device T* in_place_keys,
     device T* in_place_values,
     const constant uzu::kv_cache_update::Swap* swaps,

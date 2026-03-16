@@ -154,7 +154,7 @@ static ArgmaxPair threadgroup_raking_argmax(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(ArgmaxSingle)(
+PUBLIC KERNEL(ArgmaxSingle)(
   const device T* logits_data,
   device uint* final_tokens,
   constant uint& batch_size,
@@ -196,7 +196,7 @@ KERNEL(ArgmaxSingle)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(ArgmaxMain)(
+PUBLIC KERNEL(ArgmaxMain)(
     const device T* logits_data,
     device ArgmaxPair* partial_results,
     constant uint& batch_size,
@@ -240,7 +240,7 @@ KERNEL(ArgmaxMain)(
   }
 }
 
-KERNEL(ArgmaxFinal)(
+PUBLIC KERNEL(ArgmaxFinal)(
     const device ArgmaxPair* partial_results,
     device uint* final_tokens,
     constant uint& batch_size,

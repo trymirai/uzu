@@ -84,7 +84,7 @@ impl MetalCommandBufferEncoding {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Compute(_)) {
             self.ensure_none();
             self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(
-                self.command_buffer.new_compute_command_encoder().expect("Failed to create compute command encoder"),
+                self.command_buffer.compute_command_encoder().expect("Failed to create compute command encoder"),
             );
         }
 
@@ -98,7 +98,7 @@ impl MetalCommandBufferEncoding {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Blit(_)) {
             self.ensure_none();
             self.encoding_state = MetalCommandBufferEncodingEncodingState::Blit(
-                self.command_buffer.new_blit_command_encoder().expect("Failed to create blit command encoder"),
+                self.command_buffer.blit_command_encoder().expect("Failed to create blit command encoder"),
             );
         }
 

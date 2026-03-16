@@ -6,7 +6,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeFinalize)(
+PUBLIC KERNEL(MoeFinalize)(
     device const int* tok2row, // [T*K], -1 if dropped
     device const T* probs,     // [T*K]
     device const T* y_partial, // [sum_k, d_model]

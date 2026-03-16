@@ -10,7 +10,7 @@ using namespace metal;
 // Grid: (h_blocks, rows, 1) where h_blocks = ceil(d_ff/4)
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeExpertsDecodePassA)(
+PUBLIC KERNEL(MoeExpertsDecodePassA)(
     device const T* x_perm,             // [total_rows, d_model]
     device const uint* expert_offsets,  // [E + 1]
     device const T* w13_all,            // [E, 2*d_ff, d_model]
@@ -131,7 +131,7 @@ KERNEL(MoeExpertsDecodePassA)(
 template <typename T, typename AccumT>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(AccumT, float)
-KERNEL(MoeExpertsDecodeDownFused2D)(
+PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
     device const float* hidden,         // [total_rows, d_ff] - f32 from Pass A
     device const uint* row_expert_map,  // [total_rows] - direct row->expert lookup
     device const T* w2_all,             // [E, d_model, d_ff] - layout

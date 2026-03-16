@@ -118,7 +118,7 @@ VARIANTS(IN, float, half, bfloat)
 VARIANTS(SC, float, half, bfloat)
 VARIANTS(OUT, float, half, bfloat)
 VARIANTS(ACC, float)
-KERNEL(LayerNorm) (
+PUBLIC KERNEL(LayerNorm) (
     const device IN* input OPTIONAL(!in_place),
     const device SC* scales,
     device OUT* output,

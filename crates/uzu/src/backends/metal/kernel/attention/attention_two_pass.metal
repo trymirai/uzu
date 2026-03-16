@@ -10,7 +10,7 @@
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256)
-KERNEL(AttentionTwoPass1)(
+PUBLIC KERNEL(AttentionTwoPass1)(
     const device T* queries,
     const device T* keys,
     const device T* values,
@@ -192,7 +192,7 @@ KERNEL(AttentionTwoPass1)(
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256)
-KERNEL(AttentionTwoPass2)(
+PUBLIC KERNEL(AttentionTwoPass2)(
     const device float* partials,
     const device float* sums,
     const device float* maxs,

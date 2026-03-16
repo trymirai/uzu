@@ -17,7 +17,5 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub lda: i32,
     pub ldb: i32,
     pub ldd: i32,
-    /// Number of batched matrix multiplications (z-dimension)
-    pub batch_count: i32,
     pub transpose_b: bool,
 }

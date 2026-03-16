@@ -8,7 +8,7 @@
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256)
-KERNEL(AttentionSinglePass)(
+PUBLIC KERNEL(AttentionSinglePass)(
     const device T* queries,
     const device T* keys,
     const device T* values,

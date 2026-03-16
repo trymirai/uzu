@@ -486,6 +486,7 @@ static T threadgroup_cooperative_reduce_min(
 
 #define VARIANTS(TYPENAME, ...)                                                \
   DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
+#define PUBLIC DSL_META("dsl.public")
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
 
 #define SPECIALIZE DSL_META("dsl.specialize")

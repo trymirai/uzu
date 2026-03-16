@@ -323,6 +323,7 @@ impl MetalTemplateParameter {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetalKernelInfo {
+    pub public: bool,
     pub name: Box<str>,
     pub arguments: Box<[MetalArgument]>,
     pub variants: Option<Box<[MetalTemplateParameter]>>,
@@ -357,10 +358,14 @@ impl MetalKernelInfo {
         self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Simd)))
     }
 
-    pub fn to_kernel(&self) -> Kernel {
+    pub fn to_kernel(&self) -> Option<Kernel> {
+        if !self.public {
+            return None;
+        }
+
         let mut indirect_flag = false;
 
-        Kernel {
+        Some(Kernel {
             name: self.name.clone(),
             parameters: self
                 .variants
@@ -403,7 +408,7 @@ impl MetalKernelInfo {
                     _ => None,
                 })
                 .collect(),
-        }
+        })
     }
 }
 
@@ -487,6 +492,8 @@ impl MetalKernelInfo {
             return Ok(None);
         }
 
+        let public = annotations.iter().any(|(k, _)| k.as_ref() == "dsl.public");
+
         let variants: Box<[_]> = annotations
             .iter()
             .filter(|(k, _)| k.as_ref() == "dsl.variants")
@@ -542,6 +549,7 @@ impl MetalKernelInfo {
             .collect::<anyhow::Result<Box<[_]>>>()?;
 
         Ok(Some(MetalKernelInfo {
+            public,
             name,
             arguments,
             variants,

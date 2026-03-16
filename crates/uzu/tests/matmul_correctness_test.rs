@@ -47,7 +47,7 @@ fn run_metal_matmul(
     let mut kernel = MatmulKernel::<Metal>::new(DataType::BF16).expect("kernel");
 
     let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
-    let mut arguments = MatmulArguments {
+    let arguments = MatmulArguments {
         a: &a_buf,
         a_offset: 0,
         b: &b_buf,
@@ -59,10 +59,8 @@ fn run_metal_matmul(
         lda: k as i32,
         ldb: ldb as i32,
         ldd: n as i32,
-        batch_count: 1,
         transpose_b,
     };
-    MatmulKernel::<Metal>::apply_batch_collapse(&mut arguments);
     let descriptor =
         choose_matmul_dispatch_descriptor::<Metal>(ctx, DataType::BF16, &arguments).expect("dispatch descriptor");
     kernel.encode_with_descriptor(ctx, arguments, &descriptor, &mut command_buffer).expect("encode");

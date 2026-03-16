@@ -144,7 +144,7 @@ inline void moe_scatter_buckets_impl(
 
 // 4A: Compute per-block base offsets from partials
 // partials layout: index = (block_id * num_tiles + tile_id) * TILE_E + te
-KERNEL(MoeBlockBasesFromPartials)(
+PUBLIC KERNEL(MoeBlockBasesFromPartials)(
     device const uint* partials,
     device uint* block_bases,
     device uint* block_alloc,
@@ -186,7 +186,7 @@ KERNEL(MoeBlockBasesFromPartials)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeScatterBuckets)(
+PUBLIC KERNEL(MoeScatterBuckets)(
     device const int* topk_ids,
     device const T* topk_probs,
     device const uint* offsets,
@@ -234,7 +234,7 @@ KERNEL(MoeScatterBuckets)(
 // Map variants
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeScatterBucketsMap)(
+PUBLIC KERNEL(MoeScatterBucketsMap)(
     device const int* topk_ids,
     device const T* topk_probs,
     device const uint* offsets,

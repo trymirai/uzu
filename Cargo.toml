@@ -5,7 +5,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.8"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.94"
 license = "MIT"
 authors = ["Mirai Tech <https://trymirai.com>"]
 repository = "https://github.com/trymirai/uzu"
@@ -24,19 +24,20 @@ tokenizers = "0.22"
 mpsgraph = "0.2"
 objc2 = "0.6"
 objc2-foundation = "0.3"
-metal = { package = "mtl-rs", version = "0.1.6" }
+metal = { package = "mtl-rs", version = "0.1" }
 block2 = "0.6"
 bytemuck = "1.23"
+bytesize = "2"
 zerocopy = "0.8.27"
 xxhash-rust = "0.8.15"
 memmap2 = "0.9.8"
 num-traits = "0.2"
 regex = "1.12"
 libc = "0.2"
-bitflags = "2.10"
-minijinja = "2.15"
-minijinja-contrib = { version = "2.15", features = ["pycompat"] }
-clap = { version = "4.5", features = ["derive"] }
+bitflags = "2.11"
+minijinja = "2.17"
+minijinja-contrib = { version = "2.17", features = ["pycompat"] }
+clap = { version = "4.6", features = ["derive"] }
 rand = "0.10"
 rand_distr = "0.6.0"
 sysinfo = "0.38"
@@ -71,8 +72,8 @@ autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
-test-tag = "0.1.6"
-proptest = "1.10.0"
+test-tag = "0.1"
+proptest = "1.10"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
