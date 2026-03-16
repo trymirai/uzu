@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    backends::common::{Backend, Context, context::DeviceType, kernel::matmul::MatmulArguments},
+    backends::common::{Backend, Context, kernel::matmul::MatmulArguments},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -144,53 +144,35 @@ impl GemmSpecialization {
         data_type: DataType,
         arguments: &MatmulArguments<B>,
     ) -> Self {
-        let overall_work_elements =
-            (arguments.batch_count as i64) * (arguments.batch as i64) * (arguments.output_dim as i64);
+        let overall_work_elements = (arguments.batch as i64) * (arguments.output_dim as i64);
         let is_float32 = matches!(data_type, DataType::F32);
         let prefer_half_or_tf32 = !is_float32 || B::Context::tf32_enabled();
 
         let (block_rows, block_cols, block_depth, warps_per_row, warps_per_col, swizzle_log2) =
-            match context.device_type() {
-                DeviceType::Integrated | DeviceType::Phone | DeviceType::Unknown(_) => {
-                    if prefer_half_or_tf32 {
-                        if arguments.transpose_b {
-                            (64, 32, 32, 2, 2, 0)
-                        } else {
-                            (64, 64, 16, 2, 2, 0)
-                        }
+            if context.is_high_performance() && overall_work_elements >= (1_i64 << 20) {
+                if prefer_half_or_tf32 {
+                    if 2 * std::cmp::max(arguments.batch, arguments.output_dim) > arguments.input_dim {
+                        (64, 64, 16, 2, 2, 0)
                     } else if arguments.transpose_b {
-                        (32, 64, 16, 2, 2, 0)
-                    } else {
                         (64, 32, 32, 2, 2, 0)
-                    }
-                },
-                DeviceType::Desktop => {
-                    if overall_work_elements >= (1_i64 << 20) {
-                        if prefer_half_or_tf32 {
-                            if 2 * std::cmp::max(arguments.batch, arguments.output_dim) > arguments.input_dim {
-                                (64, 64, 16, 2, 2, 0)
-                            } else if arguments.transpose_b {
-                                (64, 32, 32, 2, 2, 0)
-                            } else {
-                                (32, 64, 16, 2, 2, 0)
-                            }
-                        } else if arguments.transpose_b {
-                            (32, 64, 16, 2, 2, 0)
-                        } else {
-                            (64, 32, 32, 2, 2, 0)
-                        }
-                    } else if prefer_half_or_tf32 {
-                        if arguments.transpose_b {
-                            (64, 32, 32, 2, 2, 0)
-                        } else {
-                            (64, 64, 16, 2, 2, 0)
-                        }
-                    } else if arguments.transpose_b {
-                        (32, 64, 16, 2, 2, 0)
                     } else {
-                        (64, 32, 32, 2, 2, 0)
+                        (32, 64, 16, 2, 2, 0)
                     }
-                },
+                } else if arguments.transpose_b {
+                    (32, 64, 16, 2, 2, 0)
+                } else {
+                    (64, 32, 32, 2, 2, 0)
+                }
+            } else if prefer_half_or_tf32 {
+                if arguments.transpose_b {
+                    (64, 32, 32, 2, 2, 0)
+                } else {
+                    (64, 64, 16, 2, 2, 0)
+                }
+            } else if arguments.transpose_b {
+                (32, 64, 16, 2, 2, 0)
+            } else {
+                (64, 32, 32, 2, 2, 0)
             };
 
         let m = arguments.batch;

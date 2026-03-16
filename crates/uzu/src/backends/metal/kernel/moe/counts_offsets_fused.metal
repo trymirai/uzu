@@ -8,7 +8,7 @@
 
 // Single-kernel fused: count all experts + scan to offsets
 // This kernel is launched with SINGLE threadgroup
-KERNEL(MoeCountsOffsetsFused)(
+PUBLIC KERNEL(MoeCountsOffsetsFused)(
     device const int* topk_ids,
     device uint* offsets,   // output: exclusive scan [E+1]
     device uint* sum_k_out, // output: total count [1]

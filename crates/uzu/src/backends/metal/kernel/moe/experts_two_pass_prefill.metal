@@ -34,7 +34,7 @@ constant uint PASSA_TG_PAD = 4; // Padding to avoid bank conflicts
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeExpertsPrefillPassA)(
+PUBLIC KERNEL(MoeExpertsPrefillPassA)(
     device const T* x_perm,
     device const uint* expert_offsets,
     device const T* w13_all,
@@ -390,7 +390,7 @@ constant uint PASSB_TG_PAD = 4; // Padding to avoid bank conflicts
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeExpertsPrefillPassB)(
+PUBLIC KERNEL(MoeExpertsPrefillPassB)(
     device const float* hidden,
     device const uint* expert_offsets,
     device const T* w2_all,

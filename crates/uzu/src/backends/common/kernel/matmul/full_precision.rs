@@ -53,7 +53,7 @@ impl<B: Backend<Kernels: MatmulKernels<FullPrecisionMatmulKernel = Self>>> FullP
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
         arguments: FullPrecisionMatmulArguments<Self::Backend>,
     ) {
-        let mut matmul_arguments = MatmulArguments {
+        let matmul_arguments = MatmulArguments {
             a: arguments.a,
             a_offset: arguments.a_offset as u64,
             b: arguments.b,
@@ -65,11 +65,8 @@ impl<B: Backend<Kernels: MatmulKernels<FullPrecisionMatmulKernel = Self>>> FullP
             lda: arguments.input_dim as i32,
             ldb: arguments.input_dim as i32,
             ldd: arguments.output_dim as i32,
-            batch_count: 1,
             transpose_b: true,
         };
-
-        MatmulKernel::<B>::apply_batch_collapse(&mut matmul_arguments);
 
         let descriptor = choose_matmul_dispatch_descriptor(context, self.data_type, &matmul_arguments)
             .expect("Failed to create dispatch descriptor for full precision matmul");

@@ -9,7 +9,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeGatherXPerm2D)(
+PUBLIC KERNEL(MoeGatherXPerm2D)(
     device const T* x,
     device const int* bucketed_ids,
     device T* x_perm,
@@ -70,7 +70,7 @@ KERNEL(MoeGatherXPerm2D)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeGatherXPerm1D)(
+PUBLIC KERNEL(MoeGatherXPerm1D)(
     device const T* x,
     device const int* bucketed_ids,
     device T* x_perm,

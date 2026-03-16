@@ -3,44 +3,17 @@ use std::{env, path::Path, rc::Rc};
 use super::Backend;
 use crate::backends::common::CommandBuffer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceClass {
-    Ultra,
-    Max,
-    Pro,
-    Base,
-    IPhone,
-}
-
-impl DeviceClass {
-    pub fn is_high_end(&self) -> bool {
-        matches!(self, DeviceClass::Ultra | DeviceClass::Max)
-    }
-}
-
-/// Device performance class based on the last character of architecture name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceType {
-    Phone,      // 'p' - iPhone/iPad integrated
-    Integrated, // 'g' - Mac integrated GPU
-    Desktop,    // 'd' - Mac Pro/Max discrete-class GPU
-    Unknown(char),
-}
-
-impl DeviceType {
-    pub fn is_high_performance(&self) -> bool {
-        matches!(self, Self::Desktop)
-    }
-}
-
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
 
     fn new() -> Result<Rc<Self>, <Self::Backend as Backend>::Error>;
 
-    fn device_class(&self) -> DeviceClass;
+    fn recommended_async_batch_size(
+        &self,
+        model_path: &Path,
+    ) -> usize;
 
-    fn device_type(&self) -> DeviceType;
+    fn is_high_performance(&self) -> bool;
 
     fn debug_active(&self) -> bool;
 

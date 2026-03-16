@@ -1,7 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Context, DeviceClass, DeviceType};
+use crate::backends::common::Context;
 
 pub struct CpuContext;
 
@@ -12,8 +12,15 @@ impl Context for CpuContext {
         Ok(Rc::new(CpuContext))
     }
 
-    fn device_class(&self) -> DeviceClass {
-        DeviceClass::Base
+    fn recommended_async_batch_size(
+        &self,
+        _model_path: &Path,
+    ) -> usize {
+        1
+    }
+
+    fn is_high_performance(&self) -> bool {
+        false
     }
 
     fn debug_active(&self) -> bool {
@@ -46,9 +53,5 @@ impl Context for CpuContext {
 
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
-    }
-
-    fn device_type(&self) -> DeviceType {
-        DeviceType::Integrated
     }
 }

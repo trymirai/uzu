@@ -11,7 +11,7 @@
 // ============================================================================
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeExpertsDecodeSinglePassA)(
+PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
     device const T* x,
     device const int* topk_ids,
     device const T* w13_all,
@@ -122,7 +122,7 @@ KERNEL(MoeExpertsDecodeSinglePassA)(
 // ============================================================================
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MoeExpertsDecodeSinglePassB)(
+PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     device const float* hidden, // [K, d_ff]
     device const int* topk_ids, // [K]
     device const T* topk_probs, // [K]

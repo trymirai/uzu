@@ -12,6 +12,6 @@ pub use command_buffer::{
     CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
     CommandBufferPending,
 };
-pub use context::{Context, DeviceClass, DeviceType};
+pub use context::Context;
 pub use event::Event;
 pub use kernel::Kernels;

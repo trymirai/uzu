@@ -27,11 +27,12 @@ sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
 
-# metal feature requires objc2, block2 (for callbacks) and metal
+# for metal feature
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
 block2 = { workspace = true, optional = true }
+bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -41,6 +42,8 @@ rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
+comfy-table.workspace = true
+indicatif.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
@@ -68,12 +71,12 @@ clang-ast = { workspace = true, optional = true }
 default = []
 
 metal = [
+    "dep:bytesize",
+    "dep:clang-ast",
     "dep:block2",
     "dep:clang-ast",
     "dep:metal",
 ]
-metal-nax = []
-
 tracing = []
 audio-runtime = []
 
@@ -84,3 +87,7 @@ path = "tests/kernel/mod.rs"
 [[test]]
 name = "moe"
 path = "tests/moe/mod.rs"
+
+[[test]]
+name = "matmul_perf_test"
+path = "tests/matmul_perf_test/main.rs"

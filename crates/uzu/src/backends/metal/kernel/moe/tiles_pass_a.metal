@@ -4,7 +4,7 @@
 // === Helper kernels for indirect dispatch of Pass A ===
 
 // Count tiles per expert: tiles = (num_rows > 0) ? num_rows * h_blocks : 0
-KERNEL(MoePassATileCounts)(
+PUBLIC KERNEL(MoePassATileCounts)(
     device const uint* expert_offsets, // [e+1]
     device uint* tile_counts,          // [e]
     constant uint& e,
@@ -18,7 +18,7 @@ KERNEL(MoePassATileCounts)(
 }
 
 // Exclusive scan of tile_counts to get tile_offsets and total_tiles
-KERNEL(MoePassATileScan)(
+PUBLIC KERNEL(MoePassATileScan)(
     device const uint* tile_counts, // [e]
     device uint* tile_offsets,      // [e+1]
     device uint* total_tiles,       // [1]
@@ -66,7 +66,7 @@ KERNEL(MoePassATileScan)(
 }
 
 // Build row→expert map: one thread per routed row
-KERNEL(MoePassABuildRowMap)(
+PUBLIC KERNEL(MoePassABuildRowMap)(
     device const uint* expert_offsets, // [e+1]
     device uint* row_expert_map,       // [total_rows]
     constant uint& total_rows,
@@ -90,7 +90,7 @@ KERNEL(MoePassABuildRowMap)(
 }
 
 // Build tile map entries from row→expert map
-KERNEL(MoePassABuildTileMap)(
+PUBLIC KERNEL(MoePassABuildTileMap)(
     device const uint* expert_offsets, // [E+1]
     device const uint* tile_offsets,   // [E+1]
     device const uint* row_expert_map, // [total_rows]
@@ -117,7 +117,7 @@ KERNEL(MoePassABuildTileMap)(
 }
 
 // Write dispatch args for indirect dispatch (reusable from tiled version)
-KERNEL(MoePassAWriteDispatchArgs)(
+PUBLIC KERNEL(MoePassAWriteDispatchArgs)(
     device const uint* total_tiles, // [1]
     device uint*
         dispatch_args, // [3] - MTLDispatchThreadgroupsIndirectArguments

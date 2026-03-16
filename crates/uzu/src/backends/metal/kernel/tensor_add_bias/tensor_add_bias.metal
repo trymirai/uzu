@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(TensorAddBias)(
+PUBLIC KERNEL(TensorAddBias)(
     const device T* input OPTIONAL(!in_place),
     const device T* bias,
     device T* output,

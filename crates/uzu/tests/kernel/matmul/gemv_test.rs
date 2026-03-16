@@ -81,7 +81,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         lda: k,
         ldb: k,
         ldd: n,
-        batch_count: 1,
         transpose_b: true,
     };
 

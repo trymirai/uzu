@@ -32,10 +32,6 @@ pub struct GemvDispatchDescriptor {
     pub matrix_leading_dim: i32,
     pub alpha: f32,
     pub beta: f32,
-    pub batch_shape: [i32; 1],
-    pub vector_batch_stride: [i64; 1],
-    pub matrix_batch_stride: [i64; 1],
-    pub bias_batch_stride: [i64; 1],
     pub bias_stride: i32,
     pub batch_rows: i32,
 }
@@ -104,37 +100,6 @@ impl GemvDispatchDescriptor {
             arguments.lda
         };
 
-        let batch_shape = [if arguments.batch_count > 1 {
-            arguments.batch_count
-        } else {
-            1
-        }];
-
-        let elements_per_matrix_a = (arguments.batch as i64) * (arguments.lda as i64);
-        let elements_per_matrix_b = if arguments.transpose_b {
-            (arguments.output_dim as i64) * (arguments.ldb as i64)
-        } else {
-            (arguments.input_dim as i64) * (arguments.ldb as i64)
-        };
-
-        let vector_batch_stride = [if matrix_is_rhs {
-            elements_per_matrix_a
-        } else {
-            elements_per_matrix_b
-        }];
-
-        let matrix_batch_stride = [if matrix_is_rhs {
-            elements_per_matrix_b
-        } else {
-            elements_per_matrix_a
-        }];
-
-        let bias_batch_stride = [if arguments.batch_count > 1 {
-            (output_dimension as i64) * (arguments.ldd as i64)
-        } else {
-            0
-        }];
-
         let batch_rows = arguments.batch;
 
         Ok(Some(Self {
@@ -146,10 +111,6 @@ impl GemvDispatchDescriptor {
             matrix_leading_dim,
             alpha,
             beta,
-            batch_shape,
-            vector_batch_stride,
-            matrix_batch_stride,
-            bias_batch_stride,
             bias_stride,
             batch_rows,
         }))

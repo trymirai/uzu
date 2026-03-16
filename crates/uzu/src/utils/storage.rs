@@ -14,7 +14,7 @@ pub fn storage_path() -> PathBuf {
         // `~/Library/Containers/<bundle-id>/Data`. Persist model files inside
         // the app-scoped caches directory to comply with sandbox rules:
         // `~/Library/Containers/<bundle-id>/Data/Library/Caches/…`.
-        let home = unsafe { objc2_foundation::NSHomeDirectory() }.to_string();
+        let home = objc2_foundation::NSHomeDirectory().to_string();
         PathBuf::from(&home).join("Library").join("Caches")
     };
 

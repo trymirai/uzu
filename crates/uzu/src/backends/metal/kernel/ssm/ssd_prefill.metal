@@ -9,7 +9,7 @@ constant ushort SSM_PREFILL_MAX_STATE = 256;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(SSDPrefill64)(
+PUBLIC KERNEL(SSDPrefill64)(
     device const T* x,      // (suffix, h, dh)
     device const T* dt_raw, // (suffix, h) - raw dt values
     device const T* b,      // (suffix, g, n)
@@ -107,7 +107,7 @@ KERNEL(SSDPrefill64)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(SSDPrefill)(
+PUBLIC KERNEL(SSDPrefill)(
     device const T* x,      // (suffix, h, dh)
     device const T* dt_raw, // (suffix, h) - raw dt values
     device const T* b,      // (suffix, g, n)
@@ -207,7 +207,7 @@ KERNEL(SSDPrefill)(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(SSDPrefillSequential)(
+PUBLIC KERNEL(SSDPrefillSequential)(
     device const T* x,      // (suffix, h, dh)
     device const T* dt_raw, // (suffix, h) - raw dt values
     device const T* b,      // (suffix, g, n)
