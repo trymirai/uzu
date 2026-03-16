@@ -34,7 +34,8 @@ fn get_test_data<T: ArrayElement + Float>(
     head_dim: u32,
     suffix_length: u32,
 ) -> Input<T> {
-    let qkv_stride = (2 * num_heads + 2 * num_groups) as usize * head_dim as usize;
+    let total_heads = 2 * num_heads + 2 * num_groups;
+    let qkv_stride = total_heads as usize * head_dim as usize;
     let qkv_size = suffix_length as usize * qkv_stride;
     let output_size = (suffix_length * num_heads * head_dim) as usize;
 
@@ -76,6 +77,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.num_heads,
         input.num_groups,
         input.head_dim,
+        2 * input.num_heads + 2 * input.num_groups,
         input.suffix_length,
         &mut command_buffer,
     );

@@ -44,6 +44,7 @@ pub struct Attention<B: Backend> {
     gate_kernel: Option<<B::Kernels as Kernels>::AttentionGateKernel>,
     gemm_block: AttentionGemmBlock<B>,
     layer_index: usize,
+    total_heads: u32,
     attention_scale: Option<f32>,
     has_sinks: bool,
     is_causal: bool,
@@ -60,6 +61,7 @@ impl<B: Backend> Attention<B> {
         is_causal: bool,
         sliding_window_size: Option<usize>,
         has_gate: bool,
+        total_heads: u32,
     ) -> Result<Self, B::Error> {
         let mut single_pass_kernels = HashMap::new();
         let mut two_pass_1_kernels = HashMap::new();
@@ -90,9 +92,9 @@ impl<B: Backend> Attention<B> {
         }
 
         let update_kv_cache_kernel =
-            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, has_gate, false)?;
+            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, false)?;
         let update_kv_cache_inplace_kernel =
-            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, has_gate, true)?;
+            <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, true)?;
         let gate_kernel = if has_gate {
             Some(<B::Kernels as Kernels>::AttentionGateKernel::new(context, data_type)?)
         } else {
@@ -109,6 +111,7 @@ impl<B: Backend> Attention<B> {
             gate_kernel,
             gemm_block,
             layer_index,
+            total_heads,
             attention_scale,
             has_sinks,
             is_causal,
@@ -254,6 +257,7 @@ impl<B: Backend> Attention<B> {
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
+                self.total_heads,
                 suffix_length as u32,
                 0u32,
                 max_sequence_length as u32,
@@ -314,6 +318,7 @@ impl<B: Backend> Attention<B> {
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
+                self.total_heads,
                 suffix_length as u32,
                 segment_prefix_length as u32,
                 max_sequence_length as u32,
@@ -452,6 +457,7 @@ impl<B: Backend> Attention<B> {
                 num_heads as u32,
                 num_groups as u32,
                 head_dim as u32,
+                self.total_heads,
                 suffix_length as u32,
                 command_buffer,
             );

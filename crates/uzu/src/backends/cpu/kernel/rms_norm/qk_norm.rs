@@ -22,6 +22,7 @@ pub fn qk_norm<
     num_q_heads: u32,
     num_kv_heads: u32,
     head_dim: u32,
+    total_heads: u32,
     epsilon: f32,
     scale_offset: f32,
     head_offset: u32,
@@ -37,7 +38,7 @@ pub fn qk_norm<
     let head_dim = head_dim as usize;
     let head_offset = head_offset as usize;
     let head_count = head_count as usize;
-    let qkv_stride = (num_q_heads + 2 * num_kv_heads) as usize * head_dim;
+    let qkv_stride = total_heads as usize * head_dim;
     let head_dim_accum = AccumT::from(head_dim).unwrap();
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();

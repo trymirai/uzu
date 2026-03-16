@@ -12,9 +12,10 @@ pub fn attention_gate<T: ArrayElement + Float>(
     num_heads: u32,
     num_groups: u32,
     head_dim: u32,
+    total_heads: u32,
     suffix_length: u32,
 ) {
-    let qkv_stride = (2 * num_heads + 2 * num_groups) * head_dim;
+    let qkv_stride = total_heads * head_dim;
     let gate_offset = (num_heads + 2 * num_groups) * head_dim;
 
     for token in 0..suffix_length {

@@ -15,6 +15,7 @@ pub(crate) enum MixerExecutables<B: Backend> {
         rope: Rc<Rope<B>>,
         attention: Attention<B>,
         out_projection: Box<dyn Linear<B>>,
+        total_heads: u32,
     },
     StateSpace {
         mixer: MambaMixer<B>,

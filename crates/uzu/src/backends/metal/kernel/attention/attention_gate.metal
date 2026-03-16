@@ -9,12 +9,13 @@ KERNEL(AttentionGate)(
     const constant uint& num_heads,
     const constant uint& num_groups,
     const constant uint& head_dim,
+    const constant uint& total_heads,
     const constant uint& suffix_length,
     const uint token_index AXIS(suffix_length, 1),
     const uint head_index AXIS(num_heads, 1),
     const uint dim_index AXIS(head_dim, 64)
 ) {
-  const uint qkv_stride = (2 * num_heads + 2 * num_groups) * head_dim;
+  const uint qkv_stride = total_heads * head_dim;
   const uint gate_offset = (num_heads + 2 * num_groups) * head_dim;
 
   const uint gate_idx = token_index * qkv_stride + gate_offset +

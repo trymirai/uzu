@@ -38,6 +38,7 @@ pub struct QKNorm<B: Backend> {
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
+    total_heads: u32,
 }
 
 impl<B: Backend> QKNorm<B> {
@@ -51,6 +52,7 @@ impl<B: Backend> QKNorm<B> {
         num_q_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
+        total_heads: u32,
     ) -> Result<Self, QKNormError<B>> {
         let mut query_kernel = None;
         let mut key_kernel = None;
@@ -118,6 +120,7 @@ impl<B: Backend> QKNorm<B> {
             num_q_heads,
             num_kv_heads,
             head_dim,
+            total_heads,
         })
     }
 
@@ -147,6 +150,7 @@ impl<B: Backend> QKNorm<B> {
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 self.head_dim as u32,
+                self.total_heads,
                 query_config.epsilon,
                 query_config.scale_offset.unwrap_or(0.0),
                 0,
@@ -168,6 +172,7 @@ impl<B: Backend> QKNorm<B> {
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 self.head_dim as u32,
+                self.total_heads,
                 key_config.epsilon,
                 key_config.scale_offset.unwrap_or(0.0),
                 self.num_q_heads as u32,

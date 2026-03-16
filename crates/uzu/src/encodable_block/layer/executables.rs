@@ -81,11 +81,13 @@ impl<B: Backend> LayerExecutables<B> {
 
                     let q_dim = layer_num_heads * layer_head_dim;
                     let kv_dim = layer_num_groups * layer_head_dim;
-                    let gate_dim = if attention_config.has_gate {
-                        q_dim
+                    let gate_heads = if attention_config.has_gate {
+                        layer_num_heads
                     } else {
                         0
                     };
+                    let gate_dim = gate_heads * layer_head_dim;
+                    let total_heads = (layer_num_heads + 2 * layer_num_groups + gate_heads) as u32;
 
                     let qkv_projection = <dyn Linear<B>>::new(
                         &attention_config.qkv_projection_config,
@@ -111,6 +113,7 @@ impl<B: Backend> LayerExecutables<B> {
                                 layer_num_heads,
                                 layer_num_groups,
                                 layer_head_dim,
+                                total_heads,
                             ) {
                                 Ok(qk_norm) => Some(qk_norm),
                                 Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
@@ -140,6 +143,7 @@ impl<B: Backend> LayerExecutables<B> {
                         attention_config.is_causal.unwrap_or(true),
                         attention_config.sliding_window_size,
                         attention_config.has_gate,
+                        total_heads,
                     )
                     .expect("Failed to create AttentionWrapper kernel");
 
@@ -149,6 +153,7 @@ impl<B: Backend> LayerExecutables<B> {
                         rope: rope_block,
                         attention,
                         out_projection,
+                        total_heads,
                     }
                 },
                 MixerConfig::Mamba(mamba_config) => {
@@ -287,12 +292,13 @@ impl<B: Backend> LayerExecutables<B> {
                 rope,
                 attention,
                 out_projection,
+                total_heads,
             } => {
                 qkv_projection.encode(state, command_buffer)?;
                 if let Some(norm) = qk_norm {
                     norm.encode(state, command_buffer)?;
                 }
-                rope.encode(state, command_buffer)?;
+                rope.encode(state, command_buffer, *total_heads)?;
                 attention.encode(state, parameters, command_buffer)?;
                 out_projection.encode(state, command_buffer)?;
                 #[cfg(feature = "tracing")]

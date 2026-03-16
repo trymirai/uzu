@@ -28,7 +28,7 @@ struct Input<T: ArrayElement + Float> {
     rope_dim: u32,
     num_heads: u32,
     num_groups: u32,
-    has_gate: bool,
+    total_heads: u32,
     suffix_length: u32,
     max_sequence_length: u32,
 }
@@ -41,8 +41,8 @@ fn get_test_data<T: ArrayElement + Float>(
     suffix_length: u32,
     max_sequence_length: u32,
 ) -> Input<T> {
-    let total_heads = (num_heads + 2 * num_groups) as usize;
-    let qkv_size = suffix_length as usize * total_heads * head_dim as usize;
+    let total_heads = num_heads + 2 * num_groups;
+    let qkv_size = suffix_length as usize * total_heads as usize * head_dim as usize;
     let cos_sin_size = max_sequence_length as usize * rope_dim as usize;
 
     let mut qkv = vec![T::zero(); qkv_size];
@@ -71,7 +71,7 @@ fn get_test_data<T: ArrayElement + Float>(
         rope_dim,
         num_heads,
         num_groups,
-        has_gate: false,
+        total_heads,
         suffix_length,
         max_sequence_length,
     }
@@ -80,15 +80,10 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, T::data_type(), input.has_gate)
+    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, T::data_type())
         .expect("Failed to create RopeKernel");
 
-    let gate_heads = if input.has_gate {
-        input.num_heads
-    } else {
-        0
-    };
-    let total_heads = (input.num_heads + 2 * input.num_groups + gate_heads) as usize;
+    let total_heads = input.total_heads as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
     let cos_sin_len = input.max_sequence_length as usize * input.rope_dim as usize;
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
@@ -113,6 +108,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.rope_dim,
         input.num_heads,
         input.num_groups,
+        input.total_heads,
         input.suffix_length,
         input.max_sequence_length,
         &mut command_buffer,
@@ -184,9 +180,10 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
 }
 
 fn with_gate<T: ArrayElement + Float>(input: Input<T>) -> Input<T> {
-    let old_stride = (input.num_heads + 2 * input.num_groups) as usize * input.head_dim as usize;
+    let old_stride = input.total_heads as usize * input.head_dim as usize;
     let gate_size = input.num_heads as usize * input.head_dim as usize;
-    let new_stride = old_stride + gate_size;
+    let new_total_heads = input.total_heads + input.num_heads;
+    let new_stride = new_total_heads as usize * input.head_dim as usize;
     let new_qkv = (0..input.suffix_length as usize)
         .flat_map(|t| {
             input.qkv[t * old_stride..(t + 1) * old_stride]
@@ -198,7 +195,7 @@ fn with_gate<T: ArrayElement + Float>(input: Input<T>) -> Input<T> {
     debug_assert_eq!(new_qkv.len(), input.suffix_length as usize * new_stride);
     Input {
         qkv: new_qkv,
-        has_gate: true,
+        total_heads: new_total_heads,
         ..input
     }
 }

@@ -21,10 +21,9 @@ impl<B: Backend> Rope<B> {
         context: &B::Context,
         data_type: DataType,
         rope_type: RopeType,
-        has_gate: bool,
     ) -> Result<Self, B::Error> {
         Ok(Self {
-            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type, has_gate)?,
+            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type)?,
             rope_type,
         })
     }
@@ -33,6 +32,7 @@ impl<B: Backend> Rope<B> {
         &self,
         state: &mut ForwardPassState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        total_heads: u32,
     ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, rope_dim, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -88,6 +88,7 @@ impl<B: Backend> Rope<B> {
             rope_dim as u32,
             num_heads as u32,
             num_groups as u32,
+            total_heads,
             suffix_length as u32,
             rope_max_seq_len as u32,
             command_buffer,

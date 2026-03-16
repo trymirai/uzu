@@ -142,6 +142,7 @@ fn get_output<
         input.num_q_heads,
         input.num_kv_heads,
         input.head_dim,
+        input.num_q_heads + 2 * input.num_kv_heads,
         input.epsilon,
         input.scale_offset,
         input.head_offset,

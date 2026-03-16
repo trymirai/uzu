@@ -27,7 +27,7 @@ struct Input<T: ArrayElement + Float> {
     num_groups: u32,
     num_heads: u32,
     head_dim: u32,
-    has_gate: bool,
+    total_heads: u32,
     suffix_length: u32,
     prefix_segment_length: u32,
     max_sequence_length: u32,
@@ -40,7 +40,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let kernel = <<B as Backend>::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(
         &context,
         T::data_type(),
-        input.has_gate,
         input.keys_in_place,
     )
     .expect("Failed to create AttentionUpdateKVCacheKernel");
@@ -65,6 +64,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.num_groups,
         input.num_heads,
         input.head_dim,
+        input.total_heads,
         input.suffix_length,
         input.prefix_segment_length,
         input.max_sequence_length,
@@ -117,7 +117,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(keys_in_place: bool) -> Input<T>
         num_groups,
         num_heads,
         head_dim,
-        has_gate: false,
+        total_heads: num_heads + 2 * num_groups,
         suffix_length,
         prefix_segment_length,
         max_sequence_length,
@@ -167,7 +167,7 @@ fn get_test_data_single_token<T: ArrayElement + Float>(keys_in_place: bool) -> I
         num_groups,
         num_heads,
         head_dim,
-        has_gate: false,
+        total_heads: num_heads + 2 * num_groups,
         suffix_length,
         prefix_segment_length,
         max_sequence_length,
@@ -208,7 +208,7 @@ fn get_test_data_prefix_zero<T: ArrayElement + Float>() -> Input<T> {
         num_groups,
         num_heads,
         head_dim,
-        has_gate: false,
+        total_heads: num_heads + 2 * num_groups,
         suffix_length,
         prefix_segment_length,
         max_sequence_length,
@@ -316,8 +316,9 @@ fn test_prefix_zero_bf16() {
 }
 
 fn with_gate<T: ArrayElement + Float>(input: Input<T>) -> Input<T> {
-    let old_stride = (input.num_heads + 2 * input.num_groups) as usize * input.head_dim as usize;
+    let old_stride = input.total_heads as usize * input.head_dim as usize;
     let gate_size = input.num_heads as usize * input.head_dim as usize;
+    let new_total_heads = input.total_heads + input.num_heads;
     let new_qkv = (0..input.suffix_length as usize)
         .flat_map(|t| {
             input.qkv[t * old_stride..(t + 1) * old_stride]
@@ -328,7 +329,7 @@ fn with_gate<T: ArrayElement + Float>(input: Input<T>) -> Input<T> {
         .collect::<Box<[_]>>();
     Input {
         qkv: new_qkv,
-        has_gate: true,
+        total_heads: new_total_heads,
         ..input
     }
 }

@@ -21,6 +21,7 @@ pub struct ClassifierLayer<B: Backend> {
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
+    total_heads: u32,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
@@ -79,6 +80,13 @@ impl<B: Backend> ClassifierLayer<B> {
                 None
             };
 
+            let gate_heads = if attention_config.has_gate {
+                num_heads
+            } else {
+                0
+            };
+            let total_heads = (num_heads + 2 * num_groups + gate_heads) as u32;
+
             let qkv_projection = <dyn Linear<B>>::new(
                 &attention_config.qkv_projection_config,
                 attention_config.has_qkv_biases,
@@ -103,6 +111,7 @@ impl<B: Backend> ClassifierLayer<B> {
                     num_heads,
                     num_groups,
                     head_dim,
+                    total_heads,
                 ) {
                     Ok(norm) => Some(norm),
                     Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
@@ -197,6 +206,7 @@ impl<B: Backend> ClassifierLayer<B> {
                 false,
                 attention_config.sliding_window_size,
                 attention_config.has_gate,
+                total_heads,
             )
             .expect("Failed to create attention kernel");
 
@@ -214,6 +224,7 @@ impl<B: Backend> ClassifierLayer<B> {
                 qkv_projection,
                 qk_norm,
                 rope,
+                total_heads,
                 attention,
                 out_projection,
                 post_attention_norm,
@@ -268,7 +279,7 @@ impl<B: Backend> ClassifierLayer<B> {
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(state, command_buffer)?;
         }
-        self.rope.encode(state, command_buffer)?;
+        self.rope.encode(state, command_buffer, self.total_heads)?;
         self.attention.encode(state, parameters, command_buffer)?;
         self.out_projection.encode(state, command_buffer)?;
         #[cfg(feature = "tracing")]

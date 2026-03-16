@@ -24,6 +24,7 @@ KERNEL(QKNorm)(
     constant uint& num_q_heads,
     constant uint& num_kv_heads,
     constant uint& head_dim,
+    constant uint& total_heads,
     constant float& epsilon,
     constant float& scale_offset,
     constant uint& head_offset,
@@ -41,7 +42,7 @@ KERNEL(QKNorm)(
   if (head_count == 0u || head_dim == 0u)
     return;
 
-  const uint total_heads_in_buffer = num_q_heads + 2u * num_kv_heads;
+  const uint total_heads_in_buffer = total_heads;
   const uint logical_head_idx = head_offset + head_idx;
   if (logical_head_idx >= total_heads_in_buffer)
     return;
