@@ -12,7 +12,7 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            gpu_types::GEMMParams,
+            gpu_types::GemmParams,
             kernel::matmul::{
                 GridSize, MatmulArguments,
                 gemm::{GemmDispatchDescriptor, GemmKernel, GemmSpecialization},
@@ -81,28 +81,28 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             ..base
         });
 
-    let tiles_n = (n + config.block_cols - 1) / config.block_cols;
-    let tiles_m = (m + config.block_rows - 1) / config.block_rows;
+    let threadgroups_per_row = (n + config.block_cols - 1) / config.block_cols;
+    let threadgroups_per_column = (m + config.block_rows - 1) / config.block_rows;
 
-    let params = GEMMParams {
+    let params = GemmParams {
         M: m,
         N: n,
         K: k,
-        lda: k,
-        ldb: k,
-        ldd: n,
-        tiles_n,
-        tiles_m,
+        leading_dimension_a: k,
+        leading_dimension_b: k,
+        leading_dimension_d: n,
+        threadgroups_per_row,
+        threadgroups_per_column,
         swizzle_log: 0,
-        gemm_k_iterations_aligned: k / config.block_depth,
+        aligned_inner_iterations: k / config.block_depth,
     };
 
     let descriptor = GemmDispatchDescriptor {
         specialization: config,
         params,
         threadgroups: GridSize {
-            x: tiles_n as usize,
-            y: tiles_m as usize,
+            x: threadgroups_per_row as usize,
+            y: threadgroups_per_column as usize,
             z: 1,
         },
     };

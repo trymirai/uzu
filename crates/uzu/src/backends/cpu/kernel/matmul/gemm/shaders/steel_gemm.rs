@@ -81,7 +81,7 @@ pub fn matmul_gemm<T: ArrayElement + Float>(
     a: *const T,
     b: *const T,
     d: *mut T,
-    params: &[crate::backends::common::gpu_types::matmul::GEMMParams],
+    params: &[crate::backends::common::gpu_types::matmul::GemmParams],
     #[allow(unused)] group_count_x: u32,
     #[allow(unused)] group_count_y: u32,
     #[allow(unused)]
@@ -95,10 +95,10 @@ pub fn matmul_gemm<T: ArrayElement + Float>(
     block_depth: u32,
     #[allow(unused)]
     #[specialize]
-    warps_per_row: u32,
+    simdgroups_per_row: u32,
     #[allow(unused)]
     #[specialize]
-    warps_per_col: u32,
+    simdgroups_per_column: u32,
     #[allow(unused)]
     #[specialize]
     align_m: bool,
@@ -118,9 +118,9 @@ pub fn matmul_gemm<T: ArrayElement + Float>(
             p.M as usize,
             p.N as usize,
             p.K as usize,
-            p.lda as usize,
-            p.ldb as usize,
-            p.ldd as usize,
+            p.leading_dimension_a as usize,
+            p.leading_dimension_b as usize,
+            p.leading_dimension_d as usize,
         );
     }
 }

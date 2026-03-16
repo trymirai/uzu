@@ -3,7 +3,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend,
-        gpu_types::GEMMParams,
+        gpu_types::GemmParams,
         kernel::matmul::{MatmulArguments, MatmulError},
     },
 };
@@ -11,7 +11,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct GemmDispatchDescriptor {
     pub specialization: GemmSpecialization,
-    pub params: GEMMParams,
+    pub params: GemmParams,
     pub threadgroups: GridSize,
 }
 
@@ -31,25 +31,25 @@ impl GemmDispatchDescriptor {
         let n = arguments.output_dim;
         let k = arguments.input_dim;
 
-        let tiles_n = (n + config.block_cols - 1) / config.block_cols;
-        let tiles_m = (m + config.block_rows - 1) / config.block_rows;
+        let threadgroups_per_row = (n + config.block_cols - 1) / config.block_cols;
+        let threadgroups_per_column = (m + config.block_rows - 1) / config.block_rows;
         let swizzle_log = config.swizzle_log2;
 
         let tile_swizzle = 1 << swizzle_log;
-        let tm_swizzled = (tiles_m + tile_swizzle - 1) / tile_swizzle;
-        let tn_swizzled = tiles_n * tile_swizzle;
+        let tm_swizzled = (threadgroups_per_column + tile_swizzle - 1) / tile_swizzle;
+        let tn_swizzled = threadgroups_per_row * tile_swizzle;
 
-        let params = GEMMParams {
+        let params = GemmParams {
             M: m,
             N: n,
             K: k,
-            lda: arguments.lda,
-            ldb: arguments.ldb,
-            ldd: arguments.ldd,
-            tiles_n,
-            tiles_m,
+            leading_dimension_a: arguments.lda,
+            leading_dimension_b: arguments.ldb,
+            leading_dimension_d: arguments.ldd,
+            threadgroups_per_row,
+            threadgroups_per_column,
             swizzle_log,
-            gemm_k_iterations_aligned: k / config.block_depth,
+            aligned_inner_iterations: k / config.block_depth,
         };
 
         let threadgroups = GridSize {
