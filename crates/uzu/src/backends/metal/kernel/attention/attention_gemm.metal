@@ -17,7 +17,7 @@ struct TransformScale {
 
 template <typename T>
 METAL_FUNC T row_reduce_max(T v) {
-  // BaseMMAFrag::get_coord mapping groups lanes for a row as:
+  // SimdgroupMultiplyAccumulate::get_lane_coordinates mapping groups lanes for a row as:
   // {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
   v = metal::max(v, simd_shuffle_xor(v, 1));
   v = metal::max(v, simd_shuffle_xor(v, 8));
@@ -106,29 +106,29 @@ PUBLIC KERNEL(AttentionGemm)(
   //
   // -------------------------------------------------------------------------
   // Block loaders
-  using QBlockLoader = BlockLoader<
+  using QBlockLoader = ThreadgroupLoader<
       T,
-      /*BROWS=*/BQ,
-      /*BCOLS=*/BD,
-      /*dst_ld=*/LDQ_tgp,
-      /*reduction_dim=*/1,
-      /*tgp_size=*/WM * WN * 32>;
+      /*BLOCK_ROWS=*/BQ,
+      /*BLOCK_COLS=*/BD,
+      /*DESTINATION_LEADING_DIMENSION=*/LDQ_tgp,
+      /*REDUCTION_DIMENSION=*/1,
+      /*THREADGROUP_SIZE=*/WM * WN * 32>;
 
-  using KBlockLoader = BlockLoader<
+  using KBlockLoader = ThreadgroupLoader<
       T,
-      /*BROWS=*/BK,
-      /*BCOLS=*/BD,
-      /*dst_ld=*/LDK_tgp,
-      /*reduction_dim=*/0,
-      /*tgp_size=*/WM * WN * 32>;
+      /*BLOCK_ROWS=*/BK,
+      /*BLOCK_COLS=*/BD,
+      /*DESTINATION_LEADING_DIMENSION=*/LDK_tgp,
+      /*REDUCTION_DIMENSION=*/0,
+      /*THREADGROUP_SIZE=*/WM * WN * 32>;
 
-  using VBlockLoader = BlockLoader<
+  using VBlockLoader = ThreadgroupLoader<
       T,
-      /*BROWS=*/BK,
-      /*BCOLS=*/BD,
-      /*dst_ld=*/LDV_tgp,
-      /*reduction_dim=*/0,
-      /*tgp_size=*/WM * WN * 32>;
+      /*BLOCK_ROWS=*/BK,
+      /*BLOCK_COLS=*/BD,
+      /*DESTINATION_LEADING_DIMENSION=*/LDV_tgp,
+      /*REDUCTION_DIMENSION=*/0,
+      /*THREADGROUP_SIZE=*/WM * WN * 32>;
 
   const int q_src_ld = int(params.q_strides[2]);
   const int k_src_ld = int(params.k_strides[2]);
@@ -142,50 +142,47 @@ PUBLIC KERNEL(AttentionGemm)(
 
   // -------------------------------------------------------------------------
   // MMA tiles
-  constexpr short kFragSize = 8;
+  constexpr short SIMDGROUP_BLOCK_SIZE = 8;
   using AccumType = float;
-  using MMAFrag_acc_t = BaseMMAFrag<AccumType, kFragSize, kFragSize>;
+  using SimdgroupMultiplyAccumulateType = SimdgroupMultiplyAccumulate<AccumType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
 
   constexpr int kNWarps = WM * WN;
   static_assert(
-      BQ >= (kNWarps * kFragSize) && BQ % (kNWarps * kFragSize) == 0,
+      BQ >= (kNWarps * SIMDGROUP_BLOCK_SIZE) && BQ % (kNWarps * SIMDGROUP_BLOCK_SIZE) == 0,
       "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
   );
 
   // Q seq frags per warp (we keep TQ == 1 for the 32-row block layout)
-  constexpr int TQ = BQ / (kNWarps * kFragSize);
-  // KV sequence frags
-  constexpr int TK = BK / kFragSize;
-  // HeadDim frags
-  constexpr int TD = BD / kFragSize;
+  constexpr int TQ = BQ / (kNWarps * SIMDGROUP_BLOCK_SIZE);
+  constexpr int TK = BK / SIMDGROUP_BLOCK_SIZE;
+  constexpr int TD = BD / SIMDGROUP_BLOCK_SIZE;
 
   static_assert(TQ == 1, "Expected TQ == 1");
 
-  MMATile<AccumType, TQ, 1, MMAFrag_acc_t> Qtile;
-  MMATile<AccumType, 1, TK, MMAFrag_acc_t> Ktile; // represents K^T slice
-  MMATile<AccumType, TQ, TK, MMAFrag_acc_t> Stile;
-  MMATile<AccumType, 1, 1, MMAFrag_acc_t> Vtile;
-  MMATile<AccumType, TQ, TD, MMAFrag_acc_t> Otile;
+  SimdgroupFragment<AccumType, TQ, 1, SimdgroupMultiplyAccumulateType> Qtile;
+  SimdgroupFragment<AccumType, 1, TK, SimdgroupMultiplyAccumulateType> Ktile;
+  SimdgroupFragment<AccumType, TQ, TK, SimdgroupMultiplyAccumulateType> Stile;
+  SimdgroupFragment<AccumType, 1, 1, SimdgroupMultiplyAccumulateType> Vtile;
+  SimdgroupFragment<AccumType, TQ, TD, SimdgroupMultiplyAccumulateType> Otile;
 
   Otile.clear();
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 simd_coord = MMAFrag_acc_t::get_coord(simd.lane_idx);
+  const short2 simd_coord = SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd.lane_idx);
   const short sm = simd_coord.y;
   const short sn = simd_coord.x;
 
-  const short tm = kFragSize * TQ * short(simd.group_idx);
+  const short tm = SIMDGROUP_BLOCK_SIZE * TQ * short(simd.group_idx);
 
   // Qs is row-major [BQ, BD]
   const short Qs_offset = (tm + sm) * LDQ_tgp + sn;
-  constexpr short Qs_tile_stride = kFragSize;
+  constexpr short Qs_tile_stride = SIMDGROUP_BLOCK_SIZE;
 
   // Ks is row-major [BK, BD] but we load K^T by swapping strides:
   // B_str_k = 1, B_str_n = LDK_tgp => offset = sn * LDK_tgp + sm
   const short Ks_offset = sn * LDK_tgp + sm;
-  constexpr short Ks_tile_stride =
-      kFragSize; // advance along head-dim (contiguous)
+  constexpr short Ks_tile_stride = SIMDGROUP_BLOCK_SIZE;
 
   // Vs is row-major [BK, BD]
   const short Vs_offset = sm * LDV_tgp + sn;
@@ -238,7 +235,7 @@ PUBLIC KERNEL(AttentionGemm)(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short dd = 0; dd < TD; dd++) {
       simdgroup_barrier(mem_flags::mem_none);
 
@@ -250,16 +247,16 @@ PUBLIC KERNEL(AttentionGemm)(
       );
 
       simdgroup_barrier(mem_flags::mem_none);
-      tile_matmad(Stile, Qtile, Ktile, Stile);
+      tile_multiply_accumulate(Stile, Qtile, Ktile, Stile);
     }
 
     // Mask out tail keys for the last (unaligned) K block
     if (!align_k && kb == params.nk_aligned) {
       const int k_rem = params.k_rem;
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < TK; j++) {
-        thread auto& frag = Stile.frag_at(0, j);
-        const int col0 = int(sn) + int(j) * kFragSize;
+        thread auto& frag = Stile.multiply_accumulate_at(0, j);
+        const int col0 = int(sn) + int(j) * SIMDGROUP_BLOCK_SIZE;
         if (col0 >= k_rem) {
           frag[0] = neg_inf;
         }
@@ -274,10 +271,10 @@ PUBLIC KERNEL(AttentionGemm)(
       const int tail_blocks = (BQ + BK - 1) / BK + int(!align_k);
       const int tail_start = kb_lim - tail_blocks;
       if (kb >= tail_start) {
-        UZU_PRAGMA_UNROLL
+        METAL_PRAGMA_UNROLL
         for (short j = 0; j < TK; j++) {
-          thread auto& frag = Stile.frag_at(0, j);
-          const int col_base = kb * BK + int(sn) + int(j) * kFragSize;
+          thread auto& frag = Stile.multiply_accumulate_at(0, j);
+          const int col_base = kb * BK + int(sn) + int(j) * SIMDGROUP_BLOCK_SIZE;
           if (q_abs < col_base) {
             frag[0] = neg_inf;
           }
@@ -293,10 +290,10 @@ PUBLIC KERNEL(AttentionGemm)(
       const int64_t row_stride = mask_params.m_strides[2];
       const int64_t row_base = int64_t(q_rel) * row_stride;
 
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < TK; j++) {
-        thread auto& frag = Stile.frag_at(0, j);
-        const int col_base = kb * BK + int(sn) + int(j) * kFragSize;
+        thread auto& frag = Stile.multiply_accumulate_at(0, j);
+        const int col_base = kb * BK + int(sn) + int(j) * SIMDGROUP_BLOCK_SIZE;
 
         const int k0 = col_base;
         const int k1 = col_base + 1;
@@ -327,9 +324,9 @@ PUBLIC KERNEL(AttentionGemm)(
 
     // Row max for this block
     AccumType block_max_local = -INFINITY;
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short j = 0; j < TK; j++) {
-      const thread auto& frag = Stile.frag_at(0, j);
+      const thread auto& frag = Stile.multiply_accumulate_at(0, j);
       block_max_local = metal::max(block_max_local, frag[0]);
       block_max_local = metal::max(block_max_local, frag[1]);
     }
@@ -344,9 +341,9 @@ PUBLIC KERNEL(AttentionGemm)(
 
     // exp2(S - new_max) and row sum
     AccumType block_sum_local = AccumType(0);
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short j = 0; j < TK; j++) {
-      thread auto& frag = Stile.frag_at(0, j);
+      thread auto& frag = Stile.multiply_accumulate_at(0, j);
       frag[0] = fast::exp2(frag[0] - new_max);
       frag[1] = fast::exp2(frag[1] - new_max);
       block_sum_local += frag[0] + frag[1];
@@ -355,23 +352,23 @@ PUBLIC KERNEL(AttentionGemm)(
     sum_score += block_sum;
 
     // Rescale output accumulator
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short id = 0; id < TD; id++) {
-      thread auto& frag = Otile.frag_at(0, id);
+      thread auto& frag = Otile.multiply_accumulate_at(0, id);
       frag[0] *= factor;
       frag[1] *= factor;
     }
 
     // Accumulate output: Otile += Stile * Vblock
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short id = 0; id < TD; id++) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short ik = 0; ik < TK; ik++) {
         IF_CONSTEXPR(BD == 128) { simdgroup_barrier(mem_flags::mem_none); }
 
-        const short kk = ik * kFragSize;
-        const short dd = id * kFragSize;
+        const short kk = ik * SIMDGROUP_BLOCK_SIZE;
+        const short dd = id * SIMDGROUP_BLOCK_SIZE;
 
         Vtile.template load<T, 1, 1, LDV_tgp, 1>(
             &Vs[Vs_offset + kk * LDV_tgp + dd]
@@ -379,11 +376,11 @@ PUBLIC KERNEL(AttentionGemm)(
 
         IF_CONSTEXPR(BD == 128) { simdgroup_barrier(mem_flags::mem_none); }
 
-        MMAFrag_acc_t::mma(
-            Otile.frag_at(0, id),
-            Stile.frag_at(0, ik),
-            Vtile.frag_at(0, 0),
-            Otile.frag_at(0, id)
+        SimdgroupMultiplyAccumulateType::multiply_accumulate(
+            Otile.multiply_accumulate_at(0, id),
+            Stile.multiply_accumulate_at(0, ik),
+            Vtile.multiply_accumulate_at(0, 0),
+            Otile.multiply_accumulate_at(0, id)
         );
       }
     }
@@ -396,9 +393,9 @@ PUBLIC KERNEL(AttentionGemm)(
   // -------------------------------------------------------------------------
   // Normalize output by sum_score (avoid div-by-zero for masked-out rows)
   const AccumType inv_sum = AccumType(1) / sum_score;
-  UZU_PRAGMA_UNROLL
+  METAL_PRAGMA_UNROLL
   for (short id = 0; id < TD; id++) {
-    thread auto& frag = Otile.frag_at(0, id);
+    thread auto& frag = Otile.multiply_accumulate_at(0, id);
     frag[0] *= inv_sum;
     frag[1] *= inv_sum;
   }
