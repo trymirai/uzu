@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 using namespace metal;
 #define GRAIN_SIZE 4

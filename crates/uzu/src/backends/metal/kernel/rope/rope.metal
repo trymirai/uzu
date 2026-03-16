@@ -1,5 +1,6 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/tensor_view.h"
 
 template <typename T>
 inline T applyRopeTransform(

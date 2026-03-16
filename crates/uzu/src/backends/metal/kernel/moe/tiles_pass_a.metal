@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 // === Helper kernels for indirect dispatch of Pass A ===
 

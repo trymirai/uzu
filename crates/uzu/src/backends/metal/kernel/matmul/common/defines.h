@@ -5,7 +5,6 @@
 #include <metal_simdgroup_matrix>
 #include <metal_stdlib>
 
-
 using namespace metal;
 
 namespace uzu {

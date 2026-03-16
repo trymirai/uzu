@@ -1,5 +1,6 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
 #include "../matmul/common/loader.h"
 #include "../matmul/common/simdgroup_fragment.h"
 #include "attention.h"
@@ -57,7 +58,7 @@ PUBLIC KERNEL(AttentionGemm)(
     const bool has_sinks SPECIALIZE,
     threadgroup T q_smem[BQ * (BD + 16 / sizeof(T))],
     threadgroup T kv_smem[BK * (BD + 16 / sizeof(T))],
-    const Simd simd,
+    const ThreadContext simd,
     const uint tgid_x GROUPS(suffix_length.div_ceil(BQ)),
     const uint tgid_y GROUPS(num_heads),
     const uint tgid_z GROUPS(1),
@@ -134,9 +135,12 @@ PUBLIC KERNEL(AttentionGemm)(
   const int k_src_ld = int(params.k_strides[2]);
   const int v_src_ld = int(params.v_strides[2]);
 
-  thread QBlockLoader loader_q(q, q_src_ld, Qs, simd.group_idx, simd.lane_idx);
-  thread KBlockLoader loader_k(k, k_src_ld, Ks, simd.group_idx, simd.lane_idx);
-  thread VBlockLoader loader_v(v, v_src_ld, Vs, simd.group_idx, simd.lane_idx);
+  thread QBlockLoader
+      loader_q(q, q_src_ld, Qs, simd.threadgroup_index, simd.simdgroup_index);
+  thread KBlockLoader
+      loader_k(k, k_src_ld, Ks, simd.threadgroup_index, simd.simdgroup_index);
+  thread VBlockLoader
+      loader_v(v, v_src_ld, Vs, simd.threadgroup_index, simd.simdgroup_index);
 
   TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
 
@@ -174,11 +178,13 @@ PUBLIC KERNEL(AttentionGemm)(
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
   const short2 simd_coord =
-      SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd.lane_idx);
+      SimdgroupMultiplyAccumulateType::get_lane_coordinates(
+          simd.simdgroup_index
+      );
   const short sm = simd_coord.y;
   const short sn = simd_coord.x;
 
-  const short tm = SIMDGROUP_BLOCK_SIZE * TQ * short(simd.group_idx);
+  const short tm = SIMDGROUP_BLOCK_SIZE * TQ * short(simd.threadgroup_index);
 
   // Qs is row-major [BQ, BD]
   const short Qs_offset = (tm + sm) * LDQ_tgp + sn;

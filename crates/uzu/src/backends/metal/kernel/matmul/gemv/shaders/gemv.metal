@@ -1,5 +1,6 @@
 #include "../../../common/utils.h"
-#include "../../../definitions.metal"
+#include "../../../common/dsl.h"
+#include "../../../common/thread_context.h"
 
 #include <metal_simdgroup>
 
@@ -38,14 +39,14 @@ PUBLIC KERNEL(MatmulGemv)(
     const uint thread_index_x THREADS(32),
     const uint thread_index_y THREADS(16),
     const uint thread_index_z THREADS(1),
-    const Simd simd
+    const ThreadContext simd
 ) {
   if (output_rows_per_threadgroup <= 0) {
     return;
   }
 
   // Simdgroup guard — kill excess simdgroups beyond what this tile uses
-  if (simd.group_idx >= tg_simd_rows * tg_simd_cols) {
+  if (simd.threadgroup_index >= tg_simd_rows * tg_simd_cols) {
     return;
   }
 
@@ -65,21 +66,22 @@ PUBLIC KERNEL(MatmulGemv)(
   thread float vector_coefficients[4];
 
   const int thread_row_in_simdgroup =
-      sg_thread_cols != 32 ? int(simd.lane_idx) / int(sg_thread_cols) : 0;
+      sg_thread_cols != 32 ? int(simd.simdgroup_index) / int(sg_thread_cols)
+                           : 0;
   const int thread_col_in_simdgroup =
-      sg_thread_cols != 32 ? int(simd.lane_idx) % int(sg_thread_cols)
-                           : int(simd.lane_idx);
+      sg_thread_cols != 32 ? int(simd.simdgroup_index) % int(sg_thread_cols)
+                           : int(simd.simdgroup_index);
 
   const int simdgroup_column_index =
-      tg_simd_cols != 1 ? int(simd.group_idx % tg_simd_cols) : 0;
+      tg_simd_cols != 1 ? int(simd.threadgroup_index % tg_simd_cols) : 0;
 
   const int simdgroup_row_thread_base =
       tg_simd_cols != 1
-          ? int(sg_thread_rows) * int(simd.group_idx / tg_simd_cols)
-          : int(sg_thread_rows) * int(simd.group_idx);
+          ? int(sg_thread_rows) * int(simd.threadgroup_index / tg_simd_cols)
+          : int(sg_thread_rows) * int(simd.threadgroup_index);
   const int simdgroup_col_thread_base =
       tg_simd_cols != 1
-          ? int(sg_thread_cols) * int(simd.group_idx % tg_simd_cols)
+          ? int(sg_thread_cols) * int(simd.threadgroup_index % tg_simd_cols)
           : 0;
 
   int output_block_row_offset =

@@ -65,7 +65,17 @@ fn matmul_gemm_impl<T: ArrayElement + Float>(
 
                 s.spawn(move || unsafe {
                     for row in start..end {
-                        matmul_gemm_compute_row(a, b, d, row, n, k, leading_dimension_a, leading_dimension_b, leading_dimension_d);
+                        matmul_gemm_compute_row(
+                            a,
+                            b,
+                            d,
+                            row,
+                            n,
+                            k,
+                            leading_dimension_a,
+                            leading_dimension_b,
+                            leading_dimension_d,
+                        );
                     }
                 });
 

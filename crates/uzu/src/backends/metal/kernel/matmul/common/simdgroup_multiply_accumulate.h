@@ -59,7 +59,8 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
     for (short i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
       for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        dst[i * THREAD_ELEMENT_COLS + j] = static_cast<T>(src[i * stride_x + j * stride_y]);
+        dst[i * THREAD_ELEMENT_COLS + j] =
+            static_cast<T>(src[i * stride_x + j * stride_y]);
       }
     }
   }
@@ -87,8 +88,9 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
       METAL_PRAGMA_UNROLL
       for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
         if ((offset_x + i) < limit_x && (offset_y + j) < limit_y) {
-          dst[i * THREAD_ELEMENT_COLS + j] =
-              static_cast<T>(src[(offset_x + i) * stride_x + (offset_y + j) * stride_y]);
+          dst[i * THREAD_ELEMENT_COLS + j] = static_cast<T>(
+              src[(offset_x + i) * stride_x + (offset_y + j) * stride_y]
+          );
         } else {
           dst[i * THREAD_ELEMENT_COLS + j] = T(0);
         }
@@ -109,7 +111,8 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
     for (short i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
       for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        dst[i * stride_x + j * stride_y] = static_cast<U>(src[i * THREAD_ELEMENT_COLS + j]);
+        dst[i * stride_x + j * stride_y] =
+            static_cast<U>(src[i * THREAD_ELEMENT_COLS + j]);
       }
     }
   }

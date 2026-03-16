@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include <metal_atomic>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 #define BM 16
 

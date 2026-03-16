@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 using namespace metal;
 
@@ -23,7 +25,7 @@ PUBLIC KERNEL(RMSNorm)(
     constant bool& full_layer,
     const bool in_place SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
-    const Simd simd,
+    const ThreadContext simd,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
 ) {

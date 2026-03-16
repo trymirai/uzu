@@ -1,5 +1,7 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 #define BLOCK_SIZE 1024
 #define BLOCK_SIZE_IN_SIMDS (BLOCK_SIZE / 32)
@@ -14,7 +16,7 @@ PUBLIC KERNEL(TopK)(
     constant uint& batch_size,
     constant uint& vocab_size,
     constant uint& top_k,
-    const Simd simd,
+    const ThreadContext simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE),
     const bool in_place SPECIALIZE

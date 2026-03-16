@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 enum QuantizationMode : uint {
   QUANT_UINT4 = 0,
