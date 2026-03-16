@@ -71,9 +71,8 @@ clang-ast = { workspace = true, optional = true }
 default = []
 
 metal = [
-    "dep:bytesize",
-    "dep:clang-ast",
     "dep:block2",
+    "dep:bytesize",
     "dep:clang-ast",
     "dep:metal",
 ]
