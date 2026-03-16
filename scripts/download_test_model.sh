@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-if [[ "$(uname)" != "Darwin" ]]; then
-  echo "Non-macOS platform detected (\"$(uname)\"); skipping test-model download."
-  exit 0
-fi
+#if [[ "$(uname)" != "Darwin" ]]; then
+#  echo "Non-macOS platform detected (\"$(uname)\"); skipping test-model download."
+#  exit 0
+#fi
 
 ROOT_PATH="$(cd "$(dirname "$0")/.." && pwd)"
 HELPERS_PATH="$ROOT_PATH/tools/helpers"
