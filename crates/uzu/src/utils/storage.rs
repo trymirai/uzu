@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use objc2::rc::Retained;
-use objc2_foundation::{NSHomeDirectory, NSSearchPathDirectory, NSString};
+use objc2_foundation::NSSearchPathDirectory;
 
 const STORAGE_DIR_NAME: &str = "com.mirai.sdk.storage";
 
@@ -17,7 +16,7 @@ pub fn user_domain_path(dir: NSSearchPathDirectory) -> PathBuf {
             let urls = fm.URLsForDirectory_inDomains(dir, NSSearchPathDomainMask::UserDomainMask);
 
             urls.firstObject().map(|url| {
-                let ns_path: Retained<NSString> = url.path().expect("URL should have a path");
+                let ns_path = url.path().expect("URL should have a path");
                 PathBuf::from(ns_path.to_string())
             })
         }) {
@@ -52,6 +51,7 @@ pub fn user_domain_path(dir: NSSearchPathDirectory) -> PathBuf {
 pub fn storage_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     let base = {
+        use objc2_foundation::NSHomeDirectory;
         // In a sandboxed macOS application, NSHomeDirectory() returns
         // `~/Library/Containers/<bundle-id>/Data`. Persist model files inside
         // the app-scoped caches directory to comply with sandbox rules:

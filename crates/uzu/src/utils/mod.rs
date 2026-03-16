@@ -1,4 +1,5 @@
 pub mod attention;
+pub mod autorelease;
 pub mod env_utils;
 pub mod model_size;
 pub mod pointers;

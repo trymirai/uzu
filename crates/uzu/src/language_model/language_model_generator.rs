@@ -16,6 +16,7 @@ use super::{
     rng::PRng,
 };
 use crate::{
+    autorelease::maybe_with_autorelease_pool,
     backends::common::{
         Backend, Buffer, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
         CommandBufferPending, Context,
@@ -237,7 +238,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
             }
 
-            objc2::rc::autoreleasepool(|_pool| {
+            maybe_with_autorelease_pool(|| {
                 let _ = last_state.take();
             });
 
@@ -612,7 +613,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     }
 
     fn clear_cache(&mut self) {
-        objc2::rc::autoreleasepool(|_pool| {
+        maybe_with_autorelease_pool(|| {
             self.pre_encoded_task = None;
         });
     }
@@ -742,7 +743,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
     ) -> Result<(ForwardPassState<B>, f64), Error> {
-        objc2::rc::autoreleasepool(|_pool| {
+        maybe_with_autorelease_pool(|| {
             let run_start = Instant::now();
 
             let mut state = ForwardPassState::new_llm(

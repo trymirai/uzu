@@ -15,11 +15,11 @@ fn nanos_to_secs(nanos: u64) -> f64 {
     nanos as f64 / 1_000_000_000.0
 }
 
-use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
+    autorelease::maybe_with_autorelease_pool,
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
@@ -696,8 +696,6 @@ impl ChatSession {
 
 impl Drop for ChatSession {
     fn drop(&mut self) {
-        autoreleasepool(|_| {
-            self.llm = None;
-        });
+        maybe_with_autorelease_pool(|| self.llm = None);
     }
 }

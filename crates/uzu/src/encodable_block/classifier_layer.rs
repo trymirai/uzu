@@ -1,9 +1,8 @@
 use std::rc::Rc;
 
-use objc2::rc::autoreleasepool;
-
 use crate::{
     DataType,
+    autorelease::maybe_with_autorelease_pool,
     backends::common::{Backend, CommandBuffer},
     config::TransformerLayerConfig,
     encodable_block::{
@@ -46,7 +45,7 @@ impl<B: Backend> ClassifierLayer<B> {
         layer_loader: &ParameterTree<B::Context>,
         rope: Rc<Rope<B>>,
     ) -> Self {
-        autoreleasepool(|_| {
+        maybe_with_autorelease_pool(|| {
             let ctx = context.as_ref(); // Reference for functions expecting &B::Context
             let attention_config =
                 layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
