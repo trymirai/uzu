@@ -63,8 +63,6 @@ impl StructuredAudioCodecGraph {
         codebooks: usize,
         frames: usize,
     ) -> AudioResult<SubmittedDecodedPaddedAudio<B>> {
-        let collect_command_buffer_profile =
-            runtime_options.collect_command_buffer_profile || runtime_options.capture_single_decode;
         if batch_size == 0 || frames == 0 {
             let out_lengths = lengths
                 .iter()
@@ -81,10 +79,6 @@ impl StructuredAudioCodecGraph {
                 frames: out_lengths.iter().copied().max().unwrap_or(0),
                 lengths: out_lengths,
                 final_command_buffer: None,
-                final_command_label: None,
-                final_cpu_encode_ms: 0.0,
-                decode_profile: None,
-                capture: None,
             });
         }
 
@@ -95,102 +89,56 @@ impl StructuredAudioCodecGraph {
                     .map_err(|_| AudioError::Runtime("structured audio length exceeds i32 range".to_string()))
             })
             .collect::<AudioResult<Vec<_>>>()?;
-        let mut decode_profile = collect_command_buffer_profile.then(|| AudioDecodeProfile {
-            batch_size,
-            frames,
-            codebooks,
-            ..AudioDecodeProfile::default()
-        });
-        let capture = if runtime_options.capture_single_decode {
-            Some(AudioCaptureGuard::start()?)
-        } else {
-            None
-        };
-        let context = if let Some(capture) = capture.as_ref() {
-            capture.context()
-        } else {
-            resources.context().clone()
-        };
-
-        let can_use_gpu_latent_path = batch_size == 1 && lengths.first().copied() == Some(frames);
-        let mut x;
-        let mut x_layout = SequenceLayout::Nsc;
-        let quantized_nsc = self.decode_quantizer_to_nsc_array_on_context(
-            resources,
-            &context,
-            tokens,
-            lengths,
-            batch_size,
-            codebooks,
-            frames,
-            &mut decode_profile,
-        )?;
-        x = if can_use_gpu_latent_path {
-            self.apply_post_module_gpu_on_array_single_batch(
-                resources,
-                &context,
-                &quantized_nsc,
-                frames,
-                &mut decode_profile,
-            )?
-        } else {
-            self.apply_post_module_gpu_on_array(
-                resources,
-                &context,
-                &quantized_nsc,
-                lengths,
-                batch_size,
-                frames,
-                &mut decode_profile,
-            )?
-        };
-
-        let vocoder_graph = self.vocoder_gpu_graph(resources)?;
-        let kernels = resources.kernels(self.vocoder_data_type)?;
+        let context = resources.context().clone();
+        let chunked_command_buffers = runtime_options.chunked_command_buffers;
+        let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
         let mut command_buffer = context
             .create_command_buffer()
             .map_err(|err| {
                 AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}"))
             })?
             .start_encoding();
-        let profile_decoder_micro_stages = runtime_options.profile_decoder_micro_stages;
-        let chunked_command_buffers = runtime_options.chunked_command_buffers;
-        let micro_flush_min_elements = runtime_options.micro_flush_min_elements;
-        let mut command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
-        let mut flush_stage = |label: String,
-                               estimated_macs: Option<usize>,
-                               command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding|
-         -> AudioResult<()> {
-            if !(chunked_command_buffers || profile_decoder_micro_stages) {
+
+        let mut x;
+        let mut x_layout = SequenceLayout::Nsc;
+        let quantized_nsc = self.decode_quantizer_to_nsc_array_enqueued(
+            resources,
+            &context,
+            &mut command_buffer,
+            tokens,
+            lengths,
+            batch_size,
+            codebooks,
+            frames,
+        )?;
+        let flush_stage = |command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| -> AudioResult<()> {
+            if !chunked_command_buffers {
                 return Ok(());
             }
-            let cpu_encode_ms =
-                command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             let next_command_buffer = context
                 .create_command_buffer()
                 .map_err(|err| {
                     AudioError::Runtime(format!("failed to create structured audio decode command buffer: {err}"))
                 })?
                 .start_encoding();
-            let submitted = std::mem::replace(command_buffer, next_command_buffer).end_encoding().submit();
-            if decode_profile.is_some() {
-                let wait_start = Instant::now();
-                let completed = submitted.wait_until_completed().map_err(|err| {
-                    AudioError::Runtime(format!("failed to wait for structured audio decoder command buffer: {err}"))
-                })?;
-                let cpu_wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
-                push_audio_command_buffer_profile(
-                    &mut decode_profile,
-                    label,
-                    &completed,
-                    cpu_encode_ms,
-                    cpu_wait_ms,
-                    estimated_macs,
-                );
-            }
-            command_buffer_encode_start = decode_profile.is_some().then(Instant::now);
+            std::mem::replace(command_buffer, next_command_buffer).end_encoding().submit();
             Ok(())
         };
+        let _ = codebooks;
+        flush_stage(&mut command_buffer)?;
+        x = self.apply_post_module_gpu_on_array_enqueued(
+            resources,
+            &context,
+            &mut command_buffer,
+            &quantized_nsc,
+            lengths,
+            batch_size,
+            frames,
+        )?;
+        flush_stage(&mut command_buffer)?;
+
+        let vocoder_graph = self.vocoder_gpu_graph(resources)?;
+        let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
@@ -253,7 +201,7 @@ impl StructuredAudioCodecGraph {
                 .map_err(|err| {
                     AudioError::Runtime(format!("structured audio upsample block {block_index} convnext failed: {err}"))
                 })?;
-            flush_stage(format!("upsample_block_{block_index}"), None, &mut command_buffer)?;
+            flush_stage(&mut command_buffer)?;
 
             x_layout = SequenceLayout::Ncs;
             current_frames = next_frames;
@@ -281,13 +229,10 @@ impl StructuredAudioCodecGraph {
             &kernels,
         )?;
         current_channels = vocoder_graph.first_conv.cout;
-        flush_stage(
-            "decoder_first_conv".to_string(),
-            Some(conv1d_estimated_macs(batch_size, current_frames, &vocoder_graph.first_conv)?),
-            &mut command_buffer,
-        )?;
+        let _ = conv1d_estimated_macs(batch_size, current_frames, &vocoder_graph.first_conv)?;
+        flush_stage(&mut command_buffer)?;
 
-        for (block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
+        for (_block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
             if block.trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
                     "structured audio decoder block input mismatch: expected {}, got {}",
@@ -349,14 +294,6 @@ impl StructuredAudioCodecGraph {
                 "decoder block estimated MACs",
             )?;
 
-            if profile_decoder_micro_stages {
-                flush_stage(
-                    format!("decoder_block_{block_index}_trans_conv"),
-                    Some(trans_conv_estimated_macs),
-                    &mut command_buffer,
-                )?;
-            }
-
             x = self.run_residual_unit_enqueued(
                 &context,
                 &mut command_buffer,
@@ -369,22 +306,13 @@ impl StructuredAudioCodecGraph {
                 current_frames,
                 &kernels,
             )?;
-            if profile_decoder_micro_stages {
-                flush_stage(
-                    format!("decoder_block_{block_index}_res1"),
-                    Some(res1_estimated_macs),
-                    &mut command_buffer,
+            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
+                let _ = checked_add_usize(
+                    trans_conv_estimated_macs,
+                    res1_estimated_macs,
+                    "decoder block res1 estimated MACs",
                 )?;
-            } else if chunked_command_buffers && active_elements >= micro_flush_min_elements {
-                flush_stage(
-                    format!("decoder_block_{block_index}_res1"),
-                    Some(checked_add_usize(
-                        trans_conv_estimated_macs,
-                        res1_estimated_macs,
-                        "decoder block res1 estimated MACs",
-                    )?),
-                    &mut command_buffer,
-                )?;
+                flush_stage(&mut command_buffer)?;
             }
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -398,13 +326,8 @@ impl StructuredAudioCodecGraph {
                 current_frames,
                 &kernels,
             )?;
-            if profile_decoder_micro_stages || (chunked_command_buffers && active_elements >= micro_flush_min_elements)
-            {
-                flush_stage(
-                    format!("decoder_block_{block_index}_res2"),
-                    Some(res2_estimated_macs),
-                    &mut command_buffer,
-                )?;
+            if chunked_command_buffers && active_elements >= micro_flush_min_elements {
+                flush_stage(&mut command_buffer)?;
             }
             x = self.run_residual_unit_enqueued(
                 &context,
@@ -418,19 +341,9 @@ impl StructuredAudioCodecGraph {
                 current_frames,
                 &kernels,
             )?;
-            flush_stage(
-                if profile_decoder_micro_stages {
-                    format!("decoder_block_{block_index}_res3")
-                } else {
-                    format!("decoder_block_{block_index}")
-                },
-                Some(if profile_decoder_micro_stages {
-                    res3_estimated_macs
-                } else {
-                    block_total_estimated_macs
-                }),
-                &mut command_buffer,
-            )?;
+            let _ = res3_estimated_macs;
+            let _ = block_total_estimated_macs;
+            flush_stage(&mut command_buffer)?;
         }
 
         x = snake1d_enqueue(
@@ -457,9 +370,6 @@ impl StructuredAudioCodecGraph {
         )?;
         x = tanh_enqueue(&context, &mut command_buffer, &x, &kernels)?;
 
-        let final_cpu_encode_ms =
-            command_buffer_encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        let final_command_label = Some("decoder_final".to_string());
         let final_command_buffer = Some(command_buffer.end_encoding().submit());
         let out_lengths = lengths_i32
             .into_iter()
@@ -475,10 +385,6 @@ impl StructuredAudioCodecGraph {
             frames: current_frames,
             lengths: out_lengths,
             final_command_buffer,
-            final_command_label,
-            final_cpu_encode_ms,
-            decode_profile,
-            capture,
         })
     }
 
@@ -491,7 +397,7 @@ impl StructuredAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<(DecodedPaddedAudio, Option<AudioDecodeProfile>)> {
+    ) -> AudioResult<DecodedPaddedAudio> {
         self.submit_decode_padded(resources, runtime_options, tokens, lengths, batch_size, codebooks, frames)?.resolve()
     }
 }

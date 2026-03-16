@@ -94,16 +94,16 @@ impl StructuredAudioCodecGraph {
         Ok(Some(vocoder_context.max(post_module_context)))
     }
 
-    pub(super) fn decode_quantizer_to_nsc_array_on_context<B: Backend>(
+    pub(super) fn decode_quantizer_to_nsc_array_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         context: &Rc<B::Context>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-        profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<B>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
@@ -171,11 +171,6 @@ impl StructuredAudioCodecGraph {
         let semantic_cardinality_i32 = usize_to_i32(quantizer_resources.semantic_cardinality, "semantic_cardinality")?;
         let residual_cardinality_i32 = usize_to_i32(quantizer_resources.residual_cardinality, "residual_cardinality")?;
 
-        let encode_start = profile.is_some().then(Instant::now);
-        let mut command_buffer = context
-            .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create quantizer command buffer: {err}")))?
-            .start_encoding();
         let tokens_buffer = tokens_array.buffer();
         let tokens_buffer = tokens_buffer.borrow();
         let lengths_buffer = lengths_array.buffer();
@@ -212,16 +207,8 @@ impl StructuredAudioCodecGraph {
             residual_quantizers_i32,
             semantic_cardinality_i32,
             residual_cardinality_i32,
-            &mut command_buffer,
+            command_buffer,
         );
-        let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        let command_buffer = command_buffer.end_encoding().submit();
-        let wait_start = profile.is_some().then(Instant::now);
-        let command_buffer = command_buffer
-            .wait_until_completed()
-            .map_err(|err| AudioError::Runtime(format!("failed to wait for quantizer command buffer: {err}")))?;
-        let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        push_audio_command_buffer_profile(profile, "quantizer", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
 
         Ok(output)
     }

@@ -316,13 +316,13 @@ impl StructuredAudioCodecGraph {
         Ok(())
     }
 
-    pub(super) fn apply_post_module_gpu_on_array_single_batch<B: Backend>(
+    pub(super) fn apply_post_module_gpu_on_array_single_batch_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         _context: &Rc<B::Context>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         latent_nsc: &Array<B>,
         frames: usize,
-        profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<B>> {
         if frames == 0 {
             return Ok(latent_nsc.clone());
@@ -374,12 +374,6 @@ impl StructuredAudioCodecGraph {
             .num_elements()
             .checked_mul(latent_nsc.data_type().size_in_bytes())
             .ok_or(AudioError::Runtime("post_module copy size overflow".to_string()))?;
-        let encode_start = profile.is_some().then(Instant::now);
-        let mut command_buffer = runtime
-            .context
-            .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?
-            .start_encoding();
         {
             let latent_buffer = latent_nsc.buffer();
             let main_output_buffer = main_output.buffer();
@@ -391,28 +385,20 @@ impl StructuredAudioCodecGraph {
                 copy_bytes,
             );
         }
-        Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
-        let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        let command_buffer = command_buffer.end_encoding().submit();
-        let wait_start = profile.is_some().then(Instant::now);
-        let command_buffer = command_buffer
-            .wait_until_completed()
-            .map_err(|err| AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}")))?;
-        let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-        push_audio_command_buffer_profile(profile, "post_module", &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
+        Self::encode_post_module_layers(&runtime, &mut state, command_buffer)?;
 
         Ok(main_output)
     }
 
-    pub(super) fn apply_post_module_gpu_on_array<B: Backend>(
+    pub(super) fn apply_post_module_gpu_on_array_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         context: &Rc<B::Context>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         latent_nsc: &Array<B>,
         lengths: &[usize],
         batch_size: usize,
         frames: usize,
-        profile: &mut Option<AudioDecodeProfile>,
     ) -> AudioResult<Array<B>> {
         if lengths.len() != batch_size {
             return Err(AudioError::InvalidTokenLengths {
@@ -428,7 +414,13 @@ impl StructuredAudioCodecGraph {
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_gpu_on_array_single_batch(resources, context, latent_nsc, frames, profile);
+            return self.apply_post_module_gpu_on_array_single_batch_enqueued(
+                resources,
+                context,
+                command_buffer,
+                latent_nsc,
+                frames,
+            );
         }
 
         let output = context.create_array(
@@ -494,12 +486,6 @@ impl StructuredAudioCodecGraph {
             };
 
             for &batch_index in &batch_indices {
-                let encode_start = profile.is_some().then(Instant::now);
-                let mut command_buffer = runtime
-                    .context
-                    .create_command_buffer()
-                    .map_err(|err| AudioError::Runtime(format!("failed to create post_module command buffer: {err}")))?
-                    .start_encoding();
                 if !copied_output_prefix {
                     {
                         let latent_buffer = latent_nsc.buffer();
@@ -526,7 +512,7 @@ impl StructuredAudioCodecGraph {
                         source.size(),
                     );
                 }
-                Self::encode_post_module_layers(&runtime, &mut state, &mut command_buffer)?;
+                Self::encode_post_module_layers(&runtime, &mut state, command_buffer)?;
                 let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
                 {
                     let main_output_buffer = main_output.buffer();
@@ -539,19 +525,6 @@ impl StructuredAudioCodecGraph {
                         destination.size(),
                     );
                 }
-                let cpu_encode_ms = encode_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-                let command_buffer = command_buffer.end_encoding().submit();
-                let wait_start = profile.is_some().then(Instant::now);
-                let command_buffer = command_buffer.wait_until_completed().map_err(|err| {
-                    AudioError::Runtime(format!("failed to wait for post_module command buffer: {err}"))
-                })?;
-                let cpu_wait_ms = wait_start.map(|start| start.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
-                let label = if batch_size == 1 && active_len == frames {
-                    "post_module".to_string()
-                } else {
-                    format!("post_module_len_{active_len}_batch_{batch_index}")
-                };
-                push_audio_command_buffer_profile(profile, label, &command_buffer, cpu_encode_ms, cpu_wait_ms, None);
             }
         }
 
