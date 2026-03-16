@@ -99,7 +99,7 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<B>>>), Error> {
-        autoreleasepool(|_| {
+        maybe_with_autoreleasepool(|| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
                 self.context.context.clone(),
