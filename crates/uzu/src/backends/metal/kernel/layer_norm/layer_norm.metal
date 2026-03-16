@@ -1,8 +1,8 @@
 #include <metal_stdlib>
+#include "../common/defines.h"
 #include "../definitions.metal"
 
 #define BLOCK_SIZE 1024
-#define SIMD_SIZE 32
 #define GRAIN_SIZE 4
 
 // LayerNorm: subtract mean, then normalize (for BERT-style models)
@@ -128,8 +128,8 @@ PUBLIC KERNEL(LayerNorm) (
     constant float& scale_offset,
     constant uint& full_layer,
     const bool in_place SPECIALIZE,
-    threadgroup ACC shared_mean[SIMD_SIZE],
-    threadgroup ACC shared_variance[SIMD_SIZE],
+    threadgroup ACC shared_mean[METAL_SIMD_SIZE],
+    threadgroup ACC shared_variance[METAL_SIMD_SIZE],
     const Simd simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_in_row THREADS(BLOCK_SIZE)

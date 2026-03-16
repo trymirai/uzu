@@ -144,7 +144,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
       constexpr uint total_vecs = Bm * vec_cols; // 16*8 = 128
       const uint iters = ceil_div(total_vecs, threads_total);
 
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (uint t = 0; t < iters; ++t) {
         const uint i = t * threads_total + lin;
         if (i < total_vecs) {
@@ -158,7 +158,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             // Safe to read - at least first element is valid
             const ulong base =
                 x_base + (ulong)r * (ulong)d_model + (ulong)(k_off + col_base);
-            UZU_PRAGMA_UNROLL
+            METAL_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
               dst[j] = (col_base + j < valid_k)
                            ? static_cast<T>(float(x_perm[base + j]))
@@ -166,7 +166,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             }
           } else {
             // Row out of bounds or entire vec8 chunk is out of K bounds
-            UZU_PRAGMA_UNROLL
+            METAL_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
               dst[j] = static_cast<T>(0.0f);
             }
@@ -183,7 +183,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
       constexpr uint total_vecs = Bn * vec_cols; // 32*8 = 256
       const uint iters = ceil_div(total_vecs, threads_total);
 
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (uint t = 0; t < iters; ++t) {
         const uint i = t * threads_total + lin;
         if (i < total_vecs) {
@@ -203,7 +203,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             const ulong gate_base = w13_expert_base +
                                     (ulong)(d_ff + gcol) * (ulong)d_model +
                                     (ulong)(k_off + col_base);
-            UZU_PRAGMA_UNROLL
+            METAL_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
               up_dst[j] = (col_base + j < valid_k)
                               ? static_cast<T>(float(w13_all[up_base + j]))
@@ -216,7 +216,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             }
           } else {
             // Row out of bounds or entire vec8 chunk is out of K bounds
-            UZU_PRAGMA_UNROLL
+            METAL_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
               up_dst[j] = static_cast<T>(0.0f);
               if (gating_sel > 1u)
@@ -230,15 +230,15 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // ---- MMA across the BK tile (in simdgroup-sized chunks) ----
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (uint kk = 0; kk < Bk; kk += SG_TILE) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (uint m_sub = 0; m_sub < SgBm; m_sub += SG_TILE) {
         const uint r_idx = m_sub / SG_TILE;
         metal::simdgroup_matrix<T, 8, 8> lhs_frag;
         simdgroup_load(lhs_frag, Xs, X_LD, ulong2(kk, row_sg_off + m_sub));
 
-        UZU_PRAGMA_UNROLL
+        METAL_PRAGMA_UNROLL
         for (uint n_sub = 0; n_sub < SgBn; n_sub += SG_TILE) {
           const uint c_idx = n_sub / SG_TILE;
           const uint tile = r_idx * (SgBn / SG_TILE) + c_idx;
@@ -305,10 +305,10 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
   const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
 
-  UZU_PRAGMA_UNROLL
+  METAL_PRAGMA_UNROLL
   for (uint n_sub = 0; n_sub < SgBn; n_sub += SG_TILE) {
     const uint c_idx = n_sub / SG_TILE;
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (uint m_sub = 0; m_sub < SgBm; m_sub += SG_TILE) {
       const uint r_idx = m_sub / SG_TILE;
       const uint tile = r_idx * (SgBn / SG_TILE) + c_idx;
@@ -458,7 +458,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   // 4 accumulators per simdgroup: 1×4 layout of 8×8 tiles
   constexpr uint TEMP = (SgBm / SG_TILE) * (SgBn / SG_TILE); // 1×4 = 4
   metal::simdgroup_float8x8 Out[TEMP];
-  UZU_PRAGMA_UNROLL
+  METAL_PRAGMA_UNROLL
   for (uint i = 0; i < TEMP; ++i) {
     Out[i] = metal::make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
   }
@@ -488,12 +488,12 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
         // Safe to read - at least first element is valid
         device const float* my_src =
             hidden + h_base + (ulong)h_bi * (ulong)d_ff + (ulong)(k_off + h_bj);
-        UZU_PRAGMA_UNROLL
+        METAL_PRAGMA_UNROLL
         for (uint j = 0; j < H_VEC; j++) {
           my_dst[j] = (h_bj + j < valid_k) ? my_src[j] : 0.0f;
         }
       } else {
-        UZU_PRAGMA_UNROLL
+        METAL_PRAGMA_UNROLL
         for (uint j = 0; j < H_VEC; j++) {
           my_dst[j] = 0.0f;
         }
@@ -512,13 +512,13 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
           device const T* my_src = w2_all + w2_expert_base +
                                    (ulong)gcol * (ulong)d_ff +
                                    (ulong)(k_off + w_bj);
-          UZU_PRAGMA_UNROLL
+          METAL_PRAGMA_UNROLL
           for (uint j = 0; j < W_VEC; j++) {
             my_dst[j] = (w_bj + j < valid_k) ? static_cast<T>(float(my_src[j]))
                                              : static_cast<T>(0.0f);
           }
         } else {
-          UZU_PRAGMA_UNROLL
+          METAL_PRAGMA_UNROLL
           for (uint j = 0; j < W_VEC; j++) {
             my_dst[j] = static_cast<T>(0.0f);
           }
@@ -529,7 +529,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // ---- Serpentine MMA: 1×4 tiles per simdgroup ----
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (uint kk = 0; kk < Bk; kk += SG_TILE) {
       // Load 1 LHS fragment
       metal::simdgroup_float8x8 lhs;
@@ -570,7 +570,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
     return;
   const ulong out_row = seg_start + row_tg_off + local_row;
 
-  UZU_PRAGMA_UNROLL
+  METAL_PRAGMA_UNROLL
   for (uint ni = 0; ni < 4; ni++) { // 4 col tiles per simdgroup
     const auto accum = Out[ni].thread_elements();
     const uint local_col = col_sg_off + ni * 8 + lane_col_base;
