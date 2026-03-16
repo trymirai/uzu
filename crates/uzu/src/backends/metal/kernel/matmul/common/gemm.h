@@ -1,7 +1,7 @@
 #pragma once
 
 #include "loader.h"
-#include "mma.h"
+#include "threadgroup_tile.h"
 #include "../../../generated/matmul.h"
 
 using namespace metal;
@@ -38,25 +38,31 @@ struct ThreadgroupGemm {
   METAL_CONST short THREADGROUP_PADDING_A = 16 / sizeof(T);
   METAL_CONST short THREADGROUP_PADDING_B = 16 / sizeof(T);
   METAL_CONST short THREADGROUP_MEMORY_SIZE_A =
-      transpose_a ? BLOCK_DEPTH * (BLOCK_ROWS + THREADGROUP_PADDING_A) : BLOCK_ROWS * (BLOCK_DEPTH + THREADGROUP_PADDING_A);
+      transpose_a ? BLOCK_DEPTH * (BLOCK_ROWS + THREADGROUP_PADDING_A)
+                  : BLOCK_ROWS * (BLOCK_DEPTH + THREADGROUP_PADDING_A);
   METAL_CONST short THREADGROUP_MEMORY_SIZE_B =
-      transpose_b ? BLOCK_COLS * (BLOCK_DEPTH + THREADGROUP_PADDING_B) : BLOCK_DEPTH * (BLOCK_COLS + THREADGROUP_PADDING_B);
-  METAL_CONST short THREADGROUP_MEMORY_SIZE = THREADGROUP_MEMORY_SIZE_A + THREADGROUP_MEMORY_SIZE_B;
+      transpose_b ? BLOCK_COLS * (BLOCK_DEPTH + THREADGROUP_PADDING_B)
+                  : BLOCK_DEPTH * (BLOCK_COLS + THREADGROUP_PADDING_B);
+  METAL_CONST short THREADGROUP_MEMORY_SIZE =
+      THREADGROUP_MEMORY_SIZE_A + THREADGROUP_MEMORY_SIZE_B;
 
-  METAL_CONST short THREADGROUP_SIZE = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32;
+  METAL_CONST short THREADGROUP_SIZE =
+      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32;
 
   using LoaderAType = ThreadgroupLoader<
       T,
       transpose_a ? BLOCK_DEPTH : BLOCK_ROWS,
       transpose_a ? BLOCK_ROWS : BLOCK_DEPTH,
-      transpose_a ? BLOCK_ROWS + THREADGROUP_PADDING_A : BLOCK_DEPTH + THREADGROUP_PADDING_A,
+      transpose_a ? BLOCK_ROWS + THREADGROUP_PADDING_A
+                  : BLOCK_DEPTH + THREADGROUP_PADDING_A,
       !transpose_a,
       THREADGROUP_SIZE>;
   using LoaderBType = ThreadgroupLoader<
       T,
       transpose_b ? BLOCK_COLS : BLOCK_DEPTH,
       transpose_b ? BLOCK_DEPTH : BLOCK_COLS,
-      transpose_b ? BLOCK_DEPTH + THREADGROUP_PADDING_B : BLOCK_COLS + THREADGROUP_PADDING_B,
+      transpose_b ? BLOCK_DEPTH + THREADGROUP_PADDING_B
+                  : BLOCK_COLS + THREADGROUP_PADDING_B,
       transpose_b,
       THREADGROUP_SIZE>;
   using ThreadgroupTileType = ThreadgroupTile<
@@ -69,8 +75,10 @@ struct ThreadgroupGemm {
       SIMDGROUPS_PER_COLUMN,
       transpose_a,
       transpose_b,
-      transpose_a ? BLOCK_ROWS + THREADGROUP_PADDING_A : BLOCK_DEPTH + THREADGROUP_PADDING_A,
-      transpose_b ? BLOCK_DEPTH + THREADGROUP_PADDING_B : BLOCK_COLS + THREADGROUP_PADDING_B,
+      transpose_a ? BLOCK_ROWS + THREADGROUP_PADDING_A
+                  : BLOCK_DEPTH + THREADGROUP_PADDING_A,
+      transpose_b ? BLOCK_DEPTH + THREADGROUP_PADDING_B
+                  : BLOCK_COLS + THREADGROUP_PADDING_B,
       AccumType,
       Epilogue>;
 
@@ -89,8 +97,12 @@ struct ThreadgroupGemm {
   ) {
     (void)alignment;
 
-    short2 tile_dimensions_a = transpose_a ? short2(threadgroup_block_rows, BLOCK_DEPTH) : short2(BLOCK_DEPTH, threadgroup_block_rows);
-    short2 tile_dimensions_b = transpose_b ? short2(BLOCK_DEPTH, threadgroup_block_cols) : short2(threadgroup_block_cols, BLOCK_DEPTH);
+    short2 tile_dimensions_a =
+        transpose_a ? short2(threadgroup_block_rows, BLOCK_DEPTH)
+                    : short2(BLOCK_DEPTH, threadgroup_block_rows);
+    short2 tile_dimensions_b =
+        transpose_b ? short2(BLOCK_DEPTH, threadgroup_block_cols)
+                    : short2(threadgroup_block_cols, BLOCK_DEPTH);
 
     for (int k = 0; k < gemm_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -118,9 +130,11 @@ struct ThreadgroupGemm {
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       short2 last_tile_dimensions_a =
-          transpose_a ? short2(threadgroup_block_rows, leftover_block_depth) : short2(leftover_block_depth, threadgroup_block_rows);
+          transpose_a ? short2(threadgroup_block_rows, leftover_block_depth)
+                      : short2(leftover_block_depth, threadgroup_block_rows);
       short2 last_tile_dimensions_b =
-          transpose_b ? short2(leftover_block_depth, threadgroup_block_cols) : short2(threadgroup_block_cols, leftover_block_depth);
+          transpose_b ? short2(leftover_block_depth, threadgroup_block_cols)
+                      : short2(threadgroup_block_cols, leftover_block_depth);
 
       loader_a.load_safe(last_tile_dimensions_a);
       loader_b.load_safe(last_tile_dimensions_b);
@@ -146,10 +160,12 @@ struct ThreadgroupGemm {
     (void)lid;
 
     const int swizzle_stride = pow2(params->swizzle_log);
-    const int swizzled_row_id = tid.y * swizzle_stride + (tid.x % swizzle_stride);
+    const int swizzled_row_id =
+        tid.y * swizzle_stride + (tid.x % swizzle_stride);
     const int swizzled_col_id = tid.x / swizzle_stride;
 
-    if (params->threadgroups_per_row <= swizzled_col_id || params->threadgroups_per_column <= swizzled_row_id) {
+    if (params->threadgroups_per_row <= swizzled_col_id ||
+        params->threadgroups_per_column <= swizzled_row_id) {
       return;
     }
 
@@ -160,12 +176,26 @@ struct ThreadgroupGemm {
     const size_t output_row_long = size_t(output_row);
     const size_t output_col_long = size_t(output_col);
 
-    a += transpose_a ? output_row_long : output_row_long * params->leading_dimension_a;
-    b += transpose_b ? output_col_long * params->leading_dimension_b : output_col_long;
+    a += transpose_a ? output_row_long
+                     : output_row_long * params->leading_dimension_a;
+    b += transpose_b ? output_col_long * params->leading_dimension_b
+                     : output_col_long;
     d += output_row_long * params->leading_dimension_d + output_col_long;
 
-    thread LoaderAType loader_a(a, params->leading_dimension_a, a_shared, simd_group_id, simd_lane_id);
-    thread LoaderBType loader_b(b, params->leading_dimension_b, b_shared, simd_group_id, simd_lane_id);
+    thread LoaderAType loader_a(
+        a,
+        params->leading_dimension_a,
+        a_shared,
+        simd_group_id,
+        simd_lane_id
+    );
+    thread LoaderBType loader_b(
+        b,
+        params->leading_dimension_b,
+        b_shared,
+        simd_group_id,
+        simd_lane_id
+    );
 
     thread ThreadgroupTileType threadgroup_tile(simd_group_id, simd_lane_id);
 
@@ -190,9 +220,14 @@ struct ThreadgroupGemm {
       threadgroup_barrier(mem_flags::mem_none);
 
       if (!K_aligned) {
-        int leftover_block_depth = params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
-        short2 tile_dimensions_a = transpose_a ? short2(BLOCK_ROWS, leftover_block_depth) : short2(leftover_block_depth, BLOCK_ROWS);
-        short2 tile_dimensions_b = transpose_b ? short2(leftover_block_depth, BLOCK_COLS) : short2(BLOCK_COLS, leftover_block_depth);
+        int leftover_block_depth =
+            params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
+        short2 tile_dimensions_a =
+            transpose_a ? short2(BLOCK_ROWS, leftover_block_depth)
+                        : short2(leftover_block_depth, BLOCK_ROWS);
+        short2 tile_dimensions_b =
+            transpose_b ? short2(leftover_block_depth, BLOCK_COLS)
+                        : short2(BLOCK_COLS, leftover_block_depth);
 
         loader_a.load_safe(tile_dimensions_a);
         loader_b.load_safe(tile_dimensions_b);
@@ -210,9 +245,11 @@ struct ThreadgroupGemm {
     else {
       short threadgroup_block_rows = min(BLOCK_ROWS, params->M - output_row);
       short threadgroup_block_cols = min(BLOCK_COLS, params->N - output_col);
-      short leftover_block_depth = params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
+      short leftover_block_depth =
+          params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
 
-      if (threadgroup_block_rows == BLOCK_ROWS && threadgroup_block_cols == BLOCK_COLS) {
+      if (threadgroup_block_rows == BLOCK_ROWS &&
+          threadgroup_block_cols == BLOCK_COLS) {
         gemm_loop<true, true, K_aligned>(
             a_shared,
             b_shared,
@@ -241,7 +278,11 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.store_result_safe(d, params->leading_dimension_d, short2(threadgroup_block_cols, threadgroup_block_rows));
+        threadgroup_tile.store_result_safe(
+            d,
+            params->leading_dimension_d,
+            short2(threadgroup_block_cols, threadgroup_block_rows)
+        );
         return;
 
       } else if (threadgroup_block_rows == BLOCK_ROWS) {
@@ -257,7 +298,11 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.store_result_safe(d, params->leading_dimension_d, short2(threadgroup_block_cols, threadgroup_block_rows));
+        threadgroup_tile.store_result_safe(
+            d,
+            params->leading_dimension_d,
+            short2(threadgroup_block_cols, threadgroup_block_rows)
+        );
         return;
 
       } else {
@@ -273,7 +318,11 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.store_result_safe(d, params->leading_dimension_d, short2(threadgroup_block_cols, threadgroup_block_rows));
+        threadgroup_tile.store_result_safe(
+            d,
+            params->leading_dimension_d,
+            short2(threadgroup_block_cols, threadgroup_block_rows)
+        );
         return;
       }
     }

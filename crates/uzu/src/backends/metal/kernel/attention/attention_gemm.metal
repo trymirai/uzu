@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 #include "../definitions.metal"
 #include "../matmul/common/loader.h"
-#include "../matmul/common/mma.h"
+#include "../matmul/common/simdgroup_fragment.h"
 #include "attention.h"
 
 using namespace metal;
@@ -17,8 +17,8 @@ struct TransformScale {
 
 template <typename T>
 METAL_FUNC T row_reduce_max(T v) {
-  // SimdgroupMultiplyAccumulate::get_lane_coordinates mapping groups lanes for a row as:
-  // {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
+  // SimdgroupMultiplyAccumulate::get_lane_coordinates mapping groups lanes for
+  // a row as: {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
   v = metal::max(v, simd_shuffle_xor(v, 1));
   v = metal::max(v, simd_shuffle_xor(v, 8));
   return v;
@@ -144,11 +144,15 @@ PUBLIC KERNEL(AttentionGemm)(
   // MMA tiles
   constexpr short SIMDGROUP_BLOCK_SIZE = 8;
   using AccumType = float;
-  using SimdgroupMultiplyAccumulateType = SimdgroupMultiplyAccumulate<AccumType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
+  using SimdgroupMultiplyAccumulateType = SimdgroupMultiplyAccumulate<
+      AccumType,
+      SIMDGROUP_BLOCK_SIZE,
+      SIMDGROUP_BLOCK_SIZE>;
 
   constexpr int kNWarps = WM * WN;
   static_assert(
-      BQ >= (kNWarps * SIMDGROUP_BLOCK_SIZE) && BQ % (kNWarps * SIMDGROUP_BLOCK_SIZE) == 0,
+      BQ >= (kNWarps * SIMDGROUP_BLOCK_SIZE) &&
+          BQ % (kNWarps * SIMDGROUP_BLOCK_SIZE) == 0,
       "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
   );
 
@@ -169,7 +173,8 @@ PUBLIC KERNEL(AttentionGemm)(
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 simd_coord = SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd.lane_idx);
+  const short2 simd_coord =
+      SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd.lane_idx);
   const short sm = simd_coord.y;
   const short sn = simd_coord.x;
 
@@ -274,7 +279,8 @@ PUBLIC KERNEL(AttentionGemm)(
         METAL_PRAGMA_UNROLL
         for (short j = 0; j < TK; j++) {
           thread auto& frag = Stile.multiply_accumulate_at(0, j);
-          const int col_base = kb * BK + int(sn) + int(j) * SIMDGROUP_BLOCK_SIZE;
+          const int col_base =
+              kb * BK + int(sn) + int(j) * SIMDGROUP_BLOCK_SIZE;
           if (q_abs < col_base) {
             frag[0] = neg_inf;
           }
