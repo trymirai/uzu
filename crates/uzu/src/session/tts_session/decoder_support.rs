@@ -14,7 +14,6 @@ pub(super) enum EmbeddingInjection {
 pub(super) struct TextSamplingState {
     rng: StdRng,
     method: SamplingMethod,
-    repetition_penalty: f32,
 }
 
 impl TextSamplingState {
@@ -22,14 +21,13 @@ impl TextSamplingState {
         seed: u64,
         config: &TextSamplingConfig,
     ) -> Self {
-        Self::with_params(seed, config.temperature, config.top_p, config.repetition_penalty)
+        Self::with_params(seed, config.temperature, config.top_p)
     }
 
     pub(super) fn with_params(
         seed: u64,
         temperature: f32,
         top_p: f32,
-        repetition_penalty: f32,
     ) -> Self {
         let method = if temperature <= 0.0 || top_p <= 0.0 {
             SamplingMethod::Greedy
@@ -45,7 +43,6 @@ impl TextSamplingState {
         Self {
             rng: StdRng::seed_from_u64(seed),
             method,
-            repetition_penalty,
         }
     }
 
@@ -55,14 +52,6 @@ impl TextSamplingState {
 
     pub(super) fn next_seed(&mut self) -> u64 {
         self.rng.random::<u64>()
-    }
-
-    pub(super) fn repetition_penalty(&self) -> f32 {
-        self.repetition_penalty
-    }
-
-    pub(super) fn uses_repetition_penalty(&self) -> bool {
-        !matches!(self.method, SamplingMethod::Greedy) && (self.repetition_penalty - 1.0).abs() > 1e-6
     }
 }
 
@@ -87,57 +76,6 @@ pub(super) fn normalize_rendered_prompt(
     rendered
 }
 
-pub(super) fn push_recent_token(
-    history: &mut Vec<u32>,
-    token: u32,
-    max_window: usize,
-) {
-    if max_window == 0 {
-        return;
-    }
-    if history.len() == max_window {
-        history.remove(0);
-    }
-    history.push(token);
-}
-
-pub(super) fn write_repetition_window(
-    destination: &mut [u32],
-    source: &[u32],
-) -> usize {
-    let mut count = 0usize;
-    for &token in source.iter().rev() {
-        if destination[..count].contains(&token) {
-            continue;
-        }
-        if count >= destination.len() {
-            break;
-        }
-        destination[count] = token;
-        count += 1;
-    }
-    count
-}
-
-pub(super) fn write_repetition_window_tail(
-    destination: &mut [u32],
-    source: &[u32],
-) -> usize {
-    destination.fill(0);
-    let tail = tail_repetition_window(source, destination.len());
-    write_repetition_window(destination, tail)
-}
-
-pub(super) fn tail_repetition_window(
-    source: &[u32],
-    max_window: usize,
-) -> &[u32] {
-    if source.len() <= max_window {
-        source
-    } else {
-        &source[source.len() - max_window..]
-    }
-}
 
 impl AdaptiveChunkController {
     pub(super) fn new(config: &TtsRunConfig) -> Self {
@@ -545,6 +483,7 @@ impl TtsSession {
             return Err(Error::UnableToLoadTokenizer);
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
+        validate_tts_tokenizer_contract(&tokenizer, &model_metadata)?;
 
         let loaded_runtime = load_tts_runtime(&model_path, &model_metadata, &options)?;
 
@@ -589,6 +528,47 @@ impl TtsSession {
             self.message_processor_config.drop_initial_newline,
         ))
     }
+}
+
+fn validate_tts_tokenizer_contract(
+    tokenizer: &Tokenizer,
+    model_metadata: &ModelMetadata,
+) -> Result<(), Error> {
+    let Some(tts_model_config) = model_metadata.model_config.as_tts() else {
+        return Ok(());
+    };
+
+    let crate::config::TtsTextDecoderConfig::FishAudioTextDecoderConfig {
+        config,
+    } = &tts_model_config.tts_config.text_decoder_config
+    else {
+        return Ok(());
+    };
+
+    let expected_pairs = [
+        ("<|im_end|>".to_string(), config.im_end_token_id),
+        ("<|semantic:0|>".to_string(), config.semantic_token_begin_id),
+        (
+            format!("<|semantic:{}|>", config.codebook_size.saturating_sub(1)),
+            config.semantic_token_end_id,
+        ),
+    ];
+
+    for (token, expected_id) in expected_pairs {
+        let Some(actual_id) = tokenizer.token_to_id(token.as_str()) else {
+            return Err(Error::InvalidTtsModelConfig(format!(
+                "tokenizer missing required FishAudio token '{token}'"
+            )));
+        };
+
+        if i64::from(actual_id) != expected_id {
+            return Err(Error::InvalidTtsModelConfig(format!(
+                "tokenizer token id mismatch for '{token}': expected {expected_id}, got {actual_id}"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 pub(super) fn semantic_token_to_code(

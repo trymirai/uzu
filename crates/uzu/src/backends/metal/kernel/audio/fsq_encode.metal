@@ -72,7 +72,7 @@ void fsq_encode(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioFsqEncode)(
+PUBLIC KERNEL(AudioFsqEncode)(
     device const T* input,
     device int* tokens,
     device const int* lengths,

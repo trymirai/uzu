@@ -15,7 +15,6 @@ pub(super) struct TokenDecoderRunner {
     decoder_config: Rc<crate::config::DecoderConfig>,
     executables: Decoder<Metal>,
     sampler: GpuSampling<Metal>,
-    repetition_penalty: <<Metal as Backend>::Kernels as Kernels>::RepetitionPenaltyKernel,
     kv_cache_update: KVCacheUpdate<Metal>,
     tensor_copy: <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel,
     tensor_add_scale: <<Metal as Backend>::Kernels as Kernels>::TensorAddScaleKernel,
@@ -24,13 +23,7 @@ pub(super) struct TokenDecoderRunner {
     async_chain_positions: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_seeds: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_results: Rc<RefCell<<Metal as Backend>::Buffer>>,
-    async_chain_repetition_tokens: Rc<RefCell<<Metal as Backend>::Buffer>>,
-    async_chain_repetition_counts: Rc<RefCell<<Metal as Backend>::Buffer>>,
     async_chain_capacity: usize,
-    repetition_capacity: usize,
-    repetition_tokens: ArrayCell<Metal>,
-    repetition_counts: ArrayCell<Metal>,
-    repetition_window_raw: Vec<u32>,
     pub(super) single_hidden_capture: ArrayCell<Metal>,
     pub(super) single_override_embedding: ArrayCell<Metal>,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
@@ -49,7 +42,6 @@ impl TokenDecoderRunner {
         embedding_subtree: &str,
         readout_subtree: &str,
         runtime_config: &TextDecoderRuntimeConfig,
-        repetition_window_size: usize,
     ) -> Result<Self, Error> {
         let command_buffer = Rc::new(RefCell::new(
             context.create_command_buffer().expect("Failed to create command buffer").start_encoding(),
@@ -68,7 +60,16 @@ impl TokenDecoderRunner {
         let root_loader_view = loader.tree();
 
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
-        shared_buffers.borrow_mut().update_data_with_transformer_subtree(&root_loader_view, transformer_subtree);
+        {
+            let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
+            let mut shared_buffers = shared_buffers.borrow_mut();
+            if let Some(global_rope) = &mut shared_buffers.global_rope {
+                global_rope.update_data(&transformer_tree, "global_rope");
+            }
+            if let Some(local_rope) = &mut shared_buffers.local_rope {
+                local_rope.update_data(&transformer_tree, "local_rope");
+            }
+        }
 
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
@@ -83,9 +84,6 @@ impl TokenDecoderRunner {
         let logits_data_type = scratch_buffers.logits.borrow().data_type();
         let sampler =
             GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(unable_to_create_context)?;
-        let repetition_penalty =
-            <<Metal as Backend>::Kernels as Kernels>::RepetitionPenaltyKernel::new(context.as_ref(), logits_data_type)
                 .map_err(unable_to_create_context)?;
         let tensor_copy =
             <<Metal as Backend>::Kernels as Kernels>::TensorCopyKernel::new(context.as_ref(), activation_data_type)
@@ -115,29 +113,6 @@ impl TokenDecoderRunner {
                 .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
                 .map_err(unable_to_create_context)?,
         ));
-        let repetition_capacity = repetition_window_size.max(1);
-        let async_chain_repetition_tokens = Rc::new(RefCell::new(
-            context
-                .create_buffer(
-                    async_chain_capacity
-                        .checked_mul(repetition_capacity)
-                        .and_then(|value| value.checked_mul(std::mem::size_of::<u32>()))
-                        .ok_or_else(|| {
-                            unable_to_create_context(std::io::Error::other(
-                                "async chain repetition buffer size overflow",
-                            ))
-                        })?,
-                )
-                .map_err(unable_to_create_context)?,
-        ));
-        let async_chain_repetition_counts = Rc::new(RefCell::new(
-            context
-                .create_buffer(async_chain_capacity * std::mem::size_of::<u32>())
-                .map_err(unable_to_create_context)?,
-        ));
-        let repetition_tokens =
-            RefCell::new(context.create_array(&[repetition_capacity], DataType::U32, "tts_repetition_tokens"));
-        let repetition_counts = RefCell::new(context.create_array(&[1], DataType::U32, "tts_repetition_counts"));
         let single_hidden_capture = RefCell::new(context.create_array(
             &[1, decoder_config.model_dim],
             activation_data_type,
@@ -170,7 +145,6 @@ impl TokenDecoderRunner {
             decoder_config,
             executables,
             sampler,
-            repetition_penalty,
             kv_cache_update,
             tensor_copy,
             tensor_add_scale,
@@ -179,13 +153,7 @@ impl TokenDecoderRunner {
             async_chain_positions,
             async_chain_seeds,
             async_chain_results,
-            async_chain_repetition_tokens,
-            async_chain_repetition_counts,
             async_chain_capacity,
-            repetition_capacity,
-            repetition_tokens,
-            repetition_counts,
-            repetition_window_raw: Vec::with_capacity(repetition_capacity),
             single_hidden_capture,
             single_override_embedding,
             single_token_vocab_masks: HashMap::new(),
@@ -199,83 +167,6 @@ impl TokenDecoderRunner {
     pub(super) fn reset(&mut self) {
         self.cache_layers.borrow_mut().clear();
         self.next_position = 0;
-        self.clear_repetition_window();
-    }
-
-    pub(super) fn clear_repetition_window(&mut self) {
-        self.repetition_window_raw.clear();
-        self.repetition_counts.borrow_mut().as_slice_mut::<u32>()[0] = 0;
-    }
-
-    pub(super) fn set_repetition_window(
-        &mut self,
-        previous_tokens: &[u32],
-    ) -> Result<(), Error> {
-        let mut tokens = self.repetition_tokens.borrow_mut();
-        let raw_window = tail_repetition_window(previous_tokens, tokens.shape()[0]);
-        self.repetition_window_raw.clear();
-        self.repetition_window_raw.extend_from_slice(raw_window);
-        let count = write_repetition_window_tail(tokens.as_slice_mut::<u32>(), previous_tokens);
-        self.repetition_counts.borrow_mut().as_slice_mut::<u32>()[0] =
-            u32::try_from(count).map_err(|_| Error::GenerateFailed)?;
-        Ok(())
-    }
-
-    fn encode_repetition_penalty_if_needed(
-        &self,
-        sampling: &TextSamplingState,
-    ) -> Result<(), Error> {
-        if !sampling.uses_repetition_penalty() {
-            return Ok(());
-        }
-        let repetition_tokens = self.repetition_tokens.borrow();
-        let repetition_counts = self.repetition_counts.borrow();
-        let count = repetition_counts.as_slice::<u32>()[0];
-        if count == 0 {
-            return Ok(());
-        }
-        let repetition_tokens_buffer = repetition_tokens.buffer();
-        let repetition_tokens_buffer = repetition_tokens_buffer.borrow();
-        let repetition_counts_buffer = repetition_counts.buffer();
-        let repetition_counts_buffer = repetition_counts_buffer.borrow();
-        let logits = self.scratch_buffers.logits.borrow();
-        let logits_buffer = logits.buffer();
-        let mut logits_buffer = logits_buffer.borrow_mut();
-        self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
-            self.repetition_penalty.encode(
-                &mut *logits_buffer,
-                &*repetition_tokens_buffer,
-                &*repetition_counts_buffer,
-                1_u32,
-                self.decoder_config.vocab_size as u32,
-                repetition_tokens.shape()[0] as u32,
-                sampling.repetition_penalty(),
-                encoder,
-            );
-        });
-        Ok(())
-    }
-
-    fn populate_async_chain_repetition_windows(
-        &mut self,
-        repetition_windows: Option<&[Vec<u32>]>,
-        first_codebook_index: usize,
-        followup_count: usize,
-    ) -> Result<(), Error> {
-        let tokens_ptr = self.async_chain_repetition_tokens.borrow().cpu_ptr().as_ptr() as *mut u32;
-        let counts_ptr = self.async_chain_repetition_counts.borrow().cpu_ptr().as_ptr() as *mut u32;
-        for pass in 0..followup_count {
-            let row = first_codebook_index + pass;
-            let previous_tokens =
-                repetition_windows.and_then(|windows| windows.get(row).map(Vec::as_slice)).unwrap_or(&[]);
-            let slot_offset = pass.checked_mul(self.repetition_capacity).ok_or(Error::GenerateFailed)?;
-            let slot = unsafe { std::slice::from_raw_parts_mut(tokens_ptr.add(slot_offset), self.repetition_capacity) };
-            let count = write_repetition_window_tail(slot, previous_tokens);
-            unsafe {
-                *counts_ptr.add(pass) = u32::try_from(count).map_err(|_| Error::GenerateFailed)?;
-            }
-        }
-        Ok(())
     }
 
     pub(super) fn prefill_without_sampling(
@@ -285,7 +176,7 @@ impl TokenDecoderRunner {
         if token_ids.is_empty() {
             return Ok(());
         }
-        let mut sampling = TextSamplingState::with_params(0, 0.0, 1.0, 1.0);
+        let mut sampling = TextSamplingState::with_params(0, 0.0, 1.0);
         let _ = self.decode_next_step(token_ids, EmbeddingInjection::None, None, &mut sampling, None, false, None)?;
         Ok(())
     }
@@ -335,8 +226,6 @@ impl TokenDecoderRunner {
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut TextSamplingState,
-        first_codebook_index: usize,
-        repetition_windows: Option<&[Vec<u32>]>,
         mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
     ) -> Result<(), Error> {
         if followup_count == 0 {
@@ -360,10 +249,9 @@ impl TokenDecoderRunner {
             None
         };
 
-        self.populate_async_chain_repetition_windows(repetition_windows, first_codebook_index, followup_count)?;
-
         {
-            let positions_ptr = self.async_chain_positions.borrow().cpu_ptr().as_ptr() as *mut i32;
+            let positions_borrow = self.async_chain_positions.borrow();
+            let positions_ptr = positions_borrow.cpu_ptr().as_ptr() as *mut i32;
             for pass in 0..followup_count {
                 unsafe {
                     *positions_ptr.add(pass) = (self.next_position + pass) as i32;
@@ -372,7 +260,8 @@ impl TokenDecoderRunner {
         }
 
         {
-            let seeds_ptr = self.async_chain_seeds.borrow().cpu_ptr().as_ptr() as *mut u64;
+            let seeds_borrow = self.async_chain_seeds.borrow();
+            let seeds_ptr = seeds_borrow.cpu_ptr().as_ptr() as *mut u64;
             if !matches!(sampling.method(), SamplingMethod::Greedy) {
                 for pass in 0..followup_count {
                     unsafe {
@@ -444,29 +333,6 @@ impl TokenDecoderRunner {
                     .encode_readout(&mut state, command_buffer.deref_mut())
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
-            let count =
-                unsafe { *(self.async_chain_repetition_counts.borrow().cpu_ptr().as_ptr() as *const u32).add(pass) };
-            let tokens_offset = pass * self.repetition_capacity * std::mem::size_of::<u32>();
-            let counts_offset = pass * std::mem::size_of::<u32>();
-            let async_chain_repetition_tokens = self.async_chain_repetition_tokens.borrow();
-            let async_chain_repetition_counts = self.async_chain_repetition_counts.borrow();
-            if sampling.uses_repetition_penalty() && count != 0 {
-                let logits = self.scratch_buffers.logits.borrow();
-                let logits_buffer = logits.buffer();
-                let mut logits_buffer = logits_buffer.borrow_mut();
-                self.command_buffer.borrow_mut().with_compute_encoder(|encoder| {
-                    self.repetition_penalty.encode(
-                        &mut *logits_buffer,
-                        (&*async_chain_repetition_tokens, tokens_offset),
-                        (&*async_chain_repetition_counts, counts_offset),
-                        1_u32,
-                        self.decoder_config.vocab_size as u32,
-                        self.repetition_capacity as u32,
-                        sampling.repetition_penalty(),
-                        encoder,
-                    );
-                });
-            }
             {
                 let mut command_buffer = self.command_buffer.borrow_mut();
                 self.sampler
@@ -507,7 +373,8 @@ impl TokenDecoderRunner {
         self.next_position = self.next_position.saturating_add(followup_count);
         self.submit_and_wait_current_command_buffer()?;
 
-        let results_ptr = self.async_chain_results.borrow().cpu_ptr().as_ptr() as *const u32;
+        let results_borrow = self.async_chain_results.borrow();
+        let results_ptr = results_borrow.cpu_ptr().as_ptr() as *const u32;
         for pass in 0..followup_count {
             let sampled = unsafe { *results_ptr.add(pass) };
             on_token(pass, u64::from(sampled))?;
@@ -517,21 +384,13 @@ impl TokenDecoderRunner {
 
     pub(super) fn decode_followup_tokens_sequential(
         &mut self,
-        first_codebook_index: usize,
         mut previous_token: u64,
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut TextSamplingState,
-        repetition_windows: Option<&[Vec<u32>]>,
         mut on_token: impl FnMut(usize, u64) -> Result<(), Error>,
     ) -> Result<(), Error> {
         for pass in 0..followup_count {
-            if let Some(windows) = repetition_windows {
-                let row = first_codebook_index + pass;
-                self.set_repetition_window(windows.get(row).map_or(&[], Vec::as_slice))?;
-            } else {
-                self.clear_repetition_window();
-            }
             let sampled = self.decode_next_token(&[previous_token], EmbeddingInjection::None, vocab_limit, sampling)?;
             on_token(pass, sampled)?;
             previous_token = sampled;
@@ -791,7 +650,6 @@ impl TokenDecoderRunner {
                 .embed
                 .encode_readout(&mut state, self.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.encode_repetition_penalty_if_needed(sampling)?;
             self.sampler
                 .encode(&mut state, self.command_buffer.borrow_mut().deref_mut())
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;

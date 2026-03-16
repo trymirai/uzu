@@ -81,7 +81,7 @@ void norm_ncs(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioNormNcs)(
+PUBLIC KERNEL(AudioNormNcs)(
     device const T* input,
     device const T* scales,
     device const T* bias,

@@ -104,21 +104,11 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
     let mut kernel_traits = Vec::new();
     let mut kernel_types = Vec::new();
-    let mut emitted_kernels_by_name: HashMap<Box<str>, Kernel> = HashMap::new();
 
     for (_file_path, file_kernels) in kernels.into_iter().sorted_by_key(|(p, _k)| p.join("::")) {
-        for kernel in file_kernels.into_vec() {
-            if let Some(cached_kernel) = emitted_kernels_by_name.get(kernel.name.as_ref()) {
-                if cached_kernel != &kernel {
-                    bail!("{cached_kernel:?} != {kernel:?}");
-                }
-                continue;
-            }
-
-            let (tr, ty) = traitgen(&kernel);
+        for (tr, ty) in file_kernels.iter().map(traitgen) {
             kernel_traits.push(tr);
             kernel_types.push(ty);
-            emitted_kernels_by_name.insert(kernel.name.clone(), kernel);
         }
     }
 

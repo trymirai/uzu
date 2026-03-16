@@ -75,7 +75,7 @@ void quantizer_decode(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioQuantizerDecode)(
+PUBLIC KERNEL(AudioQuantizerDecode)(
     device const int* tokens,
     device const int* lengths,
     device const T* semantic_codebook,

@@ -3,7 +3,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(TensorAddScale)(
+PUBLIC KERNEL(TensorAddScale)(
     const device T* input,
     const device T* bias,
     device T* output,

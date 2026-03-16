@@ -17,7 +17,7 @@ use uzu::{
             CommandBufferPending, Context, Kernels,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
-                AudioCausalConvTranspose1dKernel, AudioClampKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
+                AudioCausalConvTranspose1dKernel, AudioConv1dKernel, AudioFsqDecodeKernel,
                 AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel,
             },
         },
@@ -547,36 +547,6 @@ fn audio_add_matches_reference_f32() {
             "Add mismatch at index={index}: expected {expected_sum}, got {}, delta={sum_delta}",
             sum_got[index]
         );
-    }
-}
-
-#[test]
-fn audio_clamp_matches_reference_f32() {
-    let context = create_test_context();
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioClampKernel::new(&context, DataType::F32)
-        .expect("audio runtime");
-
-    let n = 2048usize;
-    let min_value = -1.0f32;
-    let max_value = 1.0f32;
-    let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 10.24).collect();
-
-    let mut input = context.create_array(&[n], DataType::F32, "audio_clamp_input");
-    input.as_slice_mut::<f32>().copy_from_slice(&input_values);
-
-    let output = context.create_array(&[n], DataType::F32, "audio_clamp_output");
-
-    run_command_buffer(&context, |command_buffer| {
-        borrow_array_buffer!(input_buffer = input);
-        borrow_array_buffer_mut!(output_buffer = output);
-        kernel.encode(&*input_buffer, &mut *output_buffer, n as i32, min_value, max_value, command_buffer);
-    });
-
-    let got = output.as_slice::<f32>();
-    for index in 0..n {
-        let expected = input_values[index].clamp(min_value, max_value);
-        let delta = (expected - got[index]).abs();
-        assert!(delta <= 1e-6, "Mismatch at index={index}: expected {expected}, got {}, delta={delta}", got[index]);
     }
 }
 

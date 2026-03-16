@@ -257,58 +257,6 @@ impl AudioDecodeStreamState {
         Ok((&self.flattened_tokens, &self.window_lengths, window_frames))
     }
 
-    fn extract_delta_padded(
-        &mut self,
-        full_pcm: &AudioPcmBatch,
-    ) -> AudioResult<DecodedPaddedAudio> {
-        if full_pcm.batch_size() != self.batch_size {
-            return Err(AudioError::Runtime(format!(
-                "stream decoded batch mismatch: expected {}, got {}",
-                self.batch_size,
-                full_pcm.batch_size()
-            )));
-        }
-        let channels = full_pcm.channels();
-        let mut delta_lengths = vec![0_usize; self.batch_size];
-        let mut delta_unpacked = Vec::<f32>::new();
-
-        let mut src_offset = 0usize;
-        for batch in 0..self.batch_size {
-            let full_frames = full_pcm.lengths()[batch];
-            let previous_frames = self.emitted_audio_lengths[batch].min(full_frames);
-            let delta_frames = full_frames.saturating_sub(previous_frames);
-            delta_lengths[batch] = delta_frames;
-
-            let batch_sample_count = full_frames
-                .checked_mul(channels)
-                .ok_or(AudioError::Runtime("stream batch sample count overflow".to_string()))?;
-            let src_end = src_offset
-                .checked_add(batch_sample_count)
-                .ok_or(AudioError::Runtime("stream sample offset overflow".to_string()))?;
-            let batch_slice = &full_pcm.samples()[src_offset..src_end];
-
-            let delta_start = previous_frames
-                .checked_mul(channels)
-                .ok_or(AudioError::Runtime("stream delta offset overflow".to_string()))?;
-            let delta_end = full_frames
-                .checked_mul(channels)
-                .ok_or(AudioError::Runtime("stream delta offset overflow".to_string()))?;
-            delta_unpacked.extend_from_slice(&batch_slice[delta_start..delta_end]);
-
-            src_offset = src_end;
-            self.emitted_audio_lengths[batch] = full_frames;
-            self.emitted_semantic_lengths[batch] = self.semantic_lengths[batch];
-        }
-
-        let (delta_padded, delta_frames) = pack_unpacked_to_padded(&delta_unpacked, channels, &delta_lengths)?;
-        Ok(DecodedPaddedAudio {
-            samples: delta_padded,
-            channels,
-            frames: delta_frames,
-            lengths: delta_lengths,
-        })
-    }
-
     fn extract_delta_from_padded_with_offset(
         &mut self,
         full_padded: &DecodedPaddedAudio,
@@ -442,49 +390,6 @@ fn extract_delta_from_padded_with_offset_snapshot(
         frames: max_delta_frames,
         lengths: delta_lengths,
     })
-}
-
-fn pack_unpacked_to_padded(
-    unpacked: &[f32],
-    channels: usize,
-    lengths: &[usize],
-) -> AudioResult<(Vec<f32>, usize)> {
-    if channels == 0 {
-        return Err(AudioError::InvalidChannelCount);
-    }
-    let batch_size = lengths.len();
-    let frames = lengths.iter().copied().max().unwrap_or(0);
-    let expected_unpacked = lengths
-        .iter()
-        .try_fold(0usize, |acc, &length| acc.checked_add(length.checked_mul(channels)?))
-        .ok_or(AudioError::Runtime("stream unpacked size overflow".to_string()))?;
-    if unpacked.len() != expected_unpacked {
-        return Err(AudioError::InvalidPcmShape {
-            expected_samples: expected_unpacked,
-            actual_samples: unpacked.len(),
-        });
-    }
-
-    let padded_len = checked_product(&[batch_size, channels, frames])?;
-    let mut padded = vec![0.0_f32; padded_len];
-    let mut src_offset = 0usize;
-    for (batch, &frame_count) in lengths.iter().enumerate() {
-        let batch_samples = frame_count
-            .checked_mul(channels)
-            .ok_or(AudioError::Runtime("stream batch sample count overflow".to_string()))?;
-        for frame in 0..frame_count {
-            let src_frame_base = src_offset + frame * channels;
-            for channel in 0..channels {
-                let dst_index = (batch * channels + channel) * frames + frame;
-                padded[dst_index] = unpacked[src_frame_base + channel];
-            }
-        }
-        src_offset = src_offset
-            .checked_add(batch_samples)
-            .ok_or(AudioError::Runtime("stream source offset overflow".to_string()))?;
-    }
-
-    Ok((padded, frames))
 }
 
 fn pack_pcm_to_padded(

@@ -74,7 +74,7 @@ void causal_conv_transpose1d(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioCausalConvTranspose1d)(
+PUBLIC KERNEL(AudioCausalConvTranspose1d)(
     device const T* input,
     device const T* weight,
     device const T* bias,

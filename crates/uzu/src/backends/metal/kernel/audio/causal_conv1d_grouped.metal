@@ -74,7 +74,7 @@ void causal_conv1d_grouped(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioCausalConv1dGrouped)(
+PUBLIC KERNEL(AudioCausalConv1dGrouped)(
     device const T* input,
     device const T* weight,
     device const T* bias,

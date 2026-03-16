@@ -60,7 +60,7 @@ void conv1d(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioConv1d)(
+PUBLIC KERNEL(AudioConv1d)(
     device const T* input,
     device const T* weight,
     device const T* bias,

@@ -120,7 +120,7 @@ void causal_conv1d_grouped_residual(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioCausalConv1dGroupedResidual)(
+PUBLIC KERNEL(AudioCausalConv1dGroupedResidual)(
     device const T* input,
     device const T* residual,
     device const T* weight,

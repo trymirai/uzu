@@ -1,20 +1,5 @@
 type MetalParameterTree<'loader> = crate::parameters::ParameterTree<'loader, <Metal as Backend>::Context>;
 
-fn with_weight_tree<T>(
-    context: &Rc<<Metal as Backend>::Context>,
-    weights_path: &str,
-    f: impl for<'loader> FnOnce(&MetalParameterTree<'loader>) -> AudioResult<T>,
-) -> AudioResult<T> {
-    let weights_file = File::open(weights_path).map_err(|err| {
-        AudioError::Runtime(format!("failed to open structured audio weights '{weights_path}': {err}"))
-    })?;
-    let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|err| {
-        AudioError::Runtime(format!("failed to load structured audio weights '{weights_path}': {err}"))
-    })?;
-    let root = loader.tree();
-    f(&root)
-}
-
 fn read_float_array<const RANK: usize>(
     tree: &MetalParameterTree<'_>,
     name: &str,
@@ -82,15 +67,6 @@ fn outer_axis_view(
         .and_then(|value| value.checked_add(array.offset()))
         .ok_or(AudioError::Runtime("array outer-axis view offset overflow".to_string()))?;
     Ok(unsafe { Array::from_parts(array.buffer(), offset, slice_shape, array.data_type()) })
-}
-
-fn create_zero_array(
-    context: &Rc<<Metal as Backend>::Context>,
-    data_type: DataType,
-    shape: &[usize],
-    label: &str,
-) -> Array<Metal> {
-    context.create_array(shape, data_type, label)
 }
 
 fn read_conv1d_gpu_layer(
@@ -179,7 +155,7 @@ fn read_norm_gpu_layer(
     let bias = if use_bias {
         read_float_vector_exact(tree, "biases", channels, data_type)?
     } else {
-        create_zero_array(context, data_type, &[channels], &format!("{label_prefix}_bias"))
+        context.create_array(&[channels], data_type, &format!("{label_prefix}_bias"))
     };
     Ok(StructuredAudioNorm {
         scales,

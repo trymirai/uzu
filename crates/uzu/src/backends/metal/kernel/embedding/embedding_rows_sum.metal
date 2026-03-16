@@ -5,7 +5,7 @@
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(EmbeddingRowsSum)(
+PUBLIC KERNEL(EmbeddingRowsSum)(
     const device uint64_t* row_indices, // [num_rows]
     const device T* weights,            // [total_rows, model_dim]
     device T* output,                   // [model_dim]

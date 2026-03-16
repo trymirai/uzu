@@ -61,7 +61,7 @@ fn structured_audio_kernels(
     context: &Rc<<Metal as Backend>::Context>,
     data_type: DataType,
 ) -> AudioResult<Rc<StructuredAudioKernelCache>> {
-    let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(structured_audio_dtype_key(data_type));
+    let key = (Rc::as_ptr(context) as usize).wrapping_mul(31) ^ usize::from(structured_audio_dtype_key(data_type));
     FISHAUDIO_KERNEL_CACHE.with(|cache| {
         if let Some(existing) = cache.borrow().get(&key) {
             return Ok(existing.clone());

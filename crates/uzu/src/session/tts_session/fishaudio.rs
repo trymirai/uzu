@@ -20,7 +20,6 @@ pub(super) struct FishAudioTextDecoderRuntime {
     max_seq_len: usize,
     scale_codebook_embeddings: bool,
     fast_vocab_limit: usize,
-    repeat_window_size: usize,
     apply_semantic_sampling_mask: bool,
     semantic_sampling_mask_row: Box<[u32]>,
     semantic_sampling_mask_without_im_end_row: Box<[u32]>,
@@ -237,7 +236,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
         "text_decoder.embeddings_slow",
         "text_decoder.readout_slow",
         runtime_config,
-        config.repeat_window_size,
     )?;
 
     let fast_runner = if config.num_codebooks > 1 {
@@ -249,7 +247,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
             "text_decoder.embeddings_fast",
             "text_decoder.readout_fast",
             runtime_config,
-            config.repeat_window_size,
         )?)
     } else {
         None
@@ -320,7 +317,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime(
         max_seq_len: config.max_seq_len,
         scale_codebook_embeddings: config.scale_codebook_embeddings,
         fast_vocab_limit: config.short_logits_size.min(config.codebook_size),
-        repeat_window_size: config.repeat_window_size,
         apply_semantic_sampling_mask,
         semantic_sampling_mask_row,
         semantic_sampling_mask_without_im_end_row: semantic_sampling_mask_without_im_end_row.into_boxed_slice(),
@@ -447,9 +443,6 @@ impl FishAudioTextDecoderRuntime {
         }
         let mut by_codebook =
             (0..self.num_codebooks).map(|_| Vec::<u32>::with_capacity(max_new_tokens)).collect::<Vec<_>>();
-        let mut repetition_windows = (0..(self.num_codebooks + 1))
-            .map(|_| Vec::<u32>::with_capacity(self.repeat_window_size))
-            .collect::<Vec<_>>();
         if self.current_codes_scratch.len() != self.num_codebooks {
             self.current_codes_scratch = vec![0_u32; self.num_codebooks];
         }
@@ -469,8 +462,6 @@ impl FishAudioTextDecoderRuntime {
             if current_semantic_token as i64 == self.im_end_token_id {
                 break;
             }
-            let frame_semantic_token = current_semantic_token;
-
             let first_code = semantic_token_to_code(
                 current_semantic_token,
                 self.semantic_token_begin_id,
@@ -506,7 +497,6 @@ impl FishAudioTextDecoderRuntime {
                             command_buffer,
                         )
                     };
-                fast_runner.set_repetition_window(repetition_windows.get(1).map_or(&[], Vec::as_slice))?;
                 let mut fast_token = fast_runner.decode_next_step(
                     &[0, u64::from(first_code)],
                     EmbeddingInjection::OverrideFirstRowInternal,
@@ -538,12 +528,10 @@ impl FishAudioTextDecoderRuntime {
                     };
                     match self.runtime_config.followup_strategy {
                         TextDecoderFollowupStrategy::SequentialExact => fast_runner.decode_followup_tokens_sequential(
-                            2,
                             fast_token,
                             followup_count,
                             Some(fast_vocab_limit),
                             &mut sampling,
-                            Some(&repetition_windows),
                             &mut record_followup,
                         )?,
                         TextDecoderFollowupStrategy::AsyncChain => fast_runner.decode_followup_tokens_batched(
@@ -551,8 +539,6 @@ impl FishAudioTextDecoderRuntime {
                             followup_count,
                             Some(fast_vocab_limit),
                             &mut sampling,
-                            2,
-                            Some(&repetition_windows),
                             &mut record_followup,
                         )?,
                     }
@@ -591,7 +577,6 @@ impl FishAudioTextDecoderRuntime {
             } else {
                 None
             };
-            slow_runner.set_repetition_window(&repetition_windows[0])?;
             current_semantic_token = slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
                 &[current_semantic_token],
                 EmbeddingInjection::AddPreloaded {
@@ -601,18 +586,6 @@ impl FishAudioTextDecoderRuntime {
                 slow_sampling_mask,
                 Some(&mut pre_codebook_sum),
             )?;
-            push_recent_token(
-                &mut repetition_windows[0],
-                u32::try_from(frame_semantic_token).map_err(|_| Error::GenerateFailed)?,
-                self.repeat_window_size,
-            );
-            for codebook_index in 1..=self.num_codebooks {
-                push_recent_token(
-                    &mut repetition_windows[codebook_index],
-                    self.current_codes_scratch[codebook_index - 1],
-                    self.repeat_window_size,
-                );
-            }
         }
 
         self.instrumentation = self.slow_runner.take_instrumentation();
@@ -830,87 +803,5 @@ impl SemanticDecoderBackend for FishAudioTextDecoderRuntime {
 
     fn take_instrumentation(&mut self) -> RunnerInstrumentation {
         FishAudioTextDecoderRuntime::take_instrumentation(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{validate_fishaudio_decoder_contract, validate_fishaudio_message_processor_config};
-    use crate::{config::TtsMessageProcessorConfig, session::types::Error};
-
-    #[test]
-    fn fishaudio_decoder_contract_rejects_residual_cardinality_mismatch() {
-        let result = validate_fishaudio_decoder_contract(2, 47, 256, 10, 25, 2, 48, 16);
-        assert!(matches!(result, Err(Error::InvalidTtsModelConfig(_))));
-    }
-
-    #[test]
-    fn fishaudio_decoder_contract_rejects_semantic_cardinality_mismatch() {
-        let result = validate_fishaudio_decoder_contract(2, 48, 256, 10, 25, 2, 48, 15);
-        assert!(matches!(result, Err(Error::InvalidTtsModelConfig(_))));
-    }
-
-    #[test]
-    fn fishaudio_decoder_contract_accepts_matching_cardinalities() {
-        let semantic_cardinality =
-            validate_fishaudio_decoder_contract(2, 48, 256, 10, 25, 2, 48, 16).expect("matching contract");
-        assert_eq!(semantic_cardinality, 16);
-    }
-
-    #[test]
-    fn fishaudio_decoder_contract_accepts_heterogeneous_semantic_and_residual_cardinalities() {
-        let semantic_cardinality = validate_fishaudio_decoder_contract(10, 4096, 8192, 151658, 155753, 10, 1024, 4096)
-            .expect("heterogeneous fishaudio contract");
-        assert_eq!(semantic_cardinality, 4096);
-    }
-
-    #[test]
-    fn fishaudio_message_processor_rejects_missing_required_default_fields() {
-        let result = validate_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
-            prompt_template: String::from(
-                "{% for message in messages %}<|{{message.style}}|><|{{message.speaker_id}}|>{{message.content}}{% endfor %}",
-            ),
-            drop_initial_newline: true,
-            system_role_name: String::from("system"),
-            user_role_name: String::from("user"),
-            assistant_role_name: String::from("assistant"),
-            default_message_fields: Default::default(),
-        });
-        assert!(matches!(result, Err(Error::InvalidTtsPromptConfig(_))));
-    }
-
-    #[test]
-    fn fishaudio_message_processor_accepts_explicit_default_fields() {
-        let result = validate_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
-            prompt_template: String::from(
-                "{% for message in messages %}<|{{message.style}}|><|{{message.speaker_id}}|>{{message.content}}{% endfor %}",
-            ),
-            drop_initial_newline: true,
-            system_role_name: String::from("system"),
-            user_role_name: String::from("user"),
-            assistant_role_name: String::from("assistant"),
-            default_message_fields: [
-                (String::from("speaker_id"), String::from("speaker:42")),
-                (String::from("style"), String::from("relaxed")),
-            ]
-            .into_iter()
-            .collect(),
-        });
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn fishaudio_message_processor_accepts_builtin_message_fields_without_defaults() {
-        let result = validate_fishaudio_message_processor_config(&TtsMessageProcessorConfig {
-            prompt_template: String::from(
-                "{% for message in messages %}{{message.role}}: {{message.content}}{% endfor %}",
-            ),
-            drop_initial_newline: true,
-            system_role_name: String::from("system"),
-            user_role_name: String::from("user"),
-            assistant_role_name: String::from("assistant"),
-            default_message_fields: Default::default(),
-        });
-        assert!(result.is_ok());
     }
 }

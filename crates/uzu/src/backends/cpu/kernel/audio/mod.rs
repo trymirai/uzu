@@ -1,1 +1,12 @@
-pub mod audio;
+pub mod add;
+pub mod causal_conv1d;
+pub mod causal_conv1d_grouped;
+pub mod causal_conv1d_grouped_residual;
+pub mod causal_conv_transpose1d;
+pub mod causal_conv_transpose1d_causal_pad;
+pub mod conv1d;
+pub mod fsq_decode;
+pub mod fsq_encode;
+pub mod half_snake;
+pub mod norm_ncs;
+pub mod quantizer_decode;

@@ -19,7 +19,7 @@ void add_tensors(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioAdd)(
+PUBLIC KERNEL(AudioAdd)(
     device const T* a,
     device const T* b,
     device T* out,

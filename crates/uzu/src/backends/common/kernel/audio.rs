@@ -97,14 +97,6 @@ pub struct AudioAddArguments<'a, B: Backend> {
     pub n: usize,
 }
 
-pub struct AudioClampArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub output: &'a B::Buffer,
-    pub n: usize,
-    pub min_value: f32,
-    pub max_value: f32,
-}
-
 pub trait AudioKernelRuntime<B: Backend> {
     fn encode_fsq_decode(
         &self,
@@ -145,11 +137,5 @@ pub trait AudioKernelRuntime<B: Backend> {
         &self,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         arguments: AudioAddArguments<'_, B>,
-    ) -> Result<(), B::Error>;
-
-    fn encode_clamp(
-        &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        arguments: AudioClampArguments<'_, B>,
     ) -> Result<(), B::Error>;
 }

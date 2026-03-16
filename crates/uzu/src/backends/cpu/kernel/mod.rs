@@ -2,7 +2,6 @@
 mod activation;
 mod attention;
 mod audio;
-mod compat_stubs;
 mod embedding;
 mod kv_cache_update;
 mod layer_norm;
@@ -18,6 +17,7 @@ mod sampling;
 mod short_conv;
 mod sigmoid;
 mod ssm;
+mod tensor_add_scale;
 mod tensor_add_bias;
 mod tensor_add_swap;
 mod tensor_copy;

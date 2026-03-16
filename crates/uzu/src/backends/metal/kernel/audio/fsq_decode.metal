@@ -55,7 +55,7 @@ void fsq_decode(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioFsqDecode)(
+PUBLIC KERNEL(AudioFsqDecode)(
     device const int* tokens,
     device T* out,
     device const int* lengths,

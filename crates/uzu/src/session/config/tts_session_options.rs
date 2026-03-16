@@ -5,7 +5,6 @@ use crate::audio::NanoCodecFsqRuntimeOptions;
 pub struct TextSamplingConfig {
     pub temperature: f32,
     pub top_p: f32,
-    pub repetition_penalty: f32,
 }
 
 impl Default for TextSamplingConfig {
@@ -13,7 +12,6 @@ impl Default for TextSamplingConfig {
         Self {
             temperature: 0.8008,
             top_p: 0.8008,
-            repetition_penalty: 1.1,
         }
     }
 }

@@ -40,7 +40,7 @@ void half_snake(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(AudioHalfSnake)(
+PUBLIC KERNEL(AudioHalfSnake)(
     device const T* input,
     device const T* alpha,
     device T* output,

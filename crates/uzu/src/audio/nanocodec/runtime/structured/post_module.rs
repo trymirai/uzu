@@ -94,7 +94,18 @@ impl StructuredAudioCodecGraph {
 
         let max_sequence_length = decoder_config.context_length.max(required_sequence_length.max(1));
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
-        shared_buffers.borrow_mut().update_data_with_transformer_subtree(&root_loader_view, transformer_subtree_name);
+        {
+            let transformer_tree = root_loader_view
+                .subtree(transformer_subtree_name)
+                .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
+            let mut shared_buffers = shared_buffers.borrow_mut();
+            if let Some(global_rope) = &mut shared_buffers.global_rope {
+                global_rope.update_data(&transformer_tree, "global_rope");
+            }
+            if let Some(local_rope) = &mut shared_buffers.local_rope {
+                local_rope.update_data(&transformer_tree, "local_rope");
+            }
+        }
         let scratch_buffers = ScratchBuffers::new(
             context.as_ref(),
             &decoder_config,
@@ -163,84 +174,86 @@ impl StructuredAudioCodecGraph {
         let kernel =
             <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(context.as_ref(), data_type)
                 .map_err(|err| AudioError::Runtime(format!("failed to initialize quantizer decode kernel: {err}")))?;
-        let (semantic_codebook, semantic_out_proj, semantic_out_bias, residual_codebooks, residual_out_proj, residual_out_bias, codebook_dim, residual_quantizers) =
-            with_weight_tree(context, self.weights_path.as_str(), |root| {
-                let audio_decoder_tree = root.subtree("audio_decoder")?;
-                let quantizer_tree = audio_decoder_tree.subtree("quantizer")?;
-                let semantic_tree = quantizer_tree.subtree("semantic_quantizer")?.subtree("quantizers")?.subtree("0")?;
-                let semantic_codebook =
-                    read_float_matrix_exact(&semantic_tree.subtree("codebook")?, "weights", self.semantic_codebook_size, self.config.codebook_dim, data_type)?;
-                let codebook_dim = semantic_codebook.shape()[1];
-                let semantic_out_proj = read_float_matrix_exact(
-                    &semantic_tree.subtree("out_proj")?,
-                    "weights",
-                    self.input_dim,
-                    codebook_dim,
-                    data_type,
-                )?;
-                let semantic_out_bias =
-                    read_float_vector_exact(&semantic_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
+        let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
+            AudioError::Runtime(format!(
+                "failed to open structured audio weights '{}': {err}",
+                self.weights_path
+            ))
+        })?;
+        let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|err| {
+            AudioError::Runtime(format!(
+                "failed to load structured audio weights '{}': {err}",
+                self.weights_path
+            ))
+        })?;
+        let root = loader.tree();
+        let audio_decoder_tree = root.subtree("audio_decoder")?;
+        let quantizer_tree = audio_decoder_tree.subtree("quantizer")?;
+        let semantic_tree = quantizer_tree.subtree("semantic_quantizer")?.subtree("quantizers")?.subtree("0")?;
+        let semantic_codebook = read_float_matrix_exact(
+            &semantic_tree.subtree("codebook")?,
+            "weights",
+            self.semantic_codebook_size,
+            self.config.codebook_dim,
+            data_type,
+        )?;
+        let codebook_dim = semantic_codebook.shape()[1];
+        let semantic_out_proj = read_float_matrix_exact(
+            &semantic_tree.subtree("out_proj")?,
+            "weights",
+            self.input_dim,
+            codebook_dim,
+            data_type,
+        )?;
+        let semantic_out_bias =
+            read_float_vector_exact(&semantic_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
 
-                let residual_quantizers = self.config.n_codebooks;
-                let residual_count_for_shape = residual_quantizers.max(1);
-                let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-                let residual_codebooks = context.create_array(
-                    &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
-                    data_type,
-                    "structured_audio_quantizer_residual_codebooks",
-                );
-                let residual_out_proj = context.create_array(
-                    &[residual_count_for_shape, self.input_dim, codebook_dim],
-                    data_type,
-                    "structured_audio_quantizer_residual_out_proj",
-                );
-                let residual_out_bias = context.create_array(
-                    &[residual_count_for_shape, self.input_dim],
-                    data_type,
-                    "structured_audio_quantizer_residual_out_bias",
-                );
+        let residual_quantizers = self.config.n_codebooks;
+        let residual_count_for_shape = residual_quantizers.max(1);
+        let residual_codebook_rows_for_shape = self.codebook_size.max(1);
+        let residual_codebooks = context.create_array(
+            &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
+            data_type,
+            "structured_audio_quantizer_residual_codebooks",
+        );
+        let residual_out_proj = context.create_array(
+            &[residual_count_for_shape, self.input_dim, codebook_dim],
+            data_type,
+            "structured_audio_quantizer_residual_out_proj",
+        );
+        let residual_out_bias = context.create_array(
+            &[residual_count_for_shape, self.input_dim],
+            data_type,
+            "structured_audio_quantizer_residual_out_bias",
+        );
 
-                let residual_root = quantizer_tree.subtree("quantizer")?.subtree("quantizers")?;
-                for index in 0..residual_quantizers {
-                    let quantizer_tree = residual_root.subtree(&index.to_string())?;
-                    let codebook = read_float_matrix_exact(
-                        &quantizer_tree.subtree("codebook")?,
-                        "weights",
-                        self.codebook_size,
-                        codebook_dim,
-                        data_type,
-                    )?;
-                    let out_proj = read_float_matrix_exact(
-                        &quantizer_tree.subtree("out_proj")?,
-                        "weights",
-                        self.input_dim,
-                        codebook_dim,
-                        data_type,
-                    )?;
-                    let out_bias =
-                        read_float_vector_exact(&quantizer_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
+        let residual_root = quantizer_tree.subtree("quantizer")?.subtree("quantizers")?;
+        for index in 0..residual_quantizers {
+            let quantizer_tree = residual_root.subtree(&index.to_string())?;
+            let codebook = read_float_matrix_exact(
+                &quantizer_tree.subtree("codebook")?,
+                "weights",
+                self.codebook_size,
+                codebook_dim,
+                data_type,
+            )?;
+            let out_proj = read_float_matrix_exact(
+                &quantizer_tree.subtree("out_proj")?,
+                "weights",
+                self.input_dim,
+                codebook_dim,
+                data_type,
+            )?;
+            let out_bias =
+                read_float_vector_exact(&quantizer_tree.subtree("out_proj")?, "biases", self.input_dim, data_type)?;
 
-                    let mut dst_codebook =
-                        outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim])?;
-                    dst_codebook.copy_from_array(&codebook);
-                    let mut dst_out_proj =
-                        outer_axis_view(&residual_out_proj, index, &[self.input_dim, codebook_dim])?;
-                    dst_out_proj.copy_from_array(&out_proj);
-                    let mut dst_out_bias = outer_axis_view(&residual_out_bias, index, &[self.input_dim])?;
-                    dst_out_bias.copy_from_array(&out_bias);
-                }
-
-                Ok((
-                    semantic_codebook,
-                    semantic_out_proj,
-                    semantic_out_bias,
-                    residual_codebooks,
-                    residual_out_proj,
-                    residual_out_bias,
-                    codebook_dim,
-                    residual_quantizers,
-                ))
-            })?;
+            let mut dst_codebook = outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim])?;
+            dst_codebook.copy_from_array(&codebook);
+            let mut dst_out_proj = outer_axis_view(&residual_out_proj, index, &[self.input_dim, codebook_dim])?;
+            dst_out_proj.copy_from_array(&out_proj);
+            let mut dst_out_bias = outer_axis_view(&residual_out_bias, index, &[self.input_dim])?;
+            dst_out_bias.copy_from_array(&out_bias);
+        }
 
         Ok(FishAudioQuantizerResources {
             data_type,
@@ -262,7 +275,7 @@ impl StructuredAudioCodecGraph {
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<Rc<FishAudioQuantizerResources>> {
-        let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(structured_audio_dtype_key(self.vocoder_data_type));
+        let key = (Rc::as_ptr(context) as usize).wrapping_mul(31) ^ usize::from(structured_audio_dtype_key(self.vocoder_data_type));
         FISHAUDIO_QUANTIZER_RESOURCES_CACHE.with(|cache| {
             if let Some(existing) = cache.borrow().get(&key) {
                 return Ok(existing.clone());
@@ -277,16 +290,27 @@ impl StructuredAudioCodecGraph {
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<StructuredAudioDecoderGraph> {
-        with_weight_tree(context, self.weights_path.as_str(), |root| {
-            build_vocoder_gpu_graph_from_tree(context, root, &self.config, self.vocoder_data_type)
-        })
+        let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
+            AudioError::Runtime(format!(
+                "failed to open structured audio weights '{}': {err}",
+                self.weights_path
+            ))
+        })?;
+        let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|err| {
+            AudioError::Runtime(format!(
+                "failed to load structured audio weights '{}': {err}",
+                self.weights_path
+            ))
+        })?;
+        let root = loader.tree();
+        build_vocoder_gpu_graph_from_tree(context, &root, &self.config, self.vocoder_data_type)
     }
 
     fn vocoder_gpu_graph(
         &self,
         context: &Rc<<Metal as Backend>::Context>,
     ) -> AudioResult<Rc<StructuredAudioDecoderGraph>> {
-        let key = ((Rc::as_ptr(context) as usize) << 8) | usize::from(structured_audio_dtype_key(self.vocoder_data_type));
+        let key = (Rc::as_ptr(context) as usize).wrapping_mul(31) ^ usize::from(structured_audio_dtype_key(self.vocoder_data_type));
         FISHAUDIO_VOCODER_GRAPH_CACHE.with(|cache| {
             if let Some(existing) = cache.borrow().get(&key) {
                 return Ok(existing.clone());
