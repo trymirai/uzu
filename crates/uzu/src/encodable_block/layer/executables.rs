@@ -5,7 +5,7 @@ use std::rc::Rc;
 use super::MixerExecutables;
 use crate::{
     DataType, DecoderLayerConfig,
-    autorelease::maybe_with_autorelease_pool,
+    autorelease::maybe_with_autoreleasepool,
     backends::common::{Backend, CommandBuffer},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
@@ -45,7 +45,7 @@ impl<B: Backend> LayerExecutables<B> {
         decoder_layer_loader: &ParameterTree<B::Context>,
         rope: Option<Rc<Rope<B>>>,
     ) -> Self {
-        maybe_with_autorelease_pool(|| {
+        maybe_with_autoreleasepool(|| {
             let ctx = context.as_ref(); // Reference for functions expecting &B::Context
             let intermediate_data_type: DataType = match &layer_config.mixer_config {
                 MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),

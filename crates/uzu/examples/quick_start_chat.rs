@@ -7,8 +7,12 @@ use uzu::session::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = PathBuf::from("MODEL_PATH");
-    let mut session = ChatSession::new(model_path, DecodingConfig::default())?;
+    let Ok(model_path) = std::env::var("UZU_MODEL_PATH") else {
+        return Err("UZU_MODEL_PATH environment variable is not set.".into());
+    };
+
+    let model_path_buf = PathBuf::from(model_path);
+    let mut session = ChatSession::new(model_path_buf, DecodingConfig::default())?;
 
     let input = Input::Text(String::from("Tell about London"));
     let output = session.run(

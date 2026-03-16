@@ -7,7 +7,7 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    autorelease::maybe_with_autorelease_pool,
+    autorelease::maybe_with_autoreleasepool,
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
     },
@@ -36,7 +36,7 @@ impl<B: Backend> ClassifierTrait for Classifier<B> {
     ) -> Result<ClassificationOutput, Error> {
         let run_start = Instant::now();
 
-        maybe_with_autorelease_pool(|| {
+        maybe_with_autoreleasepool(|| {
             let forward_start = Instant::now();
 
             #[cfg(feature = "tracing")]
@@ -179,7 +179,7 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<Box<[f32]>, Error> {
-        maybe_with_autorelease_pool(|| {
+        maybe_with_autoreleasepool(|| {
             let num_labels = self.context.model_config.model_config.num_labels;
             let mut state = ForwardPassState::new_classifier(
                 self.context.context.clone(),

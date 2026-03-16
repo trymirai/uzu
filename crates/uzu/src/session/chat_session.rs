@@ -19,7 +19,7 @@ use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
-    autorelease::maybe_with_autorelease_pool,
+    autorelease::maybe_with_autoreleasepool,
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
@@ -696,6 +696,6 @@ impl ChatSession {
 
 impl Drop for ChatSession {
     fn drop(&mut self) {
-        maybe_with_autorelease_pool(|| self.llm = None);
+        maybe_with_autoreleasepool(|| self.llm = None);
     }
 }
