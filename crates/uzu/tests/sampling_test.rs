@@ -1,4 +1,7 @@
+#![cfg(feature = "metal")]
+
 mod common;
+
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use rand::seq::SliceRandom;

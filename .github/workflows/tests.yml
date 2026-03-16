@@ -5,7 +5,7 @@ on:
     branches:
       - main
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [ opened, reopened, ready_for_review, synchronize ]
   workflow_dispatch:
 
 concurrency:
@@ -23,7 +23,7 @@ defaults:
 jobs:
   linters:
     name: Linters
-    runs-on: [self-hosted, macos, x64, mac, m3max, runner2]
+    runs-on: [ self-hosted, macos, x64, mac, m3max, runner2 ]
 
     steps:
       - uses: actions/checkout@v6
@@ -54,12 +54,12 @@ jobs:
 
   tests:
     name: Tests${{ matrix.tracing && ' (tracing)' || '' }}
-    runs-on: [self-hosted, macos, x64, mac, m3max, runner1]
+    runs-on: [ self-hosted, macos, x64, mac, m3max, runner1 ]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
     strategy:
       matrix:
-        tracing: [false, true]
+        tracing: [ false, true ]
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
@@ -74,8 +74,8 @@ jobs:
 
       - name: Build crates
         run: |
-          cargo build ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo build ${{ matrix.tracing && '--features "metal tracing"' || '' }}
 
       - name: Run tests
         run: |
-          cargo nextest run --profile=ci ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo nextest run --profile=ci ${{ matrix.tracing && '--features "metal tracing"' || '' }}

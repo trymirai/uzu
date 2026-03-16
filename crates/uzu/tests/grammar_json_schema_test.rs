@@ -1,4 +1,4 @@
-#![cfg(target_os = "macos")]
+#![cfg(feature = "metal")]
 
 use std::sync::Arc;
 

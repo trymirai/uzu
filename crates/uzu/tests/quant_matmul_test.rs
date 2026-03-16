@@ -1,3 +1,5 @@
+#![cfg(feature = "metal")]
+
 use std::time::Instant;
 
 use bytemuck;

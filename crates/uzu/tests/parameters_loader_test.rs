@@ -1,3 +1,4 @@
+#![cfg(feature = "metal")]
 mod common;
 
 // New integration test for ParameterLoader

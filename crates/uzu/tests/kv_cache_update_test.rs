@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "macos", target_os = "ios"))]
+#![cfg(feature = "metal")]
 
 use std::{cell::RefCell, rc::Rc};
 

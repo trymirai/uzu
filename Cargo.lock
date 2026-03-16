@@ -309,13 +309,8 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 name = "benchmarks"
 version = "0.1.8"
 dependencies = [
- "half",
- "libc",
  "mach2",
- "mtl-rs",
- "objc2",
  "serde",
- "serde_json",
  "sysinfo",
  "uzu",
 ]
@@ -583,7 +578,6 @@ dependencies = [
  "comfy-table",
  "console 0.16.3",
  "ctrlc",
- "futures",
  "indicatif 0.18.4",
  "inquire",
  "rocket",

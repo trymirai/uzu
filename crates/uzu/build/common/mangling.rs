@@ -4,6 +4,7 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+#[allow(unused)]
 pub fn static_mangle(
     function_name: impl AsRef<str>,
     variant: impl IntoIterator<Item = impl AsRef<str>>,
@@ -16,6 +17,7 @@ pub fn static_mangle(
     )
 }
 
+#[allow(unused)]
 pub fn dynamic_mangle(
     function_name: impl AsRef<str>,
     variant: impl IntoIterator<Item = TokenStream>,

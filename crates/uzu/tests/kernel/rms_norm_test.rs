@@ -7,8 +7,6 @@ use std::{
 use half::{bf16, f16};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, prelude::StdRng};
-#[cfg(feature = "metal")]
-use uzu::backends::metal::Metal;
 use uzu::{
     ArrayElement, DataType,
     array::ArrayContextExt,
@@ -440,16 +438,16 @@ fn test_edge_f16_f16_f16_f16() {
 }
 
 // performance tests
+#[cfg(feature = "metal")]
 #[test]
 fn test_perf_8k() {
-    if cfg!(feature = "metal") {
-        test_performance::<Metal>(8, 8192); // Large model like LLaMA-70B
-    }
+    use uzu::backends::metal::Metal;
+    test_performance::<Metal>(8, 8192); // Large model like LLaMA-70B
 }
 
+#[cfg(feature = "metal")]
 #[test]
 fn test_perf_16k() {
-    if cfg!(feature = "metal") {
-        test_performance::<Metal>(16, 16384); // Huge model dimension
-    }
+    use uzu::backends::metal::Metal;
+    test_performance::<Metal>(16, 16384); // Huge model dimension
 }

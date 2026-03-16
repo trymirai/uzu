@@ -1,3 +1,5 @@
+#![cfg(feature = "metal")]
+
 use half::bf16;
 use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};

@@ -1,4 +1,4 @@
-#![cfg(feature = "tracing")]
+#![cfg(all(feature = "metal", feature = "tracing"))]
 
 mod common;
 use std::path::PathBuf;

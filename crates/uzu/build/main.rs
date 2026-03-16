@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let gpu_types_compiler = gpu_types::GpuTypesCompiler::new()?;
-    let generated_header_dir = gpu_types_compiler.generated_header_dir().clone();
+    let _generated_header_dir = gpu_types_compiler.generated_header_dir().clone();
     gpu_types_compiler.build().await?;
     debug_log!("gpu_types build done");
 
@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     compilers.push(Box::new(cpu::CpuCompiler::new()?));
 
     #[cfg(feature = "metal")]
-    compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(generated_header_dir)?));
+    compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(_generated_header_dir)?));
 
     let backends_kernels = try_join_all(compilers.iter().map(|c| c.build())).await?;
 

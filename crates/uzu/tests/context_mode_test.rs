@@ -1,4 +1,7 @@
+#![cfg(feature = "metal")]
+
 mod common;
+
 use std::path::PathBuf;
 
 use test_tag::tag;

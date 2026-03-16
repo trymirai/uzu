@@ -1,4 +1,4 @@
-#![cfg(target_os = "macos")]
+#![cfg(feature = "metal")]
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 

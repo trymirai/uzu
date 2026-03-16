@@ -2,8 +2,10 @@ use std::{fs, sync::OnceLock};
 
 use anyhow::Context;
 
+#[allow(unused)]
 static BUILD_SYSTEM_HASH: OnceLock<blake3::Hash> = OnceLock::new();
 
+#[allow(unused)]
 pub fn build_system_hash() -> anyhow::Result<&'static blake3::Hash> {
     if let Some(bsh) = BUILD_SYSTEM_HASH.get() {
         Ok(bsh)
