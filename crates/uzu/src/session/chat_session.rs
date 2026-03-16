@@ -141,7 +141,6 @@ impl ChatSession {
         let llm =
             Box::new(LanguageModelGenerator::<B>::new(&model_path, decoding_config.clone()).map_err(Error::from)?);
 
-        println!("{} backend selected", std::any::type_name::<B>());
         Ok(Self {
             model_path,
             model_metadata,

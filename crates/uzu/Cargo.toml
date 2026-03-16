@@ -13,7 +13,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
-mpsgraph.workspace = true
 bytemuck.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
@@ -21,10 +20,8 @@ memmap2.workspace = true
 num-traits.workspace = true
 regex.workspace = true
 libc.workspace = true
-bitflags.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
-clap.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
@@ -44,7 +41,6 @@ rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
-mpsgraph.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
