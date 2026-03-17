@@ -21,8 +21,8 @@ typedef struct {
   int32_t leading_dimension_a;
   int32_t leading_dimension_b;
   int32_t leading_dimension_d;
-  int32_t threadgroups_per_row;
   int32_t threadgroups_per_column;
+  int32_t threadgroups_per_row;
   int32_t swizzle_log;
   int32_t aligned_inner_iterations;
 } GemmParams;
