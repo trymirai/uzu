@@ -11,7 +11,7 @@ use uzu::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::MlpGateActMulKernel,
+            Context, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel,
         },
         cpu::Cpu,
     },
@@ -23,10 +23,10 @@ struct Input<T: ArrayElement + Float> {
     fused_up: Box<[T]>,
     h: i32,
     m: i32,
-    act_type: u32,
+    act_type: ActivationType,
 }
 
-fn get_test_data<T: ArrayElement + Float>(act_type: u32) -> (Input<T>, Vec<T>) {
+fn get_test_data<T: ArrayElement + Float>(act_type: ActivationType) -> (Input<T>, Vec<T>) {
     let h = 64i32;
     let m = 4i32;
     let fused_len = (m * 2 * h) as usize;
@@ -73,7 +73,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     hidden_array.as_slice().to_vec()
 }
 
-fn test<T: ArrayElement + Float + Debug + Display>(act_type: u32) {
+fn test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.02f32
     } else {
@@ -90,30 +90,30 @@ fn test<T: ArrayElement + Float + Debug + Display>(act_type: u32) {
 
 #[test]
 fn test_silu_f32() {
-    test::<f32>(0);
+    test::<f32>(ActivationType::SILU);
 }
 
 #[test]
 fn test_silu_f16() {
-    test::<f16>(0);
+    test::<f16>(ActivationType::SILU);
 }
 
 #[test]
 fn test_silu_bf16() {
-    test::<bf16>(0);
+    test::<bf16>(ActivationType::SILU);
 }
 
 #[test]
 fn test_gelu_f32() {
-    test::<f32>(1);
+    test::<f32>(ActivationType::GELU);
 }
 
 #[test]
 fn test_gelu_f16() {
-    test::<f16>(1);
+    test::<f16>(ActivationType::GELU);
 }
 
 #[test]
 fn test_gelu_bf16() {
-    test::<bf16>(1);
+    test::<bf16>(ActivationType::GELU);
 }

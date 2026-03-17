@@ -1,9 +1,7 @@
 #include <metal_stdlib>
+#include "activation_type.h"
 
-enum ActivationType : uint {
-  ACT_SILU = 0,
-  ACT_GELU = 1,
-};
+using namespace uzu::activation_type;
 
 template <typename T>
 inline T silu(T x) {
@@ -23,8 +21,11 @@ inline T gelu_approx(T x) {
 }
 
 template <typename T>
-inline T activate(T x, uint act) {
-  if (act == ACT_SILU)
-    return silu(x);
-  return gelu_approx(x);
+inline T activate(T x, ActivationType type) {
+  switch (type) {
+    case SILU:
+      return silu(x);
+    case GELU:
+      return gelu_approx(x);
+  }
 }

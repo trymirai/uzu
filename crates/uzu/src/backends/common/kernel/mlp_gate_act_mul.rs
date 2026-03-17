@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer, Kernels, kernel::MlpGateActMulKernel},
+    backends::common::{Backend, CommandBuffer, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel},
     config::Activation,
 };
 
@@ -35,8 +35,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         let act_type = match self.activation {
             Activation::SiLU {
                 ..
-            } => 0,
-            Activation::Gelu => 1,
+            } => ActivationType::SILU,
+            Activation::Gelu => ActivationType::GELU,
             Activation::Identity => {
                 panic!("Identity activation is not supported for kernel")
             },

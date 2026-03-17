@@ -6,6 +6,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, CommandBuffer,
+        gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
     config::Activation as ActivationConfig,
@@ -50,8 +51,8 @@ impl<B: Backend> Activation<B> {
         let act_type = match self.config {
             ActivationConfig::SiLU {
                 ..
-            } => 0,
-            ActivationConfig::Gelu => 1,
+            } => ActivationType::SILU,
+            ActivationConfig::Gelu => ActivationType::GELU,
             ActivationConfig::Identity => panic!("Identity activation is not supported for kernel"),
         };
 
