@@ -149,6 +149,8 @@ pub enum ArrayTransform {
     KVCacheSlice,
     /// Transform SSM conv state layout.
     SsmConvState,
+    /// Transpose DeltaNet SSM state from [H,K,V] to [H,V,K].
+    DeltaNetSsmState,
 }
 
 // ============================================================================
@@ -648,6 +650,7 @@ impl<B: Backend> TraceValidator<B> {
 
                 (reshaped_expected, produced_view.to_owned())
             },
+            Some(ArrayTransform::DeltaNetSsmState) => (expected_view.to_owned(), produced_view.to_owned()),
             None => (expected_view.to_owned(), produced_view.to_owned()),
         };
 

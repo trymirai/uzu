@@ -10,8 +10,8 @@ use crate::{
     backends::common::{Backend, CommandBuffer},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
-        Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer, TensorAddSwap,
-        TensorCopy,
+        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer,
+        TensorAddSwap, TensorCopy,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -185,8 +185,18 @@ impl<B: Backend> LayerExecutables<B> {
                         mixer,
                     }
                 },
-                MixerConfig::DeltaNet(_) => {
-                    todo!("DeltaNet mixer kernel not yet implemented");
+                MixerConfig::DeltaNet(delta_net_config) => {
+                    let mixer = DeltaNetMixer::new(
+                        ctx,
+                        layer_type.clone(),
+                        delta_net_config.clone(),
+                        layer_index,
+                        model_dim,
+                        decoder_layer_loader,
+                    );
+                    MixerExecutables::DeltaNet {
+                        mixer,
+                    }
                 },
             };
 
@@ -316,6 +326,15 @@ impl<B: Backend> LayerExecutables<B> {
                 }
             },
             MixerExecutables::ShortConv {
+                mixer,
+            } => {
+                mixer.encode(state, command_buffer)?;
+                #[cfg(feature = "tracing")]
+                if let Some(ref layer_traces) = layer_traces {
+                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                }
+            },
+            MixerExecutables::DeltaNet {
                 mixer,
             } => {
                 mixer.encode(state, command_buffer)?;

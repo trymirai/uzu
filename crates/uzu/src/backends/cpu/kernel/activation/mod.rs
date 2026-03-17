@@ -25,10 +25,17 @@ impl TryFrom<u32> for ActivationType {
     }
 }
 
+pub fn silu_f32(x: f32) -> f32 {
+    let y = 1.0 / (1.0 + (-x.abs()).exp());
+    if x < 0.0 {
+        (1.0 - y) * x
+    } else {
+        y * x
+    }
+}
+
 fn silu<T: Float>(x: T) -> T {
-    let x_float = x.to_f32().unwrap();
-    let y_float = x_float / (1.0f32 + (-x_float).exp());
-    T::from(y_float).unwrap()
+    T::from(silu_f32(x.to_f32().unwrap())).unwrap()
 }
 
 fn gelu<T: Float>(x: T) -> T {
