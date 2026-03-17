@@ -1,7 +1,7 @@
 #include <metal_stdlib>
-#include "activation_type.h"
+#include "activation.h"
 
-using namespace uzu::activation_type;
+using namespace uzu::activation;
 
 template <typename T>
 inline T activate_silu(T x) {

@@ -11,7 +11,7 @@ pub fn mlp_gate_act_mul<T: ArrayElement + Float>(
     hidden: *mut T,
     h: i32,
     m: i32,
-    act_type: crate::backends::common::gpu_types::activation_type::ActivationType,
+    act_type: crate::backends::common::gpu_types::activation::ActivationType,
 ) {
     for j in 0..h {
         for row in 0..m {

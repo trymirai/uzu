@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../activation/activation.h"
+#include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "ssm_common.h"
 

@@ -1,8 +1,8 @@
 #include <metal_stdlib>
-#include "../activation/activation.h"
+#include "../activation/activations.h"
 #include "../common/dsl.h"
 
-using namespace uzu::activation_type;
+using namespace uzu::activation;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)

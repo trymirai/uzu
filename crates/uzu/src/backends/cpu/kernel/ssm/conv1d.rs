@@ -40,7 +40,7 @@ pub fn conv1d_decode<T: ArrayElement + Float>(
     #[allow(unused)] suffix_len: u32,
     #[allow(unused)] inner_dim: u32,
     #[allow(unused)] proj_dim: u32,
-    #[allow(unused)] activation_type: crate::backends::common::gpu_types::activation_type::ActivationType,
+    #[allow(unused)] activation_type: crate::backends::common::gpu_types::activation::ActivationType,
     #[allow(unused)]
     #[specialize]
     has_bias: bool,
@@ -70,7 +70,7 @@ pub fn conv1d_scan<T: ArrayElement + Float>(
     #[allow(unused)] num_channels: u32,
     #[allow(unused)] inner_dim: u32,
     #[allow(unused)] proj_dim: u32,
-    #[allow(unused)] activation_type: crate::backends::common::gpu_types::activation_type::ActivationType,
+    #[allow(unused)] activation_type: crate::backends::common::gpu_types::activation::ActivationType,
     #[allow(unused)]
     #[specialize]
     has_bias: bool,

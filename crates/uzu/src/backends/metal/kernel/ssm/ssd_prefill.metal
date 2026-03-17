@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
-#include "../activation/activation.h"
+#include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "ssm_common.h"
