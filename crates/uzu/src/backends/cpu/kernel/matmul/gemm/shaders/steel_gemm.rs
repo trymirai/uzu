@@ -1,5 +1,3 @@
-use dsl::kernel;
-use half::{bf16, f16};
 use num_traits::Float;
 
 use crate::{
@@ -32,7 +30,7 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
     }
 }
 
-fn matmul_gemm_impl<T: ArrayElement + Float>(
+pub fn matmul_gemm_impl<T: ArrayElement + Float>(
     a: *const T,
     b: *const T,
     d: *mut T,
@@ -82,55 +80,5 @@ fn matmul_gemm_impl<T: ArrayElement + Float>(
                 start = end;
             }
         });
-    }
-}
-
-#[kernel(MatmulGemm)]
-#[variants(T, f32, f16, bf16)]
-pub fn matmul_gemm<T: ArrayElement + Float>(
-    a: *const T,
-    b: *const T,
-    d: *mut T,
-    params: &[crate::backends::common::gpu_types::matmul::GemmParams],
-    #[allow(unused)] group_count_x: u32,
-    #[allow(unused)] group_count_y: u32,
-    #[allow(unused)]
-    #[specialize]
-    block_rows: u32,
-    #[allow(unused)]
-    #[specialize]
-    block_cols: u32,
-    #[allow(unused)]
-    #[specialize]
-    block_depth: u32,
-    #[allow(unused)]
-    #[specialize]
-    simdgroups_per_row: u32,
-    #[allow(unused)]
-    #[specialize]
-    simdgroups_per_column: u32,
-    #[allow(unused)]
-    #[specialize]
-    align_m: bool,
-    #[allow(unused)]
-    #[specialize]
-    align_n: bool,
-    #[allow(unused)]
-    #[specialize]
-    align_k: bool,
-) {
-    unsafe {
-        let p = &*params.as_ptr();
-        matmul_gemm_impl::<T>(
-            a,
-            b,
-            d,
-            p.M as usize,
-            p.N as usize,
-            p.K as usize,
-            p.leading_dimension_a as usize,
-            p.leading_dimension_b as usize,
-            p.leading_dimension_d as usize,
-        );
     }
 }

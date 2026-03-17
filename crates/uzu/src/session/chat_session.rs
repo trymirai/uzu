@@ -11,11 +11,6 @@ use std::{
     time::Instant,
 };
 
-fn nanos_to_secs(nanos: u64) -> f64 {
-    nanos as f64 / 1_000_000_000.0
-}
-
-use objc2::rc::autoreleasepool;
 use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
@@ -34,6 +29,10 @@ use crate::{
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
 };
+
+fn nanos_to_secs(nanos: u64) -> f64 {
+    nanos as f64 / 1_000_000_000.0
+}
 
 struct RunContext {
     eos_tokens: Vec<u64>,
@@ -696,8 +695,6 @@ impl ChatSession {
 
 impl Drop for ChatSession {
     fn drop(&mut self) {
-        autoreleasepool(|_| {
-            self.llm = None;
-        });
+        self.llm = None
     }
 }

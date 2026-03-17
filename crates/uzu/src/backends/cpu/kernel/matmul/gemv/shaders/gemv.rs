@@ -1,5 +1,3 @@
-use dsl::kernel;
-use half::{bf16, f16};
 use num_traits::Float;
 
 use crate::{
@@ -43,7 +41,7 @@ unsafe fn compute_gemv_rows<T: ArrayElement + Float>(
     }
 }
 
-fn matmul_gemv_impl<T: ArrayElement + Float>(
+pub fn matmul_gemv_impl<T: ArrayElement + Float>(
     matrix: *const T,
     input_vector: *const T,
     output_source: Option<*const T>,
@@ -102,55 +100,4 @@ fn matmul_gemv_impl<T: ArrayElement + Float>(
             });
         }
     }
-}
-
-#[kernel(MatmulGemv)]
-#[variants(T, f32, f16, bf16)]
-pub fn matmul_gemv<T: ArrayElement + Float>(
-    matrix: *const T,
-    input_vector: *const T,
-    #[optional(apply_output_scale_and_accumulate)] output_source: Option<*const T>,
-    output_vector: *mut T,
-    input_dimension: i32,
-    output_dimension: i32,
-    matrix_leading_dimension: i32,
-    output_scale: f32,
-    output_accumulate_scale: f32,
-    output_source_stride: i32,
-    batch_rows: i32,
-    #[allow(unused)] output_rows_per_threadgroup: i32,
-    #[allow(unused)]
-    #[specialize]
-    tg_simd_rows: u32,
-    #[allow(unused)]
-    #[specialize]
-    tg_simd_cols: u32,
-    #[allow(unused)]
-    #[specialize]
-    sg_thread_rows: u32,
-    #[allow(unused)]
-    #[specialize]
-    sg_thread_cols: u32,
-    #[allow(unused)]
-    #[specialize]
-    thread_out_rows: u32,
-    #[allow(unused)]
-    #[specialize]
-    thread_out_cols: u32,
-    #[specialize] apply_output_scale_and_accumulate: bool,
-) {
-    matmul_gemv_impl::<T>(
-        matrix,
-        input_vector,
-        output_source,
-        output_vector,
-        input_dimension as usize,
-        output_dimension as usize,
-        matrix_leading_dimension as usize,
-        output_scale,
-        output_accumulate_scale,
-        output_source_stride as usize,
-        batch_rows as usize,
-        apply_output_scale_and_accumulate,
-    );
 }

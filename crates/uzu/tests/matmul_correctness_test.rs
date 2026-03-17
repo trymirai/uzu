@@ -1,5 +1,7 @@
 //! Correctness tests comparing Metal matmul kernels against ndarray
 
+#![cfg(metal_backend)]
+
 use bytemuck;
 use half::bf16;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
@@ -10,7 +12,7 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            kernel::matmul::{MatmulArguments, MatmulKernel, choose_matmul_dispatch_descriptor},
+            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         metal::Metal,
     },
@@ -44,26 +46,28 @@ fn run_metal_matmul(
         n
     };
 
-    let mut kernel = MatmulKernel::<Metal>::new(DataType::BF16).expect("kernel");
+    let mut kernel =
+        <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(ctx, DataType::BF16).expect("kernel");
 
     let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
-    let arguments = MatmulArguments {
-        a: &a_buf,
-        a_offset: 0,
-        b: &b_buf,
-        d: &mut d_buf,
-        bias: None,
-        batch: m as i32,
-        input_dim: k as i32,
-        output_dim: n as i32,
-        leading_dimension_a: k as i32,
-        leading_dimension_b: leading_dim_b as i32,
-        leading_dimension_d: n as i32,
-        transpose_b,
-    };
-    let descriptor =
-        choose_matmul_dispatch_descriptor::<Metal>(ctx, DataType::BF16, &arguments).expect("dispatch descriptor");
-    kernel.encode_with_descriptor(ctx, arguments, &descriptor, &mut command_buffer).expect("encode");
+    kernel.encode(
+        ctx,
+        MatmulArguments {
+            a: &a_buf,
+            a_offset: 0,
+            b: &b_buf,
+            d: &mut d_buf,
+            bias: None,
+            batch: m as i32,
+            input_dim: k as i32,
+            output_dim: n as i32,
+            leading_dimension_a: k as i32,
+            leading_dimension_b: leading_dim_b as i32,
+            leading_dimension_d: n as i32,
+            transpose_b,
+        },
+        &mut command_buffer,
+    );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     unsafe {

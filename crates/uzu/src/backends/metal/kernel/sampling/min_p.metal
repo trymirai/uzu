@@ -15,7 +15,7 @@ PUBLIC KERNEL(MinP) (
     constant uint& batch_size,
     constant uint& vocab_size,
     constant float& min_p,
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     uint batch_idx GROUPS(batch_size),
     uint thread_idx THREADS(BLOCK_SIZE),
     const bool in_place SPECIALIZE
@@ -37,7 +37,7 @@ PUBLIC KERNEL(MinP) (
       local_max,
       shared_reduce_buffer,
       thread_idx,
-      simd
+      thread_context
   );
 
   // Then the threshold is just max_logit + log(min_p), mask everything strictly

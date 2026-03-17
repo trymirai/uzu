@@ -6,7 +6,7 @@ use uzu::{
         common::{
             Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
             CommandBufferPending, Context,
-            kernel::matmul::{MatmulArguments, MatmulDispatchDescriptor, MatmulKernel},
+            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         metal::Metal,
     },
@@ -31,44 +31,34 @@ fn fill_buffer_random(
     }
 }
 
-pub fn make_arguments<'a>(
-    a_buffer: &'a Buf,
-    b_buffer: &'a Buf,
-    d_buffer: &'a mut Buf,
-    shape: &TestShape,
-) -> MatmulArguments<'a, Metal> {
-    MatmulArguments {
-        a: a_buffer,
-        a_offset: 0,
-        b: b_buffer,
-        d: d_buffer,
-        bias: None,
-        batch: shape.batch as i32,
-        input_dim: shape.input_dim as i32,
-        output_dim: shape.output_dim as i32,
-        leading_dimension_a: shape.input_dim as i32,
-        leading_dimension_b: shape.input_dim as i32,
-        leading_dimension_d: shape.output_dim as i32,
-        transpose_b: true,
-    }
-}
-
 fn encode_and_run(
     context: &Ctx,
-    kernel: &mut MatmulKernel<Metal>,
+    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
     shape: &TestShape,
     a_buffer: &Buf,
     b_buffer: &Buf,
     d_buffer: &mut Buf,
-    dispatch_descriptor: &MatmulDispatchDescriptor,
 ) -> Result<f64, BenchError> {
     let mut command_buffer = context.create_command_buffer().map_err(|_| BenchError::CommandBuffer)?.start_encoding();
 
-    let arguments = make_arguments(a_buffer, b_buffer, d_buffer, shape);
-
-    kernel
-        .encode_with_descriptor(context, arguments, dispatch_descriptor, &mut command_buffer)
-        .map_err(|e| BenchError::Encode(e.to_string()))?;
+    kernel.encode(
+        context,
+        MatmulArguments {
+            a: a_buffer,
+            a_offset: 0,
+            b: b_buffer,
+            d: d_buffer,
+            bias: None,
+            batch: shape.batch as i32,
+            input_dim: shape.input_dim as i32,
+            output_dim: shape.output_dim as i32,
+            leading_dimension_a: shape.input_dim as i32,
+            leading_dimension_b: shape.input_dim as i32,
+            leading_dimension_d: shape.output_dim as i32,
+            transpose_b: true,
+        },
+        &mut command_buffer,
+    );
 
     let completed =
         command_buffer.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
@@ -80,9 +70,9 @@ fn run_benchmark(
     context: &Ctx,
     data_type: DataType,
     shape: &TestShape,
-    dispatch_descriptor: &MatmulDispatchDescriptor,
 ) -> Result<f64, BenchError> {
-    let mut kernel = MatmulKernel::<Metal>::new(data_type).map_err(|e| BenchError::Kernel(e.to_string()))?;
+    let mut kernel = <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)
+        .map_err(|e| BenchError::Kernel(e.to_string()))?;
 
     let elem_size = data_type.size_in_bytes();
     let a_byte_count = shape.batch * shape.input_dim * elem_size;
@@ -102,22 +92,23 @@ fn run_benchmark(
     fill_buffer_random(&b_buffer, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, dispatch_descriptor).map_err(
-            |source| BenchError::Warmup {
+        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
+            BenchError::Warmup {
                 iteration,
                 source: Box::new(source),
-            },
-        )?;
+            }
+        })?;
     }
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
         let gpu_ms =
-            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, dispatch_descriptor)
-                .map_err(|source| BenchError::Benchmark {
+            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
+                BenchError::Benchmark {
                     iteration,
                     source: Box::new(source),
-                })?;
+                }
+            })?;
         gpu_time_total_ms += gpu_ms;
     }
 
@@ -128,17 +119,15 @@ pub fn benchmark_single(
     context: &Ctx,
     data_type: DataType,
     shape: &TestShape,
-    path_name: &str,
-    dispatch_descriptor: &MatmulDispatchDescriptor,
 ) -> PerfResult {
-    match run_benchmark(context, data_type, shape, dispatch_descriptor) {
+    match run_benchmark(context, data_type, shape) {
         Ok(duration_ms) => {
             let flops = 2.0 * shape.batch as f64 * shape.input_dim as f64 * shape.output_dim as f64;
             let gflops = flops / (duration_ms / 1000.0) / 1e9;
             PerfResult {
                 combo: format!("{data_type:?}"),
                 shape: format!("{shape}"),
-                dispatch_path: path_name.to_owned(),
+                dispatch_path: "auto".to_owned(),
                 duration_ms,
                 gflops,
                 status: "ok".into(),
@@ -148,7 +137,7 @@ pub fn benchmark_single(
         Err(error) => PerfResult {
             combo: format!("{data_type:?}"),
             shape: format!("{shape}"),
-            dispatch_path: path_name.to_owned(),
+            dispatch_path: "auto".to_owned(),
             duration_ms: 0.0,
             gflops: 0.0,
             status: "error".into(),

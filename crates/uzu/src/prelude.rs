@@ -21,5 +21,4 @@ pub use crate::{
         },
     },
     speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
-    storage_path,
 };

@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "macos", target_os = "ios"))]
+#![cfg(metal_backend)]
 
 use half::bf16;
 use metal::MTLBuffer;

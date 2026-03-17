@@ -1,15 +1,16 @@
-use std::mem;
-
-use mach2::{
-    kern_return::KERN_SUCCESS,
-    mach_types::task_t,
-    message::mach_msg_type_number_t,
-    task::task_info,
-    task_info::{TASK_BASIC_INFO, task_basic_info},
-    traps::mach_task_self,
-};
-
+#[cfg(target_os = "macos")]
 pub fn get_memory_usage() -> Option<u64> {
+    use std::mem;
+
+    use mach2::{
+        kern_return::KERN_SUCCESS,
+        mach_types::task_t,
+        message::mach_msg_type_number_t,
+        task::task_info,
+        task_info::{TASK_BASIC_INFO, task_basic_info},
+        traps::mach_task_self,
+    };
+
     unsafe {
         let task: task_t = mach_task_self();
 
@@ -32,4 +33,9 @@ pub fn get_memory_usage() -> Option<u64> {
             None
         }
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn get_memory_usage() -> Option<u64> {
+    unimplemented!()
 }

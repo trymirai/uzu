@@ -138,19 +138,20 @@ static T threadgroup_cooperative_reduce_sum(
     T value,
     threadgroup T* shared,
     const ushort lid,
-    const thread ThreadContext& simd
+    const thread ThreadContext& thread_context
 ) {
   T local_sum = simd_sum(value);
 
-  if (simd.simdgroup_index == 0) {
-    shared[simd.threadgroup_index] = local_sum;
+  if (thread_context.simdgroup_index == 0) {
+    shared[thread_context.threadgroup_index] = local_sum;
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   T total_sum = T(0);
   const ushort num_simd_groups =
-      (BLOCK_SIZE + simd.simdgroup_size - 1) / simd.simdgroup_size;
+      (BLOCK_SIZE + thread_context.simdgroup_size - 1) /
+      thread_context.simdgroup_size;
   if (lid < num_simd_groups) {
     total_sum = shared[lid];
   }
@@ -171,20 +172,20 @@ static T threadgroup_cooperative_reduce_max(
     T value,
     threadgroup T* shared,
     const ushort lid,
-    const thread ThreadContext& simd
+    const thread ThreadContext& thread_context
 ) {
   T local_max = simd_max(value);
 
-  if (simd.simdgroup_index == 0) {
-    shared[simd.threadgroup_index] = local_max;
+  if (thread_context.simdgroup_index == 0) {
+    shared[thread_context.threadgroup_index] = local_max;
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  T total_max =
-      lid < (BLOCK_SIZE + simd.simdgroup_size - 1) / simd.simdgroup_size
-          ? shared[lid]
-          : T(-INFINITY);
+  T total_max = lid < (BLOCK_SIZE + thread_context.simdgroup_size - 1) /
+                            thread_context.simdgroup_size
+                    ? shared[lid]
+                    : T(-INFINITY);
   total_max = simd_max(total_max);
 
   if (lid == 0) {
@@ -202,20 +203,20 @@ static T threadgroup_cooperative_reduce_min(
     T value,
     threadgroup T* shared,
     const ushort lid,
-    const thread ThreadContext& simd
+    const thread ThreadContext& thread_context
 ) {
   T local_min = simd_min(value);
 
-  if (simd.simdgroup_index == 0) {
-    shared[simd.threadgroup_index] = local_min;
+  if (thread_context.simdgroup_index == 0) {
+    shared[thread_context.threadgroup_index] = local_min;
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  T total_min =
-      lid < (BLOCK_SIZE + simd.simdgroup_size - 1) / simd.simdgroup_size
-          ? shared[lid]
-          : T(INFINITY);
+  T total_min = lid < (BLOCK_SIZE + thread_context.simdgroup_size - 1) /
+                            thread_context.simdgroup_size
+                    ? shared[lid]
+                    : T(INFINITY);
   total_min = simd_min(total_min);
 
   if (lid == 0) {

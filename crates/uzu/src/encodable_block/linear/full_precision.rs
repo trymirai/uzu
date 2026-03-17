@@ -11,7 +11,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, CommandBuffer,
-        kernel::matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
+        kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -49,7 +49,7 @@ pub enum FullPrecisionLinearError<B: Backend> {
 }
 
 pub struct FullPrecisionLinear<B: Backend> {
-    kernel: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
+    kernel: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
     bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
     weights_buffer: Rc<RefCell<B::Buffer>>,
     input_dim: usize,
@@ -111,7 +111,7 @@ impl<B: Backend> FullPrecisionLinear<B> {
             Err(_) => None,
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, precision)?;
+        let kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(context, precision)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -139,17 +139,21 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
         let bias_borrow = self.bias_buffer.as_ref().map(|b| b.borrow());
         self.kernel.borrow_mut().encode(
             state.context(),
-            command_buffer,
-            FullPrecisionMatmulArguments {
+            MatmulArguments {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.weights_buffer.borrow().deref(),
-                output: output_array.buffer().borrow_mut().deref_mut(),
+                d: output_array.buffer().borrow_mut().deref_mut(),
                 bias: bias_borrow.as_deref(),
-                batch: batch_size,
-                input_dim: self.input_dim,
-                output_dim: self.output_dim,
+                batch: batch_size as i32,
+                input_dim: self.input_dim as i32,
+                output_dim: self.output_dim as i32,
+                leading_dimension_a: self.input_dim as i32,
+                leading_dimension_b: self.input_dim as i32,
+                leading_dimension_d: self.output_dim as i32,
+                transpose_b: true,
             },
+            command_buffer,
         );
         Ok(())
     }

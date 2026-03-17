@@ -2,8 +2,6 @@
 use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, path::Path, time::Instant};
 
-use objc2::rc::autoreleasepool;
-
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
@@ -37,42 +35,38 @@ impl<B: Backend> ClassifierTrait for Classifier<B> {
     ) -> Result<ClassificationOutput, Error> {
         let run_start = Instant::now();
 
-        autoreleasepool(|_pool| {
-            let forward_start = Instant::now();
+        #[cfg(feature = "tracing")]
+        let (logits, _traces) = self.forward_pass_with_traces(&token_ids, &token_positions)?;
 
-            #[cfg(feature = "tracing")]
-            let (logits, _traces) = self.forward_pass_with_traces(&token_ids, &token_positions)?;
+        #[cfg(not(feature = "tracing"))]
+        let logits = self.forward_pass(&token_ids, &token_positions)?;
 
-            #[cfg(not(feature = "tracing"))]
-            let logits = self.forward_pass(&token_ids, &token_positions)?;
+        let forward_duration = run_start.elapsed().as_secs_f64();
 
-            let forward_duration = forward_start.elapsed().as_secs_f64();
+        let postprocessing_start = Instant::now();
+        let probabilities = self.logits_to_probabilities(&logits)?;
+        let postprocessing_duration = postprocessing_start.elapsed().as_secs_f64();
 
-            let postprocessing_start = Instant::now();
-            let probabilities = self.logits_to_probabilities(&logits)?;
-            let postprocessing_duration = postprocessing_start.elapsed().as_secs_f64();
+        let (predicted_label, confidence) = probabilities
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(label, prob)| (label.clone(), *prob))
+            .unwrap_or((String::from("unknown"), 0.0));
 
-            let (predicted_label, confidence) = probabilities
-                .iter()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(label, prob)| (label.clone(), *prob))
-                .unwrap_or((String::from("unknown"), 0.0));
+        let stats = ClassificationStats::new(
+            0.0,
+            forward_duration,
+            postprocessing_duration,
+            run_start.elapsed().as_secs_f64(),
+            token_ids.len() as u64,
+            predicted_label,
+            confidence,
+        );
 
-            let stats = ClassificationStats::new(
-                0.0,
-                forward_duration,
-                postprocessing_duration,
-                run_start.elapsed().as_secs_f64(),
-                token_ids.len() as u64,
-                predicted_label,
-                confidence,
-            );
-
-            Ok(ClassificationOutput {
-                logits,
-                probabilities,
-                stats,
-            })
+        Ok(ClassificationOutput {
+            logits,
+            probabilities,
+            stats,
         })
     }
 }
@@ -100,78 +94,73 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<B>>>), Error> {
-        autoreleasepool(|_| {
-            let num_labels = self.context.model_config.model_config.num_labels;
-            let mut state = ForwardPassState::new_classifier(
-                self.context.context.clone(),
-                &self.context.model_shape,
-                &self.context.scratch_buffers,
-                self.context.shared_buffers.clone(),
-                token_ids,
-                token_positions,
-                true,
-                num_labels,
-            );
+        let num_labels = self.context.model_config.model_config.num_labels;
+        let mut state = ForwardPassState::new_classifier(
+            self.context.context.clone(),
+            &self.context.model_shape,
+            &self.context.scratch_buffers,
+            self.context.shared_buffers.clone(),
+            token_ids,
+            token_positions,
+            true,
+            num_labels,
+        );
 
-            let encoding_params = EncodingParameters::new();
+        let encoding_params = EncodingParameters::new();
 
-            let mut command_buffer = self
-                .context
-                .context
-                .create_command_buffer()
-                .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
-                .start_encoding();
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
 
-            self.context
-                .embed
-                .encode_lookup(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            self.context
-                .embedding_norm
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            #[cfg(feature = "tracing")]
-            {
-                let traces = state.traces().clone();
-                state.encode_copy_array(&mut command_buffer, ArrayId::Main, traces.borrow().embedding_norm().clone());
-            }
-
-            for layer in self.context.layers.iter() {
-                layer
-                    .encode(&mut state, &encoding_params, &mut command_buffer)
-                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            }
-            self.context
-                .output_norm
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            #[cfg(feature = "tracing")]
-            {
-                let traces = state.traces().clone();
-                state.encode_copy_array(&mut command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
-            }
-
-            self.context
-                .pooling
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-
-            self.context
-                .prediction_head
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-
-            command_buffer
-                .end_encoding()
-                .submit()
-                .wait_until_completed()
-                .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-
-            let logits = self.copy_logits_from_state(&state)?;
-
+        self.context
+            .embed
+            .encode_lookup(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context
+            .embedding_norm
+            .encode(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
+        {
             let traces = state.traces().clone();
-            Ok((logits, traces))
-        })
+            state.encode_copy_array(&mut command_buffer, ArrayId::Main, traces.borrow().embedding_norm().clone());
+        }
+
+        for layer in self.context.layers.iter() {
+            layer
+                .encode(&mut state, &encoding_params, &mut command_buffer)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        }
+        self.context
+            .output_norm
+            .encode(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
+        {
+            let traces = state.traces().clone();
+            state.encode_copy_array(&mut command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
+        }
+
+        self.context.pooling.encode(&mut state, &mut command_buffer).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+
+        self.context
+            .prediction_head
+            .encode(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+
+        command_buffer
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+
+        let logits = self.copy_logits_from_state(&state)?;
+
+        let traces = state.traces().clone();
+        Ok((logits, traces))
     }
 
     #[cfg(not(feature = "tracing"))]
@@ -180,64 +169,59 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<Box<[f32]>, Error> {
-        autoreleasepool(|_| {
-            let num_labels = self.context.model_config.model_config.num_labels;
-            let mut state = ForwardPassState::new_classifier(
-                self.context.context.clone(),
-                &self.context.model_shape,
-                &self.context.scratch_buffers,
-                self.context.shared_buffers.clone(),
-                token_ids,
-                token_positions,
-                true,
-                num_labels,
-            );
+        let num_labels = self.context.model_config.model_config.num_labels;
+        let mut state = ForwardPassState::new_classifier(
+            self.context.context.clone(),
+            &self.context.model_shape,
+            &self.context.scratch_buffers,
+            self.context.shared_buffers.clone(),
+            token_ids,
+            token_positions,
+            true,
+            num_labels,
+        );
 
-            let encoding_params = EncodingParameters::new();
+        let encoding_params = EncodingParameters::new();
 
-            let mut command_buffer = self
-                .context
-                .context
-                .create_command_buffer()
-                .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
-                .start_encoding();
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
 
-            self.context
-                .embed
-                .encode_lookup(&mut state, &mut command_buffer)
+        self.context
+            .embed
+            .encode_lookup(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context
+            .embedding_norm
+            .encode(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        for layer in self.context.layers.iter() {
+            layer
+                .encode(&mut state, &encoding_params, &mut command_buffer)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            self.context
-                .embedding_norm
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            for layer in self.context.layers.iter() {
-                layer
-                    .encode(&mut state, &encoding_params, &mut command_buffer)
-                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            }
-            self.context
-                .output_norm
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            self.context
-                .pooling
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-            self.context
-                .prediction_head
-                .encode(&mut state, &mut command_buffer)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        }
+        self.context
+            .output_norm
+            .encode(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context.pooling.encode(&mut state, &mut command_buffer).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        self.context
+            .prediction_head
+            .encode(&mut state, &mut command_buffer)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-            command_buffer
-                .end_encoding()
-                .submit()
-                .wait_until_completed()
-                .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        command_buffer
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-            let logits = self.copy_logits_from_state(&state)?;
+        let logits = self.copy_logits_from_state(&state)?;
 
-            Ok(logits)
-        })
+        Ok(logits)
     }
 
     fn copy_logits_from_state(

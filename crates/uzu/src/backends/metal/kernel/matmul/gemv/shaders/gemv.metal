@@ -13,7 +13,7 @@ using namespace metal;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-PUBLIC KERNEL(MatmulGemv)(
+KERNEL(MatmulGemv)(
     const device T* matrix,
     const device T* input_vector,
     const device T* output_source OPTIONAL(apply_output_scale_and_accumulate),
@@ -39,14 +39,14 @@ PUBLIC KERNEL(MatmulGemv)(
     const uint thread_index_x THREADS(32),
     const uint thread_index_y THREADS(16),
     const uint thread_index_z THREADS(1),
-    const ThreadContext simd
+    const ThreadContext thread_context
 ) {
   if (output_rows_per_threadgroup <= 0) {
     return;
   }
 
   // Simdgroup guard — kill excess simdgroups beyond what this tile uses
-  if (simd.threadgroup_index >= tg_simd_rows * tg_simd_cols) {
+  if (thread_context.threadgroup_index >= tg_simd_rows * tg_simd_cols) {
     return;
   }
 
@@ -66,22 +66,27 @@ PUBLIC KERNEL(MatmulGemv)(
   thread float vector_coefficients[4];
 
   const int thread_row_in_simdgroup =
-      sg_thread_cols != 32 ? int(simd.simdgroup_index) / int(sg_thread_cols)
-                           : 0;
+      sg_thread_cols != 32
+          ? int(thread_context.simdgroup_index) / int(sg_thread_cols)
+          : 0;
   const int thread_col_in_simdgroup =
-      sg_thread_cols != 32 ? int(simd.simdgroup_index) % int(sg_thread_cols)
-                           : int(simd.simdgroup_index);
+      sg_thread_cols != 32
+          ? int(thread_context.simdgroup_index) % int(sg_thread_cols)
+          : int(thread_context.simdgroup_index);
 
   const int simdgroup_column_index =
-      tg_simd_cols != 1 ? int(simd.threadgroup_index % tg_simd_cols) : 0;
+      tg_simd_cols != 1 ? int(thread_context.threadgroup_index % tg_simd_cols)
+                        : 0;
 
   const int simdgroup_row_thread_base =
       tg_simd_cols != 1
-          ? int(sg_thread_rows) * int(simd.threadgroup_index / tg_simd_cols)
-          : int(sg_thread_rows) * int(simd.threadgroup_index);
+          ? int(sg_thread_rows) *
+                int(thread_context.threadgroup_index / tg_simd_cols)
+          : int(sg_thread_rows) * int(thread_context.threadgroup_index);
   const int simdgroup_col_thread_base =
       tg_simd_cols != 1
-          ? int(sg_thread_cols) * int(simd.threadgroup_index % tg_simd_cols)
+          ? int(sg_thread_cols) *
+                int(thread_context.threadgroup_index % tg_simd_cols)
           : 0;
 
   int output_block_row_offset =

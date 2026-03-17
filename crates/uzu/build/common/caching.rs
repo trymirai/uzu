@@ -1,3 +1,5 @@
+#![cfg(all(feature = "metal", target_os = "macos"))]
+
 use std::{fs, sync::OnceLock};
 
 use anyhow::Context;

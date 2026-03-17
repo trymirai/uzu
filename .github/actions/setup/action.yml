@@ -23,6 +23,9 @@ runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rustfmt
     - if: inputs.nextest == 'true'
       uses: taiki-e/install-action@nextest
     - if: inputs.linters == 'true'

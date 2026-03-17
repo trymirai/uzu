@@ -25,7 +25,7 @@ PUBLIC KERNEL(RMSNorm)(
     constant bool& full_layer,
     const bool in_place SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
 ) {
@@ -60,7 +60,7 @@ PUBLIC KERNEL(RMSNorm)(
       partial_sum,
       shared_sum,
       thread_in_row,
-      simd
+      thread_context
   );
 
   // Compute RMS norm factor

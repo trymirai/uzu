@@ -1,4 +1,4 @@
-#![cfg(target_os = "macos")]
+#![cfg(metal_backend)]
 
 use std::sync::Arc;
 

@@ -1,3 +1,5 @@
+#![cfg(metal_backend)]
+
 use std::time::Instant;
 
 use half::bf16;

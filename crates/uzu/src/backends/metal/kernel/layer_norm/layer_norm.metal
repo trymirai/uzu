@@ -20,7 +20,7 @@ void layer_norm_core(
     threadgroup AccumT* shared_variance,
     uint thread_in_row,
     bool full_layer,
-    const thread ThreadContext& simd
+    const thread ThreadContext& thread_context
 ) {
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
@@ -40,7 +40,7 @@ void layer_norm_core(
       partial_sum,
       shared_mean,
       thread_in_row,
-      simd
+      thread_context
   );
   AccumT mean = total_sum / static_cast<AccumT>(element_count);
 
@@ -62,7 +62,7 @@ void layer_norm_core(
       partial_var_sum,
       shared_variance,
       thread_in_row,
-      simd
+      thread_context
   );
   AccumT variance = total_var / static_cast<AccumT>(element_count);
   AccumT inv_std = rsqrt(variance + static_cast<AccumT>(epsilon));
@@ -132,7 +132,7 @@ PUBLIC KERNEL(LayerNorm) (
     const bool in_place SPECIALIZE,
     threadgroup ACC shared_mean[METAL_SIMD_SIZE],
     threadgroup ACC shared_variance[METAL_SIMD_SIZE],
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     uint batch_idx GROUPS(batch_size),
     uint thread_in_row THREADS(BLOCK_SIZE)
 ) {
@@ -151,6 +151,6 @@ PUBLIC KERNEL(LayerNorm) (
       shared_variance,
       thread_in_row,
       full_layer,
-      simd
+      thread_context
   );
 }
