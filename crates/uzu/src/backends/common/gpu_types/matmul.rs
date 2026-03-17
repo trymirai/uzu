@@ -9,8 +9,8 @@ pub struct GemmParams {
     pub leading_dimension_a: i32,
     pub leading_dimension_b: i32,
     pub leading_dimension_d: i32,
-    pub threadgroups_per_row: i32,
     pub threadgroups_per_column: i32,
+    pub threadgroups_per_row: i32,
     pub swizzle_log: i32,
     pub aligned_inner_iterations: i32,
 }
