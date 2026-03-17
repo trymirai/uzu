@@ -138,11 +138,10 @@ impl StructuredAudioCodecGraph {
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
-        let mut lengths_array = context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_a");
+        let mut lengths_array = ws.lengths_array(&context, 0, lengths_i32.len());
         write_i32_slice_into_array(&mut lengths_array, &lengths_i32)
             .map_err(|err| AudioError::Runtime(format!("structured_audio_lengths_a: {err}")))?;
-        let mut next_lengths_array =
-            context.create_array(&[lengths_i32.len()], DataType::I32, "structured_audio_lengths_b");
+        let mut next_lengths_array = ws.lengths_array(&context, 1, lengths_i32.len());
 
         let data_type = x.data_type();
 

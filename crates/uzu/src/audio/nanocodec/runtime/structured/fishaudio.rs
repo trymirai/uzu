@@ -55,6 +55,9 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
 pub(super) struct DecodeWorkspace<B: Backend> {
     slots: [RefCell<Option<Rc<RefCell<B::Buffer>>>>; 2],
     toggle: Cell<bool>,
+    /// Pair of reusable I32 arrays for per-stage sequence lengths. Cached to
+    /// avoid allocating new GPU buffers on every decode call.
+    lengths_pair: [RefCell<Option<Array<B>>>; 2],
 }
 
 impl<B: Backend> DecodeWorkspace<B> {
@@ -62,7 +65,33 @@ impl<B: Backend> DecodeWorkspace<B> {
         Self {
             slots: [RefCell::new(None), RefCell::new(None)],
             toggle: Cell::new(false),
+            lengths_pair: [RefCell::new(None), RefCell::new(None)],
         }
+    }
+
+    /// Return a reusable I32 array of at least `min_elements` entries for
+    /// sequence length data. `index` must be 0 or 1 (ping-pong pair).
+    pub(super) fn lengths_array(
+        &self,
+        context: &B::Context,
+        index: usize,
+        min_elements: usize,
+    ) -> Array<B> {
+        debug_assert!(index < 2);
+        let mut slot = self.lengths_pair[index].borrow_mut();
+        if let Some(existing) = slot.as_ref() {
+            if existing.num_elements() >= min_elements {
+                return existing.clone();
+            }
+        }
+        let label = if index == 0 {
+            "structured_audio_lengths_a"
+        } else {
+            "structured_audio_lengths_b"
+        };
+        let array = context.create_array(&[min_elements], DataType::I32, label);
+        *slot = Some(array.clone());
+        array
     }
 
     /// Return a scratch [`Array`] backed by the next slot in the ping-pong
@@ -109,6 +138,8 @@ impl<B: Backend> DecodeWorkspace<B> {
         *self.slots[0].borrow_mut() = None;
         *self.slots[1].borrow_mut() = None;
         self.toggle.set(false);
+        *self.lengths_pair[0].borrow_mut() = None;
+        *self.lengths_pair[1].borrow_mut() = None;
     }
 }
 

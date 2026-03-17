@@ -66,7 +66,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                 config.validate_stream_decode().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
                 let total_frames = semantic_tokens.frames();
                 let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
-                if total_frames < chunked_threshold {
+                if total_frames <= chunked_threshold {
                     audio_decode_calls = usize::from(total_frames > 0);
                     audio_input_frames = total_frames;
                     audio_decoded_window_frames = total_frames;

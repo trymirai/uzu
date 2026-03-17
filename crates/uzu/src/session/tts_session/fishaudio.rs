@@ -489,6 +489,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 
         fast_runner.reset();
         let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+        let followup_count = self.num_codebooks.saturating_sub(2);
+
         let mut pre_projection =
             |runner: &TokenDecoderRunner<B>,
              _state: &ForwardPassState<B>,
@@ -503,39 +505,27 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     command_buffer,
                 )
             };
-        let mut fast_token = fast_runner.decode_next_step(
+
+        // Merge the first fast token and all followup tokens into a single
+        // command buffer submission, eliminating one submit/wait per frame.
+        let mut record_all = |result_index: usize, sampled: u64| -> Result<(), Error> {
+            let codebook_index = result_index + 1;
+            let clamped = u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
+                .map_err(|_| Error::GenerateFailed)?;
+            by_codebook[codebook_index].push(clamped);
+            self.current_codes_scratch[codebook_index] = clamped;
+            Ok(())
+        };
+        fast_runner.decode_first_and_followup_tokens_merged(
             &[0, u64::from(first_code)],
             EmbeddingInjection::OverrideFirstRowInternal,
+            Some(&mut pre_projection),
+            followup_count,
             Some(fast_vocab_limit),
             sampling,
-            None,
-            false,
-            Some(&mut pre_projection),
+            &mut record_all,
         )?;
-        let clamped = u32::try_from((fast_token as usize).min(residual_token_upper_bound.saturating_sub(1)))
-            .map_err(|_| Error::GenerateFailed)?;
-        by_codebook[1].push(clamped);
-        self.current_codes_scratch[1] = clamped;
-        fast_token = u64::from(clamped);
 
-        let followup_count = self.num_codebooks.saturating_sub(2);
-        if followup_count > 0 {
-            let mut record_followup = |relative_index: usize, sampled: u64| -> Result<(), Error> {
-                let codebook_index = relative_index + 2;
-                let clamped = u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                    .map_err(|_| Error::GenerateFailed)?;
-                by_codebook[codebook_index].push(clamped);
-                self.current_codes_scratch[codebook_index] = clamped;
-                Ok(())
-            };
-            fast_runner.decode_followup_tokens_batched(
-                fast_token,
-                followup_count,
-                Some(fast_vocab_limit),
-                sampling,
-                &mut record_followup,
-            )?;
-        }
         Ok(())
     }
 

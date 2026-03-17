@@ -3,7 +3,7 @@
 
 using namespace metal;
 
-constant uint AUDIO_TIME_TILE = 4;
+constant uint AUDIO_TIME_TILE = 8;
 
 template <typename T>
 void causal_conv1d_grouped_residual(
@@ -55,10 +55,18 @@ void causal_conv1d_grouped_residual(
   const float residual1 = lane_count > 1 ? float(residual[out_base + 1]) : 0.0f;
   const float residual2 = lane_count > 2 ? float(residual[out_base + 2]) : 0.0f;
   const float residual3 = lane_count > 3 ? float(residual[out_base + 3]) : 0.0f;
+  const float residual4 = lane_count > 4 ? float(residual[out_base + 4]) : 0.0f;
+  const float residual5 = lane_count > 5 ? float(residual[out_base + 5]) : 0.0f;
+  const float residual6 = lane_count > 6 ? float(residual[out_base + 6]) : 0.0f;
+  const float residual7 = lane_count > 7 ? float(residual[out_base + 7]) : 0.0f;
   float acc0 = bias_value + residual0;
   float acc1 = bias_value + residual1;
   float acc2 = bias_value + residual2;
   float acc3 = bias_value + residual3;
+  float acc4 = bias_value + residual4;
+  float acc5 = bias_value + residual5;
+  float acc6 = bias_value + residual6;
+  float acc7 = bias_value + residual7;
 
   const int cin_per_group = cin / groups;
   const int cout_per_group = cout / groups;
@@ -80,12 +88,19 @@ void causal_conv1d_grouped_residual(
       for (int k = 0; k < kernel_size; ++k) {
         const float w = float(weight[w_base + (uint)k]);
         const int x_t = (int)t + k * dilation - pad;
-        if (full_tile && x_t >= 0 && x_t + 3 < seq_len) {
+        if (full_tile && x_t >= 0 && x_t + 7 < seq_len) {
+          // Fast path: all 8 lanes in bounds, use vectorized loads
           const uint x_idx = x_base + (uint)x_t;
-          acc0 += w * float(input[x_idx]);
-          acc1 += w * float(input[x_idx + 1]);
-          acc2 += w * float(input[x_idx + 2]);
-          acc3 += w * float(input[x_idx + 3]);
+          vec<T, 4> v0 = *(device const vec<T, 4>*)(input + x_idx);
+          vec<T, 4> v1 = *(device const vec<T, 4>*)(input + x_idx + 4);
+          acc0 += w * float(v0.x);
+          acc1 += w * float(v0.y);
+          acc2 += w * float(v0.z);
+          acc3 += w * float(v0.w);
+          acc4 += w * float(v1.x);
+          acc5 += w * float(v1.y);
+          acc6 += w * float(v1.z);
+          acc7 += w * float(v1.w);
           continue;
         }
         if (valid_count > 0 && x_t >= 0 && x_t < seq_len) {
@@ -99,6 +114,18 @@ void causal_conv1d_grouped_residual(
         }
         if (valid_count > 3 && x_t + 3 >= 0 && x_t + 3 < seq_len) {
           acc3 += w * float(input[x_base + (uint)(x_t + 3)]);
+        }
+        if (valid_count > 4 && x_t + 4 >= 0 && x_t + 4 < seq_len) {
+          acc4 += w * float(input[x_base + (uint)(x_t + 4)]);
+        }
+        if (valid_count > 5 && x_t + 5 >= 0 && x_t + 5 < seq_len) {
+          acc5 += w * float(input[x_base + (uint)(x_t + 5)]);
+        }
+        if (valid_count > 6 && x_t + 6 >= 0 && x_t + 6 < seq_len) {
+          acc6 += w * float(input[x_base + (uint)(x_t + 6)]);
+        }
+        if (valid_count > 7 && x_t + 7 >= 0 && x_t + 7 < seq_len) {
+          acc7 += w * float(input[x_base + (uint)(x_t + 7)]);
         }
       }
     }
@@ -115,6 +142,18 @@ void causal_conv1d_grouped_residual(
   }
   if (lane_count > 3) {
     output[out_base + 3] = valid_count > 3 ? (T)acc3 : (T)residual3;
+  }
+  if (lane_count > 4) {
+    output[out_base + 4] = valid_count > 4 ? (T)acc4 : (T)residual4;
+  }
+  if (lane_count > 5) {
+    output[out_base + 5] = valid_count > 5 ? (T)acc5 : (T)residual5;
+  }
+  if (lane_count > 6) {
+    output[out_base + 6] = valid_count > 6 ? (T)acc6 : (T)residual6;
+  }
+  if (lane_count > 7) {
+    output[out_base + 7] = valid_count > 7 ? (T)acc7 : (T)residual7;
   }
 }
 
@@ -134,7 +173,7 @@ PUBLIC KERNEL(AudioCausalConv1dGroupedResidual)(
     const constant int& dilation,
     const constant int& groups,
     const constant int& batch_size,
-    uint t AXIS((seq_len + 3) / 4, 32),
+    uint t AXIS((seq_len + 7) / 8, 32),
     uint oc AXIS(cout, 1),
     uint b AXIS(batch_size, 1)
 ) {
