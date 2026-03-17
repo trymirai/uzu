@@ -696,6 +696,6 @@ impl ChatSession {
 
 impl Drop for ChatSession {
     fn drop(&mut self) {
-        maybe_with_autoreleasepool(|| self.llm = None);
+        self.llm = None
     }
 }

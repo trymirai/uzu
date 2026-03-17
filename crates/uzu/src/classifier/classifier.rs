@@ -36,42 +36,38 @@ impl<B: Backend> ClassifierTrait for Classifier<B> {
     ) -> Result<ClassificationOutput, Error> {
         let run_start = Instant::now();
 
-        maybe_with_autoreleasepool(|| {
-            let forward_start = Instant::now();
+        #[cfg(feature = "tracing")]
+        let (logits, _traces) = self.forward_pass_with_traces(&token_ids, &token_positions)?;
 
-            #[cfg(feature = "tracing")]
-            let (logits, _traces) = self.forward_pass_with_traces(&token_ids, &token_positions)?;
+        #[cfg(not(feature = "tracing"))]
+        let logits = self.forward_pass(&token_ids, &token_positions)?;
 
-            #[cfg(not(feature = "tracing"))]
-            let logits = self.forward_pass(&token_ids, &token_positions)?;
+        let forward_duration = run_start.elapsed().as_secs_f64();
 
-            let forward_duration = forward_start.elapsed().as_secs_f64();
+        let postprocessing_start = Instant::now();
+        let probabilities = self.logits_to_probabilities(&logits)?;
+        let postprocessing_duration = postprocessing_start.elapsed().as_secs_f64();
 
-            let postprocessing_start = Instant::now();
-            let probabilities = self.logits_to_probabilities(&logits)?;
-            let postprocessing_duration = postprocessing_start.elapsed().as_secs_f64();
+        let (predicted_label, confidence) = probabilities
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(label, prob)| (label.clone(), *prob))
+            .unwrap_or((String::from("unknown"), 0.0));
 
-            let (predicted_label, confidence) = probabilities
-                .iter()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(label, prob)| (label.clone(), *prob))
-                .unwrap_or((String::from("unknown"), 0.0));
+        let stats = ClassificationStats::new(
+            0.0,
+            forward_duration,
+            postprocessing_duration,
+            run_start.elapsed().as_secs_f64(),
+            token_ids.len() as u64,
+            predicted_label,
+            confidence,
+        );
 
-            let stats = ClassificationStats::new(
-                0.0,
-                forward_duration,
-                postprocessing_duration,
-                run_start.elapsed().as_secs_f64(),
-                token_ids.len() as u64,
-                predicted_label,
-                confidence,
-            );
-
-            Ok(ClassificationOutput {
-                logits,
-                probabilities,
-                stats,
-            })
+        Ok(ClassificationOutput {
+            logits,
+            probabilities,
+            stats,
         })
     }
 }

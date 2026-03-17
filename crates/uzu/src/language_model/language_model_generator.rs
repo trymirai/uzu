@@ -238,9 +238,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
             }
 
-            maybe_with_autoreleasepool(|| {
-                let _ = last_state.take();
-            });
+            let _ = last_state.take();
 
             let task = Task {
                 token_ids: &step_token_ids,
@@ -613,9 +611,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     }
 
     fn clear_cache(&mut self) {
-        maybe_with_autoreleasepool(|| {
-            self.pre_encoded_task = None;
-        });
+        self.pre_encoded_task = None;
     }
 
     fn reset_state(&mut self) {

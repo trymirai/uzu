@@ -74,8 +74,8 @@ jobs:
 
       - name: Build crates
         run: |
-          cargo build ${{ matrix.tracing && '--features "metal tracing"' || '' }}
+          cargo build --features metal ${{ matrix.tracing && '--features tracing' || '' }}
 
       - name: Run tests
         run: |
-          cargo nextest run --profile=ci ${{ matrix.tracing && '--features "metal tracing"' || '' }}
+          cargo nextest run --features metal --profile=ci ${{ matrix.tracing && '--features tracing' || '' }}
