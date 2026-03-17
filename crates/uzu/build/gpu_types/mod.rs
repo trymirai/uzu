@@ -2,7 +2,7 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use syn::{Expr, ExprLit, Fields, Item, ItemStruct, Lit, Meta, Type, TypeArray, TypePath};
+use syn::{Attribute, Expr, ExprLit, Fields, Item, ItemEnum, ItemStruct, Lit, Meta, Type, TypeArray, TypePath};
 use tokio::task::spawn_blocking;
 
 use crate::{
@@ -90,26 +90,42 @@ impl GpuTypesCompiler {
 
         let syntax = syn::parse_file(&source).with_context(|| format!("cannot parse {}", src_path.display()))?;
 
+        let mut repr_c_enums: Vec<ItemEnum> = Vec::new();
         let mut repr_c_structs: Vec<ItemStruct> = Vec::new();
         for item in syntax.items {
-            if let Item::Struct(item_struct) = item {
-                let has_repr_c = item_struct.attrs.iter().any(|attribute| {
-                    if attribute.path().is_ident("repr") {
-                        if let Ok(ident) = attribute.parse_args::<syn::Ident>() {
-                            return ident == "C";
-                        }
-                    }
-                    false
-                });
-
-                if has_repr_c {
+            if let Item::Enum(item_enum) = item {
+                if have_repr_c_attr(&item_enum.attrs) {
+                    repr_c_enums.push(item_enum);
+                }
+            } else if let Item::Struct(item_struct) = item {
+                if have_repr_c_attr(&item_struct.attrs) {
                     repr_c_structs.push(item_struct);
                 }
             }
         }
 
-        let mut c_struct_definitions = String::new();
-        for rust_struct in &repr_c_structs {
+        let c_enum_definitions = Self::get_enum_definitions(&repr_c_enums);
+        let c_struct_definitions = Self::get_struct_definitions(&repr_c_structs);
+
+        let mut content = String::new();
+        if !c_enum_definitions.is_empty() {
+            content.push_str(&c_enum_definitions);
+        }
+        if !c_struct_definitions.is_empty() {
+            if !content.is_empty() {
+                content.push_str("\n\n");
+            }
+            content.push_str(&c_struct_definitions);
+        }
+
+        self.write_header(module_name, content.as_str())?;
+
+        Ok(())
+    }
+
+    fn get_struct_definitions(c_structs: &Vec<ItemStruct>) -> String {
+        let mut definitions = String::new();
+        for (i, rust_struct) in c_structs.iter().enumerate() {
             for attribute in &rust_struct.attrs {
                 if attribute.path().is_ident("doc") {
                     if let Meta::NameValue(meta_name_value) = &attribute.meta {
@@ -121,16 +137,16 @@ impl GpuTypesCompiler {
                             let doc_comment = literal_string.value();
                             let doc_comment = doc_comment.trim();
                             if !doc_comment.is_empty() {
-                                c_struct_definitions.push_str("/**");
-                                c_struct_definitions.push_str(doc_comment);
-                                c_struct_definitions.push_str(" */\n");
+                                definitions.push_str("/**");
+                                definitions.push_str(doc_comment);
+                                definitions.push_str(" */\n");
                             }
                         }
                     }
                 }
             }
 
-            c_struct_definitions.push_str("typedef struct {\n");
+            definitions.push_str("typedef struct {\n");
 
             if let Fields::Named(named_fields) = &rust_struct.fields {
                 for field in &named_fields.named {
@@ -148,9 +164,9 @@ impl GpuTypesCompiler {
                                     let doc_comment = literal_string.value();
                                     let doc_comment = doc_comment.trim();
                                     if !doc_comment.is_empty() {
-                                        c_struct_definitions.push_str("  /**");
-                                        c_struct_definitions.push_str(doc_comment);
-                                        c_struct_definitions.push_str(" */\n");
+                                        definitions.push_str("  /**");
+                                        definitions.push_str(doc_comment);
+                                        definitions.push_str(" */\n");
                                     }
                                 }
                             }
@@ -158,26 +174,49 @@ impl GpuTypesCompiler {
                     }
 
                     if let Some((base_type, array_size)) = c_type.split_once('[') {
-                        c_struct_definitions.push_str(&format!("  {base_type} {field_name}[{array_size};\n"));
+                        definitions.push_str(&format!("  {base_type} {field_name}[{array_size};\n"));
                     } else {
-                        c_struct_definitions.push_str(&format!("  {c_type} {field_name};\n"));
+                        definitions.push_str(&format!("  {c_type} {field_name};\n"));
                     }
                 }
             }
 
             let struct_name = rust_struct.ident.to_string();
-            c_struct_definitions.push_str(&format!("}} {struct_name};\n\n"));
+            definitions.push_str(&format!("}} {struct_name};"));
+            if i < c_structs.len() - 1 {
+                definitions.push_str("\n\n");
+            }
         }
 
-        self.write_header(module_name, c_struct_definitions.trim())?;
+        definitions
+    }
 
-        Ok(())
+    fn get_enum_definitions(enums: &Vec<ItemEnum>) -> String {
+        let mut definitions = String::new();
+        for (i, rust_enum) in enums.iter().enumerate() {
+            let enum_name = rust_enum.ident.to_string();
+            definitions.push_str("enum ");
+            definitions.push_str(&enum_name);
+            definitions.push_str(" {\n");
+
+            for variant in &rust_enum.variants {
+                definitions.push_str("  ");
+                definitions.push_str(variant.ident.to_string().as_str());
+                definitions.push_str(",\n");
+            }
+
+            definitions.push_str("};");
+            if i < enums.len() - 1 {
+                definitions.push_str("\n\n");
+            }
+        }
+        definitions
     }
 
     fn write_header(
         &self,
         module_name: &str,
-        structs: &str,
+        content: &str,
     ) -> anyhow::Result<()> {
         let include_guard = format!("UZU_{}_H", module_name.to_uppercase());
 
@@ -198,7 +237,7 @@ namespace {module_name} {{
 #include <stdint.h>
 #endif
 
-{structs}
+{content}
 
 #ifdef __METAL_VERSION__
 }} // namespace {module_name}
@@ -263,6 +302,17 @@ fn rust_type_to_c(rust_type: &Type) -> String {
         },
         _ => "/* unknown */".to_string(),
     }
+}
+
+fn have_repr_c_attr(attrs: &Vec<Attribute>) -> bool {
+    attrs.iter().any(|attr| {
+        if attr.path().is_ident("repr") {
+            if let Ok(ident) = attr.parse_args::<syn::Ident>() {
+                return ident == "C";
+            }
+        }
+        false
+    })
 }
 
 #[async_trait]
