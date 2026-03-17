@@ -24,11 +24,11 @@ inline T activate_gelu(T x) {
 template <typename T>
 inline T activate(T x, ActivationType type) {
   switch (type) {
-    case SILU:
-      return activate_silu(x);
-    case GELU:
-      return activate_gelu(x);
-    case IDENTITY:
-      return x;
+  case SILU:
+    return activate_silu(x);
+  case GELU:
+    return activate_gelu(x);
+  case IDENTITY:
+    return x;
   }
 }

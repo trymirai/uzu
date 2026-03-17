@@ -39,28 +39,28 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
 
   int quantized_value = 0;
   switch (quant_mode) {
-    case UINT4: {
-      const uint byte_idx = token_id * weights_stride + (dim_idx / 2);
-      const uint8_t packed = weights[byte_idx];
-      if ((dim_idx & 1) == 0) {
-        quantized_value = int(packed & 0x0F);
-      } else {
-        quantized_value = int((packed >> 4) & 0x0F);
-      }
-      break;
-    };
-    case INT8: {
-      const uint elem_idx = token_id * weights_stride + dim_idx;
-      const device int8_t* weights_i8 =
+  case UINT4: {
+    const uint byte_idx = token_id * weights_stride + (dim_idx / 2);
+    const uint8_t packed = weights[byte_idx];
+    if ((dim_idx & 1) == 0) {
+      quantized_value = int(packed & 0x0F);
+    } else {
+      quantized_value = int((packed >> 4) & 0x0F);
+    }
+    break;
+  };
+  case INT8: {
+    const uint elem_idx = token_id * weights_stride + dim_idx;
+    const device int8_t* weights_i8 =
         reinterpret_cast<const device int8_t*>(weights);
-      quantized_value = int(weights_i8[elem_idx]);
-      break;
-    };
-    case UINT8: {
-      const uint elem_idx = token_id * weights_stride + dim_idx;
-      quantized_value = int(weights[elem_idx]);
-      break;
-    };
+    quantized_value = int(weights_i8[elem_idx]);
+    break;
+  };
+  case UINT8: {
+    const uint elem_idx = token_id * weights_stride + dim_idx;
+    quantized_value = int(weights[elem_idx]);
+    break;
+  };
   }
 
   float out_f = float(scale) * float(quantized_value) + float(bias);
