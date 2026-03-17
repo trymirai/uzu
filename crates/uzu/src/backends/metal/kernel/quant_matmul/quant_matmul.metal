@@ -287,12 +287,12 @@ struct QuantizedBlockLoaderMlx {
   );
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  UZU_MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
-  UZU_MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
-  UZU_MTL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
-  UZU_MTL_CONST short n_reads =
+  METAL_CONST short pack_factor = get_pack_factor<bits, 8>();
+  METAL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
+  METAL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
+  METAL_CONST short n_reads =
       (BCOLS_PACKED * BROWS < tgp_size) ? 1 : (BCOLS_PACKED * BROWS) / tgp_size;
-  UZU_MTL_CONST short group_steps = group_size / BCOLS;
+  METAL_CONST short group_steps = group_size / BCOLS;
 
   const int src_ld;
   const int tile_stride;
@@ -422,12 +422,12 @@ struct QuantizedBlockLoaderZp {
   );
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  UZU_MTL_CONST short pack_factor = get_pack_factor<bits, 8>();
-  UZU_MTL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
-  UZU_MTL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
-  UZU_MTL_CONST short n_reads =
+  METAL_CONST short pack_factor = get_pack_factor<bits, 8>();
+  METAL_CONST short bytes_per_pack = get_bytes_per_pack<bits>();
+  METAL_CONST short BCOLS_PACKED = BCOLS / pack_factor;
+  METAL_CONST short n_reads =
       (BCOLS_PACKED * BROWS < tgp_size) ? 1 : (BCOLS_PACKED * BROWS) / tgp_size;
-  UZU_MTL_CONST short group_steps = group_size / BCOLS;
+  METAL_CONST short group_steps = group_size / BCOLS;
 
   const int src_ld;
   const int groups_per_row;
@@ -744,8 +744,8 @@ void qmm_impl(
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]
 ) {
-  static_assert(BK >= 32, "BK should be larger than SIMD_SIZE");
-  static_assert(BK % 32 == 0, "BK should be divisible by SIMD_SIZE");
+  static_assert(BK >= 32, "BK should be larger than METAL_SIMD_SIZE");
+  static_assert(BK % 32 == 0, "BK should be divisible by METAL_SIMD_SIZE");
 
   (void)lid;
 
@@ -953,8 +953,8 @@ void qmm_transposed_impl(
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]
 ) {
-  static_assert(BK >= 32, "BK should be larger than SIMD_SIZE");
-  static_assert(BK % 32 == 0, "BK should be divisible by SIMD_SIZE");
+  static_assert(BK >= 32, "BK should be larger than METAL_SIMD_SIZE");
+  static_assert(BK % 32 == 0, "BK should be divisible by METAL_SIMD_SIZE");
 
   constexpr int WM = 2;
   constexpr int WN = 2;
@@ -1377,7 +1377,7 @@ void qmv_fast_impl(
   constexpr int pack_factor = get_pack_factor<bits, 32>();
   constexpr int bytes_per_pack = get_bytes_per_pack<bits, 32>();
   constexpr int values_per_thread = pack_factor * packs_per_thread;
-  constexpr int block_size = values_per_thread * SIMD_SIZE;
+  constexpr int block_size = values_per_thread * METAL_SIMD_SIZE;
   constexpr int scale_step_per_thread = group_size / values_per_thread;
   const device uint8_t* ws = (const device uint8_t*)w;
   typedef float U;

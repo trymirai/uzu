@@ -1,8 +1,10 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/defines.h"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 #define BLOCK_SIZE 1024
-#define SIMD_SIZE 32
 #define GRAIN_SIZE 4
 
 // LayerNorm: subtract mean, then normalize (for BERT-style models)
@@ -18,7 +20,7 @@ void layer_norm_core(
     threadgroup AccumT* shared_variance,
     uint thread_in_row,
     bool full_layer,
-    const thread Simd& simd
+    const thread ThreadContext& simd
 ) {
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
@@ -128,9 +130,9 @@ PUBLIC KERNEL(LayerNorm) (
     constant float& scale_offset,
     constant uint& full_layer,
     const bool in_place SPECIALIZE,
-    threadgroup ACC shared_mean[SIMD_SIZE],
-    threadgroup ACC shared_variance[SIMD_SIZE],
-    const Simd simd,
+    threadgroup ACC shared_mean[METAL_SIMD_SIZE],
+    threadgroup ACC shared_variance[METAL_SIMD_SIZE],
+    const ThreadContext simd,
     uint batch_idx GROUPS(batch_size),
     uint thread_in_row THREADS(BLOCK_SIZE)
 ) {

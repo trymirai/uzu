@@ -14,8 +14,8 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub input_dim: i32,
     /// N dimension - output_dim (cols of B, cols of D)
     pub output_dim: i32,
-    pub lda: i32,
-    pub ldb: i32,
-    pub ldd: i32,
+    pub leading_dimension_a: i32,
+    pub leading_dimension_b: i32,
+    pub leading_dimension_d: i32,
     pub transpose_b: bool,
 }

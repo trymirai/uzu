@@ -1,12 +1,9 @@
 #pragma once
 
+#include "../common/defines.h"
 #include <metal_simdgroup>
 #include <metal_simdgroup_matrix>
 #include <metal_stdlib>
-
-#define UZU_MTL_CONST static constant constexpr
-#define UZU_PRAGMA_UNROLL _Pragma("clang loop unroll(full)")
-#define SIMD_SIZE 32
 
 using namespace metal;
 
@@ -47,11 +44,11 @@ struct BaseMMAFrag {
 
 template <typename T>
 struct BaseMMAFrag<T, 8, 8> {
-  UZU_MTL_CONST int kFragRows = 8;
-  UZU_MTL_CONST int kFragCols = 8;
-  UZU_MTL_CONST int kElemsPerFrag = (kFragRows * kFragCols) / 32;
-  UZU_MTL_CONST int kElemRows = 1;
-  UZU_MTL_CONST int kElemCols = 2;
+  METAL_CONST int kFragRows = 8;
+  METAL_CONST int kFragCols = 8;
+  METAL_CONST int kElemsPerFrag = (kFragRows * kFragCols) / 32;
+  METAL_CONST int kElemRows = 1;
+  METAL_CONST int kElemCols = 2;
 
   static_assert(
       kElemRows * kElemCols == kElemsPerFrag,
@@ -77,9 +74,9 @@ struct BaseMMAFrag<T, 8, 8> {
       StrX str_x,
       StrY str_y
   ) {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         dst[i * kElemCols + j] = static_cast<T>(src[i * str_x + j * str_y]);
       }
@@ -95,9 +92,9 @@ struct BaseMMAFrag<T, 8, 8> {
   ) {
     using U = pointer_element_t<DstPtrType>;
 
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         dst[i * str_x + j * str_y] = static_cast<U>(src[i * kElemCols + j]);
       }
@@ -124,9 +121,9 @@ struct BaseMMAFrag<T, 8, 8> {
   ) {
     using U = pointer_element_t<DstPtrType>;
 
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kElemRows; i++) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < kElemCols; j++) {
         if ((off_x + i) < lim_x && (off_y + j) < lim_y) {
           dst[(off_x + i) * str_x + (off_y + j) * str_y] =
@@ -174,18 +171,18 @@ template <
 struct MMATile {
   using MMAFrag_t = MMAFrag_;
   using elem_type = T;
-  UZU_MTL_CONST int kFragRows = MMAFrag_t::kFragRows;
-  UZU_MTL_CONST int kFragCols = MMAFrag_t::kFragCols;
-  UZU_MTL_CONST int kElemsPerFrag = MMAFrag_t::kElemsPerFrag;
+  METAL_CONST int kFragRows = MMAFrag_t::kFragRows;
+  METAL_CONST int kFragCols = MMAFrag_t::kFragCols;
+  METAL_CONST int kElemsPerFrag = MMAFrag_t::kElemsPerFrag;
 
-  UZU_MTL_CONST int kTileRows = kTileRows_;
-  UZU_MTL_CONST int kTileCols = kTileCols_;
+  METAL_CONST int kTileRows = kTileRows_;
+  METAL_CONST int kTileCols = kTileCols_;
 
-  UZU_MTL_CONST int kRows = kTileRows * kFragRows;
-  UZU_MTL_CONST int kCols = kTileCols * kFragCols;
+  METAL_CONST int kRows = kTileRows * kFragRows;
+  METAL_CONST int kCols = kTileCols * kFragCols;
 
-  UZU_MTL_CONST int kNumFrags = kTileRows * kTileCols;
-  UZU_MTL_CONST int kElemsPerTile = kNumFrags * kElemsPerFrag;
+  METAL_CONST int kNumFrags = kTileRows * kTileCols;
+  METAL_CONST int kElemsPerTile = kNumFrags * kElemsPerFrag;
 
   typedef typename MMAFrag_t::mat_type mat_type;
   typedef typename MMAFrag_t::frag_type frag_type;
@@ -195,7 +192,7 @@ struct MMATile {
   METAL_FUNC MMATile() thread {}
 
   METAL_FUNC constexpr void clear() {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kNumFrags; ++i) {
       val_frags[i] = frag_type(0);
     }
@@ -222,9 +219,9 @@ struct MMATile {
 
   template <typename U, int w_x, int w_y, int str_x, int str_y>
   METAL_FUNC void load(const threadgroup U* src) {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         MMAFrag_t::load(
             frag_at(i, j),
@@ -241,9 +238,9 @@ struct MMATile {
 
   template <typename U, int w_x, int w_y>
   METAL_FUNC void store(device U* dst, const int ld) const {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         MMAFrag_t::store(
             frag_at(i, j),
@@ -258,9 +255,9 @@ struct MMATile {
   // Store results into threadgroup memory (same layout as device variant)
   template <typename U, int w_x, int w_y>
   METAL_FUNC void store_tg(threadgroup U* dst, const int ld) const {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short j = 0; j < kTileCols; ++j) {
         MMAFrag_t::store(
             frag_at(i, j),
@@ -278,9 +275,9 @@ struct MMATile {
       const int ld,
       const short2 dst_tile_dims
   ) const {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (int i = 0; i < kTileRows; ++i) {
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (int j = 0; j < kTileCols; ++j) {
         MMAFrag_t::store_safe(
             frag_at(i, j),
@@ -304,12 +301,12 @@ METAL_FUNC void tile_matmad(
     thread MMATile<U, K, N>& B,
     thread MMATile<T, M, N>& C
 ) {
-  UZU_PRAGMA_UNROLL
+  METAL_PRAGMA_UNROLL
   for (short m = 0; m < M; ++m) {
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short n = 0; n < N; ++n) {
       short n_serp = (m % 2) ? (N - 1 - n) : n;
-      UZU_PRAGMA_UNROLL
+      METAL_PRAGMA_UNROLL
       for (short k = 0; k < K; ++k) {
         MMATile<T, M, N>::MMAFrag_t::mma(
             D.frag_at(m, n_serp),
@@ -338,30 +335,30 @@ template <
     typename Epilogue = TransformNone<U, AccumType>>
 struct BlockMMA {
   // MMAFrag size
-  UZU_MTL_CONST short kFragSize = 8;
+  METAL_CONST short kFragSize = 8;
   using MMAFrag_acc_t = BaseMMAFrag<AccumType, kFragSize, kFragSize>;
 
   // Warp tile simdgroup matrix strides along M
-  UZU_MTL_CONST short TM_stride = kFragSize * WM;
+  METAL_CONST short TM_stride = kFragSize * WM;
   // Warp tile simdgroup matrix strides along M
-  UZU_MTL_CONST short TN_stride = kFragSize * WN;
+  METAL_CONST short TN_stride = kFragSize * WN;
 
   // Warp tile size along M
-  UZU_MTL_CONST short TM = BM / (kFragSize * WM);
+  METAL_CONST short TM = BM / (kFragSize * WM);
   // Warp tile size along N
-  UZU_MTL_CONST short TN = BN / (kFragSize * WN);
+  METAL_CONST short TN = BN / (kFragSize * WN);
 
   // Threadgroup A strides
-  UZU_MTL_CONST short A_str_m = transpose_a ? 1 : lda_tgp; // M
-  UZU_MTL_CONST short A_str_k = transpose_a ? lda_tgp : 1; // K
+  METAL_CONST short A_str_m = transpose_a ? 1 : lda_tgp; // M
+  METAL_CONST short A_str_k = transpose_a ? lda_tgp : 1; // K
 
   // Threadgroup B strides
-  UZU_MTL_CONST short B_str_k = transpose_b ? 1 : ldb_tgp; // K
-  UZU_MTL_CONST short B_str_n = transpose_b ? ldb_tgp : 1; // N
+  METAL_CONST short B_str_k = transpose_b ? 1 : ldb_tgp; // K
+  METAL_CONST short B_str_n = transpose_b ? ldb_tgp : 1; // N
 
   // Threadgroup strides along K
-  UZU_MTL_CONST short tile_stride_a = kFragSize * A_str_k;
-  UZU_MTL_CONST short tile_stride_b = kFragSize * B_str_k;
+  METAL_CONST short tile_stride_a = kFragSize * A_str_k;
+  METAL_CONST short tile_stride_b = kFragSize * B_str_k;
 
   // Simdgroup matrices
   MMATile<AccumType, TM, 1, MMAFrag_acc_t> Atile;
@@ -403,7 +400,7 @@ struct BlockMMA {
     Bs += Bs_offset;
 
     // Iterate over BK in blocks of kFragSize
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short kk = 0; kk < BK; kk += kFragSize) {
       simdgroup_barrier(mem_flags::mem_none);
 
@@ -426,7 +423,7 @@ struct BlockMMA {
   /* Store results from simdgroup_matrix results into device memory */
   METAL_FUNC void store_result(device U* D, const int ldd) {
     // Apply epilogue
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
       Ctile.elems()[i] = Epilogue::apply(Ctile.elems()[i]);
     }
@@ -440,7 +437,7 @@ struct BlockMMA {
   /* Store results into threadgroup memory */
   METAL_FUNC void store_result_tg(threadgroup U* D, const int ldd) {
     // Apply epilogue
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
       Ctile.elems()[i] = Epilogue::apply(Ctile.elems()[i]);
     }
@@ -457,7 +454,7 @@ struct BlockMMA {
       short2 dst_tile_dims
   ) {
     // Apply epilogue
-    UZU_PRAGMA_UNROLL
+    METAL_PRAGMA_UNROLL
     for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
       Ctile.elems()[i] = Epilogue::apply(Ctile.elems()[i]);
     }
@@ -483,7 +480,7 @@ template <
     int align_M = 1,
     int align_K = 4>
 struct BlockLoader {
-  UZU_MTL_CONST short n_reads = (BM * BK < tgp_size) ? 1 : (BM * BK) / tgp_size;
+  METAL_CONST short n_reads = (BM * BK < tgp_size) ? 1 : (BM * BK) / tgp_size;
 
   const int src_ld;
   const short thread_idx;

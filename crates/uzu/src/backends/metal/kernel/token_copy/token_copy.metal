@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 /// Copies a single sampled token (u32) to the token_ids buffer (u64).
 /// Used in async pipeline to pass sampled token to next forward pass.

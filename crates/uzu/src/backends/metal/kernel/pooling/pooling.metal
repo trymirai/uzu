@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 // CLS pooling: Extract first token [batch, seq_len, hidden_dim] → [batch,
 // hidden_dim]

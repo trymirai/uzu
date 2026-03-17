@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 64
