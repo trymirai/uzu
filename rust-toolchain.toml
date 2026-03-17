@@ -2,4 +2,4 @@
 channel = "nightly"
 profile = "default"
 components = ["rust-src", "rust-analyzer"]
-targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-linux-android", "x86_64-unknown-linux-gnu"]
+targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-linux-android", "x86_64-unknown-linux-gnu", "wasm32-wasip1"]

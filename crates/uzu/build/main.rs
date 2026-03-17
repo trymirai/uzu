@@ -29,6 +29,13 @@ async fn main() -> anyhow::Result<()> {
         println!("cargo::rustc-cfg=metal_backend");
     }
 
+    let grammar_xgrammar = cfg!(feature = "grammar") && env::var("CARGO_CFG_TARGET_ARCH").unwrap() != "wasm32";
+
+    println!("cargo::rustc-check-cfg=cfg(grammar_xgrammar)");
+    if grammar_xgrammar {
+        println!("cargo::rustc-cfg=grammar_xgrammar");
+    }
+
     debug_log!("build script started");
 
     if envs::build_clean() {

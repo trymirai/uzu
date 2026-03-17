@@ -29,5 +29,35 @@ pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: i32, cons
     #[specialize]
     use_mlx_quant: bool,
 ) {
-    todo!()
+    let k = k as usize;
+    let n = n as usize;
+    let m = m as usize;
+    let pf = super::pack_factor(BITS);
+    let w_row_stride = k / pf;
+    let num_groups = (k + GROUP_SIZE as usize - 1) / GROUP_SIZE as usize;
+
+    for batch in 0..m {
+        for row in 0..n {
+            let mut acc = 0.0f32;
+            let w_row = unsafe { w.add(row * w_row_stride) };
+            let scales_row = unsafe { scales.add(row * num_groups) };
+
+            for ki in 0..k {
+                let dequant = unsafe {
+                    super::dequantize_element::<T, GROUP_SIZE, BITS>(
+                        w_row,
+                        scales_row,
+                        zero_points.map(|zp| zp.add(row * ((num_groups + (if BITS == 4 { 1 } else { 0 })) / (if BITS == 4 { 2 } else { 1 })))),
+                        biases.map(|b| b.add(row * num_groups)),
+                        ki,
+                        use_mlx_quant,
+                    )
+                };
+                let x_val = unsafe { (*x.add(batch * k + ki)).to_f32().unwrap() };
+                acc += dequant * x_val;
+            }
+
+            unsafe { *y.add(batch * n + row) = T::from(acc).unwrap() };
+        }
+    }
 }

@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path_buf = PathBuf::from(model_path);
     let mut session = ChatSession::new(model_path_buf, DecodingConfig::default())?;
 
-    let input = Input::Text(String::from("Tell about London"));
+    let input = Input::Text(String::from("What is 2 + 2?"));
     let output = session.run(
         input,
         RunConfig::default().tokens_limit(128),

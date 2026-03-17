@@ -12,19 +12,23 @@ use std::{
 };
 
 use tokenizers::Tokenizer;
+#[cfg(grammar_xgrammar)]
 use xgrammar::TokenizerInfo;
 
+#[cfg(grammar_xgrammar)]
+use crate::language_model::grammar::CompiledGrammar;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::session::helpers::is_directory_fits_ram;
 use crate::{
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
-        grammar::CompiledGrammar,
         result::{GenerateResult, PrefillResult},
     },
     session::{
         config::{DecodingConfig, RunConfig},
-        helpers::{InputProcessor, InputProcessorDefault, OutputParser, is_directory_fits_ram},
+        helpers::{InputProcessor, InputProcessorDefault, OutputParser},
         parameter::{ConfigResolvableValue, ContextMode},
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
@@ -51,6 +55,7 @@ pub struct ChatSession {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
+    #[cfg(grammar_xgrammar)]
     tokenizer_info: TokenizerInfo,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
@@ -75,6 +80,7 @@ impl ChatSession {
             return Err(Error::ModelFolderNotFound);
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         if !is_directory_fits_ram(&model_path) {
             return Err(Error::NotEnoughMemory);
         }
@@ -127,8 +133,10 @@ impl ChatSession {
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
 
+        #[cfg(grammar_xgrammar)]
         let stop_token_ids: Vec<i32> =
             language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
+        #[cfg(grammar_xgrammar)]
         let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, Some(&stop_token_ids))
             .map_err(|error_message| Error::GrammarError(error_message))?;
 
@@ -144,6 +152,7 @@ impl ChatSession {
             model_path,
             model_metadata,
             tokenizer,
+            #[cfg(grammar_xgrammar)]
             tokenizer_info,
             input_processor: Box::new(input_processor),
             output_parser,
@@ -257,6 +266,7 @@ impl ChatSession {
 
         let sampling_method = config.sampling_policy.resolve(language_model_config);
 
+        #[cfg(grammar_xgrammar)]
         let mut compiled_grammar: Option<CompiledGrammar> = if let Some(ref grammar_config) = config.grammar_config {
             Some(CompiledGrammar::from_config(grammar_config, None, &self.tokenizer_info)?)
         } else {
@@ -267,6 +277,7 @@ impl ChatSession {
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = language_model_generator.prefill(
             tokens.clone(),
+            #[cfg(grammar_xgrammar)]
             compiled_grammar.as_mut(),
             sampling_method,
             prefix_offset,
@@ -290,13 +301,18 @@ impl ChatSession {
             run_start,
         };
 
+        #[cfg(grammar_xgrammar)]
         let grammar_terminated = compiled_grammar.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
 
+        #[cfg(grammar_xgrammar)]
         let prefill_finish_reason = if grammar_terminated {
             Some(FinishReason::Stop)
         } else {
             Self::check_finish_reason(&run_context, language_model_generator.as_ref(), &prefill_tokens)
         };
+        #[cfg(not(grammar_xgrammar))]
+        let prefill_finish_reason =
+            Self::check_finish_reason(&run_context, language_model_generator.as_ref(), &prefill_tokens);
         let prefill_output = Self::build_output(
             &self.tokenizer,
             &self.output_parser,
@@ -321,7 +337,10 @@ impl ChatSession {
             }
         }
 
+        #[cfg(grammar_xgrammar)]
         let can_use_async = language_model_generator.generate_suffix_length() == 1 && compiled_grammar.is_none();
+        #[cfg(not(grammar_xgrammar))]
+        let can_use_async = language_model_generator.generate_suffix_length() == 1 && false;
 
         let generate_output = if can_use_async {
             let batch_size = language_model_generator.async_batch_size(&self.model_path);
@@ -340,6 +359,7 @@ impl ChatSession {
                 &self.output_parser,
                 &run_context,
                 language_model_generator.as_mut(),
+                #[cfg(grammar_xgrammar)]
                 compiled_grammar.as_mut(),
                 sampling_method,
                 &progress,
@@ -355,7 +375,7 @@ impl ChatSession {
         output_parser: &OutputParser,
         run_context: &RunContext,
         language_model_generator: &mut dyn LanguageModelGeneratorTrait,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
     ) -> Result<Output, Error>
@@ -364,24 +384,33 @@ impl ChatSession {
     {
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
+        #[cfg(grammar_xgrammar)]
         let mut compiled_grammar_mut = compiled_grammar;
 
         loop {
             let generate_start = Instant::now();
-            let generate_result =
-                language_model_generator.generate(compiled_grammar_mut.as_deref_mut(), sampling_method)?;
+            let generate_result = language_model_generator.generate(
+                #[cfg(grammar_xgrammar)]
+                compiled_grammar_mut.as_deref_mut(),
+                sampling_method,
+            )?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
+            #[cfg(grammar_xgrammar)]
             let grammar_terminated = compiled_grammar_mut.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
 
+            #[cfg(grammar_xgrammar)]
             let generate_finish_reason = if grammar_terminated {
                 Some(FinishReason::Stop)
             } else {
                 Self::check_finish_reason(run_context, language_model_generator, &generate_tokens)
             };
+            #[cfg(not(grammar_xgrammar))]
+            let generate_finish_reason =
+                Self::check_finish_reason(run_context, language_model_generator, &generate_tokens);
             let generate_output = Self::build_output(
                 tokenizer,
                 output_parser,

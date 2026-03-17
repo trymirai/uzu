@@ -1,3 +1,5 @@
+#![cfg(grammar_xgrammar)]
+
 use std::iter::repeat_n;
 
 use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};

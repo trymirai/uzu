@@ -6,11 +6,14 @@ use std::{
     time::Instant,
 };
 
-use itertools::{Either, Itertools, izip};
+#[cfg(grammar_xgrammar)]
+use itertools::Either;
+use itertools::{Itertools, izip};
 
+#[cfg(grammar_xgrammar)]
+use super::grammar::CompiledGrammar;
 use super::{
     gpu_capture::GpuCaptureManager,
-    grammar::CompiledGrammar,
     language_model_generator_context::LanguageModelGeneratorContext,
     result::{GenerateResult, PrefillResult},
     rng::PRng,
@@ -76,7 +79,7 @@ pub trait LanguageModelGeneratorTrait {
     fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -84,7 +87,7 @@ pub trait LanguageModelGeneratorTrait {
 
     fn generate(
         &mut self,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error>;
 
@@ -134,7 +137,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -159,6 +162,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let suffix_root = TrieNode::from_speculator(
             &tokens,
             &self.context.seed,
+            #[cfg(grammar_xgrammar)]
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -166,6 +170,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         );
         let flat_trie = suffix_root.linearize();
 
+        #[cfg(grammar_xgrammar)]
         let has_grammar = compiled_grammar.is_some();
 
         let token_ids =
@@ -175,6 +180,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             .chain(flat_trie.token_positions().map(|trie_position| prefix_offset + tokens_length - 1 + trie_position))
             .chunks(prefill_step_size);
 
+        #[cfg(grammar_xgrammar)]
         let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
         let token_bitmasks = repeat_n(None, tokens_length - 1).chain(flat_trie.token_masks()).chunks(prefill_step_size);
 
@@ -210,6 +216,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 (0, 0)
             };
 
+            #[cfg(grammar_xgrammar)]
             let step_token_bitmask: Option<Box<[u32]>> = if has_grammar && sampling_length > 0 {
                 Some(
                     step_token_bitmasks
@@ -230,6 +237,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 let _ = step_token_bitmasks.count();
                 None
             };
+            #[cfg(not(grammar_xgrammar))]
+            let step_token_bitmask: Option<Box<[u32]>> = None;
+            #[cfg(not(grammar_xgrammar))]
+            let _ = step_token_bitmasks;
 
             let should_capture = self.gpu_capture.should_capture_prefill(step == 0);
 
@@ -301,8 +312,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let (accepted_tokens, accepted_token_indices) = flat_trie.accept(
+            &sampled_tokens,
+            #[cfg(grammar_xgrammar)]
+            compiled_grammar.as_deref_mut(),
+        );
 
         self.update_cache_layers(
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
@@ -321,7 +335,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
     fn generate(
         &mut self,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] mut compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
@@ -330,6 +344,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
             &self.context.seed,
+            #[cfg(grammar_xgrammar)]
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
             &TrieCreationConfig::default(),
@@ -342,6 +357,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_ids =
             flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_suffix_length)).collect::<Box<[u64]>>();
 
+        #[cfg(grammar_xgrammar)]
         let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
             let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
             flat_trie
@@ -359,6 +375,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 .flatten()
                 .collect::<Box<[u32]>>()
         });
+        #[cfg(not(grammar_xgrammar))]
+        let token_bitmask: Option<Box<[u32]>> = None;
 
         let start_position = self.tokens.len() - 1;
         let token_positions = flat_trie
@@ -387,8 +405,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let sampled_tokens = self.read_sampling_output(&mut state)?;
 
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let (accepted_tokens, accepted_token_indices) = flat_trie.accept(
+            &sampled_tokens,
+            #[cfg(grammar_xgrammar)]
+            compiled_grammar.as_deref_mut(),
+        );
         let speculator_proposed = active_suffix_length.saturating_sub(1);
         let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 

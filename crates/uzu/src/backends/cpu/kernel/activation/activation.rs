@@ -17,5 +17,16 @@ pub fn activation<T: ArrayElement + Float>(
     #[specialize]
     in_place: bool,
 ) {
-    todo!()
+    let src: *const T = if in_place {
+        output as *const T
+    } else {
+        input.unwrap()
+    };
+
+    let act = super::ActivationType::try_from(act_type).unwrap();
+
+    for i in 0..n as usize {
+        let val = unsafe { *src.add(i) };
+        unsafe { *output.add(i) = super::activate(val, &act) };
+    }
 }

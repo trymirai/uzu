@@ -11,5 +11,10 @@ pub fn mask_update<T: ArrayElement + Float>(
     #[allow(unused)] unmask_col: i32,
     #[allow(unused)] mask_col: i32,
 ) {
-    todo!()
+    if unmask_col >= 0 {
+        unsafe { *mask.add(unmask_col as usize) = T::zero() };
+    }
+    if mask_col >= 0 {
+        unsafe { *mask.add(mask_col as usize) = T::from(f32::NEG_INFINITY).unwrap() };
+    }
 }

@@ -29,5 +29,48 @@ pub fn quantized_matmul_qmm_transposed64x64<T: ArrayElement + Float, const GROUP
     #[specialize]
     use_mlx_quant: bool,
 ) {
-    todo!()
+    let k = k as usize;
+    let n = n as usize;
+    let m = m as usize;
+    let pf = super::pack_factor(BITS);
+    let w_row_stride = n / pf;
+    let num_groups = (n + GROUP_SIZE as usize - 1) / GROUP_SIZE as usize;
+
+    for batch in 0..m {
+        for col in 0..n {
+            unsafe { *y.add(batch * n + col) = T::zero() };
+        }
+
+        for ki in 0..k {
+            let x_val = unsafe { (*x.add(batch * k + ki)).to_f32().unwrap() };
+            if x_val == 0.0 {
+                continue;
+            }
+            let w_row = unsafe { w.add(ki * w_row_stride) };
+            let scales_row = unsafe { scales.add(ki * num_groups) };
+
+            for col in 0..n {
+                let group_idx = col / GROUP_SIZE as usize;
+                let pack_idx = col / pf;
+                let idx_in_pack = col % pf;
+                let packed = unsafe { *w_row.add(pack_idx) };
+                let quant_val = super::extract_quant(packed, idx_in_pack, BITS);
+
+                let scale = unsafe { (*scales_row.add(group_idx)).to_f32().unwrap() };
+                let dequant = if use_mlx_quant {
+                    let bias = unsafe { (*biases.unwrap().add(ki * num_groups + group_idx)).to_f32().unwrap() };
+                    scale * quant_val as f32 + bias
+                } else {
+                    let zp = unsafe { super::dequant_zero_point(zero_points.unwrap().add(ki * ((num_groups + (if BITS == 4 { 1 } else { 0 })) / (if BITS == 4 { 2 } else { 1 }))), group_idx, BITS) };
+                    scale * (quant_val as f32 - zp)
+                };
+
+                unsafe {
+                    let out_idx = batch * n + col;
+                    let prev = (*y.add(out_idx)).to_f32().unwrap();
+                    *y.add(out_idx) = T::from(prev + dequant * x_val).unwrap();
+                };
+            }
+        }
+    }
 }

@@ -1,7 +1,9 @@
 use thiserror::Error;
 
+#[cfg(grammar_xgrammar)]
+use crate::language_model::grammar::CompiledGrammar;
 use crate::{
-    language_model::{grammar::CompiledGrammar, gumbel::speculator_sample, rng::PRng},
+    language_model::{gumbel::speculator_sample, rng::PRng},
     speculators::speculator::Speculator,
 };
 
@@ -87,7 +89,7 @@ impl TrieNode {
     pub fn from_speculator(
         prefix: &[u64],
         seed: &PRng,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] mut compiled_grammar: Option<&mut CompiledGrammar>,
         speculator: &dyn Speculator,
         creation_config: &TrieCreationConfig,
         max_length: usize,
@@ -100,7 +102,10 @@ impl TrieNode {
 
         let mut length = 1;
         let mut height = 0;
+        #[cfg(grammar_xgrammar)]
         let mask = compiled_grammar.as_deref_mut().and_then(|g| g.next_bitmask().unwrap());
+        #[cfg(not(grammar_xgrammar))]
+        let mask = None;
         let mut root = Self::new(*prefix.last().unwrap(), mask, seed.derive((prefix_length - 1) as u64));
 
         let mut cur_node = &mut root;
@@ -113,6 +118,7 @@ impl TrieNode {
             // Guuumbel speculator trick: both speculator and llm sample via gumbel max trick using the same noise for increased acceptance rate
             if let Some(next_speculated_token) = speculator_sample(cur_node.seed(), &cur_node_speculator_weights) {
                 // Add speculated token to the trie
+                #[cfg(grammar_xgrammar)]
                 let mask = if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                     if compiled_grammar.accept_token(next_speculated_token).is_err() {
                         cur_node_speculator_weights.remove(&next_speculated_token);
@@ -125,6 +131,8 @@ impl TrieNode {
                 } else {
                     None
                 };
+                #[cfg(not(grammar_xgrammar))]
+                let mask = None;
 
                 let leaf_node = Self::new(next_speculated_token, mask, seed.derive((prefix_length + height) as u64));
                 cur_node.add(leaf_node).unwrap();
@@ -145,6 +153,7 @@ impl TrieNode {
             } else if let Some(next_node_token) = next_node.take() {
                 // Out of speculated tokens for this node, move onto the likeliest next node
                 speculated_suffix.push(next_node_token);
+                #[cfg(grammar_xgrammar)]
                 if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                     if compiled_grammar.accept_token(next_node_token).is_err() {
                         break;
@@ -161,6 +170,7 @@ impl TrieNode {
             };
         }
 
+        #[cfg(grammar_xgrammar)]
         if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
             compiled_grammar.rollback(height);
         }
@@ -231,7 +241,7 @@ impl<'a> FlatTrie<'a> {
     pub fn accept(
         &self,
         sampled_tokens: &[u64],
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        #[cfg(grammar_xgrammar)] mut compiled_grammar: Option<&mut CompiledGrammar>,
     ) -> (Vec<u64>, Vec<usize>) {
         let mut current_token = self.root().unwrap();
         let mut accepted_tokens = Vec::new();
@@ -242,6 +252,7 @@ impl<'a> FlatTrie<'a> {
 
             accepted_token_indices.push(current_token_index);
             accepted_tokens.push(current_token_id);
+            #[cfg(grammar_xgrammar)]
             if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
                 && !compiled_grammar.is_terminated()
             {
@@ -252,6 +263,7 @@ impl<'a> FlatTrie<'a> {
                 break;
             };
 
+            #[cfg(grammar_xgrammar)]
             if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                 assert!(!compiled_grammar.is_terminated(), "Grammar has terminated but llm continued generation");
             }

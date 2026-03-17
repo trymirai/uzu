@@ -1,3 +1,5 @@
+#![cfg_attr(target_arch = "wasm32", feature(wasi_ext))]
+
 pub mod array;
 pub mod audio;
 pub mod backends;

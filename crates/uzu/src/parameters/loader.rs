@@ -1,7 +1,10 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::os::unix::fs::FileExt;
+#[cfg(target_arch = "wasm32")]
+use std::os::wasi::fs::FileExt;
 use std::{
     collections::{HashMap, hash_map::Keys},
     fs::File,
-    os::unix::fs::FileExt,
 };
 
 use thiserror::Error;
