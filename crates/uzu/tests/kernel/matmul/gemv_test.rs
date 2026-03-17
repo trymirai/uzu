@@ -12,10 +12,7 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            kernel::matmul::{
-                MatmulArguments,
-                gemv::{GemvDispatchDescriptor, GemvKernel},
-            },
+            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         cpu::Cpu,
     },
@@ -69,29 +66,28 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let d_buf = d_array.buffer();
     let mut d_ref = d_buf.borrow_mut();
 
-    let mut arguments = MatmulArguments {
-        a: a_ref.deref(),
-        a_offset: 0,
-        b: b_ref.deref(),
-        d: d_ref.deref_mut(),
-        bias: None,
-        batch: m,
-        input_dim: k,
-        output_dim: n,
-        leading_dimension_a: k,
-        leading_dimension_b: k,
-        leading_dimension_d: n,
-        transpose_b: true,
-    };
-
-    let descriptor = GemvDispatchDescriptor::try_new::<B>(T::data_type(), &arguments)
-        .expect("Failed to create descriptor")
-        .expect("GEMV not applicable for these dimensions");
-
-    let mut kernel = GemvKernel::<B>::new(T::data_type()).expect("Failed to create GemvKernel");
+    let mut kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(&context, T::data_type())
+        .expect("Failed to create MatmulKernel");
 
     let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(&context, &mut arguments, &descriptor, &mut command_buffer).expect("Failed to encode");
+    kernel.encode(
+        &context,
+        MatmulArguments {
+            a: a_ref.deref(),
+            a_offset: 0,
+            b: b_ref.deref(),
+            d: d_ref.deref_mut(),
+            bias: None,
+            batch: m,
+            input_dim: k,
+            output_dim: n,
+            leading_dimension_a: k,
+            leading_dimension_b: k,
+            leading_dimension_d: n,
+            transpose_b: true,
+        },
+        &mut command_buffer,
+    );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     drop(d_ref);
@@ -111,7 +107,6 @@ fn test<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-// M=1 (true vector-matrix multiply)
 #[test]
 fn test_f32_m1() {
     test::<f32>(1, 128, 64, 0.01);
@@ -127,7 +122,6 @@ fn test_bf16_m1() {
     test::<bf16>(1, 128, 64, 0.1);
 }
 
-// Small batch (M <= 8, batched GEMV)
 #[test]
 fn test_f32_batched() {
     test::<f32>(4, 128, 64, 0.01);
@@ -143,7 +137,6 @@ fn test_bf16_batched() {
     test::<bf16>(4, 128, 64, 0.1);
 }
 
-// Max batch (M=8)
 #[test]
 fn test_f32_max_batch() {
     test::<f32>(8, 128, 64, 0.01);
@@ -159,7 +152,6 @@ fn test_bf16_max_batch() {
     test::<bf16>(8, 128, 64, 0.1);
 }
 
-// Unaligned K dimension
 #[test]
 fn test_f32_unaligned_k() {
     test::<f32>(1, 33, 64, 0.01);
@@ -175,7 +167,6 @@ fn test_bf16_unaligned_k() {
     test::<bf16>(1, 33, 64, 0.1);
 }
 
-// Unaligned N dimension
 #[test]
 fn test_f32_unaligned_n() {
     test::<f32>(1, 128, 11, 0.01);
@@ -191,7 +182,6 @@ fn test_bf16_unaligned_n() {
     test::<bf16>(1, 128, 11, 0.1);
 }
 
-// Large dimensions
 #[test]
 fn test_f32_large() {
     test::<f32>(1, 4096, 2048, 0.05);
@@ -207,7 +197,6 @@ fn test_bf16_large() {
     test::<bf16>(1, 4096, 2048, 1.0);
 }
 
-// Small N (< 4, triggers elements_per_thread_col=1 path)
 #[test]
 fn test_f32_small_n() {
     test::<f32>(1, 128, 3, 0.01);

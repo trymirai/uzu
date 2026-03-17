@@ -1,6 +1,9 @@
 use crate::{
     DataType,
-    backends::common::{Backend, Context, kernel::matmul::MatmulArguments},
+    backends::{
+        common::{Context, kernel::matmul::MatmulArguments},
+        metal::{Metal, context::MetalContext},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -139,14 +142,14 @@ impl GemmSpecialization {
         }
     }
 
-    pub fn select<B: Backend>(
-        context: &B::Context,
+    pub fn select(
+        context: &MetalContext,
         data_type: DataType,
-        arguments: &MatmulArguments<B>,
+        arguments: &MatmulArguments<Metal>,
     ) -> Self {
         let overall_work_elements = (arguments.batch as i64) * (arguments.output_dim as i64);
         let is_float32 = matches!(data_type, DataType::F32);
-        let prefer_half_or_tf32 = !is_float32 || B::Context::tf32_enabled();
+        let prefer_half_or_tf32 = !is_float32 || MetalContext::tf32_enabled();
 
         let (block_rows, block_cols, block_depth, simdgroups_per_row, simdgroups_per_column, swizzle_log2) =
             if context.is_high_performance() && overall_work_elements >= (1_i64 << 20) {

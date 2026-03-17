@@ -27,7 +27,7 @@ static ArgmaxPair threadgroup_cooperative_argmax(
     ArgmaxPair value,
     threadgroup ArgmaxPair* shared,
     const ushort lid,
-    const thread ThreadContext& simd
+    const thread ThreadContext& thread_context
 ) {
   // Reduce within simdgroup using manual shuffle operations
   ArgmaxPair local_result = value;
@@ -40,8 +40,8 @@ static ArgmaxPair threadgroup_cooperative_argmax(
   }
 
   // First thread in each simdgroup writes to shared memory
-  if (simd.simdgroup_index == 0) {
-    shared[simd.threadgroup_index] = local_result;
+  if (thread_context.simdgroup_index == 0) {
+    shared[thread_context.threadgroup_index] = local_result;
   }
 
   // Synchronize across the threadgroup
@@ -203,7 +203,7 @@ PUBLIC KERNEL(ArgmaxMain)(
     constant uint& batch_size,
     constant uint& vocab_size,
     threadgroup ArgmaxPair shared[BLOCK_SIZE],
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     uint batch_idx GROUPS(batch_size),
     uint vocab_group_idx GROUPS(vocab_size.div_ceil(BLOCK_SIZE * GRAIN_SIZE)),
     ushort local_id THREADS(BLOCK_SIZE)
@@ -230,7 +230,7 @@ PUBLIC KERNEL(ArgmaxMain)(
       thread_result,
       shared,
       local_id,
-      simd
+      thread_context
   );
 
   if (local_id == 0) {
@@ -247,7 +247,7 @@ PUBLIC KERNEL(ArgmaxFinal)(
     constant uint& batch_size,
     constant uint& vocab_size,
     threadgroup ArgmaxPair shared[BLOCK_SIZE],
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     uint batch_idx GROUPS(batch_size),
     ushort local_id THREADS(BLOCK_SIZE)
 ) {
@@ -271,7 +271,7 @@ PUBLIC KERNEL(ArgmaxFinal)(
       thread_result,
       shared,
       local_id,
-      simd
+      thread_context
   );
 
   if (local_id == 0) {

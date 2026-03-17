@@ -29,14 +29,14 @@ METAL_FUNC void gemm_dispatch(
       simdgroups_per_row == SIMDGROUPS_PER_ROW && simdgroups_per_column == SIMDGROUPS_PER_COLUMN) { \
     if (align_m && align_n) { \
       if (align_k) \
-        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, true, true>(a, b, d, params, a_shared, b_shared, simd.simdgroup_index, simd.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, true, true>(a, b, d, params, a_shared, b_shared, thread_context.simdgroup_index, thread_context.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
       else \
-        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, true, false>(a, b, d, params, a_shared, b_shared, simd.simdgroup_index, simd.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, true, false>(a, b, d, params, a_shared, b_shared, thread_context.simdgroup_index, thread_context.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
     } else { \
       if (align_k) \
-        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, false, true>(a, b, d, params, a_shared, b_shared, simd.simdgroup_index, simd.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, false, true>(a, b, d, params, a_shared, b_shared, thread_context.simdgroup_index, thread_context.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
       else \
-        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, false, false>(a, b, d, params, a_shared, b_shared, simd.simdgroup_index, simd.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
+        gemm_dispatch<T, BLOCK_ROWS, BLOCK_COLS, BLOCK_DEPTH, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, false, false>(a, b, d, params, a_shared, b_shared, thread_context.simdgroup_index, thread_context.threadgroup_index, uint2(group_x, group_y), uint3(thread_x, thread_y, thread_z)); \
     } \
     return; \
   }
@@ -46,7 +46,7 @@ METAL_FUNC void gemm_dispatch(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-PUBLIC KERNEL(MatmulGemm)(
+KERNEL(MatmulGemm)(
     const device T* a,
     const device T* b,
     device T* d,
@@ -68,7 +68,7 @@ PUBLIC KERNEL(MatmulGemm)(
     const uint thread_x THREADS(32),
     const uint thread_y THREADS(2),
     const uint thread_z THREADS(2),
-    const ThreadContext simd
+    const ThreadContext thread_context
 ) {
   GEMM_DISPATCH(T, 64, 64, 16, 2, 2)
   GEMM_DISPATCH(T, 64, 64, 16, 1, 2)

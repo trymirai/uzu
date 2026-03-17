@@ -58,7 +58,7 @@ PUBLIC KERNEL(AttentionGemm)(
     const bool has_sinks SPECIALIZE,
     threadgroup T q_smem[BLOCK_QUERY_ROWS * (BD + 16 / sizeof(T))],
     threadgroup T kv_smem[BK * (BD + 16 / sizeof(T))],
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     const uint tgid_x GROUPS(suffix_length.div_ceil(BLOCK_QUERY_ROWS)),
     const uint tgid_y GROUPS(num_heads),
     const uint tgid_z GROUPS(1),
@@ -139,22 +139,22 @@ PUBLIC KERNEL(AttentionGemm)(
       q,
       query_source_stride,
       query_shared,
-      simd.threadgroup_index,
-      simd.simdgroup_index
+      thread_context.threadgroup_index,
+      thread_context.simdgroup_index
   );
   thread KeyLoader key_loader(
       k,
       key_source_stride,
       key_shared,
-      simd.threadgroup_index,
-      simd.simdgroup_index
+      thread_context.threadgroup_index,
+      thread_context.simdgroup_index
   );
   thread ValueLoader value_loader(
       v,
       value_source_stride,
       value_shared,
-      simd.threadgroup_index,
-      simd.simdgroup_index
+      thread_context.threadgroup_index,
+      thread_context.simdgroup_index
   );
 
   TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
@@ -220,13 +220,13 @@ PUBLIC KERNEL(AttentionGemm)(
   // Lane coordinates and pointer offsets
   const short2 lane_coordinates =
       SimdgroupMultiplyAccumulateType::get_lane_coordinates(
-          simd.simdgroup_index
+          thread_context.simdgroup_index
       );
   const short lane_row = lane_coordinates.y;
   const short lane_col = lane_coordinates.x;
 
-  const short simdgroup_row_base =
-      SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS * short(simd.threadgroup_index);
+  const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS *
+                                   short(thread_context.threadgroup_index);
 
   const short query_shared_offset =
       (simdgroup_row_base + lane_row) * query_leading_dimension + lane_col;

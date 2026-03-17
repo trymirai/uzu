@@ -1,11 +1,11 @@
-use crate::backends::{
-    common::kernel::matmul::{MatmulKernel, MatmulKernels},
-    cpu::{Cpu, kernel::CpuKernels},
-};
-
 pub mod gemm;
 pub mod gemv;
+mod matmul;
+
+pub use matmul::MatmulCpuKernel;
+
+use crate::backends::{common::kernel::matmul::MatmulKernels, cpu::kernel::CpuKernels};
 
 impl MatmulKernels for CpuKernels {
-    type FullPrecisionMatmulKernel = MatmulKernel<Cpu>;
+    type MatmulKernel = MatmulCpuKernel;
 }
