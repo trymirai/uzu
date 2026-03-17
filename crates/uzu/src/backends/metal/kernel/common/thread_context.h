@@ -9,5 +9,4 @@ struct ThreadContext {
   uint simdgroup_size;
   uint threadgroup_size;
   uint simdgroups_per_threadgroup;
-  uint3 grid_size;
 };
