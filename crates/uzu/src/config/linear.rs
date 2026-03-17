@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigDataType, QuantizationMode};
+use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct QuantizationConfig {
@@ -69,8 +69,8 @@ mod tests {
         let ground_truth_config = LinearConfig::QLoRA {
             quantization: QuantizationConfig {
                 group_size: 32,
-                weight_quantization_mode: QuantizationMode::UInt4,
-                activation_quantization_mode: Some(QuantizationMode::Int8),
+                weight_quantization_mode: QuantizationMode::UINT4,
+                activation_quantization_mode: Some(QuantizationMode::INT8),
                 activation_precision: ConfigDataType::BFloat16,
             },
             lora_rank: 16,

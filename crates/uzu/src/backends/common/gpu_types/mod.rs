@@ -8,9 +8,11 @@ pub mod argmax;
 pub mod attention;
 pub mod kv_cache_update;
 pub mod matmul;
+pub mod quantization;
 
 pub use activation::*;
 pub use argmax::*;
 pub use attention::*;
 pub use kv_cache_update::*;
 pub use matmul::*;
+pub use quantization::*;

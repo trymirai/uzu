@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigDataType, QuantizationMode};
+use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct EmbeddingConfigCommon {
@@ -105,7 +105,7 @@ mod tests {
                 logit_soft_cap: None,
             },
             group_size: 128,
-            embedding_quantization_mode: QuantizationMode::UInt4,
+            embedding_quantization_mode: QuantizationMode::UINT4,
             activation_quantization_mode: None,
             activation_precision: ConfigDataType::BFloat16,
         };
@@ -131,7 +131,7 @@ mod tests {
                 logit_soft_cap: None,
             },
             group_size: 128,
-            embedding_quantization_mode: QuantizationMode::UInt4,
+            embedding_quantization_mode: QuantizationMode::UINT4,
             activation_quantization_mode: None,
             activation_precision: ConfigDataType::BFloat16,
         };

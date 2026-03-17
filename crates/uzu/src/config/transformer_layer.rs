@@ -27,13 +27,16 @@ mod tests {
     use super::{
         super::{
             attention::AttentionConfig,
-            common::{ConfigDataType, QuantizationMode},
+            common::ConfigDataType,
             linear::{LinearConfig, QuantizationConfig},
             normalization::UpcastMode,
         },
         *,
     };
-    use crate::{backends::common::gpu_types::ActivationType, config::mlp};
+    use crate::{
+        backends::common::gpu_types::{ActivationType, QuantizationMode},
+        config::mlp,
+    };
 
     #[test]
     fn test_transformer_layer_config() {
@@ -132,8 +135,8 @@ mod tests {
                 qkv_projection_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
@@ -142,8 +145,8 @@ mod tests {
                 out_projection_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
@@ -166,8 +169,8 @@ mod tests {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,

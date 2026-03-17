@@ -63,7 +63,7 @@ mod tests {
     use serde_json::from_str;
 
     use super::{super::linear::QuantizationConfig, *};
-    use crate::config::{ConfigDataType, QuantizationMode};
+    use crate::{backends::common::gpu_types::QuantizationMode, config::ConfigDataType};
 
     #[test]
     fn test_dense_mlp_config() {
@@ -87,8 +87,8 @@ mod tests {
             linear_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UInt4,
-                    activation_quantization_mode: Some(QuantizationMode::Int8),
+                    weight_quantization_mode: QuantizationMode::UINT4,
+                    activation_quantization_mode: Some(QuantizationMode::INT8),
                     activation_precision: ConfigDataType::BFloat16,
                 },
                 lora_rank: 16,
@@ -149,8 +149,8 @@ mod tests {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
@@ -214,8 +214,8 @@ mod tests {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
