@@ -8,7 +8,7 @@ use uzu::session::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = std::env::var("UZU_MODEL_PATH")
-        .map_err(|| return Err("UZU_MODEL_PATH environment variable is not set.".into()));
+        .map_err(|_| -> Box<dyn std::error::Error> { "UZU_MODEL_PATH environment variable is not set.".into() })?;
     let model_path_buf = PathBuf::from(model_path);
     let mut session = ChatSession::new(model_path_buf, DecodingConfig::default())?;
 
