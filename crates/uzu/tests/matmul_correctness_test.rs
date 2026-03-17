@@ -1,5 +1,7 @@
 //! Correctness tests comparing Metal matmul kernels against ndarray
 
+#![cfg(metal_backend)]
+
 use bytemuck;
 use half::bf16;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};

@@ -22,7 +22,7 @@ defaults:
 
 jobs:
   linters:
-    name: Linters
+    name: linters
     runs-on: [self-hosted, macos, x64, mac, m3max, runner2]
 
     steps:
@@ -31,12 +31,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           linters: true
-
-      - name: Install nightly rustfmt
-        if: ${{ always() && steps.setup.outcome == 'success' }}
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt
 
       - name: Check Rust formatting
         if: ${{ always() && steps.setup.outcome == 'success' }}
@@ -53,12 +47,13 @@ jobs:
           git diff --exit-code -- Cargo.lock
 
   tests:
-    name: Tests${{ matrix.tracing && ' (tracing)' || '' }}
+    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }}
     runs-on: [self-hosted, macos, x64, mac, m3max, runner1]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
     strategy:
       matrix:
+        backend: ['cpu', 'metal']
         tracing: [false, true]
 
     env:
@@ -68,14 +63,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
         with:
-          metal: true
+          metal: ${{ matrix.backend == 'metal' }}
           test_model: true
           nextest: true
 
       - name: Build crates
         run: |
-          cargo build ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo +stable build --no-default-features ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} ${{ matrix.tracing && '--features tracing' || '' }}
 
       - name: Run tests
         run: |
-          cargo nextest run --profile=ci ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo +stable nextest run --profile=ci --no-default-features ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} ${{ matrix.tracing && '--features tracing' || '' }}

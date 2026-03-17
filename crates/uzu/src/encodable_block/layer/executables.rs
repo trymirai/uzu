@@ -2,8 +2,6 @@
 
 use std::rc::Rc;
 
-use objc2::rc::autoreleasepool;
-
 use super::MixerExecutables;
 use crate::{
     DataType, DecoderLayerConfig,
@@ -46,198 +44,196 @@ impl<B: Backend> LayerExecutables<B> {
         decoder_layer_loader: &ParameterTree<B::Context>,
         rope: Option<Rc<Rope<B>>>,
     ) -> Self {
-        autoreleasepool(|_| {
-            let ctx = context.as_ref(); // Reference for functions expecting &B::Context
-            let intermediate_data_type: DataType = match &layer_config.mixer_config {
-                MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
-                MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
-                MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
-            };
-            let copy_main_to_shortcut = TensorCopy::<B>::new(
-                ctx,
-                intermediate_data_type,
-                vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-            )
-            .unwrap();
+        let ctx = context.as_ref(); // Reference for functions expecting &B::Context
+        let intermediate_data_type: DataType = match &layer_config.mixer_config {
+            MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
+            MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
+            MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
+        };
+        let copy_main_to_shortcut = TensorCopy::<B>::new(
+            ctx,
+            intermediate_data_type,
+            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+        )
+        .unwrap();
 
-            let pre_attention_norm = RMSNorm::new(
-                ctx,
-                intermediate_data_type,
-                layer_config.pre_attention_norm_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
-            )
-            .expect("Failed to create RMS norm kernel");
+        let pre_attention_norm = RMSNorm::new(
+            ctx,
+            intermediate_data_type,
+            layer_config.pre_attention_norm_config.clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
+        )
+        .expect("Failed to create RMS norm kernel");
 
-            let mixer = match &layer_config.mixer_config {
-                MixerConfig::Attention(attention_config) => {
-                    let rope_block = rope.expect("RoPE encoder missing for attention layer");
+        let mixer = match &layer_config.mixer_config {
+            MixerConfig::Attention(attention_config) => {
+                let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
-                    let qkv_projection = <dyn Linear<B>>::new(
-                        &attention_config.qkv_projection_config,
-                        attention_config.has_qkv_biases,
-                        model_dim,
-                        [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
-                        ctx,
-                        &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
-                        ArrayId::Main,
-                        ArrayId::QKV,
-                    )
-                    .expect("Failed to create qkv projection");
-
-                    let qk_norm =
-                        if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
-                            match QKNorm::new(
-                                ctx,
-                                intermediate_data_type,
-                                attention_config.query_norm_config.clone(),
-                                attention_config.key_norm_config.clone(),
-                                ArrayId::QKV,
-                                &decoder_layer_loader.subtree("mixer").unwrap(),
-                                num_heads,
-                                num_groups,
-                                head_dim,
-                            ) {
-                                Ok(qk_norm) => Some(qk_norm),
-                                Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
-                            }
-                        } else {
-                            None
-                        };
-
-                    let out_projection = <dyn Linear<B>>::new(
-                        &attention_config.out_projection_config,
-                        attention_config.has_out_biases,
-                        num_heads * head_dim,
-                        [model_dim],
-                        ctx,
-                        &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
-                        ArrayId::AttentionOutput,
-                        ArrayId::Main,
-                    )
-                    .expect("Failed to create out projection");
-
-                    let attention = Attention::new(
-                        ctx,
-                        intermediate_data_type,
-                        layer_index,
-                        attention_scale,
-                        attention_config.has_sinks,
-                        attention_config.is_causal.unwrap_or(true),
-                        attention_config.sliding_window_size,
-                    )
-                    .expect("Failed to create AttentionWrapper kernel");
-
-                    MixerExecutables::Attention {
-                        qkv_projection,
-                        qk_norm,
-                        rope: rope_block,
-                        attention,
-                        out_projection,
-                    }
-                },
-                MixerConfig::Mamba(mamba_config) => {
-                    let mixer = MambaMixer::new(
-                        ctx,
-                        layer_type.clone(),
-                        mamba_config.clone(),
-                        layer_index,
-                        model_dim,
-                        num_heads,
-                        head_dim,
-                        num_groups,
-                        decoder_layer_loader,
-                    );
-                    MixerExecutables::StateSpace {
-                        mixer,
-                    }
-                },
-                MixerConfig::ShortConv(short_conv_config) => {
-                    let mixer = ShortConvMixer::new(
-                        ctx,
-                        layer_type.clone(),
-                        short_conv_config.clone(),
-                        layer_index,
-                        model_dim,
-                        decoder_layer_loader,
-                    );
-                    MixerExecutables::ShortConv {
-                        mixer,
-                    }
-                },
-            };
-
-            let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
-                Some(
-                    RMSNorm::new(
-                        ctx,
-                        intermediate_data_type,
-                        norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &decoder_layer_loader.subtree("post_mixer_norm").unwrap(),
-                    )
-                    .expect("Failed to create RMS norm kernel"),
+                let qkv_projection = <dyn Linear<B>>::new(
+                    &attention_config.qkv_projection_config,
+                    attention_config.has_qkv_biases,
+                    model_dim,
+                    [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
+                    ctx,
+                    &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
+                    ArrayId::Main,
+                    ArrayId::QKV,
                 )
-            } else {
-                None
-            };
+                .expect("Failed to create qkv projection");
 
-            let main_shortcut_add_swap = TensorAddSwap::<B>::new(
-                ctx,
-                intermediate_data_type,
-                vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
-            )
-            .unwrap();
+                let qk_norm =
+                    if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
+                        match QKNorm::new(
+                            ctx,
+                            intermediate_data_type,
+                            attention_config.query_norm_config.clone(),
+                            attention_config.key_norm_config.clone(),
+                            ArrayId::QKV,
+                            &decoder_layer_loader.subtree("mixer").unwrap(),
+                            num_heads,
+                            num_groups,
+                            head_dim,
+                        ) {
+                            Ok(qk_norm) => Some(qk_norm),
+                            Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
+                        }
+                    } else {
+                        None
+                    };
 
-            let pre_mlp_norm = RMSNorm::new(
-                ctx,
-                intermediate_data_type,
-                layer_config.pre_mlp_norm_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-            )
-            .expect("Failed to create RMS norm kernel");
-
-            let mlp = <dyn Mlp<B>>::new(
-                &layer_config.mlp_config,
-                model_dim,
-                hidden_dim,
-                context.as_ref(),
-                &decoder_layer_loader.subtree("mlp").unwrap(),
-            )
-            .expect("Failed to create mlp block");
-
-            let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-                Some(
-                    RMSNorm::new(
-                        ctx,
-                        intermediate_data_type,
-                        norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &decoder_layer_loader.subtree("post_mlp_norm").unwrap(),
-                    )
-                    .expect("Failed to create RMS norm kernel"),
+                let out_projection = <dyn Linear<B>>::new(
+                    &attention_config.out_projection_config,
+                    attention_config.has_out_biases,
+                    num_heads * head_dim,
+                    [model_dim],
+                    ctx,
+                    &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
+                    ArrayId::AttentionOutput,
+                    ArrayId::Main,
                 )
-            } else {
-                None
-            };
+                .expect("Failed to create out projection");
 
-            Self {
-                layer_index,
-                copy_main_to_shortcut,
-                pre_attention_norm,
-                mixer,
-                post_attention_norm,
-                main_shortcut_add_swap,
-                pre_mlp_norm,
-                mlp,
-                post_mlp_norm,
-            }
-        })
+                let attention = Attention::new(
+                    ctx,
+                    intermediate_data_type,
+                    layer_index,
+                    attention_scale,
+                    attention_config.has_sinks,
+                    attention_config.is_causal.unwrap_or(true),
+                    attention_config.sliding_window_size,
+                )
+                .expect("Failed to create AttentionWrapper kernel");
+
+                MixerExecutables::Attention {
+                    qkv_projection,
+                    qk_norm,
+                    rope: rope_block,
+                    attention,
+                    out_projection,
+                }
+            },
+            MixerConfig::Mamba(mamba_config) => {
+                let mixer = MambaMixer::new(
+                    ctx,
+                    layer_type.clone(),
+                    mamba_config.clone(),
+                    layer_index,
+                    model_dim,
+                    num_heads,
+                    head_dim,
+                    num_groups,
+                    decoder_layer_loader,
+                );
+                MixerExecutables::StateSpace {
+                    mixer,
+                }
+            },
+            MixerConfig::ShortConv(short_conv_config) => {
+                let mixer = ShortConvMixer::new(
+                    ctx,
+                    layer_type.clone(),
+                    short_conv_config.clone(),
+                    layer_index,
+                    model_dim,
+                    decoder_layer_loader,
+                );
+                MixerExecutables::ShortConv {
+                    mixer,
+                }
+            },
+        };
+
+        let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
+            Some(
+                RMSNorm::new(
+                    ctx,
+                    intermediate_data_type,
+                    norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &decoder_layer_loader.subtree("post_mixer_norm").unwrap(),
+                )
+                .expect("Failed to create RMS norm kernel"),
+            )
+        } else {
+            None
+        };
+
+        let main_shortcut_add_swap = TensorAddSwap::<B>::new(
+            ctx,
+            intermediate_data_type,
+            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+        )
+        .unwrap();
+
+        let pre_mlp_norm = RMSNorm::new(
+            ctx,
+            intermediate_data_type,
+            layer_config.pre_mlp_norm_config.clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
+        )
+        .expect("Failed to create RMS norm kernel");
+
+        let mlp = <dyn Mlp<B>>::new(
+            &layer_config.mlp_config,
+            model_dim,
+            hidden_dim,
+            context.as_ref(),
+            &decoder_layer_loader.subtree("mlp").unwrap(),
+        )
+        .expect("Failed to create mlp block");
+
+        let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
+            Some(
+                RMSNorm::new(
+                    ctx,
+                    intermediate_data_type,
+                    norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &decoder_layer_loader.subtree("post_mlp_norm").unwrap(),
+                )
+                .expect("Failed to create RMS norm kernel"),
+            )
+        } else {
+            None
+        };
+
+        Self {
+            layer_index,
+            copy_main_to_shortcut,
+            pre_attention_norm,
+            mixer,
+            post_attention_norm,
+            main_shortcut_add_swap,
+            pre_mlp_norm,
+            mlp,
+            post_mlp_norm,
+        }
     }
 
     pub fn encode(

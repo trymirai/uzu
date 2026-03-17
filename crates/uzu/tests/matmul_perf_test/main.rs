@@ -1,4 +1,4 @@
-#![cfg(all(target_os = "macos", feature = "metal"))]
+#![cfg(all(target_os = "macos", metal_backend))]
 
 mod bench;
 mod error;
