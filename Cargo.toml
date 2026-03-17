@@ -13,7 +13,7 @@ repository = "https://github.com/trymirai/uzu"
 [workspace.dependencies]
 benchmarks = { path = "crates/benchmarks" }
 dsl = { path = "crates/dsl" }
-uzu = { path = "crates/uzu" }
+uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"

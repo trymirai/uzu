@@ -1,4 +1,4 @@
-#![cfg(feature = "metal")]
+#![cfg(metal_backend)]
 
 mod common;
 

@@ -4,7 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-uzu = { workspace = true, features = ["metal"] }
+uzu.workspace = true
 serde.workspace = true
 sysinfo.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 mach2.workspace = true
+
+[features]
+default = ["metal"]
+
+metal = ["uzu/metal"]

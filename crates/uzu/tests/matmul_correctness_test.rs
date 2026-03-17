@@ -1,6 +1,6 @@
 //! Correctness tests comparing Metal matmul kernels against ndarray
 
-#![cfg(feature = "metal")]
+#![cfg(metal_backend)]
 
 use bytemuck;
 use half::bf16;

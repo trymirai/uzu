@@ -1,4 +1,4 @@
-#![cfg(feature = "metal")]
+#![cfg(metal_backend)]
 
 use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};

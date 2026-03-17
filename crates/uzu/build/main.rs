@@ -8,7 +8,7 @@ mod gpu_types;
 
 mod cpu;
 
-#[cfg(feature = "metal")]
+#[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
 use common::{compiler::Compiler, envs, traitgen::traitgen_all};
@@ -19,6 +19,14 @@ async fn main() -> anyhow::Result<()> {
 
     if envs::build_always() {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
+    }
+
+    let metal_backend = cfg!(feature = "metal")
+        && matches!(env::var("CARGO_CFG_TARGET_OS").unwrap().as_ref(), "macos" | "ios" | "tvos" | "visionos");
+
+    println!("cargo::rustc-check-cfg=cfg(metal_backend)");
+    if metal_backend {
+        println!("cargo::rustc-cfg=metal_backend");
     }
 
     debug_log!("build script started");
@@ -40,8 +48,8 @@ async fn main() -> anyhow::Result<()> {
 
     compilers.push(Box::new(cpu::CpuCompiler::new()?));
 
-    #[cfg(feature = "metal")]
-    {
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    if metal_backend {
         let generated_header_dir = gpu_types_compiler.generated_header_dir().clone();
         compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(generated_header_dir)?));
     }

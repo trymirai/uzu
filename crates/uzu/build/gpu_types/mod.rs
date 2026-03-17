@@ -34,7 +34,7 @@ impl GpuTypesCompiler {
         })
     }
 
-    #[cfg(feature = "metal")]
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub fn generated_header_dir(&self) -> &PathBuf {
         &self.generated_dir
     }

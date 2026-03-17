@@ -1,4 +1,4 @@
-#![cfg(all(feature = "audio-runtime", feature = "metal"))]
+#![cfg(all(feature = "audio-runtime", metal_backend))]
 
 use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use uzu::{

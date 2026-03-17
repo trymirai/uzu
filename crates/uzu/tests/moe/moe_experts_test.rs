@@ -6,7 +6,7 @@
 //! - Intermediate buffer correctness (row maps, tiles, dispatch args)
 //! - Numerical correctness against CPU reference
 
-#![cfg(feature = "metal")]
+#![cfg(metal_backend)]
 
 use half::bf16;
 use metal::MTLBuffer;

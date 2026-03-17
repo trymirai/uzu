@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use crate::{
     DataType,
-    autorelease::maybe_with_autoreleasepool,
     backends::common::{Backend, CommandBuffer},
     config::TransformerLayerConfig,
     encodable_block::{
@@ -45,184 +44,180 @@ impl<B: Backend> ClassifierLayer<B> {
         layer_loader: &ParameterTree<B::Context>,
         rope: Rc<Rope<B>>,
     ) -> Self {
-        maybe_with_autoreleasepool(|| {
-            let ctx = context.as_ref(); // Reference for functions expecting &B::Context
-            let attention_config =
-                layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
-            let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
+        let ctx = context.as_ref(); // Reference for functions expecting &B::Context
+        let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
+        let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
-            let copy_main_to_shortcut_mixer = TensorCopy::<B>::new(
-                ctx,
-                intermediate_data_type,
-                vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-            )
-            .unwrap();
+        let copy_main_to_shortcut_mixer = TensorCopy::<B>::new(
+            ctx,
+            intermediate_data_type,
+            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+        )
+        .unwrap();
 
-            let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_attention_norm_config {
-                if layer_loader.subtree("pre_mixer_norm").is_ok() {
-                    Some(
-                        Normalization::new(
-                            ctx,
-                            intermediate_data_type,
-                            norm_config.clone(),
-                            ArrayId::Main,
-                            ArrayId::Main,
-                            &layer_loader.subtree("pre_mixer_norm").unwrap(),
-                        )
-                        .expect("Failed to create pre-attention norm kernel"),
+        let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_attention_norm_config {
+            if layer_loader.subtree("pre_mixer_norm").is_ok() {
+                Some(
+                    Normalization::new(
+                        ctx,
+                        intermediate_data_type,
+                        norm_config.clone(),
+                        ArrayId::Main,
+                        ArrayId::Main,
+                        &layer_loader.subtree("pre_mixer_norm").unwrap(),
                     )
-                } else {
-                    None
-                }
+                    .expect("Failed to create pre-attention norm kernel"),
+                )
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
-            let qkv_projection = <dyn Linear<B>>::new(
-                &attention_config.qkv_projection_config,
-                attention_config.has_qkv_biases,
-                model_dim,
-                [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
+        let qkv_projection = <dyn Linear<B>>::new(
+            &attention_config.qkv_projection_config,
+            attention_config.has_qkv_biases,
+            model_dim,
+            [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
+            ctx,
+            &layer_loader.subtree("mixer.qkv_projection").unwrap(),
+            ArrayId::Main,
+            ArrayId::QKV,
+        )
+        .expect("Failed to create qkv projection");
+
+        let qk_norm = if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
+            match QKNorm::new(
                 ctx,
-                &layer_loader.subtree("mixer.qkv_projection").unwrap(),
-                ArrayId::Main,
+                intermediate_data_type,
+                attention_config.query_norm_config.clone(),
+                attention_config.key_norm_config.clone(),
                 ArrayId::QKV,
-            )
-            .expect("Failed to create qkv projection");
+                &layer_loader.subtree("mixer").unwrap(),
+                num_heads,
+                num_groups,
+                head_dim,
+            ) {
+                Ok(norm) => Some(norm),
+                Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
+            }
+        } else {
+            None
+        };
 
-            let qk_norm = if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some()
-            {
-                match QKNorm::new(
+        let out_projection = <dyn Linear<B>>::new(
+            &attention_config.out_projection_config,
+            attention_config.has_out_biases,
+            num_heads * head_dim,
+            [model_dim],
+            ctx,
+            &layer_loader.subtree("mixer.out_projection").unwrap(),
+            ArrayId::AttentionOutput,
+            ArrayId::Main,
+        )
+        .expect("Failed to create out projection");
+
+        let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
+            Some(
+                Normalization::new(
                     ctx,
                     intermediate_data_type,
-                    attention_config.query_norm_config.clone(),
-                    attention_config.key_norm_config.clone(),
-                    ArrayId::QKV,
-                    &layer_loader.subtree("mixer").unwrap(),
-                    num_heads,
-                    num_groups,
-                    head_dim,
-                ) {
-                    Ok(norm) => Some(norm),
-                    Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
-                }
-            } else {
-                None
-            };
-
-            let out_projection = <dyn Linear<B>>::new(
-                &attention_config.out_projection_config,
-                attention_config.has_out_biases,
-                num_heads * head_dim,
-                [model_dim],
-                ctx,
-                &layer_loader.subtree("mixer.out_projection").unwrap(),
-                ArrayId::AttentionOutput,
-                ArrayId::Main,
-            )
-            .expect("Failed to create out projection");
-
-            let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
-                Some(
-                    Normalization::new(
-                        ctx,
-                        intermediate_data_type,
-                        norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &layer_loader.subtree("post_mixer_norm").unwrap(),
-                    )
-                    .expect("Failed to create post-attention norm kernel"),
+                    norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &layer_loader.subtree("post_mixer_norm").unwrap(),
                 )
-            } else {
-                None
-            };
-
-            let mixer_residual_add = TensorAddSwap::<B>::new(
-                ctx,
-                intermediate_data_type,
-                vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+                .expect("Failed to create post-attention norm kernel"),
             )
-            .unwrap();
+        } else {
+            None
+        };
 
-            let copy_main_to_shortcut_mlp = TensorCopy::<B>::new(
-                ctx,
-                intermediate_data_type,
-                vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-            )
-            .unwrap();
+        let mixer_residual_add = TensorAddSwap::<B>::new(
+            ctx,
+            intermediate_data_type,
+            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+        )
+        .unwrap();
 
-            let pre_mlp_norm = Normalization::new(
-                ctx,
-                intermediate_data_type,
-                layer_config.pre_mlp_norm_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &layer_loader.subtree("pre_mlp_norm").unwrap(),
-            )
-            .expect("Failed to create pre-MLP norm kernel");
+        let copy_main_to_shortcut_mlp = TensorCopy::<B>::new(
+            ctx,
+            intermediate_data_type,
+            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
+        )
+        .unwrap();
 
-            let mlp = <dyn Mlp<B>>::new(
-                &layer_config.mlp_config,
-                model_dim,
-                hidden_dim,
-                context.as_ref(),
-                &layer_loader.subtree("mlp").unwrap(),
-            )
-            .expect("Failed to create mlp block");
+        let pre_mlp_norm = Normalization::new(
+            ctx,
+            intermediate_data_type,
+            layer_config.pre_mlp_norm_config.clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &layer_loader.subtree("pre_mlp_norm").unwrap(),
+        )
+        .expect("Failed to create pre-MLP norm kernel");
 
-            let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-                Some(
-                    Normalization::new(
-                        ctx,
-                        intermediate_data_type,
-                        norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
-                        &layer_loader.subtree("post_mlp_norm").unwrap(),
-                    )
-                    .expect("Failed to create post-MLP norm kernel"),
+        let mlp = <dyn Mlp<B>>::new(
+            &layer_config.mlp_config,
+            model_dim,
+            hidden_dim,
+            context.as_ref(),
+            &layer_loader.subtree("mlp").unwrap(),
+        )
+        .expect("Failed to create mlp block");
+
+        let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
+            Some(
+                Normalization::new(
+                    ctx,
+                    intermediate_data_type,
+                    norm_config.clone(),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &layer_loader.subtree("post_mlp_norm").unwrap(),
                 )
-            } else {
-                None
-            };
-
-            let attention = Attention::new(
-                ctx,
-                intermediate_data_type,
-                layer_index,
-                attention_scale,
-                attention_config.has_sinks,
-                false,
-                attention_config.sliding_window_size,
+                .expect("Failed to create post-MLP norm kernel"),
             )
-            .expect("Failed to create attention kernel");
+        } else {
+            None
+        };
 
-            let mlp_residual_add = TensorAddSwap::<B>::new(
-                ctx,
-                intermediate_data_type,
-                vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
-            )
-            .unwrap();
+        let attention = Attention::new(
+            ctx,
+            intermediate_data_type,
+            layer_index,
+            attention_scale,
+            attention_config.has_sinks,
+            false,
+            attention_config.sliding_window_size,
+        )
+        .expect("Failed to create attention kernel");
 
-            Self {
-                layer_index,
-                copy_main_to_shortcut_mixer,
-                pre_attention_norm,
-                qkv_projection,
-                qk_norm,
-                rope,
-                attention,
-                out_projection,
-                post_attention_norm,
-                mixer_residual_add,
-                copy_main_to_shortcut_mlp,
-                pre_mlp_norm,
-                mlp,
-                post_mlp_norm,
-                mlp_residual_add,
-            }
-        })
+        let mlp_residual_add = TensorAddSwap::<B>::new(
+            ctx,
+            intermediate_data_type,
+            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
+        )
+        .unwrap();
+
+        Self {
+            layer_index,
+            copy_main_to_shortcut_mixer,
+            pre_attention_norm,
+            qkv_projection,
+            qk_norm,
+            rope,
+            attention,
+            out_projection,
+            post_attention_norm,
+            mixer_residual_add,
+            copy_main_to_shortcut_mlp,
+            pre_mlp_norm,
+            mlp,
+            post_mlp_norm,
+            mlp_residual_add,
+        }
     }
 
     pub fn encode(

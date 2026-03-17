@@ -16,7 +16,6 @@ use super::{
     rng::PRng,
 };
 use crate::{
-    autorelease::maybe_with_autoreleasepool,
     backends::common::{
         Backend, Buffer, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
         CommandBufferPending, Context,
@@ -739,88 +738,86 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_method: SamplingMethod,
         should_fill_attention_bias: bool,
     ) -> Result<(ForwardPassState<B>, f64), Error> {
-        maybe_with_autoreleasepool(|| {
-            let run_start = Instant::now();
+        let run_start = Instant::now();
 
-            let mut state = ForwardPassState::new_llm(
-                self.context.context.clone(),
-                &self.context.decoder_config,
-                &self.context.model_shape,
-                &self.context.scratch_buffers,
-                self.context.cache_layers.clone(),
-                self.context.shared_buffers.clone(),
-                task.token_ids,
-                task.token_positions,
-                task.token_bitmask,
-                task.token_seeds,
-                task.active_suffix_length,
-                task.sampling_start,
-                task.sampling_length,
-                task.is_prefilling,
-                None,
-                false,
-                should_fill_attention_bias,
-                None,
-                None,
-            );
+        let mut state = ForwardPassState::new_llm(
+            self.context.context.clone(),
+            &self.context.decoder_config,
+            &self.context.model_shape,
+            &self.context.scratch_buffers,
+            self.context.cache_layers.clone(),
+            self.context.shared_buffers.clone(),
+            task.token_ids,
+            task.token_positions,
+            task.token_bitmask,
+            task.token_seeds,
+            task.active_suffix_length,
+            task.sampling_start,
+            task.sampling_length,
+            task.is_prefilling,
+            None,
+            false,
+            should_fill_attention_bias,
+            None,
+            None,
+        );
 
-            if let Some(method) = state.sampling_method_mut() {
-                *method = Some(sampling_method);
-            }
+        if let Some(method) = state.sampling_method_mut() {
+            *method = Some(sampling_method);
+        }
 
-            let encoding_key = TaskEncodingKey {
-                context_len: self.tokens.len(),
-                batch_size: task.token_ids.len(),
-                expected_number_of_new_tokens: task.expected_number_of_new_tokens,
-                active_suffix_len: task.active_suffix_length,
-                sampling_method,
-                sampling_start: task.sampling_start,
-                sampling_len: task.sampling_length,
-                has_bitmask: task.token_bitmask.is_some(),
-                is_prefilling: task.is_prefilling,
-            };
+        let encoding_key = TaskEncodingKey {
+            context_len: self.tokens.len(),
+            batch_size: task.token_ids.len(),
+            expected_number_of_new_tokens: task.expected_number_of_new_tokens,
+            active_suffix_len: task.active_suffix_length,
+            sampling_method,
+            sampling_start: task.sampling_start,
+            sampling_len: task.sampling_length,
+            has_bitmask: task.token_bitmask.is_some(),
+            is_prefilling: task.is_prefilling,
+        };
 
-            let is_first_decode = task.token_ids.len() == 1;
-            let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
+        let is_first_decode = task.token_ids.len() == 1;
+        let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
 
-            if should_capture {
-                self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
-                self.pre_encoded_task = None;
-            }
+        if should_capture {
+            self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+            self.pre_encoded_task = None;
+        }
 
-            let sample = !task.is_prefilling;
+        let sample = !task.is_prefilling;
 
-            let executable = if let Some((pre_encoded_key, pre_encoded_executable)) = self.pre_encoded_task.take()
-                && pre_encoded_key == encoding_key
-            {
-                pre_encoded_executable
-            } else {
-                self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample)?
-            };
+        let executable = if let Some((pre_encoded_key, pre_encoded_executable)) = self.pre_encoded_task.take()
+            && pre_encoded_key == encoding_key
+        {
+            pre_encoded_executable
+        } else {
+            self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample)?
+        };
 
-            let pending = executable.submit();
+        let pending = executable.submit();
 
-            if allow_pre_encode {
-                let mut next_encoding_key = encoding_key;
+        if allow_pre_encode {
+            let mut next_encoding_key = encoding_key;
 
-                next_encoding_key.context_len += 1;
+            next_encoding_key.context_len += 1;
 
-                let next_executable =
-                    self.encode_forward_pass(&mut state, &EncodingParameters::new().with_projection(1), sample)?;
+            let next_executable =
+                self.encode_forward_pass(&mut state, &EncodingParameters::new().with_projection(1), sample)?;
 
-                self.pre_encoded_task = Some((next_encoding_key, next_executable));
-            }
+            self.pre_encoded_task = Some((next_encoding_key, next_executable));
+        }
 
-            pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-            let run_time = run_start.elapsed().as_secs_f64();
+        let run_time = run_start.elapsed().as_secs_f64();
 
-            if should_capture {
-                self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
-            }
+        if should_capture {
+            self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+        }
 
-            Ok((state, run_time))
-        })
+        Ok((state, run_time))
     }
 
     fn encode_forward_pass(

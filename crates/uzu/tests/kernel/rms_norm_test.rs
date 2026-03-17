@@ -438,14 +438,14 @@ fn test_edge_f16_f16_f16_f16() {
 }
 
 // performance tests
-#[cfg(feature = "metal")]
+#[cfg(metal_backend)]
 #[test]
 fn test_perf_8k() {
     use uzu::backends::metal::Metal;
     test_performance::<Metal>(8, 8192); // Large model like LLaMA-70B
 }
 
-#[cfg(feature = "metal")]
+#[cfg(metal_backend)]
 #[test]
 fn test_perf_16k() {
     use uzu::backends::metal::Metal;

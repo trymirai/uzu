@@ -1,4 +1,4 @@
-#![cfg(feature = "metal")]
+#![cfg(metal_backend)]
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 

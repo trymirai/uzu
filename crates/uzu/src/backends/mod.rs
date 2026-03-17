@@ -1,13 +1,13 @@
 pub mod common;
 
 pub mod cpu;
-#[cfg(feature = "metal")]
+#[cfg(metal_backend)]
 pub mod metal;
 
 macro_rules! select_backend {
     ($expr:expr, $unk:expr) => {{
         let mut default = "cpu";
-        if cfg!(feature = "metal") {
+        if cfg!(metal_backend) {
             default = "metal";
         }
 
@@ -16,7 +16,7 @@ macro_rules! select_backend {
                 type B = crate::backends::cpu::Cpu;
                 $expr
             },
-            #[cfg(feature = "metal")]
+            #[cfg(metal_backend)]
             "metal" => {
                 type B = crate::backends::metal::Metal;
                 $expr
