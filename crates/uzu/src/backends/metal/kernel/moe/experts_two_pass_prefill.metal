@@ -60,7 +60,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
     const uint n_tile_idx GROUPS(INDIRECT),
     const uint row_tile_idx GROUPS(INDIRECT),
     const uint local_tid_x THREADS(128),
-    const ThreadContext simd
+    const ThreadContext thread_context
 ) {
   const uint base = row_tile_idx * 3u;
   const uint expert_idx = tile_map[base + 0u];
@@ -106,15 +106,15 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
 
   // simdgroup tile mapping
   const uint sg_col_count = Bn / SgBn;
-  const uint row_sg = simd.threadgroup_index / sg_col_count;
-  const uint col_sg = simd.threadgroup_index % sg_col_count;
+  const uint row_sg = thread_context.threadgroup_index / sg_col_count;
+  const uint col_sg = thread_context.threadgroup_index % sg_col_count;
   const uint row_sg_off = row_sg * SgBm;
   const uint col_sg_off = col_sg * SgBn;
 
   // Guard against misconfigured TG sizes
   constexpr uint SG_TILE = 8; // simdgroup fragment dimension (8x8)
   constexpr uint SG_EXPECTED = (Bm / SG_TILE) * (Bn / SG_TILE);
-  if (simd.threadgroup_index >= SG_EXPECTED)
+  if (thread_context.threadgroup_index >= SG_EXPECTED)
     return;
 
   // partial accumulators (8x8 tiles per simdgroup)
@@ -295,7 +295,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // ---- Epilogue: activation/gating → hidden_out (f32) ----
-  const uint sg_lane_start = simd.threadgroup_index * 32;
+  const uint sg_lane_start = thread_context.threadgroup_index * 32;
   const uint sg_lane_end = sg_lane_start + 32;
   if (lin < sg_lane_start || lin >= sg_lane_end)
     return;
@@ -404,7 +404,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
     threadgroup float Hs[PASSB_BM * (PASSB_BK + PASSB_TG_PAD)],
     threadgroup T Wk[PASSB_BN * (PASSB_BK + PASSB_TG_PAD)],
     threadgroup float bias_tile[PASSB_BN],
-    const ThreadContext simd,
+    const ThreadContext thread_context,
     const uint n_tile_idx GROUPS(INDIRECT),
     const uint row_tile_idx GROUPS(INDIRECT),
     const uint lin THREADS(128)
@@ -446,14 +446,14 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   const ulong bias_base = (ulong)expert_idx * (ulong)d_model;
 
   // 2×2 simdgroup layout for 16×64 output (each sg handles 8×32)
-  const uint row_sg = simd.threadgroup_index / 2; // 0-1 → rows
-  const uint col_sg = simd.threadgroup_index % 2; // 0-1 → cols
+  const uint row_sg = thread_context.threadgroup_index / 2; // 0-1 → rows
+  const uint col_sg = thread_context.threadgroup_index % 2; // 0-1 → cols
   const uint row_sg_off = row_sg * SgBm;
   const uint col_sg_off = col_sg * SgBn;
 
   // Guard against excessive simdgroups
   constexpr uint SG_EXPECTED = (PASSB_BM / SgBm) * (PASSB_BN / SgBn);
-  if (simd.threadgroup_index >= SG_EXPECTED)
+  if (thread_context.threadgroup_index >= SG_EXPECTED)
     return;
 
   // 4 accumulators per simdgroup: 1×4 layout of 8×8 tiles
@@ -561,10 +561,11 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // ---- Writeout with fragment extraction ----
-  const uint lane_qid = simd.simdgroup_index >> 2;
-  const uint lane_row = (lane_qid & 4u) + ((simd.simdgroup_index >> 1) & 3u);
+  const uint lane_qid = thread_context.simdgroup_index >> 2;
+  const uint lane_row =
+      (lane_qid & 4u) + ((thread_context.simdgroup_index >> 1) & 3u);
   const uint lane_col_base =
-      ((lane_qid & 2u) << 1) + ((simd.simdgroup_index & 1u) << 1);
+      ((lane_qid & 2u) << 1) + ((thread_context.simdgroup_index & 1u) << 1);
 
   const uint local_row = row_sg_off + lane_row;
   if (local_row >= m_rows)
