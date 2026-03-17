@@ -11,15 +11,10 @@ use std::{
     time::Instant,
 };
 
-fn nanos_to_secs(nanos: u64) -> f64 {
-    nanos as f64 / 1_000_000_000.0
-}
-
 use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
-    autorelease::maybe_with_autoreleasepool,
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
@@ -34,6 +29,10 @@ use crate::{
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
 };
+
+fn nanos_to_secs(nanos: u64) -> f64 {
+    nanos as f64 / 1_000_000_000.0
+}
 
 struct RunContext {
     eos_tokens: Vec<u64>,
