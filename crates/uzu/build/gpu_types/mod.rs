@@ -34,6 +34,7 @@ impl GpuTypesCompiler {
         })
     }
 
+    #[cfg(feature = "metal")]
     pub fn generated_header_dir(&self) -> &PathBuf {
         &self.generated_dir
     }
