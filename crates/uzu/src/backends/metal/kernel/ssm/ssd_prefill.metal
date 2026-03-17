@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include "../activation/activation.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "ssm_common.h"
@@ -79,7 +80,7 @@ PUBLIC KERNEL(SSDPrefill64)(
 
     const float x_val = float(x[x_idx]);
     const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
-    const float gate = float(apply_silu(z[x_idx]));
+    const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
 
@@ -176,7 +177,7 @@ PUBLIC KERNEL(SSDPrefill)(
 
     const float x_val = float(x[x_idx]);
     const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
-    const float gate = float(apply_silu(z[x_idx]));
+    const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
 
@@ -245,7 +246,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
     const T this_dt = softplus(dt_raw_val);
     const T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
     const T this_D = d[h_idx];
-    const T this_z = apply_silu(z[x_idx]);
+    const T this_z = activate_silu(z[x_idx]);
     const T dt_scaled_input = this_x;
 
     T acc = T(0);

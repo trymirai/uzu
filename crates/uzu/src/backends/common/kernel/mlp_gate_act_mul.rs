@@ -1,12 +1,11 @@
 use crate::{
     DataType,
     backends::common::{Backend, CommandBuffer, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel},
-    config::Activation,
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {
     kernel: <B::Kernels as Kernels>::MlpGateActMulKernel,
-    activation: Activation,
+    activation: ActivationType,
     hidden_dim: usize,
 }
 
@@ -14,7 +13,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        activation: Activation,
+        activation: ActivationType,
         hidden_dim: usize,
     ) -> Result<Self, B::Error> {
         let kernel = <B::Kernels as Kernels>::MlpGateActMulKernel::new(context, data_type)?;
@@ -32,16 +31,10 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         hidden: &mut B::Buffer,
         m: i32,
     ) -> Result<(), B::Error> {
-        let act_type = match self.activation {
-            Activation::SiLU {
-                ..
-            } => ActivationType::SILU,
-            Activation::Gelu => ActivationType::GELU,
-            Activation::Identity => {
-                panic!("Identity activation is not supported for kernel")
-            },
-        };
-        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, act_type, command_buffer);
+        if self.activation == ActivationType::IDENTITY {
+            panic!("Identity activation is not supported for kernel")
+        }
+        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, self.activation, command_buffer);
         Ok(())
     }
 }

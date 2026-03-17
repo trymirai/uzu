@@ -9,10 +9,11 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    Activation, DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
+    DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
     array::Array,
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Kernels,
+        gpu_types::ActivationType,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
@@ -175,13 +176,13 @@ impl<B: Backend> MoeBlock<B> {
         })
     }
 
-    fn gating_code_from_activation(activation: &Activation) -> u32 {
+    fn gating_code_from_activation(activation: &ActivationType) -> u32 {
         match activation {
-            Activation::Gelu => 3,
-            Activation::SiLU {
+            ActivationType::GELU => 3,
+            ActivationType::SILU {
                 ..
             } => 2,
-            Activation::Identity => {
+            ActivationType::IDENTITY => {
                 panic!("Identity activation is not supported for MoE kernels")
             },
         }

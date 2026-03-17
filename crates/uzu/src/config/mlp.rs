@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Activation, LinearConfig};
+use crate::{LinearConfig, backends::common::gpu_types::ActivationType};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -14,7 +14,7 @@ pub enum MLPConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DenseMLPConfig {
     pub linear_config: LinearConfig,
-    pub activation: Activation,
+    pub activation: ActivationType,
     #[serde(default)]
     pub has_up_biases: bool,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub enum RoutingFunctionConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MoeExpertConfig {
     pub linear_config: LinearConfig,
-    pub activation: Activation,
+    pub activation: ActivationType,
     pub has_up_biases: bool,
     pub has_down_biases: bool,
     pub gate_clipping: [Option<f32>; 2],
@@ -63,7 +63,7 @@ mod tests {
     use serde_json::from_str;
 
     use super::{super::linear::QuantizationConfig, *};
-    use crate::config::{Activation, ConfigDataType, QuantizationMode};
+    use crate::config::{ConfigDataType, QuantizationMode};
 
     #[test]
     fn test_dense_mlp_config() {
@@ -94,7 +94,7 @@ mod tests {
                 lora_rank: 16,
                 lora_scale: 2.0,
             },
-            activation: Activation::SiLU {
+            activation: ActivationType::SILU {
                 alpha: 1.0,
             },
             has_up_biases: false,
@@ -156,7 +156,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SiLU {
+                activation: ActivationType::SILU {
                     alpha: 1.0,
                 },
                 has_up_biases: true,
@@ -221,7 +221,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SiLU {
+                activation: ActivationType::SILU {
                     alpha: 1.0,
                 },
                 has_up_biases: true,

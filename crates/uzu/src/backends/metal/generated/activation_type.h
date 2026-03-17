@@ -17,6 +17,7 @@ namespace activation_type {
 enum ActivationType {
   SILU,
   GELU,
+  IDENTITY,
 };
 
 #ifdef __METAL_VERSION__

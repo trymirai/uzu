@@ -9,13 +9,12 @@ use crate::{
         gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
-    config::Activation as ActivationConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
 };
 
 pub struct Activation<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationKernel,
-    config: ActivationConfig,
+    config: ActivationType,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
 }
@@ -24,7 +23,7 @@ impl<B: Backend> Activation<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        config: ActivationConfig,
+        config: ActivationType,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, B::Error> {
@@ -48,13 +47,9 @@ impl<B: Backend> Activation<B> {
         let output_array = arrays[1].borrow_mut();
 
         let n = input_array.shape().iter().product::<usize>();
-        let act_type = match self.config {
-            ActivationConfig::SiLU {
-                ..
-            } => ActivationType::SILU,
-            ActivationConfig::Gelu => ActivationType::GELU,
-            ActivationConfig::Identity => panic!("Identity activation is not supported for kernel"),
-        };
+        if self.config == ActivationType::IDENTITY {
+            panic!("Identity activation is not supported for kernel");
+        }
 
         let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
         let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
@@ -62,7 +57,7 @@ impl<B: Backend> Activation<B> {
             input_buffer_borrow.as_deref(),
             output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
-            act_type,
+            self.config,
             command_buffer,
         );
         Ok(())

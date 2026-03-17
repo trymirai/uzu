@@ -2,7 +2,7 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{Activation, ArrayElement};
+use crate::ArrayElement;
 
 #[kernel(MlpGateActMul)]
 #[variants(T, f32, f16, bf16)]

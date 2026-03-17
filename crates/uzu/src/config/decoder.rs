@@ -229,7 +229,7 @@ mod tests {
     use super::{
         super::{
             attention::AttentionConfig,
-            common::{Activation, ConfigDataType, QuantizationMode},
+            common::{ConfigDataType, QuantizationMode},
             embedding::{EmbeddingConfig, EmbeddingConfigCommon},
             linear::{LinearConfig, QuantizationConfig},
             mlp::{DenseMLPConfig, MLPConfig},
@@ -238,6 +238,7 @@ mod tests {
         },
         *,
     };
+    use crate::backends::common::gpu_types::ActivationType;
 
     #[test]
     fn test_decoder_config() {
@@ -432,7 +433,7 @@ mod tests {
                         lora_rank: 16,
                         lora_scale: 2.0,
                     },
-                    activation: Activation::SiLU {
+                    activation: ActivationType::SILU {
                         alpha: 1.0,
                     },
                     has_up_biases: false,

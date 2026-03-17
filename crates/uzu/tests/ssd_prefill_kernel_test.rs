@@ -11,6 +11,7 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context, Kernels,
+            gpu_types::ActivationType,
             kernel::{
                 Conv1dScanKernel,
                 ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
@@ -335,6 +336,7 @@ fn run_conv_scan_once(
         channels as u32,
         channels as u32,
         0u32,
+        ActivationType::silu_default(),
         &mut command_buffer,
     );
 
@@ -458,8 +460,7 @@ fn conv1d_scan_is_deterministic() {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel::new(&ctx, DataType::F32, 0u32, true).unwrap();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel::new(&ctx, DataType::F32, true).unwrap();
 
     let suffix_len = 192usize;
     let channels = 8usize;

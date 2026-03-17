@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::{
-    common::{Activation, ConfigDataType},
-    linear::LinearConfig,
-};
+use super::{common::ConfigDataType, linear::LinearConfig};
+use crate::backends::common::gpu_types::ActivationType;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct CausalConv1dConfig {
@@ -16,7 +14,7 @@ pub struct Mamba2Config {
     pub in_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
     pub conv_config: CausalConv1dConfig,
-    pub activation: Activation,
+    pub activation: ActivationType,
     pub kernel_size: usize,
     pub num_heads: usize,
     pub num_groups: usize,

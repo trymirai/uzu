@@ -106,13 +106,13 @@ mod tests {
 
     use super::{
         super::{
-            common::{Activation, ConfigDataType, QuantizationMode},
+            common::{ConfigDataType, QuantizationMode},
             linear::{LinearConfig, QuantizationConfig},
             normalization::UpcastMode,
         },
         *,
     };
-    use crate::config::mlp;
+    use crate::{backends::common::gpu_types::ActivationType, config::mlp};
 
     #[test]
     fn test_decoder_layer_config() {
@@ -245,7 +245,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SiLU {
+                activation: ActivationType::SILU {
                     alpha: 1.0,
                 },
                 has_up_biases: false,
