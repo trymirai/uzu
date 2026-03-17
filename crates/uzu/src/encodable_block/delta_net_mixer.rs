@@ -51,6 +51,12 @@ impl<B: Backend> DeltaNetMixer<B> {
             panic!("Layer {} marked as non-DeltaNet but DeltaNet config provided", layer_index);
         }
         assert!(config.kernel_size >= 2, "DeltaNet requires kernel_size >= 2, got {}", config.kernel_size);
+        if config.head_dim > 128 {
+            todo!("DeltaNet prefill kernel supports head_k_dim <= 128, got {}", config.head_dim);
+        }
+        if config.value_head_dim > 128 {
+            todo!("DeltaNet norm gate kernel supports head_v_dim <= 128, got {}", config.value_head_dim);
+        }
 
         let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
         let conv_tree = resolve_subtree(&mixer_tree, &["conv", "conv1d"]);

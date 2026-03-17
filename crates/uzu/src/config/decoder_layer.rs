@@ -246,7 +246,6 @@ mod tests {
                 has_qkv_biases: false,
                 has_out_biases: false,
                 has_gate: false,
-                use_rope: true,
                 partial_rope_dim: None,
             }),
             mlp_config: MLPConfig::Dense(mlp::DenseMLPConfig {
