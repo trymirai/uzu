@@ -112,15 +112,27 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
     if groups == 0 || shape[0] == 0 || shape[1] == 0 || shape[2] == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    let out_channels = shape[1]
+    let export_cout = shape[0];
+    let export_cin = shape[1]
         .checked_mul(groups)
-        .ok_or(AudioError::Runtime("transpose conv output channel overflow".to_string()))?;
-    let bias = read_float_vector_exact::<B>(tree, "biases", out_channels, data_type)?;
+        .ok_or(AudioError::Runtime("transpose conv input channel overflow".to_string()))?;
+    if export_cout % groups != 0 {
+        return Err(AudioError::InvalidTokenCardinality);
+    }
+    let bias = read_float_vector_exact::<B>(tree, "biases", export_cout, data_type)?;
+    let expected_weight_shape = [export_cout, export_cin / groups, shape[2]];
+    if shape != expected_weight_shape {
+        return Err(AudioError::Runtime(format!(
+            "transpose conv export-layout weight shape mismatch: expected {:?}, got {:?}",
+            expected_weight_shape, shape
+        )));
+    }
+
     Ok(StructuredAudioConvTranspose1d {
         weight,
         bias,
-        cin: shape[0],
-        cout: out_channels,
+        cin: export_cin,
+        cout: export_cout,
         kernel_size: shape[2],
         stride,
         groups,

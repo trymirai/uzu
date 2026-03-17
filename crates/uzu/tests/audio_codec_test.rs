@@ -257,7 +257,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
     let lengths_out: [i32; 2] = [9, 15];
 
     let input_len = batch_size * cin * seq_len_in;
-    let weight_len = cin * (cout / groups) * kernel_size;
+    let weight_len = cout * (cin / groups) * kernel_size;
     let output_len = batch_size * cout * seq_len_out;
 
     let input_values: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.013).sin() * 0.5).collect();
@@ -269,7 +269,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
     let mut weight =
-        context.create_array(&[cin, cout / groups, kernel_size], DataType::F32, "audio_causal_conv_transpose_weight");
+        context.create_array(&[cout, cin / groups, kernel_size], DataType::F32, "audio_causal_conv_transpose_weight");
     weight.as_slice_mut::<f32>().copy_from_slice(&weight_values);
 
     let mut bias = context.create_array(&[cout], DataType::F32, "audio_causal_conv_transpose_bias");
@@ -351,7 +351,7 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
     let lengths_out: [i32; 1] = [10];
 
     let input_len = batch_size * cin * seq_len_in;
-    let weight_len = cin * (cout / groups) * kernel_size;
+    let weight_len = cout * (cin / groups) * kernel_size;
     let output_len = batch_size * cout * seq_len_out;
 
     let input_values_ncs: Vec<f32> = (0..input_len).map(|i| (i as f32 * 0.017).sin() * 0.5).collect();
@@ -391,7 +391,7 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
         input.as_slice_mut::<f32>().copy_from_slice(input_values);
 
         let mut weight = context.create_array(
-            &[cin, cout / groups, kernel_size],
+            &[cout, cin / groups, kernel_size],
             DataType::F32,
             "audio_causal_conv_transpose_lalamo_weight",
         );

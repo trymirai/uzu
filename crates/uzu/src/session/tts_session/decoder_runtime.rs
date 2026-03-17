@@ -287,42 +287,24 @@ impl<B: Backend> TokenDecoderRunner<B> {
         self.decode_next_step(token_ids, embedding_injection, None, sampling, precomputed_token_bitmask, true, None)
     }
 
-    pub(super) fn decode_next_token_with_hidden_capture_and_pre_injection(
-        &mut self,
-        token_ids: &[u64],
-        embedding_injection: EmbeddingInjection,
-        sampling: &mut TextSamplingState,
-        precomputed_token_bitmask: Option<&[u32]>,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
-    ) -> Result<u64, Error> {
-        self.decode_next_step(
-            token_ids,
-            embedding_injection,
-            None,
-            sampling,
-            precomputed_token_bitmask,
-            true,
-            pre_injection_encode,
-        )
-    }
-
-    /// Encode the first fast token (with embedding injection and pre-injection
-    /// callback) followed by `followup_count` continuation passes into a
-    /// **single** command buffer, then submit once.
+    /// Encode the first fast token plus followup passes onto the **current**
+    /// command buffer, without submitting or reading results.  The caller
+    /// must arrange for `submit_and_wait_current_command_buffer` to be
+    /// called later (potentially after encoding more work from another
+    /// runner).
     ///
-    /// Results are written to `async_chain_results[0..total_count]` where
-    /// `total_count = 1 + followup_count` and can be read after the single
-    /// submit/wait completes.
-    pub(super) fn decode_first_and_followup_tokens_merged(
+    /// Returns `total_count = 1 + followup_count`.  After the eventual
+    /// submit+wait the results live in `async_chain_results[0..total_count]`.
+    pub(super) fn encode_first_and_followup_tokens_on(
         &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         initial_token_ids: &[u64],
         initial_embedding_injection: EmbeddingInjection,
-        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut TextSamplingState,
-        mut on_result: impl FnMut(usize, u64) -> Result<(), Error>,
-    ) -> Result<(), Error> {
+    ) -> Result<usize, Error> {
         let total_count = 1_usize.checked_add(followup_count).ok_or(Error::GenerateFailed)?;
         if total_count > self.ctx.async_chain_capacity {
             return Err(Error::GenerateFailed);
@@ -341,42 +323,35 @@ impl<B: Backend> TokenDecoderRunner<B> {
             None
         };
 
-        // --- Prepare initial step first (consumes seed before followups) ---
         let initial_token_count = initial_token_ids.len();
         if initial_token_count == 0 {
             return Err(Error::GenerateFailed);
         }
 
-        let initial_token_bitmask: Option<&[u32]> = if let Some(limit) = vocab_mask_limit {
+        // Resolve the bitmask into a local copy so that it does not borrow
+        // from `self` when we later call `encode_single_forward_pass`.
+        let initial_token_bitmask_owned: Option<Box<[u32]>> = if let Some(limit) = vocab_mask_limit {
             if initial_token_count == 1 {
-                self.get_single_token_vocab_mask(limit)
+                self.get_single_token_vocab_mask(limit).map(|m| m.into())
             } else if initial_token_count == 2 {
-                self.get_two_token_vocab_mask(limit)
+                self.get_two_token_vocab_mask(limit).map(|m| m.into())
             } else {
                 return Err(Error::GenerateFailed);
             }
         } else {
             None
         };
+        let initial_token_bitmask: Option<&[u32]> = initial_token_bitmask_owned.as_deref();
 
-        let sampling_start = initial_token_count - 1;
-
-        let mut initial_positions_storage;
-        let initial_positions: &[usize] = if initial_token_count == 1 {
-            &[self.next_position]
+        // Consume the initial seed FIRST to preserve RNG ordering with the
+        // old two-submit path (initial token consumed its seed before followups).
+        let initial_seed = if !matches!(sampling.method(), SamplingMethod::Greedy) {
+            Some(sampling.next_seed())
         } else {
-            initial_positions_storage = Vec::with_capacity(initial_token_count);
-            for i in 0..initial_token_count {
-                initial_positions_storage.push(self.next_position + i);
-            }
-            initial_positions_storage.as_slice()
+            None
         };
 
-        let mut initial_seeds = vec![0_u64; initial_token_count];
-        if !matches!(sampling.method(), SamplingMethod::Greedy) {
-            initial_seeds[sampling_start] = sampling.next_seed();
-        }
-
+        // Pre-fill followup positions and seeds into the async chain buffers.
         let followup_base_position = self.next_position + initial_token_ids.len();
         {
             let positions_borrow = self.ctx.async_chain_positions.borrow();
@@ -405,89 +380,19 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
         }
 
-        let mut state = ForwardPassState::new_llm(
-            self.ctx.context.clone(),
-            &self.ctx.decoder_config,
-            &self.ctx.model_shape,
-            &self.ctx.scratch_buffers,
-            self.ctx.cache_layers.clone(),
-            self.ctx.shared_buffers.clone(),
+        // Encode the initial forward pass (no new CB, no submit).
+        let state = self.encode_single_forward_pass_on(
+            command_buffer,
             initial_token_ids,
-            initial_positions,
+            initial_embedding_injection,
+            sampling,
             initial_token_bitmask,
-            &initial_seeds,
-            initial_token_count,
-            sampling_start,
-            1,
-            false,
-            None,
-            false,
-            self.should_fill_attention_bias,
-            None,
-            None,
-        );
-        if let Some(method) = state.sampling_method_mut() {
-            *method = Some(sampling.method());
-        }
+            false, // capture_hidden
+            pre_injection_encode,
+            initial_seed,
+        )?;
 
-        let encoding_parameters = EncodingParameters::new();
-        let accepted_suffix_indices_storage;
-        let accepted_suffix_indices: &[usize] = if initial_token_count == 1 {
-            &[0]
-        } else if initial_token_count == 2 {
-            &[0, 1]
-        } else {
-            accepted_suffix_indices_storage = (0..initial_token_count).collect::<Vec<_>>();
-            accepted_suffix_indices_storage.as_slice()
-        };
-
-        *self.ctx.command_buffer.borrow_mut() =
-            self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-        {
-            let mut command_buffer = self.ctx.command_buffer.borrow_mut();
-            self.ctx
-                .executables
-                .embed
-                .encode_lookup(&mut state, command_buffer.deref_mut())
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            if let Some(pre_encode) = pre_injection_encode.as_mut() {
-                pre_encode(self, &state, command_buffer.deref_mut())?;
-            }
-        }
-        match initial_embedding_injection {
-            EmbeddingInjection::None => {},
-            EmbeddingInjection::AddPreloaded {
-                post_scale,
-            } => {
-                self.encode_add_scale_from_single_bias(&state, initial_token_count, post_scale.unwrap_or(1.0))?;
-            },
-            EmbeddingInjection::OverrideFirstRowInternal => {
-                self.encode_override_first_row_from_device(&state, &self.single_override_embedding)?;
-            },
-        }
-        for layer in self.ctx.executables.layers.iter() {
-            layer
-                .encode(&mut state, &encoding_parameters, self.ctx.command_buffer.borrow_mut().deref_mut())
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-        }
-        // No hidden capture needed in the merged fast-runner path.
-        self.ctx
-            .executables
-            .norm
-            .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
-            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-        self.ctx
-            .executables
-            .embed
-            .encode_readout(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
-            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-        self.ctx
-            .sampler
-            .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
-            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-
-        // Copy the first step's sampled token to results[0] and to
-        // token_ids for the next pass.
+        // Copy the sampled token for chaining and into results[0].
         {
             let sampling_output = state.sampling_output().ok_or(Error::GenerateFailed)?;
             let sampling_output_binding = sampling_output.borrow();
@@ -495,50 +400,29 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_ids_binding = self.ctx.scratch_buffers.token_ids.borrow();
             let token_ids_buffer = token_ids_binding.buffer();
 
-            let mut cb = self.ctx.command_buffer.borrow_mut();
             let sampling_output_buffer = sampling_output_buffer.borrow();
             let mut token_ids_buffer = token_ids_buffer.borrow_mut();
             if followup_count > 0 {
-                self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, &mut *cb);
+                self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, command_buffer);
             }
             let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
             self.ctx.token_copy_results.encode(
                 &*sampling_output_buffer,
                 (&mut *results_buffer, 0),
-                &mut *cb,
+                command_buffer,
             );
         }
 
-        self.ctx.cache_layers.borrow_mut().update_after_acceptance(
-            accepted_suffix_indices,
-            None,
-            self.ctx.command_buffer.borrow_mut().deref_mut(),
-            &self.ctx.kv_cache_update,
-        );
-        for &pos in initial_positions.iter() {
-            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&[pos]);
-        }
+        self.encode_cache_acceptance_update_on(command_buffer, initial_token_count);
+        self.register_positions_and_advance(initial_token_count);
 
-        // --- Encode followup passes on the SAME command buffer ---
-        let followup_position_start = self.next_position + initial_token_count;
         if followup_count > 0 {
-            // Update positions for followup passes (using slots 1..total_count
-            // which are already written above during the unified preparation).
-            self.next_position = followup_position_start;
-            self.encode_followup_passes(followup_count, 0, vocab_mask_limit, sampling.method(), 1)?;
+            self.encode_followup_passes_on(command_buffer, followup_count, 0, vocab_mask_limit, sampling.method(), 1)?;
         }
 
-        self.next_position = followup_position_start.saturating_add(followup_count);
-        self.submit_and_wait_current_command_buffer()?;
-
-        // Read all results from the async chain buffer.
-        let results_borrow = self.ctx.async_chain_results.borrow();
-        let results_ptr = results_borrow.cpu_ptr().as_ptr() as *const u32;
-        for pass in 0..total_count {
-            let sampled = unsafe { *results_ptr.add(pass) };
-            on_result(pass, u64::from(sampled))?;
-        }
-        Ok(())
+        self.next_position = followup_base_position.saturating_add(followup_count);
+        // Do NOT submit -- the caller will submit after encoding more work.
+        Ok(total_count)
     }
 
     /// Encode `followup_count` autoregressive passes onto the current command
@@ -549,8 +433,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
     /// `results_offset_slots` is the slot index in `async_chain_results` where
     /// the first pass's result should be written (0 for standalone, 1+ for
     /// merged paths).
-    fn encode_followup_passes(
+    fn encode_followup_passes_on(
         &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         followup_count: usize,
         first_token: u64,
         vocab_mask_limit: Option<usize>,
@@ -598,30 +483,29 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
 
             {
-                let mut command_buffer = self.ctx.command_buffer.borrow_mut();
                 self.ctx
                     .executables
                     .embed
-                    .encode_lookup(&mut state, command_buffer.deref_mut())
+                    .encode_lookup(&mut state, command_buffer)
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 for layer in self.ctx.executables.layers.iter() {
                     layer
-                        .encode(&mut state, &encoding_parameters, command_buffer.deref_mut())
+                        .encode(&mut state, &encoding_parameters, command_buffer)
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 }
                 self.ctx
                     .executables
                     .norm
-                    .encode(&mut state, command_buffer.deref_mut())
+                    .encode(&mut state, command_buffer)
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 self.ctx
                     .executables
                     .embed
-                    .encode_readout(&mut state, command_buffer.deref_mut())
+                    .encode_readout(&mut state, command_buffer)
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
                 self.ctx
                     .sampler
-                    .encode(&mut state, command_buffer.deref_mut())
+                    .encode(&mut state, command_buffer)
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
 
@@ -632,25 +516,24 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_ids_buffer = token_ids_binding.buffer();
 
             {
-                let mut cb = self.ctx.command_buffer.borrow_mut();
                 let sampling_output_buffer = sampling_output_buffer.borrow();
                 let mut token_ids_buffer = token_ids_buffer.borrow_mut();
                 if pass + 1 < followup_count {
-                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, &mut *cb);
+                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, command_buffer);
                 }
                 let results_offset = results_slot * std::mem::size_of::<u32>();
                 let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
                 self.ctx.token_copy_results.encode(
                     &*sampling_output_buffer,
                     (&mut *results_buffer, results_offset),
-                    &mut *cb,
+                    command_buffer,
                 );
             }
 
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(
                 &[0],
                 None,
-                self.ctx.command_buffer.borrow_mut().deref_mut(),
+                command_buffer,
                 &self.ctx.kv_cache_update,
             );
             self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&[self.next_position + pass]);
@@ -716,6 +599,188 @@ impl<B: Backend> TokenDecoderRunner<B> {
         self.two_token_vocab_masks.get(&vocab_limit).map(|mask| mask.as_ref())
     }
 
+    fn encode_single_forward_pass_on(
+        &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        token_ids: &[u64],
+        embedding_injection: EmbeddingInjection,
+        sampling: &mut TextSamplingState,
+        token_bitmask: Option<&[u32]>,
+        capture_hidden: bool,
+        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        preconsumed_seed: Option<u64>,
+    ) -> Result<ForwardPassState<B>, Error> {
+        if token_ids.is_empty() {
+            return Err(Error::GenerateFailed);
+        }
+
+        let token_count = token_ids.len();
+        let sampling_start = token_count - 1;
+        let sampling_length = 1usize;
+
+        let mut single_position = [0_usize; 1];
+        let mut two_positions = [0_usize; 2];
+        let positions_storage;
+        let positions: &[usize] = if token_count == 1 {
+            single_position[0] = self.next_position;
+            &single_position
+        } else if token_count == 2 {
+            two_positions[0] = self.next_position;
+            two_positions[1] = self.next_position + 1;
+            &two_positions
+        } else {
+            positions_storage = (self.next_position..self.next_position + token_count).collect::<Vec<_>>();
+            positions_storage.as_slice()
+        };
+
+        let mut single_seed = [0_u64; 1];
+        let mut two_seeds = [0_u64; 2];
+        let mut token_seeds_storage;
+        let token_seeds: &mut [u64] = if token_count == 1 {
+            &mut single_seed
+        } else if token_count == 2 {
+            &mut two_seeds
+        } else {
+            token_seeds_storage = vec![0_u64; token_count];
+            token_seeds_storage.as_mut_slice()
+        };
+        if !matches!(sampling.method(), SamplingMethod::Greedy) {
+            token_seeds[sampling_start] = preconsumed_seed.unwrap_or_else(|| sampling.next_seed());
+        }
+
+        if let Some(mask) = token_bitmask {
+            let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
+            let expected_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
+            if mask.len() != expected_words {
+                return Err(Error::GenerateFailed);
+            }
+        }
+
+        if matches!(embedding_injection, EmbeddingInjection::OverrideFirstRowInternal) && capture_hidden {
+            return Err(Error::GenerateFailed);
+        }
+
+        let mut state = ForwardPassState::new_llm(
+            self.ctx.context.clone(),
+            &self.ctx.decoder_config,
+            &self.ctx.model_shape,
+            &self.ctx.scratch_buffers,
+            self.ctx.cache_layers.clone(),
+            self.ctx.shared_buffers.clone(),
+            token_ids,
+            positions,
+            token_bitmask,
+            token_seeds,
+            token_count,
+            sampling_start,
+            sampling_length,
+            false,
+            None,
+            false,
+            self.should_fill_attention_bias,
+            None,
+            None,
+        );
+        if let Some(method) = state.sampling_method_mut() {
+            *method = Some(sampling.method());
+        }
+
+        let encoding_parameters = EncodingParameters::new();
+        self.ctx
+            .executables
+            .embed
+            .encode_lookup(&mut state, command_buffer)
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        if let Some(pre_encode) = pre_injection_encode.as_mut() {
+            pre_encode(self, &state, command_buffer)?;
+        }
+        match embedding_injection {
+            EmbeddingInjection::None => {},
+            EmbeddingInjection::AddPreloaded {
+                post_scale,
+            } => {
+                self.encode_add_scale_from_single_bias_on(command_buffer, &state, token_count, post_scale.unwrap_or(1.0))?;
+            },
+            EmbeddingInjection::OverrideFirstRowInternal => {
+                self.encode_override_first_row_from_device_on(
+                    command_buffer,
+                    &state,
+                    &self.single_override_embedding,
+                )?;
+            },
+        }
+        for layer in self.ctx.executables.layers.iter() {
+            layer
+                .encode(&mut state, &encoding_parameters, command_buffer)
+                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        }
+        if capture_hidden {
+            self.encode_capture_last_hidden_into_single_buffer_on(command_buffer, &state, token_count)?;
+        }
+        self.ctx
+            .executables
+            .norm
+            .encode(&mut state, command_buffer)
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        self.ctx
+            .executables
+            .embed
+            .encode_readout(&mut state, command_buffer)
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        self.ctx
+            .sampler
+            .encode(&mut state, command_buffer)
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+
+        Ok(state)
+    }
+
+    /// Encode the KV-cache acceptance update for `token_count` tokens onto
+    /// the current command buffer.
+    fn encode_cache_acceptance_update_on(
+        &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        token_count: usize,
+    ) {
+        let mut single_accepted = [0_usize; 1];
+        let two_accepted = [0_usize, 1_usize];
+        let accepted_suffix_indices_storage;
+        let accepted_suffix_indices: &[usize] = if token_count == 1 {
+            single_accepted[0] = 0;
+            &single_accepted
+        } else if token_count == 2 {
+            &two_accepted
+        } else {
+            accepted_suffix_indices_storage = (0..token_count).collect::<Vec<_>>();
+            accepted_suffix_indices_storage.as_slice()
+        };
+        self.ctx.cache_layers.borrow_mut().update_after_acceptance(
+            accepted_suffix_indices,
+            None,
+            command_buffer,
+            &self.ctx.kv_cache_update,
+        );
+    }
+
+    /// Register accepted token positions in the KV cache and advance
+    /// `next_position` by `token_count`.
+    fn register_positions_and_advance(&mut self, token_count: usize) {
+        let positions_storage;
+        let positions: &[usize] = if token_count == 1 {
+            &[self.next_position]
+        } else if token_count == 2 {
+            positions_storage = [self.next_position, self.next_position + 1];
+            &positions_storage[..]
+        } else {
+            let v: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
+            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&v);
+            self.next_position = self.next_position.saturating_add(token_count);
+            return;
+        };
+        self.ctx.cache_layers.borrow_mut().register_accepted_tokens(positions);
+        self.next_position = self.next_position.saturating_add(token_count);
+    }
+
     pub(super) fn decode_next_step(
         &mut self,
         token_ids: &[u64],
@@ -724,7 +789,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         sampling: &mut TextSamplingState,
         precomputed_token_bitmask: Option<&[u32]>,
         capture_hidden: bool,
-        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
     ) -> Result<u64, Error> {
         objc2::rc::autoreleasepool(|_| {
             if token_ids.is_empty() {
@@ -732,62 +797,27 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
 
             let token_count = token_ids.len();
+
+            // Resolve the token bitmask into a local copy so that it does not
+            // borrow from `self` when we later call `encode_single_forward_pass`.
             let sampling_start = token_count - 1;
-            let sampling_length = 1usize;
-
-            let mut single_position = [0_usize; 1];
-            let mut two_positions = [0_usize; 2];
-            let positions_storage;
-            let positions: &[usize] = if token_count == 1 {
-                single_position[0] = self.next_position;
-                &single_position
-            } else if token_count == 2 {
-                two_positions[0] = self.next_position;
-                two_positions[1] = self.next_position + 1;
-                &two_positions
-            } else {
-                positions_storage = (self.next_position..self.next_position + token_count).collect::<Vec<_>>();
-                positions_storage.as_slice()
-            };
-
-            let mut single_seed = [0_u64; 1];
-            let mut two_seeds = [0_u64; 2];
-            let mut token_seeds_storage;
-            let token_seeds: &mut [u64] = if token_count == 1 {
-                &mut single_seed
-            } else if token_count == 2 {
-                &mut two_seeds
-            } else {
-                token_seeds_storage = vec![0_u64; token_count];
-                token_seeds_storage.as_mut_slice()
-            };
-            if !matches!(sampling.method(), SamplingMethod::Greedy) {
-                token_seeds[sampling_start] = sampling.next_seed();
-            }
-
-            enum TokenBitmaskSource<'a> {
-                None,
-                Borrowed(&'a [u32]),
-                Owned(Vec<u32>),
-            }
-
             let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
-            let token_bitmask_source = if let Some(mask) = precomputed_token_bitmask {
+            let token_bitmask_owned: Option<Box<[u32]>> = if let Some(mask) = precomputed_token_bitmask {
                 let expected_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
                 if mask.len() != expected_words {
                     return Err(Error::GenerateFailed);
                 }
-                TokenBitmaskSource::Borrowed(mask)
+                Some(mask.into())
             } else if let Some(limit_raw) = vocab_limit {
                 let limit = limit_raw.min(self.ctx.decoder_config.vocab_size);
                 if limit == 0 {
                     return Err(Error::GenerateFailed);
                 }
                 if limit >= self.ctx.decoder_config.vocab_size {
-                    TokenBitmaskSource::None
+                    None
                 } else if token_count == 1 {
                     if let Some(mask) = self.get_single_token_vocab_mask(limit) {
-                        TokenBitmaskSource::Borrowed(mask)
+                        Some(mask.into())
                     } else {
                         let mut mask = vec![0_u32; row_words];
                         for token_index in 0..limit {
@@ -795,11 +825,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
                             let bit = token_index % 32;
                             mask[word] |= 1_u32 << bit;
                         }
-                        TokenBitmaskSource::Owned(mask)
+                        Some(mask.into_boxed_slice())
                     }
                 } else if token_count == 2 {
                     if let Some(mask) = self.get_two_token_vocab_mask(limit) {
-                        TokenBitmaskSource::Borrowed(mask)
+                        Some(mask.into())
                     } else {
                         let total_words = token_count.checked_mul(row_words).ok_or(Error::GenerateFailed)?;
                         let mut mask = vec![0_u32; total_words];
@@ -808,7 +838,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                             let bit = token_index % 32;
                             mask[sampling_start * row_words + word] |= 1_u32 << bit;
                         }
-                        TokenBitmaskSource::Owned(mask)
+                        Some(mask.into_boxed_slice())
                     }
                 } else {
                     // token_count > 2 with vocab_limit requires a precomputed bitmask;
@@ -816,119 +846,43 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     return Err(Error::GenerateFailed);
                 }
             } else {
-                TokenBitmaskSource::None
+                None
             };
 
-            let token_bitmask: Option<&[u32]> = match &token_bitmask_source {
-                TokenBitmaskSource::None => None,
-                TokenBitmaskSource::Borrowed(mask) => Some(*mask),
-                TokenBitmaskSource::Owned(mask) => Some(mask.as_slice()),
-            };
+            let token_bitmask: Option<&[u32]> = token_bitmask_owned.as_deref();
 
-            let mut state = ForwardPassState::new_llm(
-                self.ctx.context.clone(),
-                &self.ctx.decoder_config,
-                &self.ctx.model_shape,
-                &self.ctx.scratch_buffers,
-                self.ctx.cache_layers.clone(),
-                self.ctx.shared_buffers.clone(),
-                token_ids,
-                positions,
-                token_bitmask,
-                token_seeds,
-                token_count,
-                sampling_start,
-                sampling_length,
-                false,
-                None,
-                false,
-                self.should_fill_attention_bias,
-                None,
-                None,
-            );
-            if let Some(method) = state.sampling_method_mut() {
-                *method = Some(sampling.method());
-            }
-
-            let encoding_parameters = EncodingParameters::new();
-            let mut single_accepted = [0_usize; 1];
-            let two_accepted = [0_usize, 1_usize];
-            let accepted_suffix_indices_storage;
-            let accepted_suffix_indices: &[usize] = if token_count == 1 {
-                single_accepted[0] = 0;
-                &single_accepted
-            } else if token_count == 2 {
-                &two_accepted
-            } else {
-                accepted_suffix_indices_storage = (0..token_count).collect::<Vec<_>>();
-                accepted_suffix_indices_storage.as_slice()
-            };
-
-            if matches!(embedding_injection, EmbeddingInjection::OverrideFirstRowInternal) && capture_hidden {
-                return Err(Error::GenerateFailed);
-            }
             *self.ctx.command_buffer.borrow_mut() =
                 self.ctx.context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+
+            let command_buffer_rc = self.ctx.command_buffer.clone();
+            let state = {
+                let mut command_buffer = command_buffer_rc.borrow_mut();
+                self.encode_single_forward_pass_on(
+                    command_buffer.deref_mut(),
+                    token_ids,
+                    embedding_injection,
+                    sampling,
+                    token_bitmask,
+                    capture_hidden,
+                    pre_injection_encode,
+                    None,
+                )?
+            };
             {
-                let mut command_buffer = self.ctx.command_buffer.borrow_mut();
-                self.ctx
-                    .executables
-                    .embed
-                    .encode_lookup(&mut state, command_buffer.deref_mut())
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                if let Some(pre_encode) = pre_injection_encode.as_mut() {
-                    pre_encode(self, &state, command_buffer.deref_mut())?;
-                }
+                let mut command_buffer = command_buffer_rc.borrow_mut();
+                self.encode_cache_acceptance_update_on(command_buffer.deref_mut(), token_count);
             }
-            match embedding_injection {
-                EmbeddingInjection::None => {},
-                EmbeddingInjection::AddPreloaded {
-                    post_scale,
-                } => {
-                    self.encode_add_scale_from_single_bias(&state, token_count, post_scale.unwrap_or(1.0))?;
-                },
-                EmbeddingInjection::OverrideFirstRowInternal => {
-                    self.encode_override_first_row_from_device(&state, &self.single_override_embedding)?;
-                },
-            }
-            for layer in self.ctx.executables.layers.iter() {
-                layer
-                    .encode(&mut state, &encoding_parameters, self.ctx.command_buffer.borrow_mut().deref_mut())
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            }
-            if capture_hidden {
-                self.encode_capture_last_hidden_into_single_buffer(&state, token_count)?;
-            }
-            self.ctx
-                .executables
-                .norm
-                .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.ctx
-                .executables
-                .embed
-                .encode_readout(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.ctx
-                .sampler
-                .encode(&mut state, self.ctx.command_buffer.borrow_mut().deref_mut())
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            self.ctx.cache_layers.borrow_mut().update_after_acceptance(
-                accepted_suffix_indices,
-                None,
-                self.ctx.command_buffer.borrow_mut().deref_mut(),
-                &self.ctx.kv_cache_update,
-            );
+
             self.submit_and_wait_current_command_buffer()?;
             let token = read_sampled_token_from_sampling_output(&state)?;
-            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(positions);
-            self.next_position = self.next_position.saturating_add(token_count);
+            self.register_positions_and_advance(token_count);
             Ok(token)
         })
     }
 
-    fn encode_capture_last_hidden_into_single_buffer(
+    fn encode_capture_last_hidden_into_single_buffer_on(
         &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         state: &ForwardPassState<B>,
         token_count: usize,
     ) -> Result<(), Error> {
@@ -950,19 +904,17 @@ impl<B: Backend> TokenDecoderRunner<B> {
             return Err(Error::GenerateFailed);
         }
 
-        {
-            let mut cb = self.ctx.command_buffer.borrow_mut();
-            let main_buffer = main.buffer();
-            let main_buffer = main_buffer.borrow();
-            let capture_buffer = capture.buffer();
-            let mut capture_buffer = capture_buffer.borrow_mut();
-            self.tensor_copy.encode((&*main_buffer, src_offset), &mut *capture_buffer, model_dim_u32, &mut *cb);
-        }
+        let main_buffer = main.buffer();
+        let main_buffer = main_buffer.borrow();
+        let capture_buffer = capture.buffer();
+        let mut capture_buffer = capture_buffer.borrow_mut();
+        self.tensor_copy.encode((&*main_buffer, src_offset), &mut *capture_buffer, model_dim_u32, command_buffer);
         Ok(())
     }
 
-    fn encode_override_first_row_from_device(
+    fn encode_override_first_row_from_device_on(
         &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         state: &ForwardPassState<B>,
         override_embedding: &ArrayCell<B>,
     ) -> Result<(), Error> {
@@ -975,24 +927,22 @@ impl<B: Backend> TokenDecoderRunner<B> {
             return Err(Error::GenerateFailed);
         }
 
-        {
-            let mut cb = self.ctx.command_buffer.borrow_mut();
-            let override_buffer = override_embedding.buffer();
-            let override_buffer = override_buffer.borrow();
-            let main_buffer = main.buffer();
-            let mut main_buffer = main_buffer.borrow_mut();
-            self.tensor_copy.encode(
-                (&*override_buffer, override_embedding.offset()),
-                (&mut *main_buffer, main.offset()),
-                model_dim_u32,
-                &mut *cb,
-            );
-        }
+        let override_buffer = override_embedding.buffer();
+        let override_buffer = override_buffer.borrow();
+        let main_buffer = main.buffer();
+        let mut main_buffer = main_buffer.borrow_mut();
+        self.tensor_copy.encode(
+            (&*override_buffer, override_embedding.offset()),
+            (&mut *main_buffer, main.offset()),
+            model_dim_u32,
+            command_buffer,
+        );
         Ok(())
     }
 
-    fn encode_add_scale_from_single_bias(
+    fn encode_add_scale_from_single_bias_on(
         &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         state: &ForwardPassState<B>,
         token_count: usize,
         scale: f32,
@@ -1012,25 +962,117 @@ impl<B: Backend> TokenDecoderRunner<B> {
             return Err(Error::GenerateFailed);
         }
 
+        let bias_buffer = bias.buffer();
+        let bias_buffer = bias_buffer.borrow();
+        let main_output_buffer = main.buffer();
+        let mut main_output_buffer = main_output_buffer.borrow_mut();
+        // TensorAddScale is elementwise, so in-place read/write aliasing is valid here.
+        let main_input_buffer: &B::Buffer = unsafe { &*(&*main_output_buffer as *const B::Buffer) };
+        self.tensor_add_scale.encode(
+            (main_input_buffer, main.offset()),
+            &*bias_buffer,
+            (&mut *main_output_buffer, main.offset()),
+            model_dim_u32,
+            total_len_u32,
+            scale,
+            command_buffer,
+        );
+        Ok(())
+    }
+
+    /// Encode a single decode step (embedding, transformer, readout, sampling,
+    /// and optionally hidden capture) onto the **current** command buffer.
+    /// Does NOT create a new command buffer, does NOT submit.
+    ///
+    /// The caller is responsible for submitting the command buffer and reading
+    /// the sampled token from `async_chain_results[0]` after the eventual
+    /// submit.
+    pub(super) fn encode_next_step_on(
+        &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        token_ids: &[u64],
+        embedding_injection: EmbeddingInjection,
+        sampling: &mut TextSamplingState,
+        precomputed_token_bitmask: Option<&[u32]>,
+        capture_hidden: bool,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+    ) -> Result<(), Error> {
+        let token_count = token_ids.len();
+
+        let state = self.encode_single_forward_pass_on(
+            command_buffer,
+            token_ids,
+            embedding_injection,
+            sampling,
+            precomputed_token_bitmask,
+            capture_hidden,
+            pre_injection_encode,
+            None,
+        )?;
+
+        // Copy sampled token to async_chain_results[0] so the caller can
+        // read it after the eventual submit.
         {
-            let mut cb = self.ctx.command_buffer.borrow_mut();
-            let bias_buffer = bias.buffer();
-            let bias_buffer = bias_buffer.borrow();
-            let main_output_buffer = main.buffer();
-            let mut main_output_buffer = main_output_buffer.borrow_mut();
-            // TensorAddScale is elementwise, so in-place read/write aliasing is valid here.
-            let main_input_buffer: &B::Buffer = unsafe { &*(&*main_output_buffer as *const B::Buffer) };
-            self.tensor_add_scale.encode(
-                (main_input_buffer, main.offset()),
-                &*bias_buffer,
-                (&mut *main_output_buffer, main.offset()),
-                model_dim_u32,
-                total_len_u32,
-                scale,
-                &mut *cb,
+            let sampling_output = state.sampling_output().ok_or(Error::GenerateFailed)?;
+            let sampling_output_binding = sampling_output.borrow();
+            let sampling_output_buffer = sampling_output_binding.buffer();
+
+            let sampling_output_buffer = sampling_output_buffer.borrow();
+            let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
+            self.ctx.token_copy_results.encode(
+                &*sampling_output_buffer,
+                (&mut *results_buffer, 0),
+                command_buffer,
             );
         }
+
+        self.encode_cache_acceptance_update_on(command_buffer, token_count);
+        // Do NOT submit -- the caller will submit.
+        self.register_positions_and_advance(token_count);
         Ok(())
+    }
+
+    pub(super) fn submit_and_wait_command_buffer(
+        &mut self,
+        command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), Error> {
+        self.instrumentation.command_buffers_submitted += 1;
+        command_buffer
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|err| Error::CommandBufferFailed(Box::new(err)))?;
+        self.instrumentation.host_waits += 1;
+        Ok(())
+    }
+
+    pub(super) fn copy_async_chain_results_to_on(
+        &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        src_slot: usize,
+        dst: (&B::Buffer, usize),
+        count: usize,
+    ) -> Result<(), Error> {
+        let src_offset = src_slot
+            .checked_mul(std::mem::size_of::<u32>())
+            .ok_or(Error::GenerateFailed)?;
+        let copy_size = count.checked_mul(std::mem::size_of::<u32>()).ok_or(Error::GenerateFailed)?;
+        let results_buffer = self.ctx.async_chain_results.borrow();
+        command_buffer.encode_copy_ranges((&*results_buffer, src_offset), dst, copy_size);
+        Ok(())
+    }
+
+    pub(super) fn read_async_chain_result(
+        &self,
+        slot: usize,
+    ) -> Result<u32, Error> {
+        let results_buffer = self.ctx.async_chain_results.borrow();
+        let ptr = results_buffer.cpu_ptr().as_ptr() as *const u32;
+        let capacity = self.ctx.async_chain_capacity;
+        if slot >= capacity {
+            return Err(Error::GenerateFailed);
+        }
+        Ok(unsafe { *ptr.add(slot) })
     }
 
     fn submit_and_wait_current_command_buffer(&mut self) -> Result<(), Error> {

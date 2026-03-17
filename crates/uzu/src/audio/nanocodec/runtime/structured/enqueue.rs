@@ -276,7 +276,7 @@ pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
     if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    let expected_weight_shape = [layer.cin, layer.cout / layer.groups, layer.kernel_size];
+    let expected_weight_shape = [layer.cout, layer.cin / layer.groups, layer.kernel_size];
     if layer.weight.shape() != expected_weight_shape {
         return Err(AudioError::Runtime(format!(
             "causal transpose weight shape mismatch: expected {:?}, got {:?}",

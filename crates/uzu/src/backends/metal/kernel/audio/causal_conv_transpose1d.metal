@@ -6,7 +6,7 @@ using namespace metal;
 template <typename T>
 void causal_conv_transpose1d(
     device const T* input,     // [B, Cin, Tin]
-    device const T* weight,    // [Cin, Cout_per_group, 2*stride]
+    device const T* weight,    // [Cout, Cin_per_group, 2*stride]
     device const T* bias,      // [Cout]
     device T* output,          // [B, Cout, Tout]
     device const int* lengths, // [B] (output lengths)
@@ -36,7 +36,6 @@ void causal_conv_transpose1d(
   const int cout_per_group = cout / groups;
   const int cin_per_group = cin / groups;
   const int group_idx = (int)oc / cout_per_group;
-  const int oc_in_group = (int)oc - group_idx * cout_per_group;
 
   const int q = (int)t_out / stride;
   const int r = (int)t_out - q * stride;
@@ -44,8 +43,6 @@ void causal_conv_transpose1d(
   float acc = float(bias[oc]);
 
   const uint in_base_b = b * (uint)cin * (uint)seq_len_in;
-  const uint w_base_oc = (uint)oc_in_group * (uint)(2 * stride);
-
   const int ic_begin = group_idx * cin_per_group;
   const int ic_end = ic_begin + cin_per_group;
 
@@ -55,9 +52,10 @@ void causal_conv_transpose1d(
     }
     const uint in_base = in_base_b + (uint)ic * (uint)seq_len_in;
 
-    // Weight layout: [Cin, Cout_per_group, K]
+    // Weight layout: [Cout, Cin_per_group, K]
+    const uint ic_local = (uint)(ic - ic_begin);
     const uint w_base =
-        ((uint)ic * (uint)cout_per_group) * (uint)(2 * stride) + w_base_oc;
+        ((uint)oc * (uint)cin_per_group + ic_local) * (uint)(2 * stride);
 
     // Contribution from input[q] with k=r
     acc += float(weight[w_base + (uint)r]) * float(input[in_base + (uint)q]);

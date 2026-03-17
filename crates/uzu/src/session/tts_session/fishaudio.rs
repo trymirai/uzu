@@ -32,7 +32,7 @@ struct FishAudioSemanticBridge<B: Backend> {
     projection: <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel,
     tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
     codebook_embeddings: ArrayCell<B>,
-    codebook_row_indices: ArrayCell<B>,
+    codebook_token_indices: ArrayCell<B>,
     projection_weights: Option<ArrayCell<B>>,
 }
 
@@ -105,14 +105,14 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
         .map_err(unable_to_create_context)?;
         let tensor_copy =
             <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
-        let codebook_row_indices = context.create_array(&[num_codebooks], DataType::U64, "tts_codebook_row_indices");
+        let codebook_token_indices = context.create_array(&[num_codebooks], DataType::U32, "tts_codebook_token_indices");
 
         Ok(Self {
             embedding_rows_sum,
             projection,
             tensor_copy,
             codebook_embeddings: RefCell::new(codebook_embeddings),
-            codebook_row_indices: RefCell::new(codebook_row_indices),
+            codebook_token_indices: RefCell::new(codebook_token_indices),
             projection_weights: fast_model_projection.map(RefCell::new),
         })
     }
@@ -186,7 +186,8 @@ static MESSAGE_FIELD_REF_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"message\.([A-Za-z_][A-Za-z0-9_]*)").expect("message field regex"));
 
 pub(super) fn validate_fishaudio_message_processor_config(config: &TtsMessageProcessorConfig) -> Result<(), Error> {
-    let builtin_fields = ["role", "content", "reasoning_content"].into_iter().collect::<BTreeSet<_>>();
+    let builtin_fields =
+        ["role", "content", "reasoning_content", "speaker_id", "style"].into_iter().collect::<BTreeSet<_>>();
     let referenced_fields = MESSAGE_FIELD_REF_REGEX
         .captures_iter(config.prompt_template.as_str())
         .filter_map(|capture| capture.get(1).map(|field| field.as_str().to_owned()))
@@ -392,9 +393,11 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             by_codebook[0].push(first_code);
             self.current_codes_scratch[0] = first_code;
 
-            self.decode_residual_codebooks_for_frame(
+            current_semantic_token = self.decode_frame_merged(
+                current_semantic_token,
                 first_code,
                 residual_token_upper_bound,
+                post_scale,
                 &mut sampling,
                 &mut by_codebook,
             )?;
@@ -402,12 +405,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             if let Some(callback) = on_frame.as_mut() {
                 callback(&self.current_codes_scratch)?;
             }
-            current_semantic_token = self.advance_slow_semantic_token(
-                current_semantic_token,
-                post_scale,
-                &mut sampling,
-                by_codebook[0].len(),
-            )?;
         }
 
         self.instrumentation = self.slow_runner.take_instrumentation();
@@ -472,107 +469,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         self.fast_runner.prepare_single_token_vocab_mask(fast_vocab_limit)?;
         self.fast_runner.prepare_two_token_vocab_mask(fast_vocab_limit)?;
         Ok(())
-    }
-
-    fn decode_residual_codebooks_for_frame(
-        &mut self,
-        first_code: u32,
-        residual_token_upper_bound: usize,
-        sampling: &mut TextSamplingState,
-        by_codebook: &mut [Vec<u32>],
-    ) -> Result<(), Error> {
-        let (slow_runner, fast_runner, semantic_bridge) =
-            (&mut self.slow_runner, &mut self.fast_runner, &mut self.semantic_bridge);
-        let slow_hidden_capture = &slow_runner.single_hidden_capture;
-        let slow_model_dim = self.slow_model_dim;
-        let fast_model_dim = self.fast_model_dim;
-
-        fast_runner.reset();
-        let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
-        let followup_count = self.num_codebooks.saturating_sub(2);
-
-        let mut pre_projection =
-            |runner: &TokenDecoderRunner<B>,
-             _state: &ForwardPassState<B>,
-             command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
-                Self::encode_project_slow_hidden_to_fast_on(
-                    runner.context().as_ref(),
-                    semantic_bridge,
-                    slow_hidden_capture,
-                    &runner.single_override_embedding,
-                    slow_model_dim,
-                    fast_model_dim,
-                    command_buffer,
-                )
-            };
-
-        // Merge the first fast token and all followup tokens into a single
-        // command buffer submission, eliminating one submit/wait per frame.
-        let mut record_all = |result_index: usize, sampled: u64| -> Result<(), Error> {
-            let codebook_index = result_index + 1;
-            let clamped = u32::try_from((sampled as usize).min(residual_token_upper_bound.saturating_sub(1)))
-                .map_err(|_| Error::GenerateFailed)?;
-            by_codebook[codebook_index].push(clamped);
-            self.current_codes_scratch[codebook_index] = clamped;
-            Ok(())
-        };
-        fast_runner.decode_first_and_followup_tokens_merged(
-            &[0, u64::from(first_code)],
-            EmbeddingInjection::OverrideFirstRowInternal,
-            Some(&mut pre_projection),
-            followup_count,
-            Some(fast_vocab_limit),
-            sampling,
-            &mut record_all,
-        )?;
-
-        Ok(())
-    }
-
-    fn advance_slow_semantic_token(
-        &mut self,
-        current_semantic_token: u64,
-        post_scale: Option<f32>,
-        sampling: &mut TextSamplingState,
-        sampled_frames: usize,
-    ) -> Result<u64, Error> {
-        let (slow_runner, semantic_bridge) = (&mut self.slow_runner, &mut self.semantic_bridge);
-        let current_codes = self.current_codes_scratch.as_slice();
-        let num_codebooks = self.num_codebooks;
-        let codebook_size = self.codebook_size;
-        let slow_model_dim = self.slow_model_dim;
-        let mut pre_codebook_sum =
-            |runner: &TokenDecoderRunner<B>,
-             _state: &ForwardPassState<B>,
-             command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
-                Self::encode_slow_codebook_sum_from_codes_on(
-                    semantic_bridge,
-                    &runner.single_override_embedding,
-                    current_codes,
-                    num_codebooks,
-                    codebook_size,
-                    slow_model_dim,
-                    command_buffer,
-                )
-            };
-        let slow_sampling_mask = if self.apply_semantic_sampling_mask {
-            if sampled_frames < self.runtime_config.min_frames_before_im_end {
-                Some(self.semantic_sampling_mask_without_im_end_row.as_ref())
-            } else {
-                Some(self.semantic_sampling_mask_row.as_ref())
-            }
-        } else {
-            None
-        };
-        slow_runner.decode_next_token_with_hidden_capture_and_pre_injection(
-            &[current_semantic_token],
-            EmbeddingInjection::AddPreloaded {
-                post_scale,
-            },
-            sampling,
-            slow_sampling_mask,
-            Some(&mut pre_codebook_sum),
-        )
     }
 
     fn finish_semantic_grid(
@@ -665,50 +561,62 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         Ok(())
     }
 
-    fn encode_slow_codebook_sum_from_codes_on(
+    /// Encode the codebook sum reading residual
+    /// codes directly from a GPU buffer instead of from CPU memory.
+    ///
+    /// `first_code` is written into slot 0 of the staging buffer from CPU.
+    /// Slots 1..num_codebooks are filled by a GPU blit from
+    /// `gpu_tokens_buffer` at the given byte offset.
+    fn encode_slow_codebook_sum_from_gpu_tokens_on(
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
         slow_sum_embedding: &ArrayCell<B>,
-        current_codes: &[u32],
+        first_code: u32,
+        source_runner: &TokenDecoderRunner<B>,
+        source_slot: usize,
         num_codebooks: usize,
         codebook_size: usize,
         slow_model_dim: usize,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), Error> {
-        if current_codes.len() != num_codebooks {
-            return Err(Error::GenerateFailed);
-        }
         if num_codebooks == 0 {
             return Err(Error::UnableToLoadConfig);
         }
 
+        // Write first_code at position 0 from CPU.
         {
-            let mut row_indices = semantic_bridge.codebook_row_indices.borrow_mut();
-            if row_indices.shape() != [num_codebooks] || row_indices.data_type() != DataType::U64 {
+            let mut token_indices = semantic_bridge.codebook_token_indices.borrow_mut();
+            if token_indices.shape() != [num_codebooks] || token_indices.data_type() != DataType::U32 {
                 return Err(Error::GenerateFailed);
             }
-            let indices_slice = row_indices.as_slice_mut::<u64>();
-            for (codebook_index, &token) in current_codes.iter().enumerate() {
-                let token = usize::try_from(token).map_err(|_| Error::GenerateFailed)?;
-                if token >= codebook_size {
-                    return Err(Error::GenerateFailed);
-                }
-                let row = codebook_index
-                    .checked_mul(codebook_size)
-                    .and_then(|offset| offset.checked_add(token))
-                    .ok_or(Error::GenerateFailed)?;
-                indices_slice[codebook_index] = u64::try_from(row).map_err(|_| Error::GenerateFailed)?;
-            }
+            let indices_slice = token_indices.as_slice_mut::<u32>();
+            indices_slice[0] = first_code;
+        }
+
+        // Blit residual codes from GPU: async_chain_results[0..N-2] -> codebook_token_indices[1..N-1]
+        let residual_count = num_codebooks.saturating_sub(1);
+        if residual_count > 0 {
+            let dst_byte_offset = std::mem::size_of::<u32>(); // skip slot 0
+            let token_indices = semantic_bridge.codebook_token_indices.borrow();
+            let token_indices_buffer = token_indices.buffer();
+            let token_indices_buffer = token_indices_buffer.borrow();
+            source_runner.copy_async_chain_results_to_on(
+                command_buffer,
+                source_slot,
+                (&*token_indices_buffer, token_indices.offset() + dst_byte_offset),
+                residual_count,
+            )?;
         }
 
         let total_vocab = num_codebooks.checked_mul(codebook_size).ok_or(Error::GenerateFailed)?;
         let total_vocab_u32 = u32::try_from(total_vocab).map_err(|_| Error::GenerateFailed)?;
         let num_codebooks_u32 = u32::try_from(num_codebooks).map_err(|_| Error::GenerateFailed)?;
         let slow_model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
+        let codebook_size_u32 = u32::try_from(codebook_size).map_err(|_| Error::GenerateFailed)?;
 
-        let codebook_row_indices = semantic_bridge.codebook_row_indices.borrow();
+        let codebook_token_indices = semantic_bridge.codebook_token_indices.borrow();
         let codebook_embeddings = semantic_bridge.codebook_embeddings.borrow();
         let slow_sum = slow_sum_embedding.borrow();
-        if codebook_row_indices.shape() != [num_codebooks]
+        if codebook_token_indices.shape() != [num_codebooks]
             || codebook_embeddings.shape() != [total_vocab, slow_model_dim]
             || slow_sum.shape() != [1, slow_model_dim]
             || codebook_embeddings.data_type() != slow_sum.data_type()
@@ -716,22 +624,178 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             return Err(Error::GenerateFailed);
         }
 
-        let codebook_row_indices_buffer = codebook_row_indices.buffer();
-        let codebook_row_indices_buffer = codebook_row_indices_buffer.borrow();
+        let codebook_token_indices_buffer = codebook_token_indices.buffer();
+        let codebook_token_indices_buffer = codebook_token_indices_buffer.borrow();
         let codebook_embeddings_buffer = codebook_embeddings.buffer();
         let codebook_embeddings_buffer = codebook_embeddings_buffer.borrow();
         let slow_sum_buffer = slow_sum.buffer();
         let mut slow_sum_buffer = slow_sum_buffer.borrow_mut();
         semantic_bridge.embedding_rows_sum.encode(
-            (&*codebook_row_indices_buffer, codebook_row_indices.offset()),
+            (&*codebook_token_indices_buffer, codebook_token_indices.offset()),
             (&*codebook_embeddings_buffer, codebook_embeddings.offset()),
             (&mut *slow_sum_buffer, slow_sum.offset()),
             num_codebooks_u32,
             total_vocab_u32,
             slow_model_dim_u32,
+            codebook_size_u32,
             command_buffer,
         );
         Ok(())
+    }
+
+    /// Merged fast+slow frame: encodes all fast runner forward passes, the
+    /// codebook sum (reading GPU tokens directly), and the slow runner
+    /// forward pass into a **single** command buffer submission.
+    ///
+    /// Returns the next semantic token.
+    fn decode_frame_merged(
+        &mut self,
+        current_semantic_token: u64,
+        first_code: u32,
+        residual_token_upper_bound: usize,
+        post_scale: Option<f32>,
+        sampling: &mut TextSamplingState,
+        by_codebook: &mut [Vec<u32>],
+    ) -> Result<u64, Error> {
+        let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
+        let followup_count = self.num_codebooks.saturating_sub(2);
+
+        self.fast_runner.reset();
+
+        let mut shared_cb = self
+            .fast_runner
+            .context()
+            .create_command_buffer()
+            .expect("Failed to create command buffer")
+            .start_encoding();
+
+        let total_fast_count = self.encode_fast_passes_on(
+            &mut shared_cb,
+            first_code,
+            fast_vocab_limit,
+            followup_count,
+            sampling,
+        )?;
+        self.encode_slow_pass_on(
+            &mut shared_cb,
+            current_semantic_token,
+            first_code,
+            post_scale,
+            sampling,
+            by_codebook,
+        )?;
+        self.slow_runner.submit_and_wait_command_buffer(shared_cb)?;
+
+        for pass in 0..total_fast_count {
+            let sampled = self.fast_runner.read_async_chain_result(pass)?;
+            let codebook_index = pass + 1;
+            let clamped = (sampled as usize).min(residual_token_upper_bound.saturating_sub(1));
+            let clamped = u32::try_from(clamped).map_err(|_| Error::GenerateFailed)?;
+            by_codebook[codebook_index].push(clamped);
+            self.current_codes_scratch[codebook_index] = clamped;
+        }
+
+        let slow_token = u64::from(self.slow_runner.read_async_chain_result(0)?);
+        Ok(slow_token)
+    }
+
+    /// Encode the fast runner's initial + followup passes onto the shared
+    /// command buffer.
+    fn encode_fast_passes_on(
+        &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        first_code: u32,
+        fast_vocab_limit: usize,
+        followup_count: usize,
+        sampling: &mut TextSamplingState,
+    ) -> Result<usize, Error> {
+        let (slow_runner, fast_runner, semantic_bridge) =
+            (&mut self.slow_runner, &mut self.fast_runner, &mut self.semantic_bridge);
+        let slow_hidden_capture = &slow_runner.single_hidden_capture;
+        let slow_model_dim = self.slow_model_dim;
+        let fast_model_dim = self.fast_model_dim;
+
+        let mut pre_projection =
+            |runner: &TokenDecoderRunner<B>,
+             _state: &ForwardPassState<B>,
+             command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+                Self::encode_project_slow_hidden_to_fast_on(
+                    runner.context().as_ref(),
+                    semantic_bridge,
+                    slow_hidden_capture,
+                    &runner.single_override_embedding,
+                    slow_model_dim,
+                    fast_model_dim,
+                    command_buffer,
+                )
+            };
+
+        fast_runner.encode_first_and_followup_tokens_on(
+            command_buffer,
+            &[0, u64::from(first_code)],
+            EmbeddingInjection::OverrideFirstRowInternal,
+            Some(&mut pre_projection),
+            followup_count,
+            Some(fast_vocab_limit),
+            sampling,
+        )
+    }
+
+    /// Encode the slow runner's forward pass onto the shared command buffer.
+    fn encode_slow_pass_on(
+        &mut self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        current_semantic_token: u64,
+        first_code: u32,
+        post_scale: Option<f32>,
+        sampling: &mut TextSamplingState,
+        by_codebook: &[Vec<u32>],
+    ) -> Result<(), Error> {
+        let (slow_runner, fast_runner, semantic_bridge) =
+            (&mut self.slow_runner, &mut self.fast_runner, &mut self.semantic_bridge);
+        let num_codebooks = self.num_codebooks;
+        let codebook_size = self.codebook_size;
+        let slow_model_dim = self.slow_model_dim;
+
+        let sampled_frames = by_codebook[0].len();
+        let slow_sampling_mask = if self.apply_semantic_sampling_mask {
+            if sampled_frames < self.runtime_config.min_frames_before_im_end {
+                Some(self.semantic_sampling_mask_without_im_end_row.as_ref())
+            } else {
+                Some(self.semantic_sampling_mask_row.as_ref())
+            }
+        } else {
+            None
+        };
+
+        let mut pre_codebook_sum =
+            |runner: &TokenDecoderRunner<B>,
+             _state: &ForwardPassState<B>,
+             cb: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+                Self::encode_slow_codebook_sum_from_gpu_tokens_on(
+                    semantic_bridge,
+                    &runner.single_override_embedding,
+                    first_code,
+                    fast_runner,
+                    0,
+                    num_codebooks,
+                    codebook_size,
+                    slow_model_dim,
+                    cb,
+                )
+            };
+
+        slow_runner.encode_next_step_on(
+            command_buffer,
+            &[current_semantic_token],
+            EmbeddingInjection::AddPreloaded {
+                post_scale,
+            },
+            sampling,
+            slow_sampling_mask,
+            true, // capture_hidden
+            Some(&mut pre_codebook_sum),
+        )
     }
 
     fn take_instrumentation(&mut self) -> RunnerInstrumentation {

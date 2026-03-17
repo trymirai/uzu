@@ -19,7 +19,7 @@ constant int AUDIO_LAYOUT_NSC = 1;
 template <typename T>
 void causal_conv_transpose1d_causal_pad(
     device const T* input,     // [B, Cin, Tin] when NCS, [B, Tin, Cin] when NSC
-    device const T* weight,    // [Cin, Cout_per_group, K]
+    device const T* weight,    // [Cout, Cin_per_group, K]
     device const T* bias,      // [Cout]
     device T* output,          // [B, Cout, Tout]
     device const int* lengths, // [B]
@@ -66,7 +66,6 @@ void causal_conv_transpose1d_causal_pad(
   const int cout_per_group = cout / groups;
   const int cin_per_group = cin / groups;
   const int group_idx = (int)oc / cout_per_group;
-  const int oc_in_group = (int)oc - group_idx * cout_per_group;
   const int ic_begin = group_idx * cin_per_group;
   const int ic_end = ic_begin + cin_per_group;
 
@@ -91,8 +90,9 @@ void causal_conv_transpose1d_causal_pad(
     if (input_layout == AUDIO_LAYOUT_NCS) {
       for (int ic = ic_begin; ic < ic_end; ++ic) {
         const uint in_base = (b * (uint)cin + (uint)ic) * (uint)seq_len_in;
+        const uint ic_local = (uint)(ic - ic_begin);
         const uint w_base =
-            ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
+            ((uint)oc * (uint)cin_per_group + ic_local) *
             (uint)kernel_size;
         if (fast_two_tap) {
           // When stride >= AUDIO_TIME_TILE (common for decoder blocks with
@@ -235,8 +235,9 @@ void causal_conv_transpose1d_causal_pad(
     } else {
       // NSC layout
       for (int ic = ic_begin; ic < ic_end; ++ic) {
+        const uint ic_local = (uint)(ic - ic_begin);
         const uint w_base =
-            ((uint)ic * (uint)cout_per_group + (uint)oc_in_group) *
+            ((uint)oc * (uint)cin_per_group + ic_local) *
             (uint)kernel_size;
         if (fast_two_tap) {
           if (stride >= (int)AUDIO_TIME_TILE) {

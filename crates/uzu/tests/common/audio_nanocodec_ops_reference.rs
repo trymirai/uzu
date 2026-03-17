@@ -275,7 +275,8 @@ pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) ->
     }
 
     let kernel_size = 2 * stride;
-    let expected_weight = checked_product(&[cin, cout / groups, kernel_size])?;
+    let cin_per_group = cin / groups;
+    let expected_weight = checked_product(&[cout, cin_per_group, kernel_size])?;
     if weight.len() != expected_weight {
         return Err(AudioError::InvalidTokenShape {
             expected_tokens: expected_weight,
@@ -293,13 +294,11 @@ pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) ->
     let output_len = checked_product(&[batch_size, cout, seq_len_out])?;
     let mut output = vec![0.0_f32; output_len];
     let cout_per_group = cout / groups;
-    let cin_per_group = cin / groups;
 
     for batch in 0..batch_size {
         let length = lengths[batch] as usize;
         for out_channel in 0..cout {
             let group_index = out_channel / cout_per_group;
-            let out_channel_in_group = out_channel % cout_per_group;
             let in_channel_begin = group_index * cin_per_group;
             let in_channel_end = in_channel_begin + cin_per_group;
 
@@ -320,7 +319,8 @@ pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) ->
                     }
 
                     let input_base = (batch * cin + in_channel) * seq_len_in;
-                    let weight_base = (in_channel * cout_per_group + out_channel_in_group) * kernel_size;
+                    let in_channel_in_group = in_channel - in_channel_begin;
+                    let weight_base = (out_channel * cin_per_group + in_channel_in_group) * kernel_size;
 
                     acc += input[input_base + q] * weight[weight_base + r];
                     if q > 0 {
@@ -365,7 +365,8 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
     }
 
     let cout_per_group = cout / groups;
-    let weight_plane = checked_product(&[cin, cout_per_group])?;
+    let cin_per_group = cin / groups;
+    let weight_plane = checked_product(&[cout, cin_per_group])?;
     if weight_plane == 0 || weight.len() % weight_plane != 0 {
         return Err(AudioError::InvalidTokenShape {
             expected_tokens: weight_plane,
@@ -387,7 +388,6 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
 
     let output_len = checked_product(&[batch_size, cout, seq_len_out])?;
     let mut output = vec![0.0_f32; output_len];
-    let cin_per_group = cin / groups;
     let seq_len_expanded = if seq_len_in == 0 {
         0
     } else {
@@ -402,7 +402,6 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
         let length = lengths[batch] as usize;
         for out_channel in 0..cout {
             let group_index = out_channel / cout_per_group;
-            let out_channel_in_group = out_channel % cout_per_group;
             let in_channel_begin = group_index * cin_per_group;
             let in_channel_end = in_channel_begin + cin_per_group;
 
@@ -417,7 +416,8 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
 
                 for in_channel in in_channel_begin..in_channel_end {
                     let input_base = (batch * cin + in_channel) * seq_len_in;
-                    let weight_base = (in_channel * cout_per_group + out_channel_in_group) * kernel_size;
+                    let in_channel_in_group = in_channel - in_channel_begin;
+                    let weight_base = (out_channel * cin_per_group + in_channel_in_group) * kernel_size;
 
                     for kernel_offset in 0..kernel_size {
                         let expanded_time = out_time as isize + kernel_offset as isize - left_pad as isize;
