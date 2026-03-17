@@ -149,8 +149,6 @@ pub enum ArrayTransform {
     KVCacheSlice,
     /// Transform SSM conv state layout.
     SsmConvState,
-    /// Transpose DeltaNet SSM state from [H,K,V] to [H,V,K].
-    DeltaNetSsmState,
 }
 
 // ============================================================================
@@ -324,6 +322,47 @@ impl<B: Backend> TraceValidator<B> {
 
         for index in ssm_layers {
             let arrays = state.arrays(&[ArrayId::SsmConvState(index), ArrayId::SsmState(index)]);
+            let conv_state = arrays[0].borrow();
+            let ssm_state = arrays[1].borrow();
+
+            for path in [
+                format!("updated_state.{}.conv_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(
+                            data_type,
+                            &expected,
+                            &conv_state,
+                            Some(ArrayTransform::SsmConvState),
+                        ),
+                    });
+                }
+            }
+
+            for path in [
+                format!("updated_state.{}.ssm_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                    });
+                }
+            }
+        }
+
+        // LLM-specific: DeltaNet state validation
+        let delta_net_layers: Vec<usize> = {
+            let cache = state.cache_layers().unwrap().borrow();
+            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
+        };
+
+        for index in delta_net_layers {
+            let arrays = state.arrays(&[ArrayId::DeltaNetConvState(index), ArrayId::DeltaNetSsmState(index)]);
             let conv_state = arrays[0].borrow();
             let ssm_state = arrays[1].borrow();
 
@@ -650,7 +689,6 @@ impl<B: Backend> TraceValidator<B> {
 
                 (reshaped_expected, produced_view.to_owned())
             },
-            Some(ArrayTransform::DeltaNetSsmState) => (expected_view.to_owned(), produced_view.to_owned()),
             None => (expected_view.to_owned(), produced_view.to_owned()),
         };
 

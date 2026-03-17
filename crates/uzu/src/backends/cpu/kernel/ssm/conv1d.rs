@@ -14,6 +14,7 @@ pub fn conv1d_pack<T: ArrayElement + Float>(
     #[allow(unused)] row_stride: u32,
     #[allow(unused)] suffix_len: u32,
     #[allow(unused)] num_channels: u32,
+    #[allow(unused)] in_stride: u32,
 ) {
     todo!()
 }

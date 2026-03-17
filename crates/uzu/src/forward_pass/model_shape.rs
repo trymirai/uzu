@@ -25,6 +25,8 @@ pub struct ModelShape {
     max_mamba_conv_dim: usize,
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
+    max_delta_net_kernel_size: usize,
+    max_delta_net_padded_stride: usize,
     max_attention_qkv_dim: usize,
     max_attention_output_dim: usize,
     max_attention_num_heads: usize,
@@ -60,23 +62,35 @@ impl ModelShape {
         let mut max_mamba_conv_dim = 0;
         let mut max_mamba_state_dim = 0;
         let mut max_mamba_kernel_size = 0;
+        let mut max_delta_net_kernel_size = 0;
+        let mut max_delta_net_padded_stride = 0;
         for layer in layer_types.iter() {
-            if let DecoderLayerType::StateSpace {
-                conv_dim,
-                kernel_size,
-                state_dim,
-                num_heads,
-                num_groups,
-                head_dim,
-                ..
-            } = layer
-            {
-                max_mamba_heads = max_mamba_heads.max(*num_heads);
-                max_mamba_groups = max_mamba_groups.max(*num_groups);
-                max_mamba_head_dim = max_mamba_head_dim.max(*head_dim);
-                max_mamba_conv_dim = max_mamba_conv_dim.max(*conv_dim);
-                max_mamba_state_dim = max_mamba_state_dim.max(*state_dim);
-                max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
+            match layer {
+                DecoderLayerType::StateSpace {
+                    conv_dim,
+                    kernel_size,
+                    state_dim,
+                    num_heads,
+                    num_groups,
+                    head_dim,
+                    ..
+                } => {
+                    max_mamba_heads = max_mamba_heads.max(*num_heads);
+                    max_mamba_groups = max_mamba_groups.max(*num_groups);
+                    max_mamba_head_dim = max_mamba_head_dim.max(*head_dim);
+                    max_mamba_conv_dim = max_mamba_conv_dim.max(*conv_dim);
+                    max_mamba_state_dim = max_mamba_state_dim.max(*state_dim);
+                    max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
+                },
+                DecoderLayerType::DeltaNet {
+                    conv_dim,
+                    kernel_size,
+                    ..
+                } => {
+                    max_delta_net_kernel_size = max_delta_net_kernel_size.max(*kernel_size);
+                    max_delta_net_padded_stride = max_delta_net_padded_stride.max(*conv_dim);
+                },
+                _ => {},
             }
         }
         let mut max_attention_qkv_dim = 0usize;
@@ -147,6 +161,8 @@ impl ModelShape {
             max_mamba_conv_dim,
             max_mamba_state_dim,
             max_mamba_kernel_size,
+            max_delta_net_kernel_size,
+            max_delta_net_padded_stride,
             max_attention_qkv_dim,
             max_attention_output_dim,
             max_attention_num_heads,
@@ -471,10 +487,15 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
-        match (self.max_mamba_conv_dim(), self.max_mamba_kernel_size()) {
-            (Some(conv_dim), Some(kernel_size)) if kernel_size > 0 => Some([suffix_length + kernel_size - 1, conv_dim]),
-            _ => None,
+        let mamba_kernel = self.max_mamba_kernel_size;
+        let delta_net_kernel = self.max_delta_net_kernel_size;
+        let max_kernel_size = mamba_kernel.max(delta_net_kernel);
+        if max_kernel_size == 0 {
+            return None;
         }
+        // Row stride: Mamba uses conv_dim, DeltaNet uses total_proj_dim
+        let max_stride = self.max_mamba_conv_dim.max(self.max_delta_net_padded_stride);
+        Some([suffix_length + max_kernel_size - 1, max_stride])
     }
 
     pub fn short_conv_padded_shape(

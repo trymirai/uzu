@@ -1,2 +1,5 @@
-pub mod delta_net_conv_update;
-pub mod delta_net_update;
+pub mod conv_scan;
+pub mod conv_update;
+pub mod norm_gate;
+pub mod prefill;
+pub mod update;

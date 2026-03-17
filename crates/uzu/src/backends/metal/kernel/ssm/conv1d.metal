@@ -12,6 +12,7 @@ KERNEL(Conv1dPack)(
     constant const uint& row_stride,
     constant const uint& suffix_len,
     constant const uint& num_channels,
+    constant const uint& in_stride,
     const uint channel_idx AXIS(num_channels, 32),
     const uint row_idx AXIS(state_stride + suffix_len, 1)
 ) {
@@ -21,7 +22,7 @@ KERNEL(Conv1dPack)(
     padded[padded_index] = state_in[state_index];
   } else {
     const uint token = row_idx - state_stride;
-    const uint x_index = token * row_stride + channel_idx;
+    const uint x_index = token * in_stride + channel_idx;
     padded[padded_index] = x[x_index];
   }
 }

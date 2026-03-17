@@ -16,12 +16,8 @@ KERNEL(DeltaNetConvUpdate)(
     constant const uint& conv_dim,
     constant const uint& state_stride,
     const bool has_bias SPECIALIZE,
-    const uint channel_idx AXIS(conv_dim, 1)
+    const uint channel_idx AXIS(conv_dim, 256)
 ) {
-  if (kernel_size == 0) {
-    return;
-  }
-
   const uint tap_count = kernel_size - 1;
   const uint state_offset = channel_idx * state_stride;
   const device T* w_row = w + channel_idx * kernel_size;
@@ -40,7 +36,5 @@ KERNEL(DeltaNetConvUpdate)(
   for (uint tap = 0; tap + 1 < tap_count; ++tap) {
     state[state_offset + tap] = state[state_offset + tap + 1];
   }
-  if (tap_count > 0) {
-    state[state_offset + tap_count - 1] = static_cast<T>(x);
-  }
+  state[state_offset + tap_count - 1] = static_cast<T>(x);
 }

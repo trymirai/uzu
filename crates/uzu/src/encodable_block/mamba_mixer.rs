@@ -251,6 +251,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     suffix_length as u32,
                     conv_dim as u32,
+                    conv_dim as u32,
                     command_buffer,
                 );
 

@@ -22,10 +22,6 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
     #[specialize]
     has_bias: bool,
 ) {
-    if kernel_size == 0 {
-        return;
-    }
-
     let tap_count = kernel_size as usize - 1;
 
     for c in 0..conv_dim as usize {
@@ -50,15 +46,13 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
             *in_out.add(c) = T::from(silu_f32(acc)).unwrap();
         }
 
-        for tap in 0..tap_count.saturating_sub(1) {
+        for tap in 1..tap_count {
             unsafe {
-                *state.add(state_offset + tap) = *state.add(state_offset + tap + 1);
+                *state.add(state_offset + tap - 1) = *state.add(state_offset + tap);
             }
         }
-        if tap_count > 0 {
-            unsafe {
-                *state.add(state_offset + tap_count - 1) = T::from(x).unwrap();
-            }
+        unsafe {
+            *state.add(state_offset + tap_count - 1) = T::from(x).unwrap();
         }
     }
 }
