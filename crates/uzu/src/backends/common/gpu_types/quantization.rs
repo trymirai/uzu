@@ -38,3 +38,13 @@ impl From<QuantizationMode> for DataType {
         }
     }
 }
+
+impl Into<u32> for QuantizationMode {
+    fn into(self) -> u32 {
+        match self {
+            QuantizationMode::UINT4 => 0,
+            QuantizationMode::INT8 => 1,
+            QuantizationMode::UINT8 => 2,
+        }
+    }
+}

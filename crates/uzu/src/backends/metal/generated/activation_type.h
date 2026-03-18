@@ -14,7 +14,7 @@ namespace activation_type {
 #include <stdint.h>
 #endif
 
-enum ActivationType {
+enum ActivationType : uint32_t {
   SILU,
   GELU,
   IDENTITY,

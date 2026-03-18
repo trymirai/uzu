@@ -198,7 +198,7 @@ impl GpuTypesCompiler {
             let enum_name = rust_enum.ident.to_string();
             definitions.push_str("enum ");
             definitions.push_str(&enum_name);
-            definitions.push_str(" {\n");
+            definitions.push_str(" : uint32_t {\n");
 
             for variant in &rust_enum.variants {
                 definitions.push_str("  ");
