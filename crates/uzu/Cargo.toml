@@ -85,9 +85,9 @@ name = "kernel"
 path = "tests/kernel/mod.rs"
 
 [[test]]
-name = "moe"
-path = "tests/moe/mod.rs"
-
-[[test]]
 name = "matmul_perf_test"
 path = "tests/matmul_perf_test/main.rs"
+
+[[test]]
+name = "moe"
+path = "tests/moe/mod.rs"
