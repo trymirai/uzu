@@ -9,7 +9,6 @@ use crate::{
     DataType, EmbeddingConfig,
     backends::common::{
         Backend, CommandBuffer, Kernels,
-        gpu_types::QuantizationMode,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
@@ -100,7 +99,6 @@ pub struct Embedding<B: Backend> {
     input_scale: f32,
     vocab_size: u32,
     model_dim: u32,
-    quant_mode: Option<QuantizationMode>,
 }
 
 fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
@@ -132,7 +130,6 @@ impl<B: Backend> Embedding<B> {
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, EmbeddingError<B>> {
         let common = config.common();
-        let mut quant_mode: Option<QuantizationMode> = None;
 
         let tying = match config {
             EmbeddingConfig::Tied {
@@ -220,9 +217,9 @@ impl<B: Backend> Embedding<B> {
                     context,
                     data_type,
                     *group_size as u32,
+                    (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                quant_mode = Some(*embedding_quantization_mode);
                 let readout = QuantizedMatmulKernelEncodable::new(
                     context,
                     QuantizedMatmulConfiguration {
@@ -300,9 +297,9 @@ impl<B: Backend> Embedding<B> {
                     context,
                     data_type,
                     *group_size as u32,
+                    (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                quant_mode = Some(*embedding_quantization_mode);
                 let readout = QuantizedMatmulKernelEncodable::new(
                     context,
                     QuantizedMatmulConfiguration {
@@ -418,7 +415,6 @@ impl<B: Backend> Embedding<B> {
             input_scale,
             vocab_size,
             model_dim,
-            quant_mode,
         })
     }
 
@@ -497,7 +493,6 @@ impl<B: Backend> Embedding<B> {
                     self.vocab_size,
                     self.model_dim,
                     self.input_scale,
-                    self.quant_mode.unwrap(),
                     command_buffer,
                 );
             },

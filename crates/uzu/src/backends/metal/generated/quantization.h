@@ -14,7 +14,7 @@ namespace quantization {
 #include <stdint.h>
 #endif
 
-enum QuantizationMode {
+enum QuantizationMode: uint32_t {
   UINT4,
   INT8,
   UINT8,
