@@ -111,7 +111,7 @@ impl AdaptiveChunkController {
                 let change = ((candidate as f64 - self.current_chunk_frames as f64).abs()
                     / self.current_chunk_frames as f64)
                     .max(0.0);
-                if change < DEFAULT_CHUNK_HYSTERESIS_FRACTION {
+                if change < config.chunk_hysteresis_fraction {
                     self.current_chunk_frames
                 } else {
                     candidate
@@ -122,6 +122,7 @@ impl AdaptiveChunkController {
 
     pub(super) fn observe(
         &mut self,
+        config: &TtsRunConfig,
         frames: usize,
         decode_elapsed: std::time::Duration,
         next_chunk_frames: usize,
@@ -129,9 +130,10 @@ impl AdaptiveChunkController {
         if frames == 0 {
             return;
         }
+        let alpha = config.chunk_ema_alpha;
         let ms_per_frame = (decode_elapsed.as_secs_f64() * 1000.0) / frames as f64;
         self.ema_ms_per_frame = Some(match self.ema_ms_per_frame {
-            Some(previous) => previous * (1.0 - DEFAULT_CHUNK_EMA_ALPHA) + ms_per_frame * DEFAULT_CHUNK_EMA_ALPHA,
+            Some(previous) => previous * (1.0 - alpha) + ms_per_frame * alpha,
             None => ms_per_frame,
         });
         self.current_chunk_frames = next_chunk_frames.max(1);
@@ -237,13 +239,12 @@ impl StreamingTokenAccumulator {
             self.by_codebook.len(),
             range_frames,
             vec![range_frames].into_boxed_slice(),
-            AudioTokenPacking::CodebookMajor,
         )
         .map_err(Error::from)
     }
 }
 
-pub(super) fn slice_codebook_major_grid_range(
+pub(super) fn slice_grid_range(
     grid: &AudioTokenGrid,
     frame_start: usize,
     frame_end: usize,
@@ -252,13 +253,9 @@ pub(super) fn slice_codebook_major_grid_range(
         return Err(Error::GenerateFailed);
     }
     let range_frames = frame_end.saturating_sub(frame_start);
-    let packed = grid.to_packing(AudioTokenPacking::CodebookMajor);
-    let batch_size = packed.batch_size();
-    let codebooks = packed.codebooks();
-    let frames = packed.frames();
-    if frames != grid.frames() {
-        return Err(Error::GenerateFailed);
-    }
+    let batch_size = grid.batch_size();
+    let codebooks = grid.codebooks();
+    let frames = grid.frames();
 
     let mut tokens = Vec::with_capacity(batch_size * codebooks * range_frames);
     let row_stride = frames;
@@ -271,12 +268,12 @@ pub(super) fn slice_codebook_major_grid_range(
             let row_start = row_index.checked_mul(row_stride).ok_or(Error::GenerateFailed)?;
             let src_start = row_start.checked_add(frame_start).ok_or(Error::GenerateFailed)?;
             let src_end = row_start.checked_add(frame_end).ok_or(Error::GenerateFailed)?;
-            tokens.extend_from_slice(&packed.tokens()[src_start..src_end]);
+            tokens.extend_from_slice(&grid.tokens()[src_start..src_end]);
         }
     }
 
     let mut lengths = Vec::with_capacity(batch_size);
-    for &length in packed.lengths() {
+    for &length in grid.lengths() {
         lengths.push(length.saturating_sub(frame_start).min(range_frames));
     }
 
@@ -286,7 +283,6 @@ pub(super) fn slice_codebook_major_grid_range(
         codebooks,
         range_frames,
         lengths.into_boxed_slice(),
-        AudioTokenPacking::CodebookMajor,
     )
     .map_err(Error::from)
 }
@@ -373,7 +369,7 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
             (self.on_chunk)(&partial_pcm);
         }
         self.callback_seconds += callback_start.elapsed().as_secs_f64();
-        self.chunk_controller.observe(pending.ready_frames, decode_elapsed, pending.next_chunk_frames);
+        self.chunk_controller.observe(config, pending.ready_frames, decode_elapsed, pending.next_chunk_frames);
 
         if emitted_frames > 0 {
             self.chunk_controller.adapt_up_for_realtime(
@@ -403,45 +399,6 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
     }
 }
 
-impl SemanticDecoderBackend for StubTextDecoderRuntime {
-    fn default_seed(&self) -> u64 {
-        self.default_seed
-    }
-
-    fn generate_semantic_tokens(
-        &mut self,
-        text_tokens: &[u64],
-        codec_cardinality: usize,
-        seed: u64,
-        max_semantic_frames: usize,
-    ) -> Result<AudioTokenGrid, Error> {
-        generate_stub_semantic_grid(self, text_tokens, codec_cardinality, seed, max_semantic_frames)
-    }
-
-    fn generate_semantic_tokens_with_callback(
-        &mut self,
-        text_tokens: &[u64],
-        codec_cardinality: usize,
-        seed: u64,
-        max_semantic_frames: usize,
-        on_frame: &mut dyn FnMut(&[u32]) -> Result<(), Error>,
-    ) -> Result<AudioTokenGrid, Error> {
-        let grid = generate_stub_semantic_grid(self, text_tokens, codec_cardinality, seed, max_semantic_frames)?;
-        for frame in 0..grid.frames() {
-            let mut frame_codes = Vec::with_capacity(self.num_codebooks);
-            for codebook in 0..self.num_codebooks {
-                frame_codes.push(grid.get(0, codebook, frame));
-            }
-            on_frame(&frame_codes)?;
-        }
-        Ok(grid)
-    }
-
-    fn take_instrumentation(&mut self) -> RunnerInstrumentation {
-        RunnerInstrumentation::default()
-    }
-}
-
 impl<B: Backend + Send + Sync> TtsSession<B> {
     pub fn new(model_path: PathBuf) -> Result<Self, Error> {
         Self::new_with_options(model_path, TtsSessionOptions::default())
@@ -467,7 +424,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     pub fn last_execution_stats(&self) -> Option<TtsExecutionStats> {
-        self.last_execution_stats.borrow().clone()
+        self.last_execution_stats.clone()
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -488,14 +445,12 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         let loaded_runtime = load_tts_runtime(&model_path, &model_metadata, &options)?;
 
         Ok(Self {
-            model_path,
-            model_metadata,
             tokenizer,
             audio: loaded_runtime.audio,
             audio_decoder: loaded_runtime.audio_decoder,
             message_processor_config: loaded_runtime.message_processor_config,
-            text_decoder: RefCell::new(loaded_runtime.text_decoder),
-            last_execution_stats: RefCell::new(None),
+            text_decoder: loaded_runtime.text_decoder,
+            last_execution_stats: None,
         })
     }
 
@@ -615,3 +570,4 @@ pub(super) fn expand_token_mask_for_sampling_row(
     expanded[offset..offset + row_words].copy_from_slice(row_mask);
     Ok(expanded.into_boxed_slice())
 }
+

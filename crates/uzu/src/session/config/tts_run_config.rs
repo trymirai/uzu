@@ -10,7 +10,7 @@ pub enum TtsNonStreamingMode {
     ChunkedIfNeeded,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TtsRunConfig {
     pub streaming_enabled: bool,
     pub target_emit_latency_ms: u32,
@@ -21,6 +21,9 @@ pub struct TtsRunConfig {
     pub max_semantic_frames: usize,
     pub chunk_policy: TtsChunkPolicy,
     pub non_streaming_mode: TtsNonStreamingMode,
+    pub default_seed: u64,
+    pub chunk_ema_alpha: f64,
+    pub chunk_hysteresis_fraction: f64,
 }
 
 impl TtsRunConfig {
@@ -77,11 +80,14 @@ impl Default for TtsRunConfig {
             max_semantic_frames: 768,
             chunk_policy: TtsChunkPolicy::Adaptive,
             non_streaming_mode: TtsNonStreamingMode::ChunkedIfNeeded,
+            default_seed: 123,
+            chunk_ema_alpha: 0.2,
+            chunk_hysteresis_fraction: 0.25,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TtsPerformanceConfig {
     pub streaming: TtsRunConfig,
     pub non_streaming: TtsRunConfig,
@@ -124,6 +130,9 @@ mod tests {
         assert_eq!(config.max_semantic_frames, 768);
         assert_eq!(config.chunk_policy, TtsChunkPolicy::Adaptive);
         assert_eq!(config.non_streaming_mode, TtsNonStreamingMode::ChunkedIfNeeded);
+        assert_eq!(config.default_seed, 123);
+        assert!((config.chunk_ema_alpha - 0.2).abs() < f64::EPSILON);
+        assert!((config.chunk_hysteresis_fraction - 0.25).abs() < f64::EPSILON);
     }
 
     #[test]

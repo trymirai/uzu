@@ -12,7 +12,7 @@ use super::fsq::compute_dim_base_index;
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
-    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
+    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     backends::common::{
         Backend, Buffer, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
         CommandBufferPending, Context, Kernels,
@@ -55,23 +55,6 @@ fn default_eps() -> f32 {
     1e-3
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum RuntimePacking {
-    #[default]
-    FrameMajor,
-    CodebookMajor,
-}
-
-impl From<RuntimePacking> for AudioTokenPacking {
-    fn from(value: RuntimePacking) -> Self {
-        match value {
-            RuntimePacking::FrameMajor => AudioTokenPacking::FrameMajor,
-            RuntimePacking::CodebookMajor => AudioTokenPacking::CodebookMajor,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeConfigJson {
@@ -80,8 +63,6 @@ struct RuntimeConfigJson {
     num_levels_per_group: Vec<i32>,
     #[serde(default = "default_eps")]
     eps: f32,
-    #[serde(default)]
-    output_packing: RuntimePacking,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,7 +75,6 @@ pub struct NanoCodecFsqRuntimeConfig {
     channels: usize,
     codec_cardinality: u32,
     eps: f32,
-    output_packing: AudioTokenPacking,
     structured_decoder: Option<StructuredAudioCodecGraph>,
 }
 
@@ -115,7 +95,6 @@ impl NanoCodecFsqRuntimeConfig {
             parsed.num_groups,
             parsed.num_levels_per_group.into_boxed_slice(),
             parsed.eps,
-            parsed.output_packing.into(),
         )
     }
 
@@ -124,7 +103,6 @@ impl NanoCodecFsqRuntimeConfig {
         num_groups: usize,
         num_levels_per_group: Box<[i32]>,
         eps: f32,
-        output_packing: AudioTokenPacking,
     ) -> AudioResult<Self> {
         if sample_rate == 0 {
             return Err(AudioError::InvalidSampleRate);
@@ -172,7 +150,6 @@ impl NanoCodecFsqRuntimeConfig {
             channels,
             codec_cardinality,
             eps,
-            output_packing,
             structured_decoder: None,
         })
     }
@@ -211,10 +188,6 @@ impl NanoCodecFsqRuntimeConfig {
 
     pub fn eps(&self) -> f32 {
         self.eps
-    }
-
-    pub fn output_packing(&self) -> AudioTokenPacking {
-        self.output_packing
     }
 
     fn structured_decoder(&self) -> Option<&StructuredAudioCodecGraph> {
@@ -275,17 +248,16 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         let residual_cardinality = u32::try_from(fishaudio.codebook_size).map_err(|_| {
             AudioError::Runtime("FishAudio residual codebook cardinality exceeds u32 range".to_string())
         })?;
-        let codebook_major = tokens.to_packing(AudioTokenPacking::CodebookMajor);
-        let frames = codebook_major.frames();
-        for batch in 0..codebook_major.batch_size() {
-            for codebook in 0..codebook_major.codebooks() {
+        let frames = tokens.frames();
+        for batch in 0..tokens.batch_size() {
+            for codebook in 0..tokens.codebooks() {
                 let cardinality = if codebook == 0 {
                     semantic_cardinality
                 } else {
                     residual_cardinality
                 };
                 for frame in 0..frames {
-                    let token = codebook_major.get(batch, codebook, frame);
+                    let token = tokens.get(batch, codebook, frame);
                     if token >= cardinality {
                         return Err(AudioError::InvalidCodecToken {
                             token,
@@ -324,10 +296,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             });
         }
 
-        let codebook_major = tokens.to_packing(AudioTokenPacking::CodebookMajor);
-
-        let mut tokens_i32 = vec![0_i32; codebook_major.tokens().len()];
-        for (index, &token) in codebook_major.tokens().iter().enumerate() {
+        let mut tokens_i32 = vec![0_i32; tokens.tokens().len()];
+        for (index, &token) in tokens.tokens().iter().enumerate() {
             if token >= self.config.codec_cardinality() {
                 return Err(AudioError::InvalidCodecToken {
                     token,
@@ -427,7 +397,6 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
                 self.config.num_groups(),
                 frames,
                 lengths_usize.into_boxed_slice(),
-                self.config.output_packing(),
             )?;
             return Ok(grid);
         }
@@ -507,16 +476,13 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             tokens_u32[index] = token_u32;
         }
 
-        let codebook_major = AudioTokenGrid::new(
+        AudioTokenGrid::new(
             tokens_u32.into_boxed_slice(),
             batch_size,
             self.config.num_groups(),
             frames,
             lengths_usize.into_boxed_slice(),
-            AudioTokenPacking::CodebookMajor,
-        )?;
-
-        Ok(codebook_major.to_packing(self.config.output_packing()))
+        )
     }
 
     pub fn begin_decode_stream(
@@ -671,16 +637,15 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             });
         }
 
-        let codebook_major = tokens.to_packing(AudioTokenPacking::CodebookMajor);
         if let Some(fishaudio) = self.config.structured_decoder() {
             self.validate_fishaudio_token_delta(tokens, fishaudio)?;
             let resources = self.structured_resources()?;
             let decoded = fishaudio.decode_padded(
                 resources.as_ref(),
-                codebook_major.tokens(),
+                tokens.tokens(),
                 &lengths_usize,
                 batch_size,
-                codebook_major.codebooks(),
+                tokens.codebooks(),
                 frames,
             )?;
             return Ok(decoded);

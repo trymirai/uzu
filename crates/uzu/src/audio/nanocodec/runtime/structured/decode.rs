@@ -226,7 +226,7 @@ impl StructuredAudioCodecGraph {
         )?;
         current_channels = vocoder_graph.first_conv.cout;
 
-        for (_block_index, block) in vocoder_graph.decoder_blocks.iter().enumerate() {
+        for block in vocoder_graph.decoder_blocks.iter() {
             if block.trans_conv.cin != current_channels {
                 return Err(AudioError::Runtime(format!(
                     "structured audio decoder block input mismatch: expected {}, got {}",

@@ -341,7 +341,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                 self.num_codebooks,
                 0,
                 vec![0].into_boxed_slice(),
-                AudioTokenPacking::CodebookMajor,
             )
             .map_err(Error::from);
         }
@@ -489,7 +488,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             self.num_codebooks,
             frames,
             vec![frames].into_boxed_slice(),
-            AudioTokenPacking::CodebookMajor,
         )
         .map_err(Error::from)
     }
@@ -804,9 +802,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 }
 
 impl<B: Backend> SemanticDecoderBackend for FishAudioTextDecoderRuntime<B> {
-    fn default_seed(&self) -> u64 {
-        DEFAULT_TTS_RANDOM_SEED
-    }
 
     fn generate_semantic_tokens(
         &mut self,

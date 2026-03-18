@@ -36,6 +36,49 @@ fn descript_audio_decoder_config_json() -> serde_json::Value {
     })
 }
 
+fn fishaudio_text_decoder_config_json() -> serde_json::Value {
+    let norm_config = serde_json::json!({
+        "scale_precision": "float32",
+        "accumulation_precision": "float32",
+        "epsilon": 1e-5,
+        "scale_offset": null,
+        "upcast_mode": "full_layer",
+        "subtract_mean": true
+    });
+    let transformer_config = serde_json::json!({
+        "global_rope_config": null,
+        "local_rope_config": null,
+        "layer_configs": [],
+        "output_norm_config": norm_config,
+        "model_dim": 256,
+        "hidden_dim": 256,
+        "context_length": 512
+    });
+    serde_json::json!({
+        "type": "FishAudioTextDecoderConfig",
+        "slow_embeddings_config": { "precision": "float16", "input_scale": null, "logit_soft_cap": null },
+        "slow_model_config": transformer_config,
+        "slow_readout_config": { "precision": "float16" },
+        "fast_embeddings_config": { "precision": "float16", "input_scale": null, "logit_soft_cap": null },
+        "fast_model_config": transformer_config,
+        "fast_readout_config": { "precision": "float16" },
+        "codebook_embeddings_config": { "precision": "float16", "input_scale": null, "logit_soft_cap": null },
+        "fast_model_projection_config": null,
+        "semantic_token_begin_id": 100,
+        "semantic_token_end_id": 1123,
+        "im_end_token_id": 4,
+        "codebook_size": 1024,
+        "vocab_size": 2048,
+        "slow_model_dim": 256,
+        "fast_model_dim": 256,
+        "num_codebooks": 8,
+        "max_seq_len": 4096,
+        "scale_codebook_embeddings": false,
+        "short_logits_size": 1124,
+        "repeat_window_size": 16
+    })
+}
+
 #[test]
 fn metadata_with_tts_model_type_parses() {
     let config_json = serde_json::json!({
@@ -50,11 +93,7 @@ fn metadata_with_tts_model_type_parses() {
       "model_type": "tts_model",
       "model_config": {
         "tts_config": {
-          "text_decoder_config": {
-            "type": "StubTextDecoderConfig",
-            "num_codebooks": 2,
-            "codebook_size": 48
-          },
+          "text_decoder_config": fishaudio_text_decoder_config_json(),
           "audio_decoder_config": {
             "type": "DescriptAudioCodecConfig",
             "precision": "float16",
@@ -92,7 +131,6 @@ fn metadata_with_tts_model_type_parses() {
               }
             }
           },
-          "vocoder_config": {}
         },
         "message_processor_config": {
           "prompt_template": "{% for message in messages %}{{message.content}}{% endfor %}",
@@ -117,11 +155,7 @@ fn metadata_with_tts_model_type_parses() {
 fn tts_model_config_helpers_work() {
     let model_config_json = serde_json::json!({
       "tts_config": {
-        "text_decoder_config": {
-          "type": "StubTextDecoderConfig",
-          "num_codebooks": 2,
-          "codebook_size": 48
-        },
+        "text_decoder_config": fishaudio_text_decoder_config_json(),
         "audio_decoder_config": {
           "type": "DescriptAudioCodecConfig",
           "precision": "float16",
@@ -159,7 +193,6 @@ fn tts_model_config_helpers_work() {
             }
           }
         },
-        "vocoder_config": {}
       },
       "message_processor_config": {
         "prompt_template": "{{messages[0].content}}"
@@ -182,11 +215,7 @@ fn tts_model_config_helpers_work() {
 fn tts_model_config_rejects_untyped_decoder_config() {
     let model_config_json = serde_json::json!({
       "tts_config": {
-        "text_decoder_config": {
-          "type": "StubTextDecoderConfig",
-          "num_codebooks": 2,
-          "codebook_size": 48
-        },
+        "text_decoder_config": fishaudio_text_decoder_config_json(),
         "audio_decoder_config": {
           "type": "DescriptAudioCodecConfig",
           "precision": "float16",
@@ -224,7 +253,6 @@ fn tts_model_config_rejects_untyped_decoder_config() {
             }
           }
         },
-        "vocoder_config": {}
       },
       "message_processor_config": {
         "prompt_template": "{{messages[0].content}}"

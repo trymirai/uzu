@@ -5,14 +5,14 @@ mod common;
 use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 use uzu::{
     audio::{
-        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking, NanoCodecFsqRuntime,
+        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime,
         NanoCodecFsqRuntimeConfig, nanocodec::fsq::compute_dim_base_index,
     },
     backends::metal::Metal,
 };
 
-fn create_runtime(output_packing: AudioTokenPacking) -> NanoCodecFsqRuntime<Metal> {
-    let config = NanoCodecFsqRuntimeConfig::new(24_000, 2, vec![8, 6].into_boxed_slice(), 1e-3, output_packing)
+fn create_runtime() -> NanoCodecFsqRuntime<Metal> {
+    let config = NanoCodecFsqRuntimeConfig::new(24_000, 2, vec![8, 6].into_boxed_slice(), 1e-3)
         .expect("valid runtime config");
     NanoCodecFsqRuntime::new(config)
 }
@@ -75,7 +75,7 @@ fn unpack_reference_output(
 
 #[test]
 fn nanocodec_runtime_encode_matches_fsq_reference() {
-    let runtime = create_runtime(AudioTokenPacking::FrameMajor);
+    let runtime = create_runtime();
     let pcm = make_pcm(runtime.config().channels(), &[3, 5]);
     let tokens = runtime.encode(&pcm).expect("encode");
 
@@ -94,41 +94,37 @@ fn nanocodec_runtime_encode_matches_fsq_reference() {
     )
     .expect("fsq reference encode");
     let expected_u32: Vec<u32> = expected_i32.into_iter().map(|value| value as u32).collect();
-    let expected_codebook_major = AudioTokenGrid::new(
+    let expected = AudioTokenGrid::new(
         expected_u32.into_boxed_slice(),
         pcm.batch_size(),
         runtime.config().num_groups(),
         frames,
         pcm.lengths().to_vec().into_boxed_slice(),
-        AudioTokenPacking::CodebookMajor,
     )
     .expect("expected token grid");
-    let expected = expected_codebook_major.to_packing(AudioTokenPacking::FrameMajor);
 
     assert_eq!(tokens.batch_size(), expected.batch_size());
     assert_eq!(tokens.codebooks(), expected.codebooks());
     assert_eq!(tokens.frames(), expected.frames());
     assert_eq!(tokens.lengths(), expected.lengths());
-    assert_eq!(tokens.packing(), AudioTokenPacking::FrameMajor);
     assert_eq!(tokens.tokens(), expected.tokens());
 }
 
 #[test]
 fn nanocodec_runtime_decode_matches_fsq_reference() {
-    let runtime = create_runtime(AudioTokenPacking::FrameMajor);
+    let runtime = create_runtime();
     let pcm = make_pcm(runtime.config().channels(), &[4, 2]);
     let encoded = runtime.encode(&pcm).expect("encode");
     let decoded = runtime.decode(&encoded).expect("decode");
 
-    let encoded_codebook_major = encoded.to_packing(AudioTokenPacking::CodebookMajor);
-    let reference_tokens_i32: Vec<i32> = encoded_codebook_major.tokens().iter().map(|&token| token as i32).collect();
-    let lengths_i32: Vec<i32> = encoded_codebook_major.lengths().iter().map(|&length| length as i32).collect();
+    let reference_tokens_i32: Vec<i32> = encoded.tokens().iter().map(|&token| token as i32).collect();
+    let lengths_i32: Vec<i32> = encoded.lengths().iter().map(|&length| length as i32).collect();
     let reference_padded = fsq_decode_reference(
         &reference_tokens_i32,
         &lengths_i32,
-        encoded_codebook_major.batch_size(),
+        encoded.batch_size(),
         runtime.config().num_groups(),
-        encoded_codebook_major.frames(),
+        encoded.frames(),
         runtime.config().codebook_dim_per_group(),
         runtime.config().num_levels_per_group(),
     )
@@ -136,8 +132,8 @@ fn nanocodec_runtime_decode_matches_fsq_reference() {
     let expected_samples = unpack_reference_output(
         &reference_padded,
         runtime.config().channels(),
-        encoded_codebook_major.frames(),
-        encoded_codebook_major.lengths(),
+        encoded.frames(),
+        encoded.lengths(),
     );
 
     assert_eq!(decoded.sample_rate(), runtime.config().sample_rate());
@@ -152,7 +148,7 @@ fn nanocodec_runtime_decode_matches_fsq_reference() {
 
 #[test]
 fn nanocodec_runtime_decode_rejects_out_of_range_token() {
-    let runtime = create_runtime(AudioTokenPacking::CodebookMajor);
+    let runtime = create_runtime();
     let cardinality = runtime.config().codec_cardinality();
     let tokens = AudioTokenGrid::new(
         vec![0, cardinality, 1, 2].into_boxed_slice(),
@@ -160,7 +156,6 @@ fn nanocodec_runtime_decode_rejects_out_of_range_token() {
         runtime.config().num_groups(),
         2,
         vec![2usize].into_boxed_slice(),
-        AudioTokenPacking::CodebookMajor,
     )
     .expect("token grid");
 
@@ -176,7 +171,7 @@ fn nanocodec_runtime_decode_rejects_out_of_range_token() {
 
 #[test]
 fn nanocodec_runtime_encode_rejects_channel_mismatch() {
-    let runtime = create_runtime(AudioTokenPacking::CodebookMajor);
+    let runtime = create_runtime();
     let pcm = make_pcm(runtime.config().channels() - 1, &[2]);
 
     let error = runtime.encode(&pcm).expect_err("encode should fail");

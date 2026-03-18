@@ -2,15 +2,14 @@ use super::*;
 
 impl<B: Backend + Send + Sync> TtsSession<B> {
     pub fn synthesize(
-        &self,
+        &mut self,
         input: Input,
     ) -> Result<AudioPcmBatch, Error> {
-        let seed = self.text_decoder.borrow().default_seed();
-        self.synthesize_with_seed(input, seed)
+        self.synthesize_with_seed_and_config(input, TtsRunConfig::default().default_seed, &TtsRunConfig::default())
     }
 
     pub fn synthesize_with_seed(
-        &self,
+        &mut self,
         input: Input,
         seed: u64,
     ) -> Result<AudioPcmBatch, Error> {
@@ -18,16 +17,15 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     pub fn synthesize_with_config(
-        &self,
+        &mut self,
         input: Input,
         config: &TtsRunConfig,
     ) -> Result<AudioPcmBatch, Error> {
-        let seed = self.text_decoder.borrow().default_seed();
-        self.synthesize_with_seed_and_config(input, seed, config)
+        self.synthesize_with_seed_and_config(input, config.default_seed, config)
     }
 
     pub fn synthesize_with_seed_and_config(
-        &self,
+        &mut self,
         input: Input,
         seed: u64,
         config: &TtsRunConfig,
@@ -63,6 +61,9 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                 self.audio_decoder.decode(&semantic_tokens)?
             },
             crate::session::config::TtsNonStreamingMode::ChunkedIfNeeded => {
+                if semantic_tokens.batch_size() != 1 {
+                    return Err(Error::GenerateFailed);
+                }
                 config.validate_stream_decode().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
                 let total_frames = semantic_tokens.frames();
                 let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
@@ -80,7 +81,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                         config.max_stream_workspace_frames,
                     )?;
 
-                    let mut all_samples = Vec::<f32>::new();
+                    let mut all_samples = Vec::<f32>::with_capacity(total_frames.saturating_mul(512));
                     let mut accumulated_lengths = vec![0usize; semantic_tokens.batch_size()];
                     let mut sample_rate = self.audio_decoder.sample_rate();
                     let mut channels = 1usize;
@@ -88,7 +89,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                     let mut frame_start = 0usize;
                     while frame_start < total_frames {
                         let frame_end = (frame_start + chunk_frames).min(total_frames);
-                        let delta_grid = slice_codebook_major_grid_range(&semantic_tokens, frame_start, frame_end)?;
+                        let delta_grid = slice_grid_range(&semantic_tokens, frame_start, frame_end)?;
                         let partial_pcm = stream.decode_step(&delta_grid, frame_end == total_frames)?;
                         accumulate_audio_decode_step_stats(
                             &mut audio_decode_calls,
@@ -143,7 +144,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     pub fn generate_semantic_tokens_with_seed(
-        &self,
+        &mut self,
         input: Input,
         seed: u64,
     ) -> Result<AudioTokenGrid, Error> {
@@ -151,7 +152,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     pub fn generate_semantic_tokens_with_seed_and_config(
-        &self,
+        &mut self,
         input: Input,
         seed: u64,
         config: &TtsRunConfig,
@@ -171,7 +172,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     pub fn synthesize_streaming<F>(
-        &self,
+        &mut self,
         input: Input,
         chunk_frames: usize,
         on_chunk: F,
@@ -179,12 +180,12 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     where
         F: FnMut(&AudioPcmBatch),
     {
-        let seed = self.text_decoder.borrow().default_seed();
-        self.synthesize_streaming_with_seed(input, seed, chunk_frames, on_chunk)
+        let config = TtsRunConfig::default();
+        self.synthesize_streaming_with_seed(input, config.default_seed, chunk_frames, on_chunk)
     }
 
     pub fn synthesize_streaming_with_seed<F>(
-        &self,
+        &mut self,
         input: Input,
         seed: u64,
         chunk_frames: usize,
@@ -198,7 +199,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     pub fn synthesize_streaming_with_config<F>(
-        &self,
+        &mut self,
         input: Input,
         config: &TtsRunConfig,
         on_chunk: F,
@@ -206,12 +207,11 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     where
         F: FnMut(&AudioPcmBatch),
     {
-        let seed = self.text_decoder.borrow().default_seed();
-        self.synthesize_streaming_with_seed_and_config(input, seed, config, on_chunk)
+        self.synthesize_streaming_with_seed_and_config(input, config.default_seed, config, on_chunk)
     }
 
     pub fn synthesize_streaming_with_seed_and_config<F>(
-        &self,
+        &mut self,
         input: Input,
         seed: u64,
         config: &TtsRunConfig,
@@ -253,7 +253,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
             callback_seconds: 0.0,
             audio_decode_seconds_in_loop: 0.0,
             audio_decode_seconds: 0.0,
-            output_samples: Vec::new(),
+            output_samples: Vec::with_capacity(config.max_semantic_frames.saturating_mul(512)),
             output_frames: 0,
             output_sample_rate: self.audio_decoder.sample_rate(),
             output_channels: 1,
@@ -384,18 +384,17 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     }
 
     fn generate_semantic_tokens(
-        &self,
+        &mut self,
         text_tokens: &[u64],
         seed: u64,
         max_semantic_frames: usize,
     ) -> Result<AudioTokenGrid, Error> {
-        let mut decoder = self.text_decoder.borrow_mut();
         let codec_cardinality = self.audio_decoder.codec_cardinality();
-        decoder.generate_semantic_tokens(text_tokens, codec_cardinality, seed, max_semantic_frames)
+        self.text_decoder.generate_semantic_tokens(text_tokens, codec_cardinality, seed, max_semantic_frames)
     }
 
     fn generate_semantic_tokens_with_callback<F>(
-        &self,
+        &mut self,
         text_tokens: &[u64],
         seed: u64,
         max_semantic_frames: usize,
@@ -404,9 +403,8 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
     where
         F: FnMut(&[u32]) -> Result<(), Error>,
     {
-        let mut decoder = self.text_decoder.borrow_mut();
         let codec_cardinality = self.audio_decoder.codec_cardinality();
-        decoder.generate_semantic_tokens_with_callback(
+        self.text_decoder.generate_semantic_tokens_with_callback(
             text_tokens,
             codec_cardinality,
             seed,
@@ -415,14 +413,14 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         )
     }
 
-    fn take_text_decoder_instrumentation(&self) -> RunnerInstrumentation {
-        self.text_decoder.borrow_mut().take_instrumentation()
+    fn take_text_decoder_instrumentation(&mut self) -> RunnerInstrumentation {
+        self.text_decoder.take_instrumentation()
     }
 
     fn record_last_execution_stats(
-        &self,
+        &mut self,
         stats: TtsExecutionStats,
     ) {
-        self.last_execution_stats.borrow_mut().replace(stats);
+        self.last_execution_stats.replace(stats);
     }
 }

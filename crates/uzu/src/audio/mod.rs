@@ -11,4 +11,4 @@ pub use context::AudioGenerationContext;
 pub use nanocodec::{
     NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
 };
-pub use types::{AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking};
+pub use types::{AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid};

@@ -11,8 +11,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     fs::File,
-    ops::DerefMut,
-    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     rc::Rc,
     time::Instant,
@@ -26,7 +24,7 @@ use crate::{
     DataType,
     array::{ArrayCell, ArrayContextExt},
     audio::{
-        AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking,
+        AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
     },
     backends::common::{
@@ -47,7 +45,7 @@ use crate::{
         scratch_buffers::ScratchBuffers,
         state::{ArrayId, ForwardPassState, SharedBuffers},
     },
-    parameters::{ParameterLoader, read_safetensors_metadata},
+    parameters::ParameterLoader,
     session::{
         config::{
             TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig,
@@ -61,11 +59,6 @@ use crate::{
 use backend_factory::load_tts_runtime;
 use decoder_runtime::*;
 use decoder_support::*;
-
-const DEFAULT_STUB_SEED: u64 = 123;
-const DEFAULT_TTS_RANDOM_SEED: u64 = 123;
-const DEFAULT_CHUNK_EMA_ALPHA: f64 = 0.2;
-const DEFAULT_CHUNK_HYSTERESIS_FRACTION: f64 = 0.25;
 
 fn unable_to_create_context<E: std::error::Error + 'static>(err: E) -> Error {
     Error::UnableToCreateContext(Box::new(err))
@@ -101,21 +94,15 @@ pub(super) struct AdaptiveChunkController {
 }
 
 pub struct TtsSession<B: Backend> {
-    #[allow(dead_code)]
-    model_path: PathBuf,
-    #[allow(dead_code)]
-    model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
     audio: AudioGenerationContext<B>,
     audio_decoder: Box<dyn AudioDecoderBackend>,
     message_processor_config: TtsMessageProcessorConfig,
-    text_decoder: RefCell<Box<dyn SemanticDecoderBackend>>,
-    last_execution_stats: RefCell<Option<TtsExecutionStats>>,
+    text_decoder: Box<dyn SemanticDecoderBackend>,
+    last_execution_stats: Option<TtsExecutionStats>,
 }
 
 trait SemanticDecoderBackend {
-    fn default_seed(&self) -> u64;
-
     fn generate_semantic_tokens(
         &mut self,
         text_tokens: &[u64],
@@ -239,9 +226,3 @@ pub(super) struct PendingStreamingChunk {
     pub(super) chunk: Box<dyn PendingAudioChunkBackend>,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct StubTextDecoderRuntime {
-    pub(super) num_codebooks: usize,
-    pub(super) codebook_size: usize,
-    pub(super) default_seed: u64,
-}

@@ -180,7 +180,6 @@ pub(super) fn load_audio_runtime_from_tts_config(
         num_groups: total_codebooks,
         num_levels_per_group: vec![codebook_size_i32],
         eps: default_eps(),
-        output_packing: RuntimePacking::CodebookMajor,
     };
     let decoder = StructuredAudioCodecGraph {
         config: cfg.clone(),

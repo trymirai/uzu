@@ -334,7 +334,6 @@ impl StructuredAudioCodecGraph {
     pub(super) fn apply_post_module_single_batch_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        _context: &Rc<B::Context>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         latent_nsc: &Array<B>,
         frames: usize,
@@ -431,7 +430,6 @@ impl StructuredAudioCodecGraph {
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
             return self.apply_post_module_single_batch_enqueued(
                 resources,
-                context,
                 command_buffer,
                 latent_nsc,
                 frames,

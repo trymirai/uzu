@@ -39,17 +39,10 @@ fn default_tts_message_fields() -> BTreeMap<String, String> {
     BTreeMap::new()
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Default)]
-pub struct TtsVocoderConfig {
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TtsConfig {
     pub text_decoder_config: TtsTextDecoderConfig,
     pub audio_decoder_config: TtsAudioDecoderConfig,
-    pub vocoder_config: TtsVocoderConfig,
     #[serde(default)]
     pub activation_precision: Option<ConfigDataType>,
 }
@@ -57,10 +50,6 @@ pub struct TtsConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum TtsTextDecoderConfig {
-    StubTextDecoderConfig {
-        num_codebooks: usize,
-        codebook_size: usize,
-    },
     FishAudioTextDecoderConfig {
         #[serde(flatten)]
         config: FishAudioTextDecoderConfig,

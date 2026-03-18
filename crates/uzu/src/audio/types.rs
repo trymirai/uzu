@@ -55,13 +55,6 @@ impl<B: Backend> From<ParameterLoaderError<B>> for AudioError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AudioTokenPacking {
-    #[default]
-    FrameMajor,
-    CodebookMajor,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioPcmBatch {
     samples: Box<[f32]>,
@@ -131,7 +124,6 @@ pub struct AudioTokenGrid {
     codebooks: usize,
     frames: usize,
     lengths: Box<[usize]>,
-    packing: AudioTokenPacking,
 }
 
 impl AudioTokenGrid {
@@ -141,7 +133,6 @@ impl AudioTokenGrid {
         codebooks: usize,
         frames: usize,
         lengths: Box<[usize]>,
-        packing: AudioTokenPacking,
     ) -> AudioResult<Self> {
         if codebooks == 0 {
             return Err(AudioError::InvalidTokenCardinality);
@@ -181,7 +172,6 @@ impl AudioTokenGrid {
             codebooks,
             frames,
             lengths,
-            packing,
         })
     }
 
@@ -201,16 +191,12 @@ impl AudioTokenGrid {
         &self.lengths
     }
 
-    pub fn packing(&self) -> AudioTokenPacking {
-        self.packing
-    }
-
     pub fn tokens(&self) -> &[u32] {
         &self.tokens
     }
 
-    pub fn into_parts(self) -> (Box<[u32]>, usize, usize, usize, Box<[usize]>, AudioTokenPacking) {
-        (self.tokens, self.batch_size, self.codebooks, self.frames, self.lengths, self.packing)
+    pub fn into_parts(self) -> (Box<[u32]>, usize, usize, usize, Box<[usize]>) {
+        (self.tokens, self.batch_size, self.codebooks, self.frames, self.lengths)
     }
 
     pub fn get(
@@ -219,101 +205,24 @@ impl AudioTokenGrid {
         codebook: usize,
         frame: usize,
     ) -> u32 {
-        let index =
-            Self::token_index(self.packing, self.batch_size, self.codebooks, self.frames, batch, codebook, frame);
+        let index = Self::token_index(self.codebooks, self.frames, batch, codebook, frame);
         self.tokens[index]
     }
 
-    pub fn to_packing(
-        &self,
-        packing: AudioTokenPacking,
-    ) -> Self {
-        if packing == self.packing {
-            return self.clone();
-        }
-
-        let mut tokens = vec![0u32; self.tokens.len()];
-        for batch in 0..self.batch_size {
-            for frame in 0..self.frames {
-                for codebook in 0..self.codebooks {
-                    let src_idx = Self::token_index(
-                        self.packing,
-                        self.batch_size,
-                        self.codebooks,
-                        self.frames,
-                        batch,
-                        codebook,
-                        frame,
-                    );
-                    let dst_idx = Self::token_index(
-                        packing,
-                        self.batch_size,
-                        self.codebooks,
-                        self.frames,
-                        batch,
-                        codebook,
-                        frame,
-                    );
-                    tokens[dst_idx] = self.tokens[src_idx];
-                }
-            }
-        }
-
-        Self {
-            tokens: tokens.into_boxed_slice(),
-            batch_size: self.batch_size,
-            codebooks: self.codebooks,
-            frames: self.frames,
-            lengths: self.lengths.clone(),
-            packing,
-        }
-    }
-
     fn token_index(
-        packing: AudioTokenPacking,
-        batch_size: usize,
         codebooks: usize,
         frames: usize,
         batch: usize,
         codebook: usize,
         frame: usize,
     ) -> usize {
-        debug_assert!(batch < batch_size);
-        debug_assert!(codebook < codebooks);
-        debug_assert!(frame < frames);
-
-        match packing {
-            AudioTokenPacking::FrameMajor => ((batch * frames + frame) * codebooks) + codebook,
-            AudioTokenPacking::CodebookMajor => ((batch * codebooks + codebook) * frames) + frame,
-        }
+        ((batch * codebooks + codebook) * frames) + frame
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioError, AudioTokenGrid, AudioTokenPacking};
-
-    #[test]
-    fn packing_conversion_roundtrip_is_lossless() {
-        let grid = AudioTokenGrid::new(
-            vec![
-                0, 1, 2, 3, // b0 f0, f1
-                4, 5, 6, 7, // b1 f0, f1
-            ]
-            .into_boxed_slice(),
-            2,
-            2,
-            2,
-            vec![2, 2].into_boxed_slice(),
-            AudioTokenPacking::FrameMajor,
-        )
-        .expect("valid grid");
-
-        let converted = grid.to_packing(AudioTokenPacking::CodebookMajor);
-        let restored = converted.to_packing(AudioTokenPacking::FrameMajor);
-
-        assert_eq!(restored, grid);
-    }
+    use super::{AudioError, AudioTokenGrid};
 
     #[test]
     fn invalid_grid_shape_is_rejected() {
@@ -323,7 +232,6 @@ mod tests {
             2,
             2,
             vec![2].into_boxed_slice(),
-            AudioTokenPacking::FrameMajor,
         )
         .expect_err("shape mismatch should fail");
 

@@ -46,38 +46,6 @@ pub(super) fn load_tts_runtime<B: Backend + Send + Sync>(
     })
 }
 
-fn validate_stub_text_decoder_contract(
-    num_codebooks: usize,
-    codebook_size: usize,
-    audio_num_codebooks: usize,
-    audio_codec_cardinality: usize,
-    audio_semantic_codec_cardinality: Option<usize>,
-) -> Result<(), Error> {
-    if num_codebooks == 0 || codebook_size == 0 {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "stub decoder requires positive num_codebooks and codebook_size, got num_codebooks={num_codebooks}, codebook_size={codebook_size}"
-        )));
-    }
-    if num_codebooks != audio_num_codebooks {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "stub decoder num_codebooks={num_codebooks} does not match audio num_codebooks={audio_num_codebooks}"
-        )));
-    }
-    if codebook_size != audio_codec_cardinality {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "stub decoder codebook_size={codebook_size} does not match audio codec_cardinality={audio_codec_cardinality}"
-        )));
-    }
-    if let Some(semantic_codec_cardinality) = audio_semantic_codec_cardinality {
-        if semantic_codec_cardinality != audio_codec_cardinality {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "stub decoder requires uniform semantic/residual codec cardinality, got semantic_codec_cardinality={semantic_codec_cardinality}, residual_codec_cardinality={audio_codec_cardinality}"
-            )));
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn build_text_decoder_backend<B: Backend>(
     tts_model_config: &TtsModelConfig,
     audio: &AudioGenerationContext<B>,
@@ -85,47 +53,11 @@ pub(super) fn build_text_decoder_backend<B: Backend>(
     options: &TtsSessionOptions,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
     match &tts_model_config.tts_config.text_decoder_config {
-        TtsTextDecoderConfig::StubTextDecoderConfig {
-            num_codebooks,
-            codebook_size,
-        } => {
-            validate_stub_text_decoder_contract(
-                *num_codebooks,
-                *codebook_size,
-                audio.num_codebooks(),
-                audio.codec_cardinality(),
-                audio.semantic_codec_cardinality(),
-            )?;
-            let default_seed = load_stub_seed(model_path.join("model.safetensors")).unwrap_or(DEFAULT_STUB_SEED);
-            Ok(Box::new(StubTextDecoderRuntime {
-                num_codebooks: *num_codebooks,
-                codebook_size: *codebook_size,
-                default_seed,
-            }))
-        },
         TtsTextDecoderConfig::FishAudioTextDecoderConfig {
             config,
         } => {
             fishaudio::validate_fishaudio_message_processor_config(&tts_model_config.message_processor_config)?;
             fishaudio::build_fishaudio_text_decoder_runtime(config, audio, model_path, &options.text_decoder)
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_stub_text_decoder_contract;
-    use crate::session::types::Error;
-
-    #[test]
-    fn stub_decoder_contract_accepts_uniform_codebooks() {
-        let result = validate_stub_text_decoder_contract(4, 1024, 4, 1024, Some(1024));
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn stub_decoder_contract_rejects_heterogeneous_semantic_codebook() {
-        let result = validate_stub_text_decoder_contract(4, 1024, 4, 1024, Some(512));
-        assert!(matches!(result, Err(Error::InvalidTtsModelConfig(_))));
     }
 }

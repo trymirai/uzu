@@ -13,12 +13,18 @@ pub struct AudioDecodeStepStats {
     pub decoded_window_frames: usize,
 }
 
+/// Ring-buffer backed stream state for incremental audio decoding.
+///
+/// Token rows are stored in fixed-capacity circular buffers so that evicting
+/// old frames is O(1) (just advance the head pointer) instead of O(N) via
+/// `Vec::drain`.
 #[derive(Debug, Clone)]
 pub struct AudioDecodeStreamState {
     pub(super) batch_size: usize,
     pub(super) codebooks: usize,
-    max_workspace_frames: usize,
+    retained_capacity: usize,
     stored_frame_start: usize,
+    stored_frames: usize,
     total_frames_generated: usize,
     row_tokens: Vec<Vec<u32>>,
     flattened_tokens: Vec<u32>,
@@ -48,16 +54,22 @@ impl AudioDecodeStreamState {
         let row_count = batch_size
             .checked_mul(codebooks)
             .ok_or(AudioError::Runtime("stream state row count overflow".to_string()))?;
+        // Double the workspace for ring capacity so we have room for context
+        // overlap without immediate eviction.
+        let retained_capacity = max_workspace_frames
+            .checked_mul(2)
+            .ok_or(AudioError::Runtime("stream retained capacity overflow".to_string()))?;
         let mut row_tokens = Vec::with_capacity(row_count);
         for _ in 0..row_count {
-            row_tokens.push(Vec::with_capacity(max_workspace_frames));
+            row_tokens.push(vec![0u32; retained_capacity]);
         }
 
         Ok(Self {
             batch_size,
             codebooks,
-            max_workspace_frames,
+            retained_capacity,
             stored_frame_start: 0,
+            stored_frames: 0,
             total_frames_generated: 0,
             row_tokens,
             flattened_tokens: Vec::with_capacity(
@@ -81,12 +93,15 @@ impl AudioDecodeStreamState {
         self.last_step_stats
     }
 
-    fn stored_frames(&self) -> usize {
-        self.row_tokens.first().map_or(0, Vec::len)
+    /// Global frame index one past the last retained frame.
+    fn stored_frame_end(&self) -> usize {
+        self.stored_frame_start.saturating_add(self.stored_frames)
     }
 
-    fn stored_frame_end(&self) -> usize {
-        self.stored_frame_start.saturating_add(self.stored_frames())
+    /// Physical ring slot for a global frame index.
+    #[inline]
+    fn slot(&self, global_frame: usize) -> usize {
+        global_frame % self.retained_capacity
     }
 
     pub(super) fn append_delta(
@@ -111,44 +126,29 @@ impl AudioDecodeStreamState {
             return Ok(());
         }
 
-        let converted;
-        let delta_ref = if delta_tokens.packing() == AudioTokenPacking::CodebookMajor {
-            delta_tokens
-        } else {
-            converted = delta_tokens.to_packing(AudioTokenPacking::CodebookMajor);
-            &converted
-        };
-        let delta_frames = delta_ref.frames();
-        let tokens = delta_ref.tokens();
-        let delta_lengths = delta_ref.lengths();
-        let target_frames = self.total_frames().saturating_add(delta_frames);
+        let delta_frames = delta_tokens.frames();
+        let tokens = delta_tokens.tokens();
+        let delta_lengths = delta_tokens.lengths();
 
-        for batch in 0..self.batch_size {
-            for codebook in 0..self.codebooks {
-                let row_index = batch
-                    .checked_mul(self.codebooks)
-                    .and_then(|value| value.checked_add(codebook))
-                    .ok_or(AudioError::Runtime("stream row index overflow".to_string()))?;
-                let row = &mut self.row_tokens[row_index];
-                let src_start = row_index
-                    .checked_mul(delta_frames)
-                    .ok_or(AudioError::Runtime("stream source index overflow".to_string()))?;
-                let src_end = src_start
-                    .checked_add(delta_frames)
-                    .ok_or(AudioError::Runtime("stream source index overflow".to_string()))?;
-                row.extend_from_slice(&tokens[src_start..src_end]);
+        for frame_offset in 0..delta_frames {
+            let global_frame = self.stored_frame_start + self.stored_frames;
+            // Evict oldest frame if ring is full.
+            if self.stored_frames == self.retained_capacity {
+                self.stored_frame_start += 1;
+                self.stored_frames -= 1;
             }
-        }
-        self.total_frames_generated = target_frames;
+            let physical = self.slot(global_frame);
 
-        let stored_frames = self.stored_frames();
-        if stored_frames > self.max_workspace_frames {
-            let evict = stored_frames - self.max_workspace_frames;
-            for row in &mut self.row_tokens {
-                row.drain(..evict);
+            for batch in 0..self.batch_size {
+                for codebook in 0..self.codebooks {
+                    let row_index = batch * self.codebooks + codebook;
+                    let src_index = row_index * delta_frames + frame_offset;
+                    self.row_tokens[row_index][physical] = tokens[src_index];
+                }
             }
-            self.stored_frame_start = self.stored_frame_start.saturating_add(evict);
+            self.stored_frames += 1;
         }
+        self.total_frames_generated = self.total_frames_generated.saturating_add(delta_frames);
 
         for (length, &delta_len) in self.semantic_lengths.iter_mut().zip(delta_lengths.iter()) {
             *length = length
@@ -166,12 +166,7 @@ impl AudioDecodeStreamState {
                 self.stored_frame_start
             )));
         }
-        let total_frames = self.stored_frames();
-        for row in &self.row_tokens {
-            if row.len() != total_frames {
-                return Err(AudioError::Runtime("stream row token length mismatch".to_string()));
-            }
-        }
+        let total_frames = self.stored_frames;
 
         let expected_tokens = self
             .batch_size
@@ -179,8 +174,14 @@ impl AudioDecodeStreamState {
             .and_then(|value| value.checked_mul(total_frames))
             .ok_or(AudioError::Runtime("stream token count overflow".to_string()))?;
         let mut tokens = Vec::with_capacity(expected_tokens);
+
         for row in &self.row_tokens {
-            tokens.extend_from_slice(row);
+            // When stored_frame_start == 0 and no wrap has occurred, frames
+            // 0..total_frames map to physical slots 0..total_frames.
+            for frame in 0..total_frames {
+                let physical = self.slot(frame);
+                tokens.push(row[physical]);
+            }
         }
         if tokens.len() != expected_tokens {
             return Err(AudioError::Runtime("stream flattened token count mismatch".to_string()));
@@ -192,7 +193,6 @@ impl AudioDecodeStreamState {
             self.codebooks,
             total_frames,
             self.semantic_lengths.clone().into_boxed_slice(),
-            AudioTokenPacking::CodebookMajor,
         )
     }
 
@@ -221,8 +221,6 @@ impl AudioDecodeStreamState {
         }
 
         let window_frames = end_frame.saturating_sub(start_frame);
-        let local_start = start_frame.saturating_sub(self.stored_frame_start);
-        let local_end = local_start.saturating_add(window_frames);
         let row_count = self
             .batch_size
             .checked_mul(self.codebooks)
@@ -231,15 +229,18 @@ impl AudioDecodeStreamState {
             .checked_mul(window_frames)
             .ok_or(AudioError::Runtime("stream window token capacity overflow".to_string()))?;
 
+        // Grow the scratch buffer if needed (only happens once in practice).
         if self.flattened_tokens.capacity() < required_capacity {
-            return Err(AudioError::Runtime(format!(
-                "stream flattened window capacity exceeded: required={required_capacity}, capacity={}",
-                self.flattened_tokens.capacity()
-            )));
+            self.flattened_tokens.reserve(required_capacity - self.flattened_tokens.capacity());
         }
         self.flattened_tokens.clear();
+
+        // Read from ring in logical order via modulo indexing.
         for row in &self.row_tokens {
-            self.flattened_tokens.extend_from_slice(&row[local_start..local_end]);
+            for global_frame in start_frame..end_frame {
+                let physical = self.slot(global_frame);
+                self.flattened_tokens.push(row[physical]);
+            }
         }
 
         self.window_lengths.clear();
