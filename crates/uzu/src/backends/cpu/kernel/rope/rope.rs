@@ -32,22 +32,24 @@ pub fn rope<T: ArrayElement + Float>(
     rotated_queries: *mut T,
     rotated_keys: *mut T,
     head_dim: u32,
+    rope_dim: u32,
     num_heads: u32,
     num_groups: u32,
     suffix_length: u32,
     max_sequence_length: u32,
 ) {
-    if head_dim & 1 != 0 || num_heads % num_groups != 0 {
+    if num_groups == 0 || head_dim & 1 != 0 || rope_dim & 1 != 0 || rope_dim > head_dim || num_heads % num_groups != 0 {
         return;
     }
 
     let head_dim = head_dim as usize;
+    let rope_dim = rope_dim as usize;
     let num_heads = num_heads as usize;
     let num_groups = num_groups as usize;
     let suffix_length = suffix_length as usize;
     let max_sequence_length = max_sequence_length as usize;
 
-    let half_dim = head_dim / 2;
+    let half_rope_dim = rope_dim / 2;
     let total_heads = num_heads + 2 * num_groups;
     let heads_per_group = num_heads / num_groups;
 
@@ -62,14 +64,16 @@ pub fn rope<T: ArrayElement + Float>(
                 raw_position
             };
 
-            for dim_index in 0..head_dim {
-                let cos_val = unsafe { *cosines.add(absolute_position * head_dim + dim_index) };
-                let sin_val = unsafe { *sines.add(absolute_position * head_dim + dim_index) };
+            // Rotated dimensions: apply RoPE to dims 0..rope_dim
+            for dim_index in 0..rope_dim {
+                let cos_val = unsafe { *cosines.add(absolute_position * rope_dim + dim_index) };
+                let sin_val = unsafe { *sines.add(absolute_position * rope_dim + dim_index) };
 
                 // Query rotation
                 let q_val =
                     unsafe { *qkv.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index) };
-                let q_paired = get_paired_val(qkv, dim_index, half_dim, token_index, total_heads, head_dim, head_index);
+                let q_paired =
+                    get_paired_val(qkv, dim_index, half_rope_dim, token_index, total_heads, head_dim, head_index);
                 let q_result = q_val * cos_val + q_paired * sin_val;
                 unsafe {
                     *rotated_queries.add(head_index * suffix_length * head_dim + token_index * head_dim + dim_index) =
@@ -82,13 +86,41 @@ pub fn rope<T: ArrayElement + Float>(
                     let k_val = unsafe {
                         *qkv.add(token_index * total_heads * head_dim + key_head_index * head_dim + dim_index)
                     };
-                    let k_paired =
-                        get_paired_val(qkv, dim_index, half_dim, token_index, total_heads, head_dim, key_head_index);
+                    let k_paired = get_paired_val(
+                        qkv,
+                        dim_index,
+                        half_rope_dim,
+                        token_index,
+                        total_heads,
+                        head_dim,
+                        key_head_index,
+                    );
                     let k_result = k_val * cos_val + k_paired * sin_val;
                     unsafe {
                         *rotated_keys
                             .add(group_index * suffix_length * head_dim + token_index * head_dim + dim_index) =
                             k_result;
+                    }
+                }
+            }
+
+            // Pass-through dimensions: copy dims rope_dim..head_dim unchanged
+            for dim_index in rope_dim..head_dim {
+                let q_val =
+                    unsafe { *qkv.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index) };
+                unsafe {
+                    *rotated_queries.add(head_index * suffix_length * head_dim + token_index * head_dim + dim_index) =
+                        q_val;
+                }
+
+                if head_index == group_index * heads_per_group {
+                    let key_head_index = num_heads + group_index;
+                    let k_val = unsafe {
+                        *qkv.add(token_index * total_heads * head_dim + key_head_index * head_dim + dim_index)
+                    };
+                    unsafe {
+                        *rotated_keys
+                            .add(group_index * suffix_length * head_dim + token_index * head_dim + dim_index) = k_val;
                     }
                 }
             }

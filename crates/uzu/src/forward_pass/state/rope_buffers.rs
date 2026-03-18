@@ -8,9 +8,9 @@ use crate::{
 };
 
 pub struct RopeBuffers<B: Backend> {
-    /// [rope_max_sequence_length, head_dim]
+    /// [rope_max_sequence_length, rope_dim]
     pub cosines: ArrayCell<B>,
-    /// [rope_max_sequence_length, head_dim]
+    /// [rope_max_sequence_length, rope_dim]
     pub sines: ArrayCell<B>,
 }
 
@@ -19,18 +19,17 @@ impl<B: Backend> RopeBuffers<B> {
         context: &B::Context,
         model_shape: &ModelShape,
     ) -> Self {
-        let rotated_queries_shape = model_shape.rotated_queries_shape(1);
-        let head_dim = rotated_queries_shape[2];
+        let rope_dim = model_shape.rope_dim();
         let rope_max_sequence_length = model_shape.context_length();
 
         Self {
             cosines: RefCell::new(context.create_array_uninitialized(
-                &[rope_max_sequence_length, head_dim],
+                &[rope_max_sequence_length, rope_dim],
                 model_shape.activation_data_type(),
                 "rope_buffers_cosines",
             )),
             sines: RefCell::new(context.create_array_uninitialized(
-                &[rope_max_sequence_length, head_dim],
+                &[rope_max_sequence_length, rope_dim],
                 model_shape.activation_data_type(),
                 "rope_buffers_sines",
             )),

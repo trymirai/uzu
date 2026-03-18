@@ -25,6 +25,7 @@ struct Input<T: ArrayElement + Float> {
     sines: Box<[T]>,
     token_positions: Box<[i32]>,
     head_dim: u32,
+    rope_dim: u32,
     num_heads: u32,
     num_groups: u32,
     suffix_length: u32,
@@ -35,12 +36,13 @@ fn get_test_data<T: ArrayElement + Float>(
     num_heads: u32,
     num_groups: u32,
     head_dim: u32,
+    rope_dim: u32,
     suffix_length: u32,
     max_sequence_length: u32,
 ) -> Input<T> {
     let total_heads = (num_heads + 2 * num_groups) as usize;
     let qkv_size = suffix_length as usize * total_heads * head_dim as usize;
-    let cos_sin_size = max_sequence_length as usize * head_dim as usize;
+    let cos_sin_size = max_sequence_length as usize * rope_dim as usize;
 
     let mut qkv = vec![T::zero(); qkv_size];
     for i in 0..qkv_size {
@@ -65,6 +67,7 @@ fn get_test_data<T: ArrayElement + Float>(
         sines: sines.into_boxed_slice(),
         token_positions: token_positions.into_boxed_slice(),
         head_dim,
+        rope_dim,
         num_heads,
         num_groups,
         suffix_length,
@@ -80,7 +83,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
 
     let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
-    let cos_sin_len = input.max_sequence_length as usize * input.head_dim as usize;
+    let cos_sin_len = input.max_sequence_length as usize * input.rope_dim as usize;
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
     let keys_len = input.num_groups as usize * input.suffix_length as usize * input.head_dim as usize;
 
@@ -100,6 +103,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         rotated_queries_array.buffer().borrow_mut().deref_mut(),
         rotated_keys_array.buffer().borrow_mut().deref_mut(),
         input.head_dim,
+        input.rope_dim,
         input.num_heads,
         input.num_groups,
         input.suffix_length,
@@ -132,30 +136,40 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     // Typical GQA config: 32 query heads, 8 KV groups, head_dim=128, 4 tokens
-    let input = get_test_data::<T>(32, 8, 128, 4, 512);
+    let input = get_test_data::<T>(32, 8, 128, 128, 4, 512);
     test_internal(&input);
 }
 
 fn test_mha<T: ArrayElement + Float + Debug + Display>() {
     // MHA: num_heads == num_groups
-    let input = get_test_data::<T>(8, 8, 64, 2, 256);
+    let input = get_test_data::<T>(8, 8, 64, 64, 2, 256);
     test_internal(&input);
 }
 
 fn test_single_token<T: ArrayElement + Float + Debug + Display>() {
     // Single token (decode)
-    let input = get_test_data::<T>(16, 4, 64, 1, 1024);
+    let input = get_test_data::<T>(16, 4, 64, 64, 1, 1024);
     test_internal(&input);
 }
 
 fn test_small<T: ArrayElement + Float + Debug + Display>() {
     // Minimal config
-    let input = get_test_data::<T>(2, 1, 4, 1, 8);
+    let input = get_test_data::<T>(2, 1, 4, 4, 1, 8);
+    test_internal(&input);
+}
+
+fn test_partial_rope_basic<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_test_data::<T>(32, 8, 128, 64, 4, 512);
+    test_internal(&input);
+}
+
+fn test_partial_rope_small<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_test_data::<T>(2, 1, 8, 4, 1, 8);
     test_internal(&input);
 }
 
 fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
-    let mut input = get_test_data::<T>(4, 2, 8, 3, 64);
+    let mut input = get_test_data::<T>(4, 2, 8, 8, 3, 64);
     input.token_positions = vec![10, 11, 12].into_boxed_slice();
     test_internal(&input);
 }
@@ -226,4 +240,14 @@ fn test_single_token_bf16() {
 #[test]
 fn test_small_bf16() {
     test_small::<bf16>();
+}
+
+#[test]
+fn test_partial_rope_basic_f32() {
+    test_partial_rope_basic::<f32>();
+}
+
+#[test]
+fn test_partial_rope_small_f32() {
+    test_partial_rope_small::<f32>();
 }
