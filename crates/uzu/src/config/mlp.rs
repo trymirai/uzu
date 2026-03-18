@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Activation, LinearConfig};
+use crate::{LinearConfig, backends::common::ActivationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -14,7 +14,7 @@ pub enum MLPConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DenseMLPConfig {
     pub linear_config: LinearConfig,
-    pub activation: Activation,
+    pub activation: ActivationConfig,
     #[serde(default)]
     pub has_up_biases: bool,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub enum RoutingFunctionConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MoeExpertConfig {
     pub linear_config: LinearConfig,
-    pub activation: Activation,
+    pub activation: ActivationConfig,
     pub has_up_biases: bool,
     pub has_down_biases: bool,
     pub gate_clipping: [Option<f32>; 2],
@@ -63,7 +63,7 @@ mod tests {
     use serde_json::from_str;
 
     use super::{super::linear::QuantizationConfig, *};
-    use crate::config::{Activation, ConfigDataType, QuantizationMode};
+    use crate::{backends::common::gpu_types::QuantizationMode, config::ConfigDataType};
 
     #[test]
     fn test_dense_mlp_config() {
@@ -87,16 +87,14 @@ mod tests {
             linear_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UInt4,
-                    activation_quantization_mode: Some(QuantizationMode::Int8),
+                    weight_quantization_mode: QuantizationMode::UINT4,
+                    activation_quantization_mode: Some(QuantizationMode::INT8),
                     activation_precision: ConfigDataType::BFloat16,
                 },
                 lora_rank: 16,
                 lora_scale: 2.0,
             },
-            activation: Activation::SiLU {
-                alpha: 1.0,
-            },
+            activation: ActivationConfig::silu_default(),
             has_up_biases: false,
             has_down_biases: false,
             gate_clipping: None,
@@ -149,16 +147,14 @@ mod tests {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SiLU {
-                    alpha: 1.0,
-                },
+                activation: ActivationConfig::silu_default(),
                 has_up_biases: true,
                 has_down_biases: true,
                 gate_clipping: [None, Some(7.0)],
@@ -214,16 +210,14 @@ mod tests {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UInt4,
-                        activation_quantization_mode: Some(QuantizationMode::Int8),
+                        weight_quantization_mode: QuantizationMode::UINT4,
+                        activation_quantization_mode: Some(QuantizationMode::INT8),
                         activation_precision: ConfigDataType::BFloat16,
                     },
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: Activation::SiLU {
-                    alpha: 1.0,
-                },
+                activation: ActivationConfig::silu_default(),
                 has_up_biases: true,
                 has_down_biases: true,
                 gate_clipping: [None, Some(7.0)],

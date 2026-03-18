@@ -1,6 +1,8 @@
 #include <metal_stdlib>
-#include "../activation/activation.h"
+#include "../activation/activations.h"
 #include "../common/dsl.h"
+
+using namespace uzu::activation_type;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
@@ -9,7 +11,7 @@ PUBLIC KERNEL(MlpGateActMul) (
     device T* hidden,
     const constant int& h,
     const constant int& m,
-    const constant uint& act_type,
+    const constant ActivationType& act_type,
     uint j AXIS(h, 64),
     uint row AXIS(m, 1)
 ) {

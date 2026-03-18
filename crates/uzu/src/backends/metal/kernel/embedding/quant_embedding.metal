@@ -1,11 +1,8 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "quantization.h"
 
-enum QuantizationMode : uint {
-  QUANT_UINT4 = 0,
-  QUANT_INT8 = 1,
-  QUANT_UINT8 = 2
-};
+using namespace uzu::quantization;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
@@ -19,8 +16,8 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     constant uint32_t& vocab_size,
     constant uint32_t& model_dim,
     constant float& input_scale,
+    const constant QuantizationMode& quant_mode,
     const uint32_t group_size SPECIALIZE,
-    const uint quant_mode SPECIALIZE,
     const uint dim_idx AXIS(model_dim, 16),
     const uint batch_idx AXIS(batch_size, 16)
 ) {
@@ -37,11 +34,12 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
   const T scale = scales[token_id * num_groups + group_idx];
   const T bias = biases[token_id * num_groups + group_idx];
 
-  const uint packing_divisor = quant_mode == QUANT_UINT4 ? 2 : 1;
+  const uint packing_divisor = quant_mode == QuantizationMode::UINT4 ? 2 : 1;
   const uint weights_stride = model_dim / packing_divisor;
 
   int quantized_value = 0;
-  if (quant_mode == QUANT_UINT4) {
+  switch (quant_mode) {
+  case UINT4: {
     const uint byte_idx = token_id * weights_stride + (dim_idx / 2);
     const uint8_t packed = weights[byte_idx];
     if ((dim_idx & 1) == 0) {
@@ -49,14 +47,20 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     } else {
       quantized_value = int((packed >> 4) & 0x0F);
     }
-  } else if (quant_mode == QUANT_INT8) {
+    break;
+  };
+  case INT8: {
     const uint elem_idx = token_id * weights_stride + dim_idx;
     const device int8_t* weights_i8 =
         reinterpret_cast<const device int8_t*>(weights);
     quantized_value = int(weights_i8[elem_idx]);
-  } else {
+    break;
+  };
+  case UINT8: {
     const uint elem_idx = token_id * weights_stride + dim_idx;
     quantized_value = int(weights[elem_idx]);
+    break;
+  };
   }
 
   float out_f = float(scale) * float(quantized_value) + float(bias);

@@ -1,6 +1,8 @@
 #include <metal_stdlib>
+#include "../activation/activations.h"
 #include "../common/dsl.h"
-#include "ssm_common.h"
+
+using namespace uzu::activation_type;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
@@ -44,7 +46,7 @@ PUBLIC KERNEL(Conv1dDecode)(
     constant const uint& suffix_len,
     constant const uint& inner_dim,
     constant const uint& proj_dim,
-    const uint activation_type SPECIALIZE,
+    constant const ActivationType& activation_type,
     const bool has_bias SPECIALIZE,
     const bool state_in_place SPECIALIZE,
     const uint token_idx AXIS(suffix_len, 32),
@@ -76,7 +78,7 @@ PUBLIC KERNEL(Conv1dDecode)(
     acc += float(w_row[current_tap_index]) * current;
   }
 
-  const T activated = apply_activation_fn(static_cast<T>(acc), activation_type);
+  const T activated = activate(static_cast<T>(acc), activation_type);
   if (channel_idx < inner_dim) {
     const uint dst = token_idx * inner_dim + channel_idx;
     x_out[dst] = activated;
@@ -120,7 +122,7 @@ PUBLIC KERNEL(Conv1dScan)(
     constant const uint& num_channels,
     constant const uint& inner_dim,
     constant const uint& proj_dim,
-    const uint activation_type SPECIALIZE,
+    constant const ActivationType& activation_type,
     const bool has_bias SPECIALIZE,
     const uint token_idx AXIS(suffix_len + kernel_size.saturating_sub(1), 32), 
     const uint channel_idx AXIS(num_channels, 1)
@@ -143,8 +145,7 @@ PUBLIC KERNEL(Conv1dScan)(
       acc += float(w_row[tap]) * sample;
     }
 
-    const T activated =
-        apply_activation_fn(static_cast<T>(acc), activation_type);
+    const T activated = activate(static_cast<T>(acc), activation_type);
     if (channel_idx < inner_dim) {
       const size_t dst = size_t(token_idx) * inner_dim + channel_idx;
       x_out[dst] = activated;

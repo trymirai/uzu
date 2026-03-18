@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    Activation, DataType,
+    DataType,
     array::Array,
     backends::common::{
         Backend, CommandBuffer, Kernels,
@@ -107,17 +107,12 @@ impl<B: Backend> MambaMixer<B> {
 
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
             .expect("Failed to create split in-projection kernel");
-        let conv_scan = <B::Kernels as Kernels>::Conv1dScanKernel::new(
-            context,
-            data_type,
-            Self::activation_to_int(&mamba_config.activation),
-            mamba_config.conv_config.has_biases,
-        )
-        .expect("Failed to create conv scan kernel");
+        let conv_scan =
+            <B::Kernels as Kernels>::Conv1dScanKernel::new(context, data_type, mamba_config.conv_config.has_biases)
+                .expect("Failed to create conv scan kernel");
         let conv_decode = <B::Kernels as Kernels>::Conv1dDecodeKernel::new(
             context,
             data_type,
-            Self::activation_to_int(&mamba_config.activation),
             mamba_config.conv_config.has_biases,
             true,
         )
@@ -235,6 +230,7 @@ impl<B: Backend> MambaMixer<B> {
                     suffix_length as u32,
                     inner_dim as u32,
                     proj_dim as u32,
+                    self.config.activation.act_type(),
                     command_buffer,
                 );
             }
@@ -279,6 +275,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     inner_dim as u32,
                     proj_dim as u32,
+                    self.config.activation.act_type(),
                     command_buffer,
                 )
             }
@@ -395,16 +392,6 @@ impl<B: Backend> MambaMixer<B> {
             dh,
             command_buffer,
         );
-    }
-
-    fn activation_to_int(activation: &Activation) -> u32 {
-        match activation {
-            Activation::Identity => 0,
-            Activation::SiLU {
-                ..
-            } => 1,
-            Activation::Gelu => 2,
-        }
     }
 
     pub(crate) fn encode(

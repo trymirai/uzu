@@ -229,7 +229,7 @@ mod tests {
     use super::{
         super::{
             attention::AttentionConfig,
-            common::{Activation, ConfigDataType, QuantizationMode},
+            common::ConfigDataType,
             embedding::{EmbeddingConfig, EmbeddingConfigCommon},
             linear::{LinearConfig, QuantizationConfig},
             mlp::{DenseMLPConfig, MLPConfig},
@@ -238,6 +238,7 @@ mod tests {
         },
         *,
     };
+    use crate::backends::common::{ActivationConfig, gpu_types::QuantizationMode};
 
     #[test]
     fn test_decoder_config() {
@@ -354,8 +355,8 @@ mod tests {
                     logit_soft_cap: None,
                 },
                 group_size: 128,
-                embedding_quantization_mode: QuantizationMode::Int8,
-                activation_quantization_mode: Some(QuantizationMode::Int8),
+                embedding_quantization_mode: QuantizationMode::INT8,
+                activation_quantization_mode: Some(QuantizationMode::INT8),
                 activation_precision: ConfigDataType::BFloat16,
             },
             global_rope_config: Some(RoPEConfig::Llama {
@@ -391,8 +392,8 @@ mod tests {
                     qkv_projection_config: LinearConfig::QLoRA {
                         quantization: QuantizationConfig {
                             group_size: 32,
-                            weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(QuantizationMode::Int8),
+                            weight_quantization_mode: QuantizationMode::UINT4,
+                            activation_quantization_mode: Some(QuantizationMode::INT8),
                             activation_precision: ConfigDataType::BFloat16,
                         },
                         lora_rank: 16,
@@ -401,8 +402,8 @@ mod tests {
                     out_projection_config: LinearConfig::QLoRA {
                         quantization: QuantizationConfig {
                             group_size: 32,
-                            weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(QuantizationMode::Int8),
+                            weight_quantization_mode: QuantizationMode::UINT4,
+                            activation_quantization_mode: Some(QuantizationMode::INT8),
                             activation_precision: ConfigDataType::BFloat16,
                         },
                         lora_rank: 16,
@@ -425,16 +426,14 @@ mod tests {
                     linear_config: LinearConfig::QLoRA {
                         quantization: QuantizationConfig {
                             group_size: 32,
-                            weight_quantization_mode: QuantizationMode::UInt4,
-                            activation_quantization_mode: Some(QuantizationMode::Int8),
+                            weight_quantization_mode: QuantizationMode::UINT4,
+                            activation_quantization_mode: Some(QuantizationMode::INT8),
                             activation_precision: ConfigDataType::BFloat16,
                         },
                         lora_rank: 16,
                         lora_scale: 2.0,
                     },
-                    activation: Activation::SiLU {
-                        alpha: 1.0,
-                    },
+                    activation: ActivationConfig::silu_default(),
                     has_up_biases: false,
                     has_down_biases: false,
                     gate_clipping: None,

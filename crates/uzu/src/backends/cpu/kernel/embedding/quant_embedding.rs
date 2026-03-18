@@ -19,9 +19,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
     #[allow(unused)]
     #[specialize]
     group_size: u32,
-    #[allow(unused)]
-    #[specialize]
-    quant_mode: u32,
+    #[allow(unused)] quant_mode: crate::backends::common::gpu_types::quantization::QuantizationMode,
 ) {
     todo!()
 }
