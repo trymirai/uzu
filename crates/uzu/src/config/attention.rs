@@ -22,6 +22,8 @@ pub struct AttentionConfig {
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
+    #[serde(default)]
+    pub partial_rope_dim: Option<usize>,
 }
 
 #[cfg(test)]
@@ -104,6 +106,7 @@ mod tests {
             has_sinks: false,
             has_qkv_biases: false,
             has_out_biases: false,
+            partial_rope_dim: None,
         };
 
         let deserialized_config: AttentionConfig = from_str(config_str).unwrap();

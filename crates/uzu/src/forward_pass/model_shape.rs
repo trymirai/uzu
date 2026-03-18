@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    config::{DecoderConfig, DecoderLayerType},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig},
 };
 
 #[derive(Debug)]
@@ -25,6 +25,7 @@ pub struct ModelShape {
     max_mamba_conv_dim: usize,
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
+    max_rope_dim: usize,
 }
 
 impl ModelShape {
@@ -73,6 +74,25 @@ impl ModelShape {
                 max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
             }
         }
+        let mut max_rope_dim = 0usize;
+
+        let all_layer_configs = decoder_config
+            .layer_configs
+            .as_ref()
+            .map(|configs| configs.iter().collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
+
+        for layer_config in &all_layer_configs {
+            if let MixerConfig::Attention(attn) = &layer_config.mixer_config {
+                let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
+                max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
+            }
+        }
+
+        if max_rope_dim == 0 {
+            max_rope_dim = decoder_config.head_dim;
+        }
+
         Self {
             activation_type,
             kv_cache_type: activation_type,
@@ -95,6 +115,7 @@ impl ModelShape {
             max_mamba_conv_dim,
             max_mamba_state_dim,
             max_mamba_kernel_size,
+            max_rope_dim,
         }
     }
 
@@ -112,6 +133,10 @@ impl ModelShape {
 
     pub fn head_dim(&self) -> usize {
         self.head_dim
+    }
+
+    pub fn rope_dim(&self) -> usize {
+        self.max_rope_dim
     }
 
     pub fn num_groups(&self) -> usize {
