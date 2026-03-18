@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
+#[macro_use]
+#[path = "../../common/mod.rs"]
 mod common;
+
 use common::{RepeatSpeculator, get_test_model_path};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

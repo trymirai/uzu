@@ -1,5 +1,7 @@
 #![cfg(metal_backend)]
 
+#[macro_use]
+#[path = "../common/mod.rs"]
 mod common;
 
 use bytemuck;

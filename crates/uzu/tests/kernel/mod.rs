@@ -6,6 +6,7 @@ mod matmul;
 mod sampling;
 
 mod activation_mul_test;
+mod audio_test;
 mod full_precision_embedding_test;
 mod qk_norm_test;
 mod rms_norm_test;
