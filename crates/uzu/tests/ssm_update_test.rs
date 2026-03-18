@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "macos"))]
+#![cfg(metal_backend)]
 
 use bytemuck;
 use half::bf16;

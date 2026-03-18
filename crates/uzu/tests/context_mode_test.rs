@@ -1,4 +1,7 @@
+#![cfg(metal_backend)]
+
 mod common;
+
 use std::path::PathBuf;
 
 use test_tag::tag;

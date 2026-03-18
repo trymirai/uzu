@@ -1,4 +1,4 @@
-#![cfg(feature = "tracing")]
+#![cfg(all(metal_backend, feature = "tracing"))]
 
 mod common;
 use std::path::PathBuf;

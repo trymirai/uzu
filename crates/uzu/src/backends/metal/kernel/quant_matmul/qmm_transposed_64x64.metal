@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 #include "quant_matmul.metal"
 
 template <typename T, int GROUP_SIZE, int BITS>

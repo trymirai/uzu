@@ -315,6 +315,12 @@ pub fn bindgen(
         (quote! {}, quote! {}, None)
     };
 
+    let method_visibility = if kernel.public {
+        quote! {}
+    } else {
+        quote! { pub(crate) }
+    };
+
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -324,14 +330,14 @@ pub fn bindgen(
         impl #maybe_trait_impl #struct_name {
             #maybe_associate_backend
 
-            fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
+            #method_visibility fn new(context: &MetalContext #(, #variants_extra_arguments)* #(, #specialize_args)*) -> Result<Self, MetalError> {
                 let entry_name = #entry_name;
                 #function_constants_init
                 let pipeline = context.compute_pipeline_state(#cache_key, &entry_name, #function_constants_arg)?;
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* })
             }
 
-            fn encode<#(#encode_generics, )* 'command_buffer>(&self, #(#encode_args_defs, )* command_buffer: &'command_buffer mut MetalCommandBufferEncoding) {
+            #method_visibility fn encode<#(#encode_generics, )* 'command_buffer>(&self, #(#encode_args_defs, )* command_buffer: &'command_buffer mut MetalCommandBufferEncoding) {
                 let compute_encoder = command_buffer.ensure_compute();
                 #empty_dispatch_guards
                 compute_encoder.set_compute_pipeline_state(&self.pipeline);

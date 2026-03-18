@@ -1,4 +1,7 @@
+#![cfg(metal_backend)]
+
 mod common;
+
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use rand::seq::SliceRandom;

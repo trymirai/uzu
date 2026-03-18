@@ -1,22 +1,16 @@
-//! GEMM kernel parameter structs.
-//!
-//! Field names use uppercase for matrix dimensions (M, N, K) to match
-//! standard BLAS/GEMM convention and generated shader headers.
-
 #![allow(non_snake_case)]
 
-/// Main GEMM parameters passed to backend kernels as constant buffer.
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
-pub struct GEMMParams {
+pub struct GemmParams {
     pub M: i32,
     pub N: i32,
     pub K: i32,
-    pub lda: i32,
-    pub ldb: i32,
-    pub ldd: i32,
-    pub tiles_n: i32,
-    pub tiles_m: i32,
+    pub leading_dimension_a: i32,
+    pub leading_dimension_b: i32,
+    pub leading_dimension_d: i32,
+    pub threadgroups_per_column: i32,
+    pub threadgroups_per_row: i32,
     pub swizzle_log: i32,
-    pub gemm_k_iterations_aligned: i32,
+    pub aligned_inner_iterations: i32,
 }

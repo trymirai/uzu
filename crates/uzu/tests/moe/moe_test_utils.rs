@@ -3,7 +3,7 @@
 //! Contains common helper functions, CPU ground truth implementations,
 //! buffer allocation helpers, and test fixtures used across all MoE test files.
 
-#![cfg(any(target_os = "macos", target_os = "ios"))]
+#![cfg(metal_backend)]
 
 use std::rc::Rc;
 

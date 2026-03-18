@@ -12,11 +12,7 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
-            gpu_types::GEMMParams,
-            kernel::matmul::{
-                GridSize, MatmulArguments,
-                gemm::{GemmDispatchDescriptor, GemmKernel, GemmSpecialization},
-            },
+            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         cpu::Cpu,
     },
@@ -63,52 +59,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
     let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
 
-    // Pick a precompile config matching alignment requirements
-    let configs = GemmSpecialization::precompile_configs(T::data_type());
-    let base = configs[0];
-    let align_m = (m % base.block_rows) == 0;
-    let align_n = (n % base.block_cols) == 0;
-    let align_k = (k % base.block_depth) == 0;
-    // Find a config that matches alignment, or fall back to overriding the first one
-    let config = configs
-        .iter()
-        .find(|c| c.align_m == align_m && c.align_n == align_n && c.align_k == align_k)
-        .copied()
-        .unwrap_or(GemmSpecialization {
-            align_m,
-            align_n,
-            align_k,
-            ..base
-        });
-
-    let tiles_n = (n + config.block_cols - 1) / config.block_cols;
-    let tiles_m = (m + config.block_rows - 1) / config.block_rows;
-
-    let params = GEMMParams {
-        M: m,
-        N: n,
-        K: k,
-        lda: k,
-        ldb: k,
-        ldd: n,
-        tiles_n,
-        tiles_m,
-        swizzle_log: 0,
-        gemm_k_iterations_aligned: k / config.block_depth,
-    };
-
-    let descriptor = GemmDispatchDescriptor {
-        specialization: config,
-        params,
-        threadgroups: GridSize {
-            x: tiles_n as usize,
-            y: tiles_m as usize,
-            z: 1,
-        },
-    };
-
-    let mut kernel = GemmKernel::<B>::new(T::data_type()).expect("Failed to create GemmKernel");
-
     let a_buf = a_array.buffer();
     let a_ref = a_buf.borrow();
     let b_buf = b_array.buffer();
@@ -116,22 +66,28 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let d_buf = d_array.buffer();
     let mut d_ref = d_buf.borrow_mut();
 
+    let mut kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(&context, T::data_type())
+        .expect("Failed to create MatmulKernel");
+
     let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    let mut arguments = MatmulArguments {
-        a: a_ref.deref(),
-        a_offset: 0,
-        b: b_ref.deref(),
-        d: d_ref.deref_mut(),
-        bias: None,
-        batch: m,
-        input_dim: k,
-        output_dim: n,
-        lda: k,
-        ldb: k,
-        ldd: n,
-        transpose_b: true,
-    };
-    kernel.encode(&context, &mut arguments, &descriptor, &mut command_buffer).expect("Failed to encode");
+    kernel.encode(
+        &context,
+        MatmulArguments {
+            a: a_ref.deref(),
+            a_offset: 0,
+            b: b_ref.deref(),
+            d: d_ref.deref_mut(),
+            bias: None,
+            batch: m,
+            input_dim: k,
+            output_dim: n,
+            leading_dimension_a: k,
+            leading_dimension_b: k,
+            leading_dimension_d: n,
+            transpose_b: true,
+        },
+        &mut command_buffer,
+    );
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
     drop(d_ref);
@@ -151,7 +107,6 @@ fn test<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-// Aligned dimensions (divisible by common block sizes)
 #[test]
 fn test_f32_aligned() {
     test::<f32>(64, 64, 64, 0.01);
@@ -167,7 +122,6 @@ fn test_bf16_aligned() {
     test::<bf16>(64, 64, 64, 0.1);
 }
 
-// Unaligned dimensions
 #[test]
 fn test_f32_unaligned() {
     test::<f32>(7, 33, 11, 0.01);
@@ -183,7 +137,6 @@ fn test_bf16_unaligned() {
     test::<bf16>(7, 33, 11, 0.1);
 }
 
-// Larger matrix
 #[test]
 fn test_f32_large() {
     test::<f32>(16, 128, 256, 0.01);

@@ -119,7 +119,7 @@ pub enum MetalArgumentType {
     Axis(Box<str>, Box<str>),
     Groups(MetalGroupsType),
     Threads(Box<str>),
-    Simd,
+    ThreadContext,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -251,8 +251,8 @@ impl MetalArgument {
                 },
                 _ => bail!("unknown annotation: {annotation_key}"),
             }
-        } else if self.c_type.as_ref() == "Simd" || self.c_type.as_ref() == "const Simd" {
-            Ok(MetalArgumentType::Simd)
+        } else if self.c_type.as_ref() == "ThreadContext" || self.c_type.as_ref() == "const ThreadContext" {
+            Ok(MetalArgumentType::ThreadContext)
         } else if self.c_type.contains("device") && self.c_type.contains('*') && !self.c_type.contains('&') {
             Ok(MetalArgumentType::Buffer(if self.c_type.contains("const") {
                 MetalBufferAccess::Read
@@ -354,8 +354,8 @@ impl MetalKernelInfo {
         self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_))))
     }
 
-    pub fn has_simd(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Simd)))
+    pub fn has_thread_context(&self) -> bool {
+        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::ThreadContext)))
     }
 
     pub fn to_kernel(&self) -> Option<Kernel> {

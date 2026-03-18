@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 
 // Tiling config for 2D gather
 #define ROWS_PER_TG 8

@@ -1,6 +1,9 @@
 use crate::{
     DataType,
-    backends::common::{Backend, Context, kernel::matmul::MatmulArguments},
+    backends::{
+        common::{Context, kernel::matmul::MatmulArguments},
+        metal::{Metal, context::MetalContext},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -8,8 +11,8 @@ pub struct GemmSpecialization {
     pub block_rows: i32,
     pub block_cols: i32,
     pub block_depth: i32,
-    pub warps_per_row: u64,
-    pub warps_per_col: u64,
+    pub simdgroups_per_row: u64,
+    pub simdgroups_per_column: u64,
     pub swizzle_log2: i32,
     pub align_m: bool,
     pub align_n: bool,
@@ -24,8 +27,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 32,
                     block_depth: 32,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: false,
                     align_n: true,
@@ -35,8 +38,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 32,
                     block_depth: 32,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: true,
                     align_n: true,
@@ -46,8 +49,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: false,
                     align_n: true,
@@ -57,8 +60,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: true,
                     align_n: false,
@@ -68,8 +71,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: true,
                     align_n: true,
@@ -79,8 +82,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 1,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 1,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: true,
                     align_n: true,
@@ -92,8 +95,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: true,
                     align_n: true,
@@ -103,8 +106,8 @@ impl GemmSpecialization {
                     block_rows: 64,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: false,
                     align_n: true,
@@ -116,8 +119,8 @@ impl GemmSpecialization {
                     block_rows: 32,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: false,
                     align_n: true,
@@ -127,8 +130,8 @@ impl GemmSpecialization {
                     block_rows: 32,
                     block_cols: 64,
                     block_depth: 16,
-                    warps_per_row: 2,
-                    warps_per_col: 2,
+                    simdgroups_per_row: 2,
+                    simdgroups_per_column: 2,
                     swizzle_log2: 0,
                     align_m: true,
                     align_n: true,
@@ -139,16 +142,16 @@ impl GemmSpecialization {
         }
     }
 
-    pub fn select<B: Backend>(
-        context: &B::Context,
+    pub fn select(
+        context: &MetalContext,
         data_type: DataType,
-        arguments: &MatmulArguments<B>,
+        arguments: &MatmulArguments<Metal>,
     ) -> Self {
         let overall_work_elements = (arguments.batch as i64) * (arguments.output_dim as i64);
         let is_float32 = matches!(data_type, DataType::F32);
-        let prefer_half_or_tf32 = !is_float32 || B::Context::tf32_enabled();
+        let prefer_half_or_tf32 = !is_float32 || MetalContext::tf32_enabled();
 
-        let (block_rows, block_cols, block_depth, warps_per_row, warps_per_col, swizzle_log2) =
+        let (block_rows, block_cols, block_depth, simdgroups_per_row, simdgroups_per_column, swizzle_log2) =
             if context.is_high_performance() && overall_work_elements >= (1_i64 << 20) {
                 if prefer_half_or_tf32 {
                     if 2 * std::cmp::max(arguments.batch, arguments.output_dim) > arguments.input_dim {
@@ -183,8 +186,8 @@ impl GemmSpecialization {
             block_rows,
             block_cols,
             block_depth,
-            warps_per_row,
-            warps_per_col,
+            simdgroups_per_row,
+            simdgroups_per_column,
             swizzle_log2,
             align_m: (m % block_rows) == 0,
             align_n: (n % block_cols) == 0,

@@ -1,7 +1,9 @@
 #include <metal_stdlib>
 #include <metal_atomic>
 
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 #define BLOCK_SIZE 128
 #define TILE_E 512
@@ -23,7 +25,7 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
     threadgroup uint
         counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
     threadgroup uint& carry,
-    const Simd simd,
+    const ThreadContext thread_context,
     const uint lid THREADS(128)
 ) {
   if (e_input == 0) {
@@ -102,7 +104,7 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
         v,
         reduce_shared,
         (ushort)lid,
-        simd
+        thread_context
     );
     if (lid == 0) {
       carry += block_sum;

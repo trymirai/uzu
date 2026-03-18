@@ -13,7 +13,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
-mpsgraph.workspace = true
 bytemuck.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
@@ -21,26 +20,19 @@ memmap2.workspace = true
 num-traits.workspace = true
 regex.workspace = true
 libc.workspace = true
-bitflags.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
-clap.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 itertools.workspace = true
 schemars.workspace = true
 
-# metal feature requires objc2, block2 (for callbacks) and metal
-bytesize = { workspace = true, optional = true }
+# metal on macos requires objc2, bytesize, metal
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
-block2 = { workspace = true, optional = true }
+bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
-
-# macos requires objc2 even on non-metal (but shouldn't)
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2.workspace = true
-objc2-foundation.workspace = true
 
 [dev-dependencies]
 test-tag.workspace = true
@@ -49,7 +41,6 @@ rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
-mpsgraph.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true
 
@@ -72,18 +63,18 @@ prettyplease.workspace = true
 itertools.workspace = true
 cbindgen.workspace = true
 
-# metal feature requires clang-ast
+# metal on macos requires clang-ast for dsl build
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }
 
 [features]
 default = ["metal"]
 
 metal = [
-    "dep:bytesize",
     "dep:clang-ast",
     "dep:objc2",
     "dep:objc2-foundation",
-    "dep:block2",
+    "dep:bytesize",
     "dep:metal",
 ]
 tracing = []

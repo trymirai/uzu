@@ -1,4 +1,4 @@
-#![cfg(all(target_os = "macos", feature = "metal"))]
+#![cfg(all(target_os = "macos", metal_backend))]
 
 mod bench;
 mod error;
@@ -6,16 +6,13 @@ mod output;
 mod shapes;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use metal::{MTLDeviceExt, MTLResourceOptions};
+use metal::MTLDeviceExt;
 use output::print_results_table;
 use shapes::test_shapes;
 use uzu::{
     DataType,
     backends::{
-        common::{
-            Backend, Context,
-            kernel::matmul::{MatmulDispatchDescriptor, choose_matmul_dispatch_descriptor},
-        },
+        common::{Backend, Context},
         metal::Metal,
     },
 };
@@ -56,47 +53,9 @@ fn matmul_perf() {
     let mut results = Vec::new();
 
     for &data_type in &data_types {
-        let elem_size = data_type.size_in_bytes();
-
         for shape in &test_shapes {
-            let a_byte_count = shape.batch * shape.input_dim * elem_size;
-            let b_byte_count = shape.output_dim * shape.input_dim * elem_size;
-            let d_byte_count = shape.batch * shape.output_dim * elem_size;
-
-            let (a_buffer, b_buffer, mut d_buffer) = match (
-                context.device.new_buffer(a_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-                context.device.new_buffer(b_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-                context.device.new_buffer(d_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-            ) {
-                (Some(a), Some(b), Some(d)) => (a, b, d),
-                _ => continue,
-            };
-
-            let arguments = bench::make_arguments(&a_buffer, &b_buffer, &mut d_buffer, shape);
-
-            let descriptor = match choose_matmul_dispatch_descriptor::<Metal>(&context, data_type, &arguments) {
-                Ok(d) => d,
-                Err(e) => {
-                    results.push(output::PerfResult {
-                        combo: format!("{data_type:?}"),
-                        shape: format!("{shape}"),
-                        dispatch_path: "auto".into(),
-                        duration_ms: 0.0,
-                        gflops: 0.0,
-                        status: "error".into(),
-                        error: Some(format!("dispatch: {e}")),
-                    });
-                    continue;
-                },
-            };
-
-            let path_name = match &descriptor {
-                MatmulDispatchDescriptor::Gemv(_) => "Gemv",
-                MatmulDispatchDescriptor::Gemm(_) => "Gemm",
-            };
-
-            progress_bar.set_message(format!("{data_type:?} {shape} {path_name}"));
-            let result = bench::benchmark_single(&context, data_type, shape, path_name, &descriptor);
+            progress_bar.set_message(format!("{data_type:?} {shape}"));
+            let result = bench::benchmark_single(&context, data_type, shape);
             results.push(result);
             progress_bar.inc(1);
         }

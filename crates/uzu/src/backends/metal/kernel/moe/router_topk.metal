@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 using namespace metal;
 
 constant uint THREADS_PER_TG = 256; // 8 simdgroups
@@ -28,7 +30,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
     threadgroup uint reduce_tmp_u[THREADS_PER_TG],
     threadgroup uint shared_best_idx[1],
     threadgroup float shared_best_val[1],
-    const Simd simd,
+    const ThreadContext thread_context,
     const uint tgpig_x GROUPS(1),
     const uint token_idx GROUPS(t),
     const uint lid THREADS(256)
@@ -50,11 +52,12 @@ PUBLIC KERNEL(MoeRouterTopK)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint row = simd.group_idx; row < e; row += simd.groups_per_threadgroup) {
+  for (uint row = thread_context.threadgroup_index; row < e;
+       row += thread_context.simdgroups_per_threadgroup) {
     const device ScalarT* w_vec = weight + (ulong)row * (ulong)vecs * 4;
 
     float4 accum4 = float4(0.0f);
-    for (uint c = simd.lane_idx; c < vecs; c += 32u) {
+    for (uint c = thread_context.simdgroup_index; c < vecs; c += 32u) {
       const float4 wv = float4(
           w_vec[c * 4 + 0],
           w_vec[c * 4 + 1],
@@ -97,7 +100,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
         local_best,
         reduce_tmp,
         lid,
-        simd
+        thread_context
     );
 
     uint candidate_id = (local_best == max_val) ? local_idx : 0xFFFFFFFFu;
@@ -105,7 +108,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
         candidate_id,
         reduce_tmp_u,
         lid,
-        simd
+        thread_context
     );
 
     if (lid == 0) {

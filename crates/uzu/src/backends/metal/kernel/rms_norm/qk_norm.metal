@@ -1,9 +1,8 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/defines.h"
+#include "../common/dsl.h"
 
 using namespace metal;
-
-#define SIMD_SIZE 32
 #define GRAIN_SIZE 4
 
 // QK norm: normalize per-head vectors (small head_dim) efficiently.
@@ -31,7 +30,7 @@ PUBLIC KERNEL(QKNorm)(
     constant bool& full_layer,
     const uint batch_idx GROUPS(batch_size),
     const uint head_idx GROUPS(head_count),
-    const uint lane_id THREADS(SIMD_SIZE),
+    const uint lane_id THREADS(METAL_SIMD_SIZE),
     const bool in_place SPECIALIZE
 ) {
   if (in_place) {
@@ -59,7 +58,7 @@ PUBLIC KERNEL(QKNorm)(
 
   // Sum of squares: each lane processes GRAIN_SIZE elements per iteration.
   for (uint base_i = lane_id * GRAIN_SIZE; base_i < element_count;
-       base_i += SIMD_SIZE * GRAIN_SIZE) {
+       base_i += METAL_SIMD_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
@@ -80,7 +79,7 @@ PUBLIC KERNEL(QKNorm)(
 
   // Normalize + scale.
   for (uint base_i = lane_id * GRAIN_SIZE; base_i < element_count;
-       base_i += SIMD_SIZE * GRAIN_SIZE) {
+       base_i += METAL_SIMD_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;

@@ -11,7 +11,7 @@ use crate::{
         Backend, CommandBuffer, Kernels,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulError, MatmulKernels},
+            matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable, QuantizedMatmulType,
@@ -48,7 +48,7 @@ enum TiedEmbeddingType<B: Backend> {
         lookup_weights: B::Buffer,
         readout_weights: B::Buffer,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
+        readout: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
     },
     Quantized {
         lookup_weights: B::Buffer,
@@ -78,7 +78,7 @@ enum UntiedEmbeddingLookupType<B: Backend> {
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
         weights: B::Buffer,
-        readout: RefCell<<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel>,
+        readout: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
     },
     Quantized {
         weights: B::Buffer,
@@ -171,8 +171,7 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout =
-                    RefCell::new(<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, data_type)?);
+                let readout = RefCell::new(<B::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)?);
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::FullPrecision {
@@ -199,8 +198,7 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout =
-                    RefCell::new(<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel::new(context, data_type)?);
+                let readout = RefCell::new(<B::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)?);
 
                 EmbeddingTying::Untied {
                     input_ty: UntiedEmbeddingLookupType::FullPrecision {
@@ -595,19 +593,25 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
             } => {
+                let input_dim = self.model_dim as usize;
+                let output_dim = self.vocab_size as usize;
                 readout.borrow_mut().encode(
                     state.context(),
-                    command_buffer,
-                    FullPrecisionMatmulArguments {
+                    MatmulArguments {
                         a: input,
-                        a_offset: input_offset,
+                        a_offset: input_offset as u64,
                         b: weights,
-                        output,
+                        d: output,
                         bias: None,
-                        batch: batch_size,
-                        input_dim: self.model_dim as usize,
-                        output_dim: self.vocab_size as usize,
+                        batch: batch_size as i32,
+                        input_dim: input_dim as i32,
+                        output_dim: output_dim as i32,
+                        leading_dimension_a: input_dim as i32,
+                        leading_dimension_b: input_dim as i32,
+                        leading_dimension_d: output_dim as i32,
+                        transpose_b: true,
                     },
+                    command_buffer,
                 );
             },
             EmbeddingTying::Tied {
