@@ -19,7 +19,12 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
                 AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
             })?;
         }
-        let samples = read_array_to_f32_vec(&self.output)?;
+        let samples: Vec<f32> = match self.output.data_type() {
+            DataType::F32 => self.output.as_slice::<f32>().to_vec(),
+            DataType::F16 => self.output.as_slice::<half::f16>().iter().map(|&v| f32::from(v)).collect(),
+            DataType::BF16 => self.output.as_slice::<half::bf16>().iter().map(|&v| f32::from(v)).collect(),
+            dt => return Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
+        };
         Ok(DecodedPaddedAudio {
             samples,
             channels: self.channels,

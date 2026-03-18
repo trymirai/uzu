@@ -139,8 +139,7 @@ impl StructuredAudioCodecGraph {
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
         let mut lengths_array = ws.lengths_array(&context, 0, lengths_i32.len());
-        write_i32_slice_into_array(&mut lengths_array, &lengths_i32)
-            .map_err(|err| AudioError::Runtime(format!("structured_audio_lengths_a: {err}")))?;
+        lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
         let mut next_lengths_array = ws.lengths_array(&context, 1, lengths_i32.len());
 
         let data_type = x.data_type();
@@ -156,8 +155,7 @@ impl StructuredAudioCodecGraph {
                 .checked_mul(trans_conv.stride)
                 .ok_or(AudioError::Runtime("structured audio upsampler frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, trans_conv.stride)?;
-            write_i32_slice_into_array(&mut next_lengths_array, &next_lengths_i32)
-                .map_err(|err| AudioError::Runtime(format!("structured_audio_upsample_lengths: {err}")))?;
+            next_lengths_array.as_slice_mut::<i32>().copy_from_slice(&next_lengths_i32);
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &mut command_buffer,
@@ -253,8 +251,7 @@ impl StructuredAudioCodecGraph {
                 .checked_mul(block.trans_conv.stride)
                 .ok_or(AudioError::Runtime("structured audio decoder frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, block.trans_conv.stride)?;
-            write_i32_slice_into_array(&mut next_lengths_array, &next_lengths_i32)
-                .map_err(|err| AudioError::Runtime(format!("structured_audio_decoder_block_lengths: {err}")))?;
+            next_lengths_array.as_slice_mut::<i32>().copy_from_slice(&next_lengths_i32);
 
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &mut command_buffer,

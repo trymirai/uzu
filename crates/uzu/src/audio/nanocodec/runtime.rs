@@ -34,7 +34,6 @@ use crate::{
         state::{ArrayId, ForwardPassState, SharedBuffers},
     },
     parameters::ParameterLoader,
-    utils::array_io::{read_array_to_f32_vec, write_i32_slice_into_array},
 };
 
 mod loaders;
