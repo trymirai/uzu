@@ -5,6 +5,7 @@ mod error;
 mod output;
 mod shapes;
 
+use bench::DispatchPath;
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::MTLDeviceExt;
 use output::print_results_table;
@@ -42,22 +43,34 @@ fn matmul_perf() {
 
     let data_types = [DataType::BF16, DataType::F16];
     let test_shapes = test_shapes();
+    let dispatch_paths = DispatchPath::available_paths(&context);
 
-    eprintln!("Matmul perf: {} dtypes x {} shapes", data_types.len(), test_shapes.len(),);
+    let total_benchmarks = data_types.len() * test_shapes.len() * dispatch_paths.len();
+    eprintln!(
+        "Matmul perf: {} dtypes x {} shapes x {} kernels = {} benchmarks",
+        data_types.len(),
+        test_shapes.len(),
+        dispatch_paths.len(),
+        total_benchmarks,
+    );
 
     let progress_bar = ProgressBar::new_spinner();
     progress_bar.set_style(
-        ProgressStyle::with_template("{spinner} {pos} benchmarks [{elapsed_precise}] {msg}").expect("progress style"),
+        ProgressStyle::with_template("{spinner} {pos}/{len} benchmarks [{elapsed_precise}] {msg}")
+            .expect("progress style"),
     );
+    progress_bar.set_length(total_benchmarks as u64);
 
     let mut results = Vec::new();
 
     for &data_type in &data_types {
         for shape in &test_shapes {
-            progress_bar.set_message(format!("{data_type:?} {shape}"));
-            let result = bench::benchmark_single(&context, data_type, shape);
-            results.push(result);
-            progress_bar.inc(1);
+            for &dispatch_path in &dispatch_paths {
+                progress_bar.set_message(format!("{data_type:?} {shape} {}", dispatch_path.name()));
+                let result = bench::benchmark_single(&context, data_type, dispatch_path, shape);
+                results.push(result);
+                progress_bar.inc(1);
+            }
         }
     }
 

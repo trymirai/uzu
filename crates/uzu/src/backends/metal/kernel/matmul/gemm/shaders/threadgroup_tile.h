@@ -1,6 +1,6 @@
 #pragma once
 
-#include "simdgroup_fragment.h"
+#include "../../common/simdgroup_fragment.h"
 
 using namespace metal;
 

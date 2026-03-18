@@ -20,6 +20,33 @@ type Buf = Retained<ProtocolObject<dyn MTLBuffer>>;
 const WARMUP_ITERATIONS: usize = 3;
 const BENCHMARK_ITERATIONS: usize = 10;
 
+#[derive(Debug, Clone, Copy)]
+pub enum DispatchPath {
+    Gemv,
+    Gemm,
+    GemmMppStaged,
+    GemmMppNxu,
+}
+
+impl DispatchPath {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Gemv => "Gemv",
+            Self::Gemm => "Gemm",
+            Self::GemmMppStaged => "GemmMppStaged",
+            Self::GemmMppNxu => "GemmMppNxu",
+        }
+    }
+
+    pub fn available_paths(context: &Ctx) -> Vec<Self> {
+        let mut paths = vec![Self::Gemv, Self::Gemm, Self::GemmMppStaged];
+        if context.device_capabilities().supports_mxu {
+            paths.push(Self::GemmMppNxu);
+        }
+        paths
+    }
+}
+
 fn fill_buffer_random(
     buffer: &ProtocolObject<dyn MTLBuffer>,
     byte_count: usize,
@@ -34,6 +61,7 @@ fn fill_buffer_random(
 fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
+    dispatch_path: DispatchPath,
     shape: &TestShape,
     a_buffer: &Buf,
     b_buffer: &Buf,
@@ -41,24 +69,29 @@ fn encode_and_run(
 ) -> Result<f64, BenchError> {
     let mut command_buffer = context.create_command_buffer().map_err(|_| BenchError::CommandBuffer)?.start_encoding();
 
-    kernel.encode(
-        context,
-        MatmulArguments {
-            a: a_buffer,
-            a_offset: 0,
-            b: b_buffer,
-            d: d_buffer,
-            bias: None,
-            batch: shape.batch as i32,
-            input_dim: shape.input_dim as i32,
-            output_dim: shape.output_dim as i32,
-            leading_dimension_a: shape.input_dim as i32,
-            leading_dimension_b: shape.input_dim as i32,
-            leading_dimension_d: shape.output_dim as i32,
-            transpose_b: true,
-        },
-        &mut command_buffer,
-    );
+    let arguments = MatmulArguments {
+        a: a_buffer,
+        a_offset: 0,
+        b: b_buffer,
+        d: d_buffer,
+        bias: None,
+        batch: shape.batch as i32,
+        input_dim: shape.input_dim as i32,
+        output_dim: shape.output_dim as i32,
+        leading_dimension_a: shape.input_dim as i32,
+        leading_dimension_b: shape.input_dim as i32,
+        leading_dimension_d: shape.output_dim as i32,
+        transpose_b: true,
+    };
+
+    let encode_result = match dispatch_path {
+        DispatchPath::Gemv => kernel.encode_gemv(context, &mut command_buffer, arguments),
+        DispatchPath::Gemm => kernel.encode_gemm(context, &mut command_buffer, arguments),
+        DispatchPath::GemmMppStaged => kernel.encode_gemm_mpp_staged(context, &mut command_buffer, arguments),
+        DispatchPath::GemmMppNxu => kernel.encode_gemm_mpp_nxu(context, &mut command_buffer, arguments),
+    };
+
+    encode_result.map_err(|e| BenchError::Kernel(e.to_string()))?;
 
     let completed =
         command_buffer.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
@@ -69,6 +102,7 @@ fn encode_and_run(
 fn run_benchmark(
     context: &Ctx,
     data_type: DataType,
+    dispatch_path: DispatchPath,
     shape: &TestShape,
 ) -> Result<f64, BenchError> {
     let mut kernel = <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)
@@ -92,23 +126,23 @@ fn run_benchmark(
     fill_buffer_random(&b_buffer, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
-            BenchError::Warmup {
+        encode_and_run(context, &mut kernel, dispatch_path, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(
+            |source| BenchError::Warmup {
                 iteration,
                 source: Box::new(source),
-            }
-        })?;
+            },
+        )?;
     }
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
         let gpu_ms =
-            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
-                BenchError::Benchmark {
+            encode_and_run(context, &mut kernel, dispatch_path, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(
+                |source| BenchError::Benchmark {
                     iteration,
                     source: Box::new(source),
-                }
-            })?;
+                },
+            )?;
         gpu_time_total_ms += gpu_ms;
     }
 
@@ -118,16 +152,17 @@ fn run_benchmark(
 pub fn benchmark_single(
     context: &Ctx,
     data_type: DataType,
+    dispatch_path: DispatchPath,
     shape: &TestShape,
 ) -> PerfResult {
-    match run_benchmark(context, data_type, shape) {
+    match run_benchmark(context, data_type, dispatch_path, shape) {
         Ok(duration_ms) => {
             let flops = 2.0 * shape.batch as f64 * shape.input_dim as f64 * shape.output_dim as f64;
             let gflops = flops / (duration_ms / 1000.0) / 1e9;
             PerfResult {
                 combo: format!("{data_type:?}"),
                 shape: format!("{shape}"),
-                dispatch_path: "auto".to_owned(),
+                dispatch_path: dispatch_path.name().to_owned(),
                 duration_ms,
                 gflops,
                 status: "ok".into(),
@@ -137,7 +172,7 @@ pub fn benchmark_single(
         Err(error) => PerfResult {
             combo: format!("{data_type:?}"),
             shape: format!("{shape}"),
-            dispatch_path: "auto".to_owned(),
+            dispatch_path: dispatch_path.name().to_owned(),
             duration_ms: 0.0,
             gflops: 0.0,
             status: "error".into(),
