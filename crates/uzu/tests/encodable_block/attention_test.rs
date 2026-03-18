@@ -1,7 +1,5 @@
 #![cfg(metal_backend)]
 
-mod common;
-
 use std::mem::size_of;
 
 use bytemuck;
@@ -9,7 +7,8 @@ use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array3, Array4, s};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use test_tag::tag;
-use uzu::{
+
+use crate::{
     DataType,
     backends::{
         common::{
