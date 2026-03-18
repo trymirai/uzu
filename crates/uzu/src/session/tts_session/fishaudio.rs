@@ -100,10 +100,8 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
 
         let embedding_rows_sum = <B::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
             .map_err(unable_to_create_context)?;
-        let projection = <<B::Kernels as MatmulKernels>::MatmulKernel as MatmulKernel>::new(
-            context, data_type,
-        )
-        .map_err(unable_to_create_context)?;
+        let projection = <<B::Kernels as MatmulKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
+            .map_err(unable_to_create_context)?;
         let tensor_copy =
             <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
         let codebook_token_indices =
