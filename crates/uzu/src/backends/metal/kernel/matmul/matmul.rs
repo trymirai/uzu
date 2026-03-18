@@ -489,9 +489,6 @@ impl MatmulKernel for MatmulMetalKernel {
         for &config in gemm::GemmSpecialization::precompile_configs(data_type) {
             kernel.get_or_create_gemm(context, config)?;
         }
-        for config in gemm_mpp_staged::GemmMppStagedSpecialization::precompile_configs().iter() {
-            kernel.get_or_create_gemm_mpp_staged(context, *config)?;
-        }
         if context.device_capabilities().supports_mxu {
             for config in gemm_mpp_nxu::GemmMppNxuSpecialization::precompile_configs().iter() {
                 kernel.get_or_create_gemm_mpp_nxu(context, *config)?;
@@ -512,8 +509,7 @@ impl MatmulKernel for MatmulMetalKernel {
         } else if context.device_capabilities().supports_mxu {
             self.encode_gemm_mpp_nxu(context, command_buffer, arguments).expect("Failed to encode GEMM MPP NXU kernel");
         } else {
-            self.encode_gemm_mpp_staged(context, command_buffer, arguments)
-                .expect("Failed to encode GEMM MPP staged kernel");
+            self.encode_gemm(context, command_buffer, arguments).expect("Failed to encode GEMM kernel");
         }
     }
 }

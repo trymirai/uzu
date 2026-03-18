@@ -1,0 +1,12 @@
+[package]
+name = "matmul-profile"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+uzu = { path = "../../crates/uzu", features = ["metal"] }
+metal = { workspace = true }
+objc2 = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+half = "2"
+bytemuck = "1"
