@@ -34,7 +34,7 @@ mod tests {
         *,
     };
     use crate::{
-        backends::common::gpu_types::{ActivationType, QuantizationMode},
+        backends::common::{ActivationConfig, gpu_types::QuantizationMode},
         config::mlp,
     };
 
@@ -176,9 +176,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: ActivationType::SILU {
-                    alpha: 1.0,
-                },
+                activation: ActivationConfig::silu_default(),
                 has_up_biases: false,
                 has_down_biases: false,
                 gate_clipping: None,

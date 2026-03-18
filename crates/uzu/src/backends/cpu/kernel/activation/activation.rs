@@ -12,7 +12,7 @@ pub fn activation<T: ArrayElement + Float>(
     input: Option<*const T>,
     #[allow(unused)] output: *mut T,
     #[allow(unused)] n: u32,
-    #[allow(unused)] act_type: crate::backends::common::gpu_types::activation::ActivationType,
+    #[allow(unused)] act_type: crate::backends::common::gpu_types::activation_type::ActivationType,
     #[allow(unused)]
     #[specialize]
     in_place: bool,

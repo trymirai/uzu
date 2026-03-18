@@ -363,7 +363,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             },
         );
 
-        let gating_code = Self::gating_code_from_activation(&self.moe_config.expert_config.activation);
+        let gating_code = Self::gating_code_from_activation(&self.moe_config.expert_config.activation.act_type());
 
         // Compute clipping values and alpha for expert kernels
         let gate_clip_min = self.moe_config.expert_config.gate_clipping[0].unwrap_or(f32::NEG_INFINITY);

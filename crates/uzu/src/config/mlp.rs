@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LinearConfig, backends::common::gpu_types::ActivationType};
+use crate::{LinearConfig, backends::common::ActivationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -14,7 +14,7 @@ pub enum MLPConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DenseMLPConfig {
     pub linear_config: LinearConfig,
-    pub activation: ActivationType,
+    pub activation: ActivationConfig,
     #[serde(default)]
     pub has_up_biases: bool,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub enum RoutingFunctionConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MoeExpertConfig {
     pub linear_config: LinearConfig,
-    pub activation: ActivationType,
+    pub activation: ActivationConfig,
     pub has_up_biases: bool,
     pub has_down_biases: bool,
     pub gate_clipping: [Option<f32>; 2],
@@ -94,9 +94,7 @@ mod tests {
                 lora_rank: 16,
                 lora_scale: 2.0,
             },
-            activation: ActivationType::SILU {
-                alpha: 1.0,
-            },
+            activation: ActivationConfig::silu_default(),
             has_up_biases: false,
             has_down_biases: false,
             gate_clipping: None,
@@ -156,9 +154,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: ActivationType::SILU {
-                    alpha: 1.0,
-                },
+                activation: ActivationConfig::silu_default(),
                 has_up_biases: true,
                 has_down_biases: true,
                 gate_clipping: [None, Some(7.0)],
@@ -221,9 +217,7 @@ mod tests {
                     lora_rank: 16,
                     lora_scale: 2.0,
                 },
-                activation: ActivationType::SILU {
-                    alpha: 1.0,
-                },
+                activation: ActivationConfig::silu_default(),
                 has_up_biases: true,
                 has_down_biases: true,
                 gate_clipping: [None, Some(7.0)],

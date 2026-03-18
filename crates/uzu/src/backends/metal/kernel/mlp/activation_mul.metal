@@ -2,7 +2,7 @@
 #include "../activation/activations.h"
 #include "../common/dsl.h"
 
-using namespace uzu::activation;
+using namespace uzu::activation_type;
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)

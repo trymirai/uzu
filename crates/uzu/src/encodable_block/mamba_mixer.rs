@@ -230,7 +230,7 @@ impl<B: Backend> MambaMixer<B> {
                     suffix_length as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    self.config.activation,
+                    self.config.activation.act_type(),
                     command_buffer,
                 );
             }
@@ -275,7 +275,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    self.config.activation,
+                    self.config.activation.act_type(),
                     command_buffer,
                 )
             }
