@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
 #include "../activation/activation.h"
 
 using namespace metal;

@@ -76,12 +76,8 @@ impl ConfigResolvableValue<TtsMessageProcessorConfig, HashMap<String, String>> f
             Role::Assistant => config.assistant_role_name.clone(),
         };
         let mut result: HashMap<String, String> = config.default_message_fields.clone().into_iter().collect();
-        result
-            .entry(String::from("speaker_id"))
-            .or_insert_with(|| String::from(DEFAULT_TTS_SPEAKER_ID));
-        result
-            .entry(String::from("style"))
-            .or_insert_with(|| String::from(DEFAULT_TTS_STYLE));
+        result.entry(String::from("speaker_id")).or_insert_with(|| String::from(DEFAULT_TTS_SPEAKER_ID));
+        result.entry(String::from("style")).or_insert_with(|| String::from(DEFAULT_TTS_STYLE));
         result.insert(String::from("role"), role);
         result.insert(String::from("content"), self.content.clone());
         if let Some(reasoning_content) = self.reasoning_content.clone() {

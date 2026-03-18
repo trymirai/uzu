@@ -1,5 +1,7 @@
 #include <metal_stdlib>
-#include "../definitions.metal"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 using namespace metal;
 
@@ -19,7 +21,7 @@ void norm_ncs(
     const constant int& subtract_mean,
     threadgroup float* shared_mean,
     threadgroup float* shared_variance,
-    const thread Simd& simd,
+    const thread ThreadContext& thread_context,
     const uint b,
     const uint t,
     const uint lid
@@ -50,7 +52,7 @@ void norm_ncs(
       partial_sum,
       shared_mean,
       (ushort)lid,
-      simd
+      thread_context
   );
   const float mean = (subtract_mean != 0) ? (sum / (float)channels) : 0.0f;
 
@@ -66,7 +68,7 @@ void norm_ncs(
       partial_variance,
       shared_variance,
       (ushort)lid,
-      simd
+      thread_context
   );
   const float inv_std = rsqrt(variance_sum / (float)channels + epsilon);
 
@@ -94,7 +96,7 @@ PUBLIC KERNEL(AudioNormNcs)(
     const constant int& batch_size,
     threadgroup float shared_mean[AUDIO_NORM_NCS_MAX_SIMDS],
     threadgroup float shared_variance[AUDIO_NORM_NCS_MAX_SIMDS],
-    const Simd simd,
+    const ThreadContext thread_context,
     const uint b GROUPS(batch_size),
     const uint t GROUPS(seq_len),
     const uint lid THREADS(AUDIO_NORM_NCS_BLOCK_SIZE)
@@ -111,7 +113,7 @@ PUBLIC KERNEL(AudioNormNcs)(
       subtract_mean,
       shared_mean,
       shared_variance,
-      simd,
+      thread_context,
       b,
       t,
       lid

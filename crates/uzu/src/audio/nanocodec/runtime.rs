@@ -90,12 +90,7 @@ impl NanoCodecFsqRuntimeConfig {
     }
 
     fn from_runtime_config_json(parsed: RuntimeConfigJson) -> AudioResult<Self> {
-        Self::new(
-            parsed.sample_rate,
-            parsed.num_groups,
-            parsed.num_levels_per_group.into_boxed_slice(),
-            parsed.eps,
-        )
+        Self::new(parsed.sample_rate, parsed.num_groups, parsed.num_levels_per_group.into_boxed_slice(), parsed.eps)
     }
 
     pub fn new(

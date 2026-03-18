@@ -5,15 +5,15 @@ mod common;
 use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 use uzu::{
     audio::{
-        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime,
-        NanoCodecFsqRuntimeConfig, nanocodec::fsq::compute_dim_base_index,
+        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
+        nanocodec::fsq::compute_dim_base_index,
     },
     backends::metal::Metal,
 };
 
 fn create_runtime() -> NanoCodecFsqRuntime<Metal> {
-    let config = NanoCodecFsqRuntimeConfig::new(24_000, 2, vec![8, 6].into_boxed_slice(), 1e-3)
-        .expect("valid runtime config");
+    let config =
+        NanoCodecFsqRuntimeConfig::new(24_000, 2, vec![8, 6].into_boxed_slice(), 1e-3).expect("valid runtime config");
     NanoCodecFsqRuntime::new(config)
 }
 
@@ -129,12 +129,8 @@ fn nanocodec_runtime_decode_matches_fsq_reference() {
         runtime.config().num_levels_per_group(),
     )
     .expect("fsq reference decode");
-    let expected_samples = unpack_reference_output(
-        &reference_padded,
-        runtime.config().channels(),
-        encoded.frames(),
-        encoded.lengths(),
-    );
+    let expected_samples =
+        unpack_reference_output(&reference_padded, runtime.config().channels(), encoded.frames(), encoded.lengths());
 
     assert_eq!(decoded.sample_rate(), runtime.config().sample_rate());
     assert_eq!(decoded.channels(), runtime.config().channels());

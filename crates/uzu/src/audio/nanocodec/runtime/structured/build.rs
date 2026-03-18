@@ -113,9 +113,8 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
         return Err(AudioError::InvalidTokenCardinality);
     }
     let export_cout = shape[0];
-    let export_cin = shape[1]
-        .checked_mul(groups)
-        .ok_or(AudioError::Runtime("transpose conv input channel overflow".to_string()))?;
+    let export_cin =
+        shape[1].checked_mul(groups).ok_or(AudioError::Runtime("transpose conv input channel overflow".to_string()))?;
     if export_cout % groups != 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -305,8 +304,7 @@ pub(super) fn build_vocoder_graph_from_tree<B: Backend>(
     let mut upsample_blocks = Vec::with_capacity(config.downsample_factor.len());
     for (index, &stride) in config.downsample_factor.iter().rev().enumerate() {
         let block_tree = quantizer_tree.subtree("upsampler")?.subtree("blocks")?.subtree(&index.to_string())?;
-        let trans_conv =
-            read_conv_transpose1d_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
+        let trans_conv = read_conv_transpose1d_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
         let convnext = read_convnext_layer::<B>(
             context,
             &block_tree.subtree("convnext")?,
@@ -325,8 +323,7 @@ pub(super) fn build_vocoder_graph_from_tree<B: Backend>(
     let mut decoder_blocks = Vec::with_capacity(config.decoder_rates.len());
     for (index, &stride) in config.decoder_rates.iter().enumerate() {
         let block_tree = decoder_tree.subtree("decoder_blocks")?.subtree(&index.to_string())?;
-        let trans_conv =
-            read_conv_transpose1d_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
+        let trans_conv = read_conv_transpose1d_layer::<B>(&block_tree.subtree("trans_conv")?, data_type, stride, 1)?;
         let snake_alpha =
             read_float_vector_exact::<B>(&block_tree.subtree("snake")?, "alpha", trans_conv.cin, data_type)?;
         let channels = trans_conv.cout;

@@ -13,9 +13,7 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
         self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn resolve(
-        mut self
-    ) -> AudioResult<DecodedPaddedAudio> {
+    pub(in crate::audio::nanocodec::runtime) fn resolve(mut self) -> AudioResult<DecodedPaddedAudio> {
         if let Some(command_buffer) = self.final_command_buffer.take() {
             command_buffer.wait_until_completed().map_err(|err| {
                 AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))

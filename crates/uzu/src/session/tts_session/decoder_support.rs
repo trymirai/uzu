@@ -277,14 +277,8 @@ pub(super) fn slice_grid_range(
         lengths.push(length.saturating_sub(frame_start).min(range_frames));
     }
 
-    AudioTokenGrid::new(
-        tokens.into_boxed_slice(),
-        batch_size,
-        codebooks,
-        range_frames,
-        lengths.into_boxed_slice(),
-    )
-    .map_err(Error::from)
+    AudioTokenGrid::new(tokens.into_boxed_slice(), batch_size, codebooks, range_frames, lengths.into_boxed_slice())
+        .map_err(Error::from)
 }
 
 pub(super) fn accumulate_audio_decode_step_stats(
@@ -570,4 +564,3 @@ pub(super) fn expand_token_mask_for_sampling_row(
     expanded[offset..offset + row_words].copy_from_slice(row_mask);
     Ok(expanded.into_boxed_slice())
 }
-

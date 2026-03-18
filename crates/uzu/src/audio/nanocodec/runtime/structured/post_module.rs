@@ -54,12 +54,7 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = gelu_enqueue(
-            command_buffer,
-            &x,
-            ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu"),
-            kernels,
-        )?;
+        let x = gelu_enqueue(command_buffer, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu"), kernels)?;
         let x = conv1d_pointwise_ncs_enqueue(
             command_buffer,
             &x,
@@ -71,13 +66,7 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        add_enqueue(
-            command_buffer,
-            &x,
-            &residual,
-            ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add"),
-            kernels,
-        )
+        add_enqueue(command_buffer, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add"), kernels)
     }
 
     pub(super) fn build_post_module_runtime<B: Backend>(
@@ -428,12 +417,7 @@ impl StructuredAudioCodecGraph {
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_single_batch_enqueued(
-                resources,
-                command_buffer,
-                latent_nsc,
-                frames,
-            );
+            return self.apply_post_module_single_batch_enqueued(resources, command_buffer, latent_nsc, frames);
         }
 
         let output = context.create_array(

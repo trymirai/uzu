@@ -9,6 +9,8 @@
 // Session Parameters
 // Session Types
 // Speculators
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+pub use crate::session::TtsSession;
 pub use crate::{
     VERSION,
     audio::{AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid},
@@ -22,6 +24,3 @@ pub use crate::{
     },
     speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
 };
-
-#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
-pub use crate::session::TtsSession;

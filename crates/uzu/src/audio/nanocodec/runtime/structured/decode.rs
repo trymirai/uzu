@@ -215,7 +215,12 @@ impl StructuredAudioCodecGraph {
         x = causal_conv1d_grouped_enqueue(
             &mut command_buffer,
             &x,
-            ws.next_scratch(&context, &[batch_size, vocoder_graph.first_conv.cout, current_frames], data_type, "dec_first_conv"),
+            ws.next_scratch(
+                &context,
+                &[batch_size, vocoder_graph.first_conv.cout, current_frames],
+                data_type,
+                "dec_first_conv",
+            ),
             &vocoder_graph.first_conv,
             x_layout,
             &lengths_i32,
@@ -321,7 +326,12 @@ impl StructuredAudioCodecGraph {
         x = causal_conv1d_grouped_enqueue(
             &mut command_buffer,
             &x,
-            ws.next_scratch(&context, &[batch_size, vocoder_graph.final_conv.cout, current_frames], data_type, "final_conv"),
+            ws.next_scratch(
+                &context,
+                &[batch_size, vocoder_graph.final_conv.cout, current_frames],
+                data_type,
+                "final_conv",
+            ),
             &vocoder_graph.final_conv,
             SequenceLayout::Ncs,
             &lengths_i32,

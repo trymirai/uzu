@@ -100,7 +100,10 @@ impl AudioDecodeStreamState {
 
     /// Physical ring slot for a global frame index.
     #[inline]
-    fn slot(&self, global_frame: usize) -> usize {
+    fn slot(
+        &self,
+        global_frame: usize,
+    ) -> usize {
         global_frame % self.retained_capacity
     }
 

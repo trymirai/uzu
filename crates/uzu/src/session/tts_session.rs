@@ -16,6 +16,9 @@ use std::{
     time::Instant,
 };
 
+use backend_factory::load_tts_runtime;
+use decoder_runtime::*;
+use decoder_support::*;
 use minijinja::{Environment, context};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tokenizers::Tokenizer;
@@ -34,7 +37,7 @@ use crate::{
             EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
             TokenCopyToResultsKernel,
             kv_cache_update::KVCacheUpdate,
-            matmul::{FullPrecisionMatmulArguments, FullPrecisionMatmulKernel, MatmulKernels},
+            matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
     },
     config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
@@ -47,18 +50,11 @@ use crate::{
     },
     parameters::ParameterLoader,
     session::{
-        config::{
-            TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig,
-            TtsSessionOptions,
-        },
+        config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions},
         parameter::{ConfigResolvableValue, SamplingMethod, SamplingProcessingOrder},
         types::{Error, Input},
     },
 };
-
-use backend_factory::load_tts_runtime;
-use decoder_runtime::*;
-use decoder_support::*;
 
 fn unable_to_create_context<E: std::error::Error + 'static>(err: E) -> Error {
     Error::UnableToCreateContext(Box::new(err))
@@ -225,4 +221,3 @@ pub(super) struct PendingStreamingChunk {
     pub(super) next_chunk_frames: usize,
     pub(super) chunk: Box<dyn PendingAudioChunkBackend>,
 }
-

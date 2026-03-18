@@ -113,9 +113,7 @@ impl<B: Backend> DecodeWorkspace<B> {
         // and it is large enough.
         if let Some(buf_rc) = slot.as_ref() {
             if Rc::strong_count(buf_rc) == 1 && buf_rc.borrow().length() >= needed {
-                let array = unsafe {
-                    Array::from_parts(buf_rc.clone(), 0, shape, data_type)
-                };
+                let array = unsafe { Array::from_parts(buf_rc.clone(), 0, shape, data_type) };
                 return array;
             }
         }
@@ -125,9 +123,7 @@ impl<B: Backend> DecodeWorkspace<B> {
         buffer.set_label(Some(label));
         let buf_rc = Rc::new(RefCell::new(buffer));
         *slot = Some(buf_rc.clone());
-        unsafe {
-            Array::from_parts(buf_rc, 0, shape, data_type)
-        }
+        unsafe { Array::from_parts(buf_rc, 0, shape, data_type) }
     }
 
     /// Clear both scratch slots, forcing the next call to allocate fresh
@@ -194,7 +190,10 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
         Ok(created)
     }
 
-    pub(super) fn token_staging(&self, min_elements: usize) -> Array<B> {
+    pub(super) fn token_staging(
+        &self,
+        min_elements: usize,
+    ) -> Array<B> {
         let mut slot = self.token_staging.borrow_mut();
         if let Some(existing) = slot.as_ref() {
             if existing.num_elements() >= min_elements {
@@ -206,7 +205,10 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
         array
     }
 
-    pub(super) fn length_staging(&self, min_elements: usize) -> Array<B> {
+    pub(super) fn length_staging(
+        &self,
+        min_elements: usize,
+    ) -> Array<B> {
         let mut slot = self.length_staging.borrow_mut();
         if let Some(existing) = slot.as_ref() {
             if existing.num_elements() >= min_elements {

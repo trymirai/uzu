@@ -1,8 +1,9 @@
-use super::*;
-use crate::array::Array;
-use crate::config::TtsMessageProcessorConfig;
-use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
+
+use regex::Regex;
+
+use super::*;
+use crate::{array::Array, config::TtsMessageProcessorConfig};
 
 pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
     slow_runner: TokenDecoderRunner<B>,
@@ -29,7 +30,7 @@ pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
 
 struct FishAudioSemanticBridge<B: Backend> {
     embedding_rows_sum: <B::Kernels as Kernels>::EmbeddingRowsSumKernel,
-    projection: <B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel,
+    projection: <B::Kernels as MatmulKernels>::MatmulKernel,
     tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
     codebook_embeddings: ArrayCell<B>,
     codebook_token_indices: ArrayCell<B>,
@@ -99,13 +100,14 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
 
         let embedding_rows_sum = <B::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
             .map_err(unable_to_create_context)?;
-        let projection = <<B::Kernels as MatmulKernels>::FullPrecisionMatmulKernel as FullPrecisionMatmulKernel>::new(
+        let projection = <<B::Kernels as MatmulKernels>::MatmulKernel as MatmulKernel>::new(
             context, data_type,
         )
         .map_err(unable_to_create_context)?;
         let tensor_copy =
             <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
-        let codebook_token_indices = context.create_array(&[num_codebooks], DataType::U32, "tts_codebook_token_indices");
+        let codebook_token_indices =
+            context.create_array(&[num_codebooks], DataType::U32, "tts_codebook_token_indices");
 
         Ok(Self {
             embedding_rows_sum,
@@ -299,7 +301,8 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     let apply_semantic_sampling_mask =
         runtime_config.force_semantic_sampling_mask.unwrap_or(!matches!(activation_data_type, DataType::F32));
 
-    let semantic_bridge = FishAudioSemanticBridge::load(text_decoder_context.as_ref(), &root_weights, config, activation_data_type)?;
+    let semantic_bridge =
+        FishAudioSemanticBridge::load(text_decoder_context.as_ref(), &root_weights, config, activation_data_type)?;
 
     Ok(Box::new(FishAudioTextDecoderRuntime::<B> {
         slow_runner,
@@ -482,14 +485,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             }
             tokens.extend_from_slice(codebook_tokens);
         }
-        AudioTokenGrid::new(
-            tokens.into_boxed_slice(),
-            1,
-            self.num_codebooks,
-            frames,
-            vec![frames].into_boxed_slice(),
-        )
-        .map_err(Error::from)
+        AudioTokenGrid::new(tokens.into_boxed_slice(), 1, self.num_codebooks, frames, vec![frames].into_boxed_slice())
+            .map_err(Error::from)
     }
 
     fn encode_project_slow_hidden_to_fast_on(
@@ -522,17 +519,21 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             let mut output_buffer = output_buffer.borrow_mut();
             semantic_bridge.projection.encode(
                 context,
-                command_buffer,
-                FullPrecisionMatmulArguments {
+                MatmulArguments {
                     a: &hidden_buffer,
-                    a_offset: hidden.offset(),
+                    a_offset: hidden.offset() as u64,
                     b: &weights_buffer,
-                    output: &mut output_buffer,
+                    d: &mut output_buffer,
                     bias: None,
                     batch: 1,
-                    input_dim: slow_model_dim,
-                    output_dim: fast_model_dim,
+                    input_dim: slow_model_dim as i32,
+                    output_dim: fast_model_dim as i32,
+                    leading_dimension_a: slow_model_dim as i32,
+                    leading_dimension_b: fast_model_dim as i32,
+                    leading_dimension_d: fast_model_dim as i32,
+                    transpose_b: false,
                 },
+                command_buffer,
             );
             return Ok(());
         }
@@ -667,13 +668,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             .expect("Failed to create command buffer")
             .start_encoding();
 
-        let total_fast_count = self.encode_fast_passes_on(
-            &mut shared_cb,
-            first_code,
-            fast_vocab_limit,
-            followup_count,
-            sampling,
-        )?;
+        let total_fast_count =
+            self.encode_fast_passes_on(&mut shared_cb, first_code, fast_vocab_limit, followup_count, sampling)?;
         self.encode_slow_pass_on(
             &mut shared_cb,
             current_semantic_token,
@@ -802,7 +798,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 }
 
 impl<B: Backend> SemanticDecoderBackend for FishAudioTextDecoderRuntime<B> {
-
     fn generate_semantic_tokens(
         &mut self,
         text_tokens: &[u64],
