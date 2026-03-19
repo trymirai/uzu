@@ -16,7 +16,8 @@ use uzu::{
     backends::{
         common::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels, gpu_types::ActivationType,
+            CommandBufferPending, Context, Kernels,
+            gpu_types::ActivationType,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
                 AudioCausalConvTranspose1dKernel, AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel,
@@ -514,13 +515,7 @@ fn audio_tanh_matches_reference_f32() {
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
         borrow_array_buffer_mut!(output_buffer = output);
-        kernel.encode(
-            Some(&*input_buffer),
-            &mut *output_buffer,
-            n as u32,
-            ActivationType::TANH,
-            command_buffer,
-        );
+        kernel.encode(Some(&*input_buffer), &mut *output_buffer, n as u32, ActivationType::TANH, command_buffer);
     });
 
     let got = output.as_slice::<f32>();

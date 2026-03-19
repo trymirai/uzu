@@ -512,13 +512,7 @@ pub(super) fn gelu_enqueue<B: Backend>(
     let input_buffer = input_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.activation.encode(
-        Some(&*input_buffer),
-        &mut *output_buffer,
-        n_u32,
-        ActivationType::GELU,
-        command_buffer,
-    );
+    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, ActivationType::GELU, command_buffer);
     Ok(output)
 }
 
@@ -566,12 +560,6 @@ pub(super) fn tanh_enqueue<B: Backend>(
     let input_buffer = input_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.activation.encode(
-        Some(&*input_buffer),
-        &mut *output_buffer,
-        n_u32,
-        ActivationType::TANH,
-        command_buffer,
-    );
+    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, ActivationType::TANH, command_buffer);
     Ok(output)
 }
