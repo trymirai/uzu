@@ -15,5 +15,5 @@ pub struct NormalizationConfig {
 }
 
 #[cfg(test)]
-#[path = "../../../tests_unit/config/normalization/normalization_config_test.rs"]
+#[path = "../../../tests/unit/config/normalization/normalization_config_test.rs"]
 mod tests;

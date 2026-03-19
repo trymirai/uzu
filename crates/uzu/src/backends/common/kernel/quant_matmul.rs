@@ -512,5 +512,5 @@ fn kernel_key_name(key: KernelKey) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests_unit/backends/common/kernel/quant_matmul_test.rs"]
+#[path = "../../../../tests/unit/backends/common/kernel/quant_matmul_test.rs"]
 mod tests;

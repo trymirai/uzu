@@ -59,5 +59,5 @@ pub struct MoeExpertConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/mlp_test.rs"]
+#[path = "../../tests/unit/config/mlp_test.rs"]
 mod tests;

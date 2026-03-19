@@ -21,5 +21,5 @@ impl TransformerLayerConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/transformer_layer_test.rs"]
+#[path = "../../tests/unit/config/transformer_layer_test.rs"]
 mod tests;

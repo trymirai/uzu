@@ -80,5 +80,5 @@ impl EmbeddingConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/embedding_test.rs"]
+#[path = "../../tests/unit/config/embedding_test.rs"]
 mod tests;

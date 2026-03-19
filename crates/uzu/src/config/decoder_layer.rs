@@ -101,5 +101,5 @@ impl DecoderLayerConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/decoder_layer_test.rs"]
+#[path = "../../tests/unit/config/decoder_layer_test.rs"]
 mod tests;

@@ -86,7 +86,7 @@ path = "tests/integration/mod.rs"
 
 [[test]]
 name = "kernel"
-path = "tests_unit/kernel/mod.rs"
+path = "tests/unit/kernel/mod.rs"
 
 [[test]]
 name = "performance"

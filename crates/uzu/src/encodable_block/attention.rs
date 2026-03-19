@@ -453,5 +453,5 @@ struct KernelKey {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/encodable_block/attention_test.rs"]
+#[path = "../../tests/unit/encodable_block/attention_test.rs"]
 mod tests;

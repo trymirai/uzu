@@ -25,5 +25,5 @@ pub struct AttentionConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/attention_test.rs"]
+#[path = "../../tests/unit/config/attention_test.rs"]
 mod tests;

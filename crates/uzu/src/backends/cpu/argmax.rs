@@ -181,5 +181,5 @@ pub fn neon_optimized_argmax<T: ArrayElement>(input: &[T]) -> usize {
 }
 
 #[cfg(test)]
-#[path = "../../../tests_unit/backends/cpu/argmax_test.rs"]
+#[path = "../../../tests/unit/backends/cpu/argmax_test.rs"]
 mod tests;

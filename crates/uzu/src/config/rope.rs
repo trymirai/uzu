@@ -61,5 +61,5 @@ impl RoPEConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/rope_test.rs"]
+#[path = "../../tests/unit/config/rope_test.rs"]
 mod tests;

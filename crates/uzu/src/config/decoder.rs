@@ -223,5 +223,5 @@ impl DecoderConfig {
 }
 
 #[cfg(test)]
-#[path = "../../tests_unit/config/decoder_test.rs"]
+#[path = "../../tests/unit/config/decoder_test.rs"]
 mod tests;
