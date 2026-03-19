@@ -1,12 +1,34 @@
 use std::collections::HashMap;
 
-use uzu::{
+use crate::{
     language_model::rng::PRng,
+    prelude::Speculator,
     speculators::empty_speculator::EmptySpeculator,
     trie::{TrieCreationConfig, TrieNode},
 };
 
-use crate::util::speculator::StaticSpeculator;
+pub struct StaticSpeculator {
+    responses: HashMap<Vec<u64>, HashMap<u64, f32>>,
+    default_response: Option<HashMap<u64, f32>>,
+}
+
+impl StaticSpeculator {
+    pub fn new(responses: HashMap<Vec<u64>, HashMap<u64, f32>>) -> Self {
+        Self {
+            responses,
+            default_response: None,
+        }
+    }
+}
+
+impl Speculator for StaticSpeculator {
+    fn speculate(
+        &self,
+        prefix: &[u64],
+    ) -> HashMap<u64, f32> {
+        self.responses.get(prefix).cloned().or_else(|| self.default_response.clone()).unwrap_or_default()
+    }
+}
 
 fn verify_sprout(
     trie_root: &TrieNode,

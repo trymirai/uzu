@@ -6,8 +6,7 @@ use std::{
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
-    ArrayElement,
-    array::ArrayContextExt,
+    ArrayContextExt, ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
@@ -15,7 +14,7 @@ use uzu::{
         },
         cpu::Cpu,
     },
-    language_model::gumbel::{gumbel_float, revidx},
+    gumbel_float, revidx,
 };
 
 struct Input<T: ArrayElement + Float> {

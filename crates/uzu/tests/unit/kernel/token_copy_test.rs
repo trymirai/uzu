@@ -1,8 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use uzu::{
-    ArrayElement,
-    array::ArrayContextExt,
+    ArrayContextExt, ArrayElement,
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
         Kernels,

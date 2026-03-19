@@ -6,7 +6,7 @@ use std::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
-    prelude::{SamplingSeed, SpeculatorConfig},
+    prelude::{NGramSpeculator, SamplingSeed, SpeculatorConfig},
     session::{
         Session,
         config::{DecodingConfig, RunConfig},
@@ -91,7 +91,7 @@ pub fn load_session(
 
                 let number_of_speculated_tokens = number_of_speculated_tokens.parse().unwrap();
 
-                let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load(speculator));
+                let speculator = Arc::new(NGramSpeculator::load(speculator));
 
                 SpeculatorConfig {
                     number_of_speculated_tokens,

@@ -262,3 +262,7 @@ impl<'a> FlatTrie<'a> {
         (accepted_tokens, accepted_token_indices)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/trie_test.rs"]
+mod tests;

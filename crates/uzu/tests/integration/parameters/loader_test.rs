@@ -5,11 +5,11 @@ use half::bf16;
 use is_close::is_close;
 use test_tag::tag;
 use uzu::{
+    ParameterLoader,
     backends::{
         common::{Backend, Context},
         metal::Metal,
     },
-    parameters::ParameterLoader,
 };
 
 use crate::util::path::get_test_weights_path;

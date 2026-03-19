@@ -1,6 +1,6 @@
 #![cfg(all(metal_backend, feature = "tracing"))]
 
-use uzu::{backends::metal::Metal, tracer::TraceValidator};
+use uzu::{TraceValidator, backends::metal::Metal};
 
 use crate::util::path::{get_test_model_path, get_traces_path};
 

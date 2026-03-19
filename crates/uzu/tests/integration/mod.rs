@@ -6,4 +6,3 @@ mod tracer;
 mod util;
 
 mod person_schema_metal_bitmask_test;
-mod trie_test;

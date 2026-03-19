@@ -7,8 +7,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
-    ArrayElement, DataType,
-    array::ArrayContextExt,
+    ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,

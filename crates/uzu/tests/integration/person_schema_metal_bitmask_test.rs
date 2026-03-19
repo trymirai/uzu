@@ -6,7 +6,7 @@ use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
-use uzu::{DataType, array::Array, backends::metal::Metal};
+use uzu::{Array, DataType, backends::metal::Metal};
 use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
