@@ -16,7 +16,7 @@ use uzu::{
     backends::{
         common::{
             Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels,
+            CommandBufferPending, Context, Kernels, gpu_types::ActivationType,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
                 AudioCausalConvTranspose1dKernel, AudioConv1dKernel, AudioFsqDecodeKernel, AudioFsqEncodeKernel,
@@ -453,23 +453,36 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
 #[test]
 fn audio_leaky_relu_matches_reference_f32() {
     let context = create_test_context();
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(&context, DataType::F32, false)
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(&context, DataType::F32)
         .expect("audio runtime");
 
     let n = 1024usize;
     let slope = 0.0f32;
+    let eps = 1e-6f32;
     let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
 
-    let mut input = context.create_array(&[n], DataType::F32, "audio_leaky_relu_input");
+    let mut input = context.create_array(&[1, 1, n], DataType::F32, "audio_leaky_relu_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let output = context.create_array(&[n], DataType::F32, "audio_leaky_relu_output");
+    let alpha = context.create_array(&[1], DataType::F32, "audio_leaky_relu_alpha");
+    let output = context.create_array(&[1, 1, n], DataType::F32, "audio_leaky_relu_output");
 
-    let act_leaky_relu = 3_u32;
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
+        borrow_array_buffer!(alpha_buffer = alpha);
         borrow_array_buffer_mut!(output_buffer = output);
-        kernel.encode(Some(&*input_buffer), &mut *output_buffer, n as u32, act_leaky_relu, command_buffer);
+        kernel.encode(
+            &*input_buffer,
+            &*alpha_buffer,
+            &mut *output_buffer,
+            1,
+            n as i32,
+            0,
+            slope,
+            eps,
+            1,
+            command_buffer,
+        );
     });
 
     let got = output.as_slice::<f32>();
@@ -498,11 +511,16 @@ fn audio_tanh_matches_reference_f32() {
 
     let output = context.create_array(&[n], DataType::F32, "audio_tanh_output");
 
-    let act_tanh = 2_u32;
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
         borrow_array_buffer_mut!(output_buffer = output);
-        kernel.encode(Some(&*input_buffer), &mut *output_buffer, n as u32, act_tanh, command_buffer);
+        kernel.encode(
+            Some(&*input_buffer),
+            &mut *output_buffer,
+            n as u32,
+            ActivationType::TANH,
+            command_buffer,
+        );
     });
 
     let got = output.as_slice::<f32>();

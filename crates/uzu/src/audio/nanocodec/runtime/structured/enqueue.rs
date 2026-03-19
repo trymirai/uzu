@@ -1,4 +1,5 @@
 use super::*;
+use crate::backends::common::gpu_types::ActivationType;
 
 pub(super) fn snake1d_enqueue<B: Backend>(
     command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -507,12 +508,17 @@ pub(super) fn gelu_enqueue<B: Backend>(
 ) -> AudioResult<Array<B>> {
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
-    let gelu_id = 1_u32;
     let input_buffer = input.buffer();
     let input_buffer = input_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, gelu_id, command_buffer);
+    kernels.activation.encode(
+        Some(&*input_buffer),
+        &mut *output_buffer,
+        n_u32,
+        ActivationType::GELU,
+        command_buffer,
+    );
     Ok(output)
 }
 
@@ -556,11 +562,16 @@ pub(super) fn tanh_enqueue<B: Backend>(
 ) -> AudioResult<Array<B>> {
     let n_u32 = u32::try_from(input.num_elements())
         .map_err(|_| AudioError::Runtime("tanh element count exceeds u32 range".to_string()))?;
-    let tanh_id = 2_u32;
     let input_buffer = input.buffer();
     let input_buffer = input_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, tanh_id, command_buffer);
+    kernels.activation.encode(
+        Some(&*input_buffer),
+        &mut *output_buffer,
+        n_u32,
+        ActivationType::TANH,
+        command_buffer,
+    );
     Ok(output)
 }

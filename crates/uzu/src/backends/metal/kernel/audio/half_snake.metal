@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
-#include "../activation/activation.h"
+#include "../activation/activations.h"
 
 using namespace metal;
 
@@ -34,7 +34,7 @@ void half_snake(
     const float y = x + (1.0f / (a + eps)) * (s * s);
     output[idx] = (T)y;
   } else {
-    output[idx] = activate((T)x, ACT_LEAKY_RELU, negative_slope);
+    output[idx] = activate_leaky_relu((T)x, negative_slope);
   }
 }
 
