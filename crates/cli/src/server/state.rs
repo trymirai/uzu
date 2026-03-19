@@ -96,10 +96,8 @@ pub fn load_session(
                 let temperature: Option<f32> =
                     parts.get(2).map(|s| s.parse().expect("invalid temperature, expected float"));
 
-                let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load_with_temperature(
-                    speculator_path,
-                    temperature,
-                ));
+                use uzu::speculators::ngram_speculator::NGramSpeculator;
+                let speculator = Arc::new(NGramSpeculator::load(speculator_path, temperature));
 
                 SpeculatorConfig::new(number_of_speculated_tokens, speculator)
             },

@@ -12,7 +12,7 @@ compile_error!("Only little endian is supported");
 const MAX_CTX: usize = 15;
 
 #[inline]
-fn full_hash(seq: &[u32]) -> u64 {
+fn seqhash(seq: &[u32]) -> u64 {
     xxh3_64(cast_slice(seq))
 }
 
@@ -44,17 +44,12 @@ struct TaggedTableHeader {
 
 const HEADER_SIZE: usize = size_of::<TaggedTableHeader>();
 
-/// Layout of a single tagged n-gram table within the mmap'd buffer.
-/// Offsets (`keys_start`, `values_start`) are absolute byte positions.
-/// Tags are copied to an aligned buffer at load time to avoid alignment
-/// issues with u64 reads from mmap.
 struct TaggedTableLayout {
     hashtable_size: u32,
     top_k: u32,
     ngram_n: u32,
-    /// Token ID used for left-padding when the prefix is shorter than the context window.
     ngram_pad: u32,
-    tags: Box<[u64]>,
+    tags_start: usize,
     keys_start: usize,
     values_start: usize,
 }
@@ -82,28 +77,12 @@ impl TaggedTableLayout {
 
         let tags_start = off;
         off += 8 * hs;
-        let mut tags = vec![0u64; hs].into_boxed_slice();
-        for i in 0..hs {
-            let t = tags_start + i * 8;
-            tags[i] = u64::from_le_bytes(bytes[t..t + 8].try_into().unwrap());
-        }
 
         let keys_start = off;
         off += 4 * k * hs;
 
         let values_start = off;
         off += 4 * k * hs;
-
-        // cast_slice requires 4-byte alignment for u32/f32.
-        // Check the actual byte pointer alignment, not just the numeric offset.
-        assert!(
-            bytes[keys_start..].as_ptr() as usize % 4 == 0,
-            "keys buffer at offset {keys_start} is not 4-byte aligned"
-        );
-        assert!(
-            bytes[values_start..].as_ptr() as usize % 4 == 0,
-            "values buffer at offset {values_start} is not 4-byte aligned"
-        );
 
         // Counts: used during training, skipped at inference time
         off += 4 * hs;
@@ -114,7 +93,7 @@ impl TaggedTableLayout {
                 top_k: header.top_k,
                 ngram_n: header.ngram_n,
                 ngram_pad: header.ngram_pad,
-                tags,
+                tags_start,
                 keys_start,
                 values_start,
             },
@@ -122,9 +101,16 @@ impl TaggedTableLayout {
         )
     }
 
-    /// Hash the context, check tag for collision detection, return top-k if tag matches.
-    /// For unigram tables (ngram_n=1), context is empty and hash is deterministic —
-    /// this matches the Python serializer which stores the hash of an empty context.
+    #[inline]
+    fn read_tag(
+        &self,
+        bytes: &[u8],
+        idx: usize,
+    ) -> u64 {
+        let off = self.tags_start + idx * 8;
+        u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
+    }
+
     #[inline]
     fn lookup(
         &self,
@@ -151,13 +137,11 @@ impl TaggedTableLayout {
             }
         }
 
-        let hash = full_hash(&ctx_buf[..ngram_ctx]);
+        let hash = seqhash(&ctx_buf[..ngram_ctx]);
         let idx = (hash % self.hashtable_size as u64) as usize;
         let tag = hash / self.hashtable_size as u64;
 
-        // Tag mismatch means a hash collision — this context was not stored
-        // in this bucket. Back off to a lower-order table.
-        if self.tags[idx] != tag {
+        if self.read_tag(bytes, idx) != tag {
             return None;
         }
 
@@ -191,11 +175,7 @@ pub struct NGramSpeculator<B: Deref<Target = [u8]> + Send + Sync> {
 }
 
 impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
-    pub fn new(bytes: B) -> Self {
-        Self::new_with_temperature(bytes, None)
-    }
-
-    pub fn new_with_temperature(
+    pub fn new(
         bytes: B,
         temperature: Option<f32>,
     ) -> Self {
@@ -203,7 +183,6 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
 
         let max_order = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
         // Discount parameter is baked into the exported probabilities at training time.
-        // Stored in the binary for metadata but not used at inference.
         let _discount = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
         off += 8;
 
@@ -219,7 +198,6 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
                 "table {}: parsed size {parsed_size} != declared size {table_len}",
                 tables.len()
             );
-            // Validate ascending ngram_n order (lookup relies on .iter().rev())
             if let Some(prev) = tables.last() {
                 assert!(
                     layout.ngram_n > prev.ngram_n,
@@ -243,7 +221,7 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
                     0.0
                 }
             },
-            None => 0.0, // no temperature scaling
+            None => 0.0,
         };
 
         Self {
@@ -253,7 +231,6 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         }
     }
 
-    /// Cascading backoff: try highest-order table first, fall back to lower orders.
     fn lookup(
         &self,
         prefix: &[u64],
@@ -268,18 +245,15 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
 }
 
 impl NGramSpeculator<memmap2::Mmap> {
-    pub fn load(path: &str) -> Self {
-        Self::load_with_temperature(path, None)
-    }
-
-    pub fn load_with_temperature(
+    pub fn load(
         path: &str,
         temperature: Option<f32>,
     ) -> Self {
-        let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
+        let file = std::fs::File::open(path)
+            .unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
         let mmap = unsafe { memmap2::MmapOptions::default().map(&file) }
             .unwrap_or_else(|e| panic!("failed to mmap speculator file '{path}': {e}"));
-        Self::new_with_temperature(mmap, temperature)
+        Self::new(mmap, temperature)
     }
 }
 
