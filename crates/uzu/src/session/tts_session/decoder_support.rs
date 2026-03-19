@@ -36,7 +36,7 @@ impl TextSamplingState {
         let method = if temperature <= 0.0 || top_p <= 0.0 {
             SamplingMethod::Greedy
         } else {
-            SamplingMethod::AdvancedStochastic {
+            SamplingMethod::Stochastic {
                 temperature: Some(temperature),
                 top_k: None,
                 top_p: Some(top_p),

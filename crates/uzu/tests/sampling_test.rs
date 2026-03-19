@@ -19,7 +19,7 @@ use uzu::{
         },
         metal::Metal,
     },
-    session::parameter::SamplingMethod,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 // Constant seed for reproducible test results
@@ -295,6 +295,7 @@ fn test_categorical_sampling() {
                     top_k: None,
                     top_p: None,
                     min_p: None,
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 batch_size,
                 vocab_size,
@@ -432,6 +433,7 @@ fn test_categorical_sampling_statistical() {
                     top_k: None,
                     top_p: None,
                     min_p: None,
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 BATCH,
                 VOCAB,
@@ -533,6 +535,7 @@ fn perf_categorical_128k_vocab() {
                 top_k: None,
                 top_p: None,
                 min_p: None,
+                processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
             BATCH,
             VOCAB,
@@ -765,6 +768,7 @@ fn test_minp_sampling_exact_match(
                     top_k: None,
                     top_p: None,
                     min_p: Some(min_p),
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 batch_size,
                 vocab_size,

@@ -2,7 +2,6 @@ mod backend;
 mod buffer;
 pub mod command_buffer;
 mod context;
-mod copy_encoder;
 mod device_capabilities;
 mod error;
 mod event;

@@ -1,3 +1,5 @@
+use thiserror::Error;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsChunkPolicy {
     Fixed,
@@ -26,33 +28,51 @@ pub struct TtsRunConfig {
     pub chunk_hysteresis_fraction: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TtsRunConfigError {
+    #[error("initial_chunk_frames must be greater than zero")]
+    InitialChunkFramesMustBePositive,
+    #[error("min_chunk_frames must be greater than zero")]
+    MinChunkFramesMustBePositive,
+    #[error("max_chunk_frames must be greater than or equal to min_chunk_frames")]
+    MaxChunkFramesBelowMinChunkFrames,
+    #[error("max_stream_workspace_frames must be greater than zero")]
+    MaxStreamWorkspaceFramesMustBePositive,
+    #[error("target_emit_latency_ms must be greater than zero")]
+    TargetEmitLatencyMustBePositive,
+    #[error("max_semantic_frames must be greater than zero")]
+    MaxSemanticFramesMustBePositive,
+    #[error("max_stream_workspace_frames must be greater than or equal to max_chunk_frames")]
+    MaxStreamWorkspaceFramesBelowMaxChunkFrames,
+}
+
 impl TtsRunConfig {
-    pub fn validate(&self) -> Result<(), &'static str> {
+    pub fn validate(&self) -> Result<(), TtsRunConfigError> {
         if self.initial_chunk_frames == 0 {
-            return Err("initial_chunk_frames must be greater than zero");
+            return Err(TtsRunConfigError::InitialChunkFramesMustBePositive);
         }
         if self.min_chunk_frames == 0 {
-            return Err("min_chunk_frames must be greater than zero");
+            return Err(TtsRunConfigError::MinChunkFramesMustBePositive);
         }
         if self.max_chunk_frames < self.min_chunk_frames {
-            return Err("max_chunk_frames must be greater than or equal to min_chunk_frames");
+            return Err(TtsRunConfigError::MaxChunkFramesBelowMinChunkFrames);
         }
         if self.max_stream_workspace_frames == 0 {
-            return Err("max_stream_workspace_frames must be greater than zero");
+            return Err(TtsRunConfigError::MaxStreamWorkspaceFramesMustBePositive);
         }
         if self.target_emit_latency_ms == 0 {
-            return Err("target_emit_latency_ms must be greater than zero");
+            return Err(TtsRunConfigError::TargetEmitLatencyMustBePositive);
         }
         if self.max_semantic_frames == 0 {
-            return Err("max_semantic_frames must be greater than zero");
+            return Err(TtsRunConfigError::MaxSemanticFramesMustBePositive);
         }
         Ok(())
     }
 
-    pub fn validate_stream_decode(&self) -> Result<(), &'static str> {
+    pub fn validate_stream_decode(&self) -> Result<(), TtsRunConfigError> {
         self.validate()?;
         if self.max_stream_workspace_frames < self.max_chunk_frames {
-            return Err("max_stream_workspace_frames must be greater than or equal to max_chunk_frames");
+            return Err(TtsRunConfigError::MaxStreamWorkspaceFramesBelowMaxChunkFrames);
         }
         Ok(())
     }

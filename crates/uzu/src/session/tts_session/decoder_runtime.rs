@@ -1,5 +1,5 @@
 use super::{decoder_support::*, *};
-use crate::backends::common::Buffer;
+use crate::{backends::common::Buffer, session::types::TtsModelConfigError};
 
 struct TokenDecoderLoadedModel<B: Backend> {
     shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -345,14 +345,14 @@ impl<B: Backend> TokenDecoderRunner<B> {
         vocab_limit: Option<usize>,
         sampling: &mut TextSamplingState,
     ) -> Result<usize, Error> {
-        let total_count = 1_usize
-            .checked_add(followup_count)
-            .ok_or(Error::InvalidTtsModelConfig("followup_count overflow in async chain".to_string()))?;
+        let total_count =
+            1_usize.checked_add(followup_count).ok_or(TtsModelConfigError::AsyncChainFollowupCountOverflow)?;
         if total_count > self.ctx.async_chain_capacity {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "async chain token count {total_count} exceeds capacity {}",
-                self.ctx.async_chain_capacity
-            )));
+            return Err(TtsModelConfigError::AsyncChainTokenCountExceedsCapacity {
+                total_count,
+                capacity: self.ctx.async_chain_capacity,
+            }
+            .into());
         }
 
         let vocab_mask_limit = if let Some(limit_raw) = vocab_limit {
@@ -381,9 +381,10 @@ impl<B: Backend> TokenDecoderRunner<B> {
             } else if initial_token_count == 2 {
                 self.get_two_token_vocab_mask(limit).map(|m| m.into())
             } else {
-                return Err(Error::InvalidTtsModelConfig(format!(
-                    "vocab mask not supported for initial_token_count={initial_token_count} (expected 1 or 2)"
-                )));
+                return Err(TtsModelConfigError::UnsupportedInitialTokenCountForVocabMask {
+                    initial_token_count,
+                }
+                .into());
             }
         } else {
             None
@@ -624,9 +625,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
         let mut mask = vec![
             0_u32;
-            row_words.checked_mul(2).ok_or(Error::InvalidTtsModelConfig(format!(
-                "two-token vocab mask size overflow (row_words={row_words})"
-            )))?
+            row_words.checked_mul(2).ok_or(TtsModelConfigError::TwoTokenVocabMaskSizeOverflow {
+                row_words
+            })?
         ];
         for token_index in 0..limit {
             let word = token_index / 32;
@@ -702,14 +703,16 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
         if let Some(mask) = token_bitmask {
             let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
-            let expected_words = token_count
-                .checked_mul(row_words)
-                .ok_or(Error::InvalidTtsModelConfig("token bitmask size overflow".to_string()))?;
+            let expected_words =
+                token_count.checked_mul(row_words).ok_or(TtsModelConfigError::TokenBitmaskSizeOverflow)?;
             if mask.len() != expected_words {
-                return Err(Error::InvalidTtsModelConfig(format!(
-                    "token bitmask length {}, expected {expected_words} (token_count={token_count}, row_words={row_words})",
-                    mask.len()
-                )));
+                return Err(TtsModelConfigError::TokenBitmaskLengthMismatch {
+                    actual_words: mask.len(),
+                    expected_words,
+                    token_count,
+                    row_words,
+                }
+                .into());
             }
         }
 
@@ -861,20 +864,20 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let sampling_start = token_count - 1;
             let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
             let token_bitmask_owned: Option<Box<[u32]>> = if let Some(mask) = precomputed_token_bitmask {
-                let expected_words = token_count
-                    .checked_mul(row_words)
-                    .ok_or(Error::InvalidTtsModelConfig("precomputed bitmask size overflow".to_string()))?;
+                let expected_words =
+                    token_count.checked_mul(row_words).ok_or(TtsModelConfigError::PrecomputedBitmaskSizeOverflow)?;
                 if mask.len() != expected_words {
-                    return Err(Error::InvalidTtsModelConfig(format!(
-                        "precomputed bitmask length {}, expected {expected_words}",
-                        mask.len()
-                    )));
+                    return Err(TtsModelConfigError::PrecomputedBitmaskLengthMismatch {
+                        actual_words: mask.len(),
+                        expected_words,
+                    }
+                    .into());
                 }
                 Some(mask.into())
             } else if let Some(limit_raw) = vocab_limit {
                 let limit = limit_raw.min(self.ctx.decoder_config.vocab_size);
                 if limit == 0 {
-                    return Err(Error::InvalidTtsModelConfig("vocab_limit resolved to 0".to_string()));
+                    return Err(TtsModelConfigError::VocabLimitResolvedToZero.into());
                 }
                 if limit >= self.ctx.decoder_config.vocab_size {
                     None
@@ -894,9 +897,12 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     if let Some(mask) = self.get_two_token_vocab_mask(limit) {
                         Some(mask.into())
                     } else {
-                        let total_words = token_count.checked_mul(row_words).ok_or(Error::InvalidTtsModelConfig(
-                            format!("inline bitmask size overflow (token_count={token_count}, row_words={row_words})"),
-                        ))?;
+                        let total_words = token_count.checked_mul(row_words).ok_or(
+                            TtsModelConfigError::InlineBitmaskSizeOverflow {
+                                token_count,
+                                row_words,
+                            },
+                        )?;
                         let mut mask = vec![0_u32; total_words];
                         for token_index in 0..limit {
                             let word = token_index / 32;
@@ -908,9 +914,10 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 } else {
                     // token_count > 2 with vocab_limit requires a precomputed bitmask;
                     // silently dropping the limit would produce incorrect sampling.
-                    return Err(Error::InvalidTtsModelConfig(format!(
-                        "vocab_limit with token_count={token_count} requires a precomputed bitmask"
-                    )));
+                    return Err(TtsModelConfigError::VocabLimitRequiresPrecomputedBitmask {
+                        token_count,
+                    }
+                    .into());
                 }
             } else {
                 None
@@ -950,29 +957,30 @@ impl<B: Backend> TokenDecoderRunner<B> {
             return Err(Error::GenerateFailed);
         }
         let model_dim = self.ctx.decoder_config.model_dim;
-        let model_dim_u32 = u32::try_from(model_dim)
-            .map_err(|_| Error::InvalidTtsModelConfig(format!("model_dim {model_dim} exceeds u32 range")))?;
+        let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
+            model_dim,
+        })?;
         let main = state.arrays(&[ArrayId::Main])[0].clone();
         let main = main.borrow();
         let bytes_per_element = main.data_type().size_in_bytes();
         let row_offset = (token_count - 1)
             .checked_mul(model_dim)
             .and_then(|value| value.checked_mul(bytes_per_element))
-            .ok_or(Error::InvalidTtsModelConfig(format!(
-                "hidden capture row offset overflow (token_count={token_count}, model_dim={model_dim})"
-            )))?;
-        let src_offset = main
-            .offset()
-            .checked_add(row_offset)
-            .ok_or(Error::InvalidTtsModelConfig("hidden capture src offset overflow".to_string()))?;
+            .ok_or(TtsModelConfigError::HiddenCaptureRowOffsetOverflow {
+                token_count,
+                model_dim,
+            })?;
+        let src_offset =
+            main.offset().checked_add(row_offset).ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
         let capture = self.single_hidden_capture.borrow();
         if capture.shape() != [1, model_dim] || capture.data_type() != main.data_type() {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "hidden capture shape/dtype mismatch: expected [1, {model_dim}] {:?}, got {:?} {:?}",
-                main.data_type(),
-                capture.shape(),
-                capture.data_type()
-            )));
+            return Err(TtsModelConfigError::HiddenCaptureTensorMismatch {
+                expected_shape: [1, model_dim].into(),
+                expected_data_type: main.data_type(),
+                actual_shape: capture.shape().into(),
+                actual_data_type: capture.data_type(),
+            }
+            .into());
         }
 
         let main_buffer = main.buffer();
@@ -990,18 +998,20 @@ impl<B: Backend> TokenDecoderRunner<B> {
         override_embedding: &ArrayCell<B>,
     ) -> Result<(), Error> {
         let model_dim = self.ctx.decoder_config.model_dim;
-        let model_dim_u32 = u32::try_from(model_dim)
-            .map_err(|_| Error::InvalidTtsModelConfig(format!("model_dim {model_dim} exceeds u32 range")))?;
+        let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
+            model_dim,
+        })?;
         let main = state.arrays(&[ArrayId::Main])[0].clone();
         let main = main.borrow();
         let override_embedding = override_embedding.borrow();
         if override_embedding.shape() != [1, model_dim] || override_embedding.data_type() != main.data_type() {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "override embedding shape/dtype mismatch: expected [1, {model_dim}] {:?}, got {:?} {:?}",
-                main.data_type(),
-                override_embedding.shape(),
-                override_embedding.data_type()
-            )));
+            return Err(TtsModelConfigError::OverrideEmbeddingTensorMismatch {
+                expected_shape: [1, model_dim].into(),
+                expected_data_type: main.data_type(),
+                actual_shape: override_embedding.shape().into(),
+                actual_data_type: override_embedding.data_type(),
+            }
+            .into());
         }
 
         let override_buffer = override_embedding.buffer();
@@ -1028,24 +1038,29 @@ impl<B: Backend> TokenDecoderRunner<B> {
             return Err(Error::GenerateFailed);
         }
         let model_dim = self.ctx.decoder_config.model_dim;
-        let model_dim_u32 = u32::try_from(model_dim)
-            .map_err(|_| Error::InvalidTtsModelConfig(format!("model_dim {model_dim} exceeds u32 range")))?;
-        let total_len = token_count.checked_mul(model_dim).ok_or(Error::InvalidTtsModelConfig(format!(
-            "add_scale total_len overflow (token_count={token_count}, model_dim={model_dim})"
-        )))?;
-        let total_len_u32 = u32::try_from(total_len)
-            .map_err(|_| Error::InvalidTtsModelConfig(format!("add_scale total_len {total_len} exceeds u32 range")))?;
+        let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
+            model_dim,
+        })?;
+        let total_len = token_count.checked_mul(model_dim).ok_or(TtsModelConfigError::AddScaleTotalLengthOverflow {
+            token_count,
+            model_dim,
+        })?;
+        let total_len_u32 =
+            u32::try_from(total_len).map_err(|_| TtsModelConfigError::AddScaleTotalLengthExceedsU32 {
+                total_len,
+            })?;
 
         let main = state.arrays(&[ArrayId::Main])[0].clone();
         let main = main.borrow();
         let bias = self.single_override_embedding.borrow();
         if bias.shape() != [1, model_dim] || bias.data_type() != main.data_type() {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "add_scale bias shape/dtype mismatch: expected [1, {model_dim}] {:?}, got {:?} {:?}",
-                main.data_type(),
-                bias.shape(),
-                bias.data_type()
-            )));
+            return Err(TtsModelConfigError::AddScaleBiasTensorMismatch {
+                expected_shape: [1, model_dim].into(),
+                expected_data_type: main.data_type(),
+                actual_shape: bias.shape().into(),
+                actual_data_type: bias.data_type(),
+            }
+            .into());
         }
 
         let bias_buffer = bias.buffer();
@@ -1132,17 +1147,25 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &self,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         src_slot: usize,
-        dst: (&B::Buffer, usize),
+        dst: (&mut B::Buffer, usize),
         count: usize,
     ) -> Result<(), Error> {
-        let src_offset = src_slot.checked_mul(std::mem::size_of::<u32>()).ok_or(Error::InvalidTtsModelConfig(
-            format!("async chain copy src_offset overflow (src_slot={src_slot})"),
-        ))?;
-        let copy_size = count
-            .checked_mul(std::mem::size_of::<u32>())
-            .ok_or(Error::InvalidTtsModelConfig(format!("async chain copy size overflow (count={count})")))?;
+        let src_offset = src_slot.checked_mul(std::mem::size_of::<u32>()).ok_or(
+            TtsModelConfigError::AsyncChainCopySourceOffsetOverflow {
+                src_slot,
+            },
+        )?;
+        let copy_size =
+            count.checked_mul(std::mem::size_of::<u32>()).ok_or(TtsModelConfigError::AsyncChainCopySizeOverflow {
+                count,
+            })?;
         let results_buffer = self.ctx.async_chain_results.borrow();
-        command_buffer.encode_copy_ranges((&*results_buffer, src_offset), dst, copy_size);
+        command_buffer.encode_copy(
+            &results_buffer,
+            src_offset..src_offset + copy_size,
+            dst.0,
+            dst.1..dst.1 + copy_size,
+        );
         Ok(())
     }
 
@@ -1154,9 +1177,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let ptr = results_buffer.cpu_ptr().as_ptr() as *const u32;
         let capacity = self.ctx.async_chain_capacity;
         if slot >= capacity {
-            return Err(Error::InvalidTtsModelConfig(format!(
-                "async chain result slot {slot} out of bounds (capacity={capacity})"
-            )));
+            return Err(TtsModelConfigError::AsyncChainResultSlotOutOfBounds {
+                slot,
+                capacity,
+            }
+            .into());
         }
         Ok(unsafe { *ptr.add(slot) })
     }

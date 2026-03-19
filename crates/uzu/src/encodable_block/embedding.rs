@@ -136,7 +136,7 @@ impl<B: Backend> Embedding<B> {
         Self::new_with_parameter_trees(context, vocab_size, model_dim, config, parameter_tree, parameter_tree)
     }
 
-    pub fn new_with_parameter_trees(
+    pub(crate) fn new_with_parameter_trees(
         context: &B::Context,
         vocab_size: u32,
         model_dim: u32,

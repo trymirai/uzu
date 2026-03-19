@@ -179,12 +179,6 @@ impl<B: Backend> SamplingKernel<B> {
                 top_k,
                 top_p,
                 min_p,
-            } => Some((temperature, top_k, top_p, min_p, SamplingProcessingOrder::TemperatureThenFilters)),
-            SamplingMethod::AdvancedStochastic {
-                temperature,
-                top_k,
-                top_p,
-                min_p,
                 processing_order,
             } => Some((temperature, top_k, top_p, min_p, processing_order)),
         };

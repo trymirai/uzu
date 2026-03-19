@@ -59,24 +59,14 @@ impl CommandBufferEncoding for CpuCommandBuffer {
     fn encode_copy(
         &mut self,
         src: &Box<[u8]>,
+        src_range: std::ops::Range<usize>,
         dst: &mut Box<[u8]>,
-        size: usize,
+        dst_range: std::ops::Range<usize>,
     ) {
-        let src = src.as_ptr();
-        let dst = dst.as_ptr() as *mut u8;
-        self.push_command(Box::new(move || unsafe {
-            std::ptr::copy(src, dst, size);
-        }))
-    }
-
-    fn encode_copy_ranges(
-        &mut self,
-        src: (&Box<[u8]>, usize),
-        dst: (&Box<[u8]>, usize),
-        size: usize,
-    ) {
-        let src_ptr = unsafe { src.0.as_ptr().add(src.1) };
-        let dst_ptr = unsafe { (dst.0.as_ptr() as *mut u8).add(dst.1) };
+        let size = src_range.end - src_range.start;
+        assert_eq!(size, dst_range.end - dst_range.start);
+        let src_ptr = unsafe { src.as_ptr().add(src_range.start) };
+        let dst_ptr = unsafe { dst.as_ptr().add(dst_range.start) as *mut u8 };
         self.push_command(Box::new(move || unsafe {
             std::ptr::copy(src_ptr, dst_ptr, size);
         }))
@@ -162,10 +152,6 @@ impl CommandBufferPending for CpuCommandBuffer {
 
 impl CommandBufferCompleted for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
-
-    fn is_completed(&self) -> bool {
-        true
-    }
 
     fn gpu_execution_time(&self) -> Option<Duration> {
         self.gpu_execution_time.get().copied()

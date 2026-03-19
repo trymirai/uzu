@@ -30,7 +30,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         seed: u64,
         config: &TtsRunConfig,
     ) -> Result<AudioPcmBatch, Error> {
-        config.validate().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
+        config.validate()?;
 
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self
@@ -64,7 +64,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                 if semantic_tokens.batch_size() != 1 {
                     return Err(Error::GenerateFailed);
                 }
-                config.validate_stream_decode().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
+                config.validate_stream_decode()?;
                 let total_frames = semantic_tokens.frames();
                 let chunked_threshold = config.max_stream_workspace_frames.max(config.max_chunk_frames.max(1));
                 if total_frames <= chunked_threshold {
@@ -157,7 +157,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         seed: u64,
         config: &TtsRunConfig,
     ) -> Result<AudioTokenGrid, Error> {
-        config.validate().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
+        config.validate()?;
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self
             .tokenizer
@@ -225,7 +225,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
             on_chunk(&pcm);
             return Ok(pcm);
         }
-        config.validate_stream_decode().map_err(|reason| Error::InvalidTtsRunConfig(reason.to_string()))?;
+        config.validate_stream_decode()?;
 
         let prompt = self.render_prompt(&input)?;
         let text_tokens: Vec<u64> = self

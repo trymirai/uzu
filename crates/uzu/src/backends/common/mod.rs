@@ -3,7 +3,6 @@ mod backend;
 mod buffer;
 mod command_buffer;
 mod context;
-mod copy_encoder;
 mod event;
 pub mod gpu_types;
 pub mod kernel;
@@ -16,6 +15,5 @@ pub use command_buffer::{
     CommandBufferPending,
 };
 pub use context::Context;
-pub use copy_encoder::CopyEncoder;
 pub use event::Event;
 pub use kernel::Kernels;

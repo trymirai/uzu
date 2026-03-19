@@ -24,15 +24,9 @@ pub trait CommandBufferEncoding {
     fn encode_copy(
         &mut self,
         src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        src_range: Range<usize>,
         dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
-        size: usize,
-    );
-
-    fn encode_copy_ranges(
-        &mut self,
-        src: (&<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer, usize),
-        dst: (&<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer, usize),
-        size: usize,
+        dst_range: Range<usize>,
     );
 
     fn encode_fill(
@@ -88,8 +82,6 @@ pub trait CommandBufferPending {
 
 pub trait CommandBufferCompleted {
     type CommandBuffer: CommandBuffer<Completed = Self>;
-
-    fn is_completed(&self) -> bool;
 
     fn gpu_execution_time(&self) -> Option<Duration>;
 }

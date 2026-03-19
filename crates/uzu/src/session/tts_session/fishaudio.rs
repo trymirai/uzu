@@ -3,7 +3,11 @@ use std::{collections::BTreeSet, sync::LazyLock};
 use regex::Regex;
 
 use super::*;
-use crate::{array::Array, config::TtsMessageProcessorConfig};
+use crate::{
+    array::Array,
+    config::TtsMessageProcessorConfig,
+    session::types::{TtsModelConfigError, TtsPromptConfigError},
+};
 
 pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
     slow_runner: TokenDecoderRunner<B>,
@@ -129,10 +133,12 @@ fn load_float_tensor_array<B: Backend>(
         return Err(Error::UnableToLoadConfig);
     }
     if array.data_type() != target_data_type {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "FishAudio tensor {key} dtype mismatch: expected {target_data_type:?}, got {:?}",
-            array.data_type()
-        )));
+        return Err(TtsModelConfigError::FishAudioTensorDataTypeMismatch {
+            key: key.into(),
+            expected: target_data_type,
+            actual: array.data_type(),
+        }
+        .into());
     }
     Ok(array)
 }
@@ -148,35 +154,47 @@ fn validate_fishaudio_decoder_contract(
     audio_semantic_cardinality: usize,
 ) -> Result<usize, Error> {
     if num_codebooks <= 1 || codebook_size == 0 || max_seq_len == 0 {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "FishAudio decoder requires num_codebooks > 1 plus positive codebook_size and max_seq_len, got num_codebooks={num_codebooks}, codebook_size={codebook_size}, max_seq_len={max_seq_len}"
-        )));
+        return Err(TtsModelConfigError::FishAudioDecoderCoreParametersInvalid {
+            num_codebooks,
+            codebook_size,
+            max_seq_len,
+        }
+        .into());
     }
     if num_codebooks != audio_num_codebooks {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "FishAudio decoder num_codebooks={num_codebooks} does not match audio num_codebooks={audio_num_codebooks}"
-        )));
+        return Err(TtsModelConfigError::FishAudioDecoderNumCodebooksMismatch {
+            decoder_num_codebooks: num_codebooks,
+            audio_num_codebooks,
+        }
+        .into());
     }
     if audio_codec_cardinality == 0 || audio_codec_cardinality > codebook_size {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "FishAudio decoder codebook_size={codebook_size} must be at least audio residual codec cardinality={audio_codec_cardinality}"
-        )));
+        return Err(TtsModelConfigError::FishAudioDecoderCodebookSizeTooSmall {
+            codebook_size,
+            audio_codec_cardinality,
+        }
+        .into());
     }
     if semantic_token_begin_id > semantic_token_end_id {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "FishAudio semantic token range is invalid: begin={semantic_token_begin_id}, end={semantic_token_end_id}"
-        )));
+        return Err(TtsModelConfigError::FishAudioSemanticTokenRangeInvalid {
+            begin: semantic_token_begin_id,
+            end: semantic_token_end_id,
+        }
+        .into());
     }
 
     let semantic_cardinality = usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| {
-        Error::InvalidTtsModelConfig(format!(
-            "FishAudio semantic token range overflow: begin={semantic_token_begin_id}, end={semantic_token_end_id}"
-        ))
+        TtsModelConfigError::FishAudioSemanticTokenRangeOverflow {
+            begin: semantic_token_begin_id,
+            end: semantic_token_end_id,
+        }
     })?;
     if semantic_cardinality == 0 || semantic_cardinality != audio_semantic_cardinality {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "FishAudio semantic codec cardinality={semantic_cardinality} does not match audio semantic codec cardinality={audio_semantic_cardinality}"
-        )));
+        return Err(TtsModelConfigError::FishAudioSemanticCodecCardinalityMismatch {
+            semantic_cardinality,
+            audio_semantic_cardinality,
+        }
+        .into());
     }
 
     Ok(semantic_cardinality)
@@ -195,9 +213,10 @@ pub(super) fn validate_fishaudio_message_processor_config(config: &TtsMessagePro
 
     for field in referenced_fields {
         if !builtin_fields.contains(field.as_str()) && !config.default_message_fields.contains_key(field.as_str()) {
-            return Err(Error::InvalidTtsPromptConfig(format!(
-                "FishAudio prompt template references message.{field}, but default_message_fields does not provide it"
-            )));
+            return Err(TtsPromptConfigError::MissingDefaultMessageField {
+                field: field.into_boxed_str(),
+            }
+            .into());
         }
     }
 
@@ -595,11 +614,11 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             let dst_byte_offset = std::mem::size_of::<u32>(); // skip slot 0
             let token_indices = semantic_bridge.codebook_token_indices.borrow();
             let token_indices_buffer = token_indices.buffer();
-            let token_indices_buffer = token_indices_buffer.borrow();
+            let mut token_indices_buffer = token_indices_buffer.borrow_mut();
             source_runner.copy_async_chain_results_to_on(
                 command_buffer,
                 source_slot,
-                (&*token_indices_buffer, token_indices.offset() + dst_byte_offset),
+                (&mut *token_indices_buffer, token_indices.offset() + dst_byte_offset),
                 residual_count,
             )?;
         }

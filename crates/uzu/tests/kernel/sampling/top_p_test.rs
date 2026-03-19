@@ -18,7 +18,7 @@ use uzu::{
         },
         cpu::Cpu,
     },
-    session::parameter::SamplingMethod,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 const TEST_SAMPLING_SEED: u64 = 42;
@@ -296,6 +296,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
                     top_k: None,
                     top_p: Some(p),
                     min_p: None,
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 batch_size,
                 vocab_size,
@@ -401,6 +402,7 @@ fn test_topp_sampling_statistical_large() {
                         top_k: None,
                         top_p: Some(TOP_P),
                         min_p: None,
+                        processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                     },
                     BATCH,
                     VOCAB,
@@ -478,6 +480,7 @@ fn perf_topp_128k_vocab() {
                     top_k: None,
                     top_p: Some(TOP_P),
                     min_p: None,
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 BATCH,
                 VOCAB,

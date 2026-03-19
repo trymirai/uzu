@@ -1,5 +1,8 @@
 use super::*;
-use crate::config::{ModelType, TtsModelConfig, TtsTextDecoderConfig};
+use crate::{
+    config::{ModelType, TtsModelConfig, TtsTextDecoderConfig},
+    session::types::TtsModelConfigError,
+};
 
 pub(super) struct LoadedTtsRuntime<B: Backend> {
     pub(super) audio: AudioGenerationContext<B>,
@@ -20,18 +23,15 @@ pub(super) fn load_tts_runtime<B: Backend + Send + Sync>(
     options: &TtsSessionOptions,
 ) -> Result<LoadedTtsRuntime<B>, Error> {
     if model_metadata.model_type != ModelType::TtsModel {
-        return Err(Error::InvalidTtsModelConfig(format!(
-            "expected model_type={:?}, got {:?}",
-            ModelType::TtsModel,
-            model_metadata.model_type
-        )));
+        return Err(TtsModelConfigError::ModelTypeMismatch {
+            expected: ModelType::TtsModel,
+            actual: model_metadata.model_type.clone(),
+        }
+        .into());
     }
 
-    let tts_model_config = model_metadata
-        .model_config
-        .as_tts()
-        .ok_or_else(|| Error::InvalidTtsModelConfig("missing TTS model config".to_string()))?
-        .clone();
+    let tts_model_config =
+        model_metadata.model_config.as_tts().ok_or(TtsModelConfigError::MissingTtsModelConfig)?.clone();
     let audio: AudioGenerationContext<B> =
         tts_model_config.create_audio_generation_context_with_model_path(model_path)?;
     let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, model_path, options)?;

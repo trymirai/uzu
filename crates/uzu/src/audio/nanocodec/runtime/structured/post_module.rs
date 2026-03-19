@@ -381,11 +381,12 @@ impl StructuredAudioCodecGraph {
             let latent_buffer = latent_nsc.buffer();
             let main_output_buffer = main_output.buffer();
             let latent_buffer = latent_buffer.borrow();
-            let main_output_buffer = main_output_buffer.borrow();
-            command_buffer.encode_copy_ranges(
-                (&latent_buffer, latent_nsc.offset()),
-                (&main_output_buffer, main_output.offset()),
-                copy_bytes,
+            let mut main_output_buffer = main_output_buffer.borrow_mut();
+            command_buffer.encode_copy(
+                &latent_buffer,
+                latent_nsc.offset()..latent_nsc.offset() + copy_bytes,
+                &mut main_output_buffer,
+                main_output.offset()..main_output.offset() + copy_bytes,
             );
         }
         Self::encode_post_module_layers(&runtime, &mut state, command_buffer)?;
@@ -488,11 +489,12 @@ impl StructuredAudioCodecGraph {
                         let latent_buffer = latent_nsc.buffer();
                         let output_buffer = output.buffer();
                         let latent_buffer = latent_buffer.borrow();
-                        let output_buffer = output_buffer.borrow();
-                        command_buffer.encode_copy_ranges(
-                            (&latent_buffer, latent_nsc.offset()),
-                            (&output_buffer, output.offset()),
-                            full_copy_bytes,
+                        let mut output_buffer = output_buffer.borrow_mut();
+                        command_buffer.encode_copy(
+                            &latent_buffer,
+                            latent_nsc.offset()..latent_nsc.offset() + full_copy_bytes,
+                            &mut output_buffer,
+                            output.offset()..output.offset() + full_copy_bytes,
                         );
                     }
                     copied_output_prefix = true;
@@ -502,11 +504,12 @@ impl StructuredAudioCodecGraph {
                     let source_buffer = source.buffer();
                     let main_output_buffer = main_output.buffer();
                     let source_buffer = source_buffer.borrow();
-                    let main_output_buffer = main_output_buffer.borrow();
-                    command_buffer.encode_copy_ranges(
-                        (&source_buffer, source.offset()),
-                        (&main_output_buffer, main_output.offset()),
-                        source.size(),
+                    let mut main_output_buffer = main_output_buffer.borrow_mut();
+                    command_buffer.encode_copy(
+                        &source_buffer,
+                        source.offset()..source.offset() + source.size(),
+                        &mut main_output_buffer,
+                        main_output.offset()..main_output.offset() + source.size(),
                     );
                 }
                 Self::encode_post_module_layers(&runtime, &mut state, command_buffer)?;
@@ -515,11 +518,12 @@ impl StructuredAudioCodecGraph {
                     let main_output_buffer = main_output.buffer();
                     let destination_buffer = destination.buffer();
                     let main_output_buffer = main_output_buffer.borrow();
-                    let destination_buffer = destination_buffer.borrow();
-                    command_buffer.encode_copy_ranges(
-                        (&main_output_buffer, main_output.offset()),
-                        (&destination_buffer, destination.offset()),
-                        destination.size(),
+                    let mut destination_buffer = destination_buffer.borrow_mut();
+                    command_buffer.encode_copy(
+                        &main_output_buffer,
+                        main_output.offset()..main_output.offset() + destination.size(),
+                        &mut destination_buffer,
+                        destination.offset()..destination.offset() + destination.size(),
                     );
                 }
             }

@@ -343,7 +343,7 @@ fn run_conv_scan_once(
     if let Some(ref scratch) = scratch_buf {
         let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            command_buffer.encode_copy(scratch, &mut state_buf, bytes);
+            command_buffer.encode_copy(scratch, 0..bytes, &mut state_buf, 0..bytes);
         }
     }
 
