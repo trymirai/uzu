@@ -22,6 +22,8 @@ pub struct AttentionConfig {
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
+    #[serde(default)]
+    pub partial_rope_dim: Option<usize>,
 }
 
 #[cfg(test)]
@@ -29,12 +31,10 @@ mod tests {
     use serde_json5::from_str;
 
     use super::{
-        super::{
-            common::{ConfigDataType, QuantizationMode},
-            linear::QuantizationConfig,
-        },
+        super::{common::ConfigDataType, linear::QuantizationConfig},
         *,
     };
+    use crate::backends::common::gpu_types::QuantizationMode;
 
     #[test]
     fn test_attention_config() {
@@ -77,8 +77,8 @@ mod tests {
             qkv_projection_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UInt4,
-                    activation_quantization_mode: Some(QuantizationMode::Int8),
+                    weight_quantization_mode: QuantizationMode::UINT4,
+                    activation_quantization_mode: Some(QuantizationMode::INT8),
                     activation_precision: ConfigDataType::BFloat16,
                 },
                 lora_rank: 16,
@@ -87,8 +87,8 @@ mod tests {
             out_projection_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UInt4,
-                    activation_quantization_mode: Some(QuantizationMode::Int8),
+                    weight_quantization_mode: QuantizationMode::UINT4,
+                    activation_quantization_mode: Some(QuantizationMode::INT8),
                     activation_precision: ConfigDataType::BFloat16,
                 },
                 lora_rank: 16,
@@ -106,6 +106,7 @@ mod tests {
             has_sinks: false,
             has_qkv_biases: false,
             has_out_biases: false,
+            partial_rope_dim: None,
         };
 
         let deserialized_config: AttentionConfig = from_str(config_str).unwrap();

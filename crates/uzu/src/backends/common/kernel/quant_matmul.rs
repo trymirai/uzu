@@ -4,12 +4,12 @@ use crate::{
     DataType,
     backends::common::{
         Backend, CommandBuffer, Kernels,
+        gpu_types::QuantizationMode,
         kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
             QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
         },
     },
-    config::QuantizationMode,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -466,8 +466,8 @@ fn select_matrix_matrix_family(
 
 fn quant_bits<B: Backend>(mode: QuantizationMode) -> Result<usize, QuantizedMatmulError<B>> {
     let bits = match mode {
-        QuantizationMode::UInt4 => 4,
-        QuantizationMode::UInt8 | QuantizationMode::Int8 => 8,
+        QuantizationMode::UINT4 => 4,
+        QuantizationMode::INT8 | QuantizationMode::UINT8 => 8,
     };
     if matches!(bits, 4 | 8) {
         Ok(bits)

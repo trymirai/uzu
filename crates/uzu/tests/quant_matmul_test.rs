@@ -12,6 +12,7 @@ use uzu::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
             Context,
+            gpu_types::QuantizationMode,
             kernel::quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
                 QuantizedMatmulType,
@@ -19,7 +20,6 @@ use uzu::{
         },
         metal::Metal,
     },
-    config::QuantizationMode,
 };
 
 fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
@@ -489,8 +489,8 @@ fn execute_quantized_matmul(
             input_dim,
             output_dim,
             mode: match bits {
-                4 => QuantizationMode::UInt4,
-                8 => QuantizationMode::Int8,
+                4 => QuantizationMode::UINT4,
+                8 => QuantizationMode::INT8,
                 _ => panic!("Unsupported bits: {}", bits),
             },
             quantization_type,

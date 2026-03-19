@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "ssm_common.h"
 
@@ -55,7 +56,7 @@ PUBLIC KERNEL(SSDUpdate)(
   T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
   T this_d = d[h_idx];
   T this_z = z[x_idx];
-  this_z = apply_silu(this_z);
+  this_z = activate_silu(this_z);
   T dt_scaled_input = this_x;
 
   T temp = T(0);

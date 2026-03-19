@@ -6,7 +6,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    DataType, EmbeddingConfig, QuantizationMode,
+    DataType, EmbeddingConfig,
     backends::common::{
         Backend, CommandBuffer, Kernels,
         kernel::{
@@ -103,14 +103,6 @@ pub struct Embedding<B: Backend> {
     input_scale: f32,
     vocab_size: u32,
     model_dim: u32,
-}
-
-fn quant_mode_to_int(quant_mode: QuantizationMode) -> u32 {
-    match quant_mode {
-        QuantizationMode::UInt4 => 0,
-        QuantizationMode::Int8 => 1,
-        QuantizationMode::UInt8 => 2,
-    }
 }
 
 fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
@@ -259,7 +251,7 @@ impl<B: Backend> Embedding<B> {
                     context,
                     data_type,
                     *group_size as u32,
-                    quant_mode_to_int(*embedding_quantization_mode),
+                    (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
                 let readout = QuantizedMatmulKernelEncodable::new(
@@ -342,7 +334,7 @@ impl<B: Backend> Embedding<B> {
                     context,
                     data_type,
                     *group_size as u32,
-                    quant_mode_to_int(*embedding_quantization_mode),
+                    (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
                 let readout = QuantizedMatmulKernelEncodable::new(

@@ -1,3 +1,4 @@
+mod activation_config;
 mod backend;
 mod buffer;
 mod command_buffer;
@@ -7,6 +8,7 @@ mod event;
 pub mod gpu_types;
 pub mod kernel;
 
+pub use activation_config::ActivationConfig;
 pub use backend::Backend;
 pub use buffer::Buffer;
 pub use command_buffer::{
