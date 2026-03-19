@@ -98,3 +98,7 @@ impl<B: Backend> Sampling<B> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests_unit/encodable_block/sampling_test.rs"]
+mod tests;

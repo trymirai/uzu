@@ -1,9 +1,5 @@
 #![cfg(metal_backend)]
 
-#[macro_use]
-#[path = "../common/mod.rs"]
-mod common;
-
 use test_tag::tag;
 use uzu::session::{
     Session,
@@ -11,6 +7,8 @@ use uzu::session::{
     parameter::SamplingSeed,
     types::{Input, Message, Output},
 };
+
+use crate::common::path::get_test_model_path;
 
 fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::default().with_sampling_seed(SamplingSeed::Custom(42))
@@ -23,7 +21,7 @@ fn build_default_text() -> String {
 #[tag(heavy)]
 #[test]
 fn test_text_session_base() {
-    run(common::get_test_model_path(), build_decoding_config(), 128);
+    run(build_default_text(), build_decoding_config(), 128);
 }
 
 #[tag(heavy)]
@@ -37,7 +35,7 @@ fn test_text_session_scenario() {
 #[tag(heavy)]
 #[test]
 fn test_text_session_stability() {
-    let mut session = Session::new(common::get_test_model_path(), build_decoding_config()).unwrap();
+    let mut session = Session::new(get_test_model_path(), build_decoding_config()).unwrap();
     println!("Index | TTFT, s | Prompt t/s | Generate t/s");
     for index in 0..10 {
         let input = Input::Text(build_default_text());
@@ -65,7 +63,7 @@ fn run(
     decoding_config: DecodingConfig,
     tokens_limit: u64,
 ) {
-    let mut session = Session::new(common::get_test_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
     let output = session
         .run(
@@ -94,7 +92,7 @@ fn run_scenario(
     system_prompt: Option<String>,
     user_prompts: Vec<String>,
 ) {
-    let mut session = Session::new(common::get_test_model_path(), build_decoding_config()).unwrap();
+    let mut session = Session::new(get_test_model_path(), build_decoding_config()).unwrap();
 
     let mut messages: Vec<Message> = vec![];
     if let Some(system_prompt) = system_prompt {

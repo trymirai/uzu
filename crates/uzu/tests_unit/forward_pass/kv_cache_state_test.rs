@@ -1,6 +1,6 @@
 #![cfg(metal_backend)]
 
-use uzu::{
+use crate::{
     DataType,
     array::ArrayContextExt,
     backends::{

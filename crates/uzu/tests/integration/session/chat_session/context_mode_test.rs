@@ -1,9 +1,5 @@
 #![cfg(metal_backend)]
 
-#[macro_use]
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::path::PathBuf;
 
 use test_tag::tag;
@@ -16,8 +12,10 @@ use uzu::session::{
     types::{Input, Message, Output},
 };
 
+use crate::common::path::get_test_model_path;
+
 fn build_model_path() -> PathBuf {
-    common::get_test_model_path()
+    get_test_model_path()
 }
 
 fn build_decoding_config() -> DecodingConfig {

@@ -5,7 +5,8 @@ use std::mem::size_of;
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::runtime::ProtocolObject;
-use uzu::{
+
+use crate::{
     DataType,
     backends::{
         common::{

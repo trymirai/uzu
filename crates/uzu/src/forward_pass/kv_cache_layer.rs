@@ -464,3 +464,7 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests_unit/forward_pass/kv_cache_state_test.rs"]
+mod tests;

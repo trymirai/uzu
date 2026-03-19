@@ -21,7 +21,7 @@ fn person_schema_metal_bitmask() {
     let crate_version = env!("CARGO_PKG_VERSION");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
-    let model_dir = repo_root.join("models").join(crate_version).join("Llama-3.2-1B-Instruct");
+    let model_dir = repo_root.join("../../../../models").join(crate_version).join("Llama-3.2-1B-Instruct");
 
     let tokenizer_path = model_dir.join("tokenizer.json");
     if !tokenizer_path.exists() {

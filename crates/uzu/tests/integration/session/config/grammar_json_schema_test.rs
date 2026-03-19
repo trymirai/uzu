@@ -2,11 +2,6 @@
 
 use std::sync::Arc;
 
-#[macro_use]
-#[path = "../../common/mod.rs"]
-mod common;
-
-use common::{RepeatSpeculator, get_test_model_path};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use test_tag::tag;
@@ -16,6 +11,8 @@ use uzu::session::{
     parameter::SamplingPolicy,
     types::Input,
 };
+
+use crate::common::{path::get_test_model_path, speculator::RepeatSpeculator};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Address {

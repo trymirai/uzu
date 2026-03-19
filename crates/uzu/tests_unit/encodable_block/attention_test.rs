@@ -1,9 +1,5 @@
 #![cfg(metal_backend)]
 
-#[macro_use]
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::mem::size_of;
 
 use bytemuck;

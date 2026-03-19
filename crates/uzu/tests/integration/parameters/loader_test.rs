@@ -1,9 +1,5 @@
 #![cfg(metal_backend)]
 
-#[macro_use]
-#[path = "../common/mod.rs"]
-mod common;
-
 // New integration test for ParameterLoader
 use half::bf16;
 use is_close::is_close;
@@ -16,10 +12,12 @@ use uzu::{
     parameters::ParameterLoader,
 };
 
+use crate::common::path::get_test_weights_path;
+
 #[tag(heavy)]
 #[test]
 fn test_parameter_loader_basic() {
-    let weights_path = crate::common::get_test_weights_path();
+    let weights_path = get_test_weights_path();
     let context = <Metal as Backend>::Context::new().expect("Failed to create MetalContext");
     let file = std::fs::File::open(&weights_path).expect("Weights file not found; run download script");
 

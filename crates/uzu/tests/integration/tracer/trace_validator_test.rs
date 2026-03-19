@@ -1,18 +1,14 @@
 #![cfg(all(metal_backend, feature = "tracing"))]
 
-#[macro_use]
-#[path = "../common/mod.rs"]
-mod common;
-
-use std::path::PathBuf;
-
 use uzu::{backends::metal::Metal, tracer::TraceValidator};
+
+use crate::common::path::{get_test_model_path, get_traces_path};
 
 #[test]
 fn test_tracer() {
-    let model_path = common::get_test_model_path();
+    let model_path = get_test_model_path();
     // Ensure traces file present, otherwise skip
-    let traces_path = crate::common::get_traces_path();
+    let traces_path = get_traces_path();
     if !traces_path.exists() {
         println!("Skipping tracer test: traces file missing at {:?}", traces_path);
         return;

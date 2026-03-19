@@ -81,13 +81,13 @@ tracing = []
 audio-runtime = []
 
 [[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
+[[test]]
 name = "kernel"
-path = "tests/kernel/mod.rs"
+path = "tests_unit/kernel/mod.rs"
 
 [[test]]
 name = "matmul_perf_test"
 path = "tests/matmul_perf_test/main.rs"
-
-[[test]]
-name = "moe"
-path = "tests/moe/mod.rs"

@@ -1,14 +1,11 @@
 #![cfg(metal_backend)]
 
-#[macro_use]
-#[path = "../common/mod.rs"]
-mod common;
-
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use rand::seq::SliceRandom;
+
 // for Vec::shuffle
-use uzu::{
+use crate::{
     DataType,
     backends::{
         common::{

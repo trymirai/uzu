@@ -6,7 +6,8 @@ use bytemuck;
 use half::{bf16, f16};
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use uzu::{
+
+use crate::{
     DataType,
     backends::{
         common::{
