@@ -88,18 +88,21 @@ pub fn load_session(
             Some(speculator) => {
                 let parts: Vec<&str> = speculator.splitn(3, ':').collect();
                 let speculator_path = parts[0];
-                let number_of_speculated_tokens: usize = parts.get(1).unwrap_or(&"1").parse().unwrap();
-                let temperature: Option<f32> = parts.get(2).map(|s| s.parse().unwrap());
+                let number_of_speculated_tokens: usize = parts
+                    .get(1)
+                    .unwrap_or(&"1")
+                    .parse()
+                    .expect("invalid number_of_speculated_tokens, expected integer");
+                let temperature: Option<f32> = parts.get(2).map(|s| {
+                    s.parse().expect("invalid temperature, expected float")
+                });
 
                 let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load_with_temperature(
                     speculator_path,
                     temperature,
                 ));
 
-                SpeculatorConfig {
-                    number_of_speculated_tokens,
-                    speculator,
-                }
+                SpeculatorConfig::new(number_of_speculated_tokens, speculator)
             },
             None => SpeculatorConfig::default(),
         });
