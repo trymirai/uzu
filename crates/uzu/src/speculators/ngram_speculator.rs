@@ -249,8 +249,7 @@ impl NGramSpeculator<memmap2::Mmap> {
         path: &str,
         temperature: Option<f32>,
     ) -> Self {
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
+        let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
         let mmap = unsafe { memmap2::MmapOptions::default().map(&file) }
             .unwrap_or_else(|e| panic!("failed to mmap speculator file '{path}': {e}"));
         Self::new(mmap, temperature)
