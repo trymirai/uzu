@@ -91,9 +91,10 @@ pub fn load_session(
                 let number_of_speculated_tokens: usize = parts.get(1).unwrap_or(&"1").parse().unwrap();
                 let temperature: Option<f32> = parts.get(2).map(|s| s.parse().unwrap());
 
-                let speculator = Arc::new(
-                    uzu::speculators::ngram_speculator::NGramSpeculator::load_with_temperature(speculator_path, temperature),
-                );
+                let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load_with_temperature(
+                    speculator_path,
+                    temperature,
+                ));
 
                 SpeculatorConfig {
                     number_of_speculated_tokens,

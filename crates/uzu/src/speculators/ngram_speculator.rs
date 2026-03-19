@@ -16,7 +16,10 @@ fn full_hash(seq: &[u32]) -> u64 {
     xxh3_64(cast_slice(seq))
 }
 
-fn apply_temperature(probs: &mut HashMap<u64, f32>, inv_tau: f32) {
+fn apply_temperature(
+    probs: &mut HashMap<u64, f32>,
+    inv_tau: f32,
+) {
     let mut sum = 0.0f32;
     for v in probs.values_mut() {
         *v = v.powf(inv_tau);
@@ -52,11 +55,19 @@ struct TaggedTableLayout {
 }
 
 impl TaggedTableLayout {
-    fn parse(bytes: &[u8], offset: usize) -> (Self, usize) {
+    fn parse(
+        bytes: &[u8],
+        offset: usize,
+    ) -> (Self, usize) {
         let header = TaggedTableHeader::ref_from_bytes(&bytes[offset..offset + HEADER_SIZE]).unwrap();
 
         assert!(header.ngram_n >= 1, "ngram_n must be >= 1, got {}", header.ngram_n);
-        assert!((header.ngram_n - 1) as usize <= MAX_CTX, "ngram_n {} exceeds max supported {}", header.ngram_n, MAX_CTX + 1);
+        assert!(
+            (header.ngram_n - 1) as usize <= MAX_CTX,
+            "ngram_n {} exceeds max supported {}",
+            header.ngram_n,
+            MAX_CTX + 1
+        );
 
         let hs = header.hashtable_size as usize;
         let k = header.top_k as usize;
@@ -84,11 +95,26 @@ impl TaggedTableLayout {
         let cont_len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
         off += 4 + 8 * cont_len; // cont_keys + cont_vals
 
-        (Self { hashtable_size: header.hashtable_size, top_k: header.top_k, ngram_n: header.ngram_n, ngram_pad: header.ngram_pad, tags, keys_start, values_start }, off - offset)
+        (
+            Self {
+                hashtable_size: header.hashtable_size,
+                top_k: header.top_k,
+                ngram_n: header.ngram_n,
+                ngram_pad: header.ngram_pad,
+                tags,
+                keys_start,
+                values_start,
+            },
+            off - offset,
+        )
     }
 
     #[inline]
-    fn lookup(&self, bytes: &[u8], prefix: &[u64]) -> Option<HashMap<u64, f32>> {
+    fn lookup(
+        &self,
+        bytes: &[u8],
+        prefix: &[u64],
+    ) -> Option<HashMap<u64, f32>> {
         let ngram_ctx = (self.ngram_n - 1) as usize;
 
         let mut ctx_buf = [0u32; MAX_CTX];
@@ -120,7 +146,8 @@ impl TaggedTableLayout {
         let k = self.top_k as usize;
         let row_byte_off = idx * k * 4;
         let keys: &[u32] = cast_slice(&bytes[self.keys_start + row_byte_off..self.keys_start + row_byte_off + k * 4]);
-        let values: &[f32] = cast_slice(&bytes[self.values_start + row_byte_off..self.values_start + row_byte_off + k * 4]);
+        let values: &[f32] =
+            cast_slice(&bytes[self.values_start + row_byte_off..self.values_start + row_byte_off + k * 4]);
 
         let mut result = HashMap::with_capacity(k);
         for i in 0..k {
@@ -145,7 +172,10 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         Self::new_with_temperature(bytes, None)
     }
 
-    pub fn new_with_temperature(bytes: B, temperature: Option<f32>) -> Self {
+    pub fn new_with_temperature(
+        bytes: B,
+        temperature: Option<f32>,
+    ) -> Self {
         let mut off = 0;
 
         let max_order = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
@@ -158,7 +188,12 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
             off += 8;
 
             let (layout, parsed_size) = TaggedTableLayout::parse(&bytes, off);
-            assert_eq!(parsed_size, table_len, "table {}: parsed size {parsed_size} != declared size {table_len}", tables.len());
+            assert_eq!(
+                parsed_size,
+                table_len,
+                "table {}: parsed size {parsed_size} != declared size {table_len}",
+                tables.len()
+            );
             tables.push(layout);
             off += table_len;
         }
@@ -166,12 +201,23 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         assert_eq!(off, bytes.len(), "speculator file size mismatch: expected {off} bytes, got {}", bytes.len());
 
         let tau = temperature.unwrap_or(1.0);
-        let inv_tau = if tau > 0.0 && tau != 1.0 { 1.0 / tau } else { 0.0 };
+        let inv_tau = if tau > 0.0 && tau != 1.0 {
+            1.0 / tau
+        } else {
+            0.0
+        };
 
-        Self { bytes, tables, inv_tau }
+        Self {
+            bytes,
+            tables,
+            inv_tau,
+        }
     }
 
-    fn lookup(&self, prefix: &[u64]) -> Option<HashMap<u64, f32>> {
+    fn lookup(
+        &self,
+        prefix: &[u64],
+    ) -> Option<HashMap<u64, f32>> {
         for table in self.tables.iter().rev() {
             if let Some(result) = table.lookup(&self.bytes, prefix) {
                 return Some(result);
@@ -186,9 +232,11 @@ impl NGramSpeculator<memmap2::Mmap> {
         Self::load_with_temperature(path, None)
     }
 
-    pub fn load_with_temperature(path: &str, temperature: Option<f32>) -> Self {
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
+    pub fn load_with_temperature(
+        path: &str,
+        temperature: Option<f32>,
+    ) -> Self {
+        let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
         let mmap = unsafe { memmap2::MmapOptions::default().map(&file) }
             .unwrap_or_else(|e| panic!("failed to mmap speculator file '{path}': {e}"));
         Self::new_with_temperature(mmap, temperature)
@@ -196,7 +244,10 @@ impl NGramSpeculator<memmap2::Mmap> {
 }
 
 impl<B: Deref<Target = [u8]> + Send + Sync> Speculator for NGramSpeculator<B> {
-    fn speculate(&self, prefix: &[u64]) -> HashMap<u64, f32> {
+    fn speculate(
+        &self,
+        prefix: &[u64],
+    ) -> HashMap<u64, f32> {
         match self.lookup(prefix) {
             Some(mut probs) => {
                 if self.inv_tau > 0.0 {
