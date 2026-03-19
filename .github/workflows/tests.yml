@@ -47,7 +47,7 @@ jobs:
           git diff --exit-code -- Cargo.lock
 
   tests:
-    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }}
+    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }} ${{ matrix.audio && ' (audio-runtime)' || '' }}
     runs-on: [ self-hosted, macos, x64, mac, m3max, runner1 ]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
