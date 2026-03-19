@@ -5,7 +5,6 @@ use std::{
     rc::Rc,
 };
 
-use metal::{MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue};
 use uzu::{
     ArrayContextExt, DataType,
     backends::{
