@@ -86,12 +86,14 @@ pub fn load_session(
         })
         .with_speculator_config(match speculator {
             Some(speculator) => {
-                let (speculator, number_of_speculated_tokens) =
-                    speculator.split_once(':').unwrap_or((&speculator, "1"));
+                let parts: Vec<&str> = speculator.splitn(3, ':').collect();
+                let speculator_path = parts[0];
+                let number_of_speculated_tokens: usize = parts.get(1).unwrap_or(&"1").parse().unwrap();
+                let temperature: Option<f32> = parts.get(2).map(|s| s.parse().unwrap());
 
-                let number_of_speculated_tokens = number_of_speculated_tokens.parse().unwrap();
-
-                let speculator = Arc::new(uzu::speculators::ngram_speculator::NGramSpeculator::load(speculator));
+                let speculator = Arc::new(
+                    uzu::speculators::ngram_speculator::NGramSpeculator::load_with_temperature(speculator_path, temperature),
+                );
 
                 SpeculatorConfig {
                     number_of_speculated_tokens,
