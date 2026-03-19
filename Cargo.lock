@@ -4340,6 +4340,7 @@ dependencies = [
  "async-trait",
  "bindgen",
  "blake3",
+ "block2",
  "bytemuck",
  "bytesize",
  "cbindgen",

@@ -104,37 +104,45 @@ pub fn bindgen(
         Vec<Option<TokenStream>>,
         Vec<Option<TokenStream>>,
         Vec<TokenStream>,
-        Vec<Option<TokenStream>>,
-        Vec<Option<TokenStream>>,
+        Vec<TokenStream>,
+        Vec<TokenStream>,
         Vec<TokenStream>,
     ) = kernel
         .arguments
         .iter()
         .filter_map(|ka| {
             let arg_name = format_ident!("{}", ka.name.as_ref());
+            let arg_deconstructed_name = format_ident!("__dsl_arg_deconstructed_{}", ka.name.as_ref());
 
             match ka.argument_type().unwrap() {
                 arg_type @ (MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) => {
-                    let (mut ty, deconstruct, access_type, mut set, generic) = match arg_type {
+                    let (mut ty, mut deconstruct, mut access, mut set, generic) = match arg_type {
                         MetalArgumentType::Buffer(access) => {
                             let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
+                            let compute_write = matches!(access, MetalBufferAccess::ReadWrite);
+
                             (
                                 match access {
                                     MetalBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
                                     MetalBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
                                 },
-                                Some(if ka.argument_condition().unwrap().is_some() {
-                                    quote! {
-                                        let #arg_name = #arg_name.map(|#arg_name| #arg_name.into_parts());
-                                    }
-                                } else {
-                                    quote! {
-                                        let #arg_name = #arg_name.into_parts();
-                                    }
-                                }),
-                                Some(access),
                                 quote! {
-                                    compute_encoder.set_buffer(Some(#arg_name.0), #arg_name.1, #arg_count);
+                                    let #arg_deconstructed_name = #arg_name.into_parts();
+                                    let #arg_deconstructed_name = #arg_deconstructed_name.0.gpu_address_subrange((#arg_deconstructed_name.1)..(#arg_deconstructed_name.0.length()));
+                                },
+                                quote! {
+                                    crate::backends::common::Access {
+                                        range: #arg_deconstructed_name.clone(),
+                                        flags: crate::backends::common::AccessFlags {
+                                            compute_read: true,
+                                            compute_write: #compute_write,
+                                            copy_read: false,
+                                            copy_write: false,
+                                        },
+                                    }
+                                },
+                                quote! {
+                                    __dsl_argument_table.set_address_at_index(#arg_deconstructed_name.start as u64, #arg_count);
                                 },
                                 Some(quote! { #buffer_lifetime }),
                             )
@@ -144,16 +152,44 @@ pub fn bindgen(
                             match constant_type {
                                 MetalConstantType::Scalar => (
                                     quote! { #arg_dtype },
-                                    None,
-                                    None,
-                                    quote! { compute_encoder.set_value(&#arg_name, #arg_count); },
+                                    quote! {
+                                        let #arg_deconstructed_name = encoder.allocate_constant(std::mem::size_of::<#arg_dtype>()).unwrap();
+                                        let #arg_deconstructed_name = #arg_deconstructed_name.as_buffer_range();
+                                        unsafe {
+                                            *(#arg_deconstructed_name.0.cpu_ptr().as_ptr().byte_add(#arg_deconstructed_name.1.start) as *mut #arg_dtype) = #arg_name;
+                                        };
+                                        let #arg_deconstructed_name = #arg_deconstructed_name.0.gpu_address_subrange(#arg_deconstructed_name.1);
+                                    },
+                                    quote! {
+                                        crate::backends::common::Access {
+                                            range: #arg_deconstructed_name.clone(),
+                                            flags: crate::backends::common::AccessFlags::compute_read(),
+                                        }
+                                    },
+                                    quote! {
+                                        __dsl_argument_table.set_address_at_index(#arg_deconstructed_name.start as u64, #arg_count);
+                                    },
                                     None,
                                 ),
                                 MetalConstantType::Array => (
                                     quote! { &[#arg_dtype] },
-                                    None,
-                                    None,
-                                    quote! { compute_encoder.set_slice(#arg_name, #arg_count); },
+                                    quote! {
+                                        let #arg_deconstructed_name = encoder.allocate_constant(#arg_name.len() * std::mem::size_of::<#arg_dtype>()).unwrap();
+                                        let #arg_deconstructed_name = #arg_deconstructed_name.as_buffer_range();
+                                        unsafe {
+                                            std::slice::from_raw_parts_mut::<#arg_dtype>(#arg_deconstructed_name.0.cpu_ptr().as_ptr().byte_add(#arg_deconstructed_name.1.start) as *mut #arg_dtype, #arg_name.len()).copy_from_slice(#arg_name);
+                                        };
+                                        let #arg_deconstructed_name = #arg_deconstructed_name.0.gpu_address_subrange(#arg_deconstructed_name.1);
+                                    },
+                                    quote! {
+                                        crate::backends::common::Access {
+                                            range: #arg_deconstructed_name.clone(),
+                                            flags: crate::backends::common::AccessFlags::compute_read(),
+                                        }
+                                    },
+                                    quote! {
+                                        __dsl_argument_table.set_address_at_index(#arg_deconstructed_name.start as u64, #arg_count);
+                                    },
                                     None,
                                 ),
                             }
@@ -161,32 +197,22 @@ pub fn bindgen(
                         _ => unreachable!(),
                     };
 
-                    let mut access = access_type.map(|access| {
-                        let compute_write = matches!(access, MetalBufferAccess::ReadWrite);
-
-                        quote! {
-                            crate::backends::common::Access {
-                                range: #arg_name.0.gpu_address_subrange((#arg_name.1)..(#arg_name.0.length())),
-                                flags: crate::backends::common::AccessFlags {
-                                    compute_read: true,
-                                    compute_write: #compute_write,
-                                    copy_read: false,
-                                    copy_write: false,
-                                },
-                            }
-                        }
-                    });
-
                     let (conditional_buffer_field, conditional_buffer_set) =
                         if let Some(condition) = ka.argument_condition().unwrap() {
                             let conditional_field_name = format_ident!("has_{}", ka.name.as_ref());
                             let condition = parse_expr(condition.as_ref()).unwrap();
 
                             ty = quote! { Option<#ty> };
-                            access = access.map(|access| quote! { #arg_name.as_ref().map(|#arg_name| #access)});
+                            deconstruct = quote! {
+                                let #arg_deconstructed_name = #arg_name.map(|#arg_name| {
+                                    #deconstruct
+                                    #arg_deconstructed_name
+                                });
+                            };
+                            access = quote! { #arg_deconstructed_name.as_ref().map(|#arg_deconstructed_name| #access)};
                             set = quote! {
-                                assert!(#arg_name.is_some() == (self.#conditional_field_name));
-                                if let Some(#arg_name) = #arg_name {
+                                assert!(#arg_deconstructed_name.is_some() == (self.#conditional_field_name));
+                                if let Some(#arg_deconstructed_name) = #arg_deconstructed_name {
                                     #set
                                 }
                             };
@@ -196,7 +222,7 @@ pub fn bindgen(
                                 Some(quote! { #conditional_field_name: #condition }),
                             )
                         } else {
-                            access = access.map(|access| quote! { Some(#access)});
+                            access = quote! { Some(#access) };
 
                             (None, None)
                         };
@@ -221,13 +247,13 @@ pub fn bindgen(
                         None,
                         Some(quote! { '__dsl_indirect_dispatch_buffer }),
                         quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> },
-                        Some(quote! { let __dsl_indirect_dispatch_buffer = __dsl_indirect_dispatch_buffer.into_parts(); }),
-                        Some(quote! {
+                        quote! { let __dsl_indirect_dispatch_buffer = __dsl_indirect_dispatch_buffer.into_parts(); },
+                        quote! {
                             Some(crate::backends::common::Access {
                                 range: __dsl_indirect_dispatch_buffer.0.gpu_address_subrange((__dsl_indirect_dispatch_buffer.1)..(__dsl_indirect_dispatch_buffer.1+12)),
                                 flags: crate::backends::common::AccessFlags::compute_read(),
                             })
-                        }),
+                        },
                         quote! {},
                     ))
                 }
@@ -240,9 +266,6 @@ pub fn bindgen(
     let conditional_buffer_sets = conditional_buffer_sets.into_iter().flatten().collect::<Vec<_>>();
     let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
 
-    let encode_deconstructs = encode_deconstructs.into_iter().flatten().collect::<Vec<_>>();
-
-    let encode_accesses = encode_accesses.into_iter().flatten().collect::<Vec<_>>();
     let encode_accesses = if !encode_accesses.is_empty() {
         let encode_accesses = encode_accesses.iter().fold(quote! {}, |a, b| {
             if !a.is_empty() && !b.is_empty() {
@@ -282,7 +305,7 @@ pub fn bindgen(
 
         (
             quote! {
-                compute_encoder.dispatch_threads(
+                command_encoder.dispatch_threads_threads_per_threadgroup(
                     MTLSize::new(#((#threads) as usize, )*),
                     MTLSize::new(#((#threads_per_group) as usize, )*),
                 );
@@ -310,9 +333,8 @@ pub fn bindgen(
 
             (
                 quote! {
-                    compute_encoder.dispatch_threadgroups_indirect(
-                        __dsl_indirect_dispatch_buffer.0,
-                        __dsl_indirect_dispatch_buffer.1,
+                    command_encoder.dispatch_threadgroups_with_indirect_buffer_threads_per_threadgroup(
+                        __dsl_indirect_dispatch_buffer.0.gpu_address() + __dsl_indirect_dispatch_buffer.1 as u64,
                         MTLSize::new(#((#threads) as usize, )*),
                     );
                 },
@@ -334,7 +356,7 @@ pub fn bindgen(
 
             (
                 quote! {
-                    compute_encoder.dispatch_threadgroups(
+                    command_encoder.dispatch_threadgroups_threads_per_threadgroup(
                         MTLSize::new(#((#groups) as usize, )*),
                         MTLSize::new(#((#threads) as usize, )*),
                     );
@@ -385,6 +407,8 @@ pub fn bindgen(
         quote! { pub(crate) }
     };
 
+    let max_buffers = encode_args_sets.len();
+
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -405,9 +429,13 @@ pub fn bindgen(
                 #empty_dispatch_guards
                 #(#encode_deconstructs)*
                 #encode_accesses
-                let compute_encoder = encoder.as_command_buffer_mut().ensure_compute();
-                compute_encoder.set_compute_pipeline_state(&self.pipeline);
+                let command_encoder = encoder.as_command_buffer_mut().command_encoder();
+                command_encoder.set_compute_pipeline_state(&self.pipeline);
+                let __dsl_argument_table_descriptor = MTL4ArgumentTableDescriptor::new();
+                __dsl_argument_table_descriptor.set_max_buffer_bind_count(#max_buffers);
+                let __dsl_argument_table = self.pipeline.device().new_argument_table_with_descriptor(&__dsl_argument_table_descriptor).unwrap();
                 #(#encode_args_sets)*
+                command_encoder.set_argument_table(Some(&__dsl_argument_table));
                 #dispatch
             }
         }

@@ -277,15 +277,18 @@ impl MetalCompiler {
         let associated_types = associated_types.into_iter().flatten().collect::<Vec<TokenStream>>();
 
         let tokens = quote! {
-            use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
+            use metal::{
+                MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4ComputeCommandEncoder, MTLBuffer, MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues,
+                MTLSize,
+            };
             use objc2::{rc::Retained, runtime::ProtocolObject};
 
-            use crate::backends::common::BufferGpuAddressRangeExt;
-            use crate::backends::metal::{
-                context::MetalContext,
-                error::MetalError,
-                metal_extensions::{
-                    ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,
+            use crate::backends::{
+                common::{Buffer, BufferGpuAddressRangeExt},
+                metal::{
+                    context::MetalContext,
+                    error::MetalError,
+                    metal_extensions::{FunctionConstantValuesSetValue, MetalDataTypeExt},
                 },
             };
 

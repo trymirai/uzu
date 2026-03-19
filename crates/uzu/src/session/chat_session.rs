@@ -321,7 +321,8 @@ impl ChatSession {
             }
         }
 
-        let can_use_async = language_model_generator.generate_suffix_length() == 1 && compiled_grammar.is_none();
+        let can_use_async =
+            language_model_generator.generate_suffix_length() == 1 && compiled_grammar.is_none() && false;
 
         let generate_output = if can_use_async {
             let batch_size = language_model_generator.async_batch_size(&self.model_path);

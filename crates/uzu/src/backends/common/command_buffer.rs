@@ -118,7 +118,10 @@ pub trait CommandBufferEncoding {
 pub trait CommandBufferExecutable {
     type CommandBuffer: CommandBuffer<Executable = Self>;
 
-    fn submit(self) -> <Self::CommandBuffer as CommandBuffer>::Pending;
+    fn submit(
+        self,
+        context: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Context,
+    ) -> <Self::CommandBuffer as CommandBuffer>::Pending;
 }
 
 pub trait CommandBufferPending {

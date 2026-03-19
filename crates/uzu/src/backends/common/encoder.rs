@@ -138,9 +138,12 @@ pub struct Executable<B: Backend> {
 }
 
 impl<B: Backend> Executable<B> {
-    pub fn submit(self) -> Pending<B> {
+    pub fn submit(
+        self,
+        context: &B::Context,
+    ) -> Pending<B> {
         Pending {
-            command_buffer: self.command_buffer.submit(),
+            command_buffer: self.command_buffer.submit(context),
             allocation_pool: self.allocation_pool,
         }
     }

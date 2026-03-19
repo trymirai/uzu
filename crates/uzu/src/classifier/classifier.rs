@@ -131,7 +131,11 @@ impl<B: Backend> Classifier<B> {
 
         self.context.prediction_head.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        encoder
+            .end_encoding()
+            .submit(&self.context.context)
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let logits = self.copy_logits_from_state(&state)?;
 
@@ -171,7 +175,11 @@ impl<B: Backend> Classifier<B> {
         self.context.pooling.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         self.context.prediction_head.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        encoder
+            .end_encoding()
+            .submit(&self.context.context)
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let logits = self.copy_logits_from_state(&state)?;
 

@@ -1,9 +1,10 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
-    MTLResourceOptions,
+    MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor,
+    MTLCaptureDestination, MTLCaptureManager, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
+    MTLFunctionConstantValues, MTLLibrary, MTLResidencySet, MTLResidencySetDescriptor, MTLResourceOptions,
+    MTLSharedEvent,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -24,7 +25,10 @@ use crate::{
 
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
-    pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    pub command_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    residency_set: Retained<ProtocolObject<dyn MTLResidencySet>>,
+    pub timeline_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
+    pub timeline_counter: RefCell<u64>,
     allocator: Rc<Allocator<Metal>>,
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
@@ -34,6 +38,16 @@ pub struct MetalContext {
 impl MetalContext {
     pub fn device_generation(&self) -> DeviceGeneration {
         self.device_capabilities.generation
+    }
+
+    pub fn argument_table(
+        &self,
+        max_buffers: usize,
+    ) -> Retained<ProtocolObject<dyn MTL4ArgumentTable>> {
+        let descriptor = MTL4ArgumentTableDescriptor::new();
+        descriptor.set_max_buffer_bind_count(max_buffers);
+
+        self.device.new_argument_table_with_descriptor(&descriptor).unwrap()
     }
 
     pub fn compute_pipeline_state(
@@ -61,8 +75,19 @@ impl Context for MetalContext {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
             <dyn metal::MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
-        let command_queue =
-            device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+        let command_queue = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueue)?;
+
+        let residency_set_descriptor = MTLResidencySetDescriptor::new();
+        residency_set_descriptor.set_initial_capacity(4096);
+
+        let residency_set = device
+            .new_residency_set_with_descriptor(&residency_set_descriptor)
+            .map_err(|_| MetalError::CannotCreateCommandQueue)?;
+
+        command_queue.add_residency_set(&residency_set);
+
+        let timeline_event = device.new_shared_event().ok_or(MetalError::CannotCreateCommandQueue)?;
+        let timeline_counter = RefCell::new(0);
 
         let library = device
             .new_library_with_data(kernel::MTLB)
@@ -73,6 +98,9 @@ impl Context for MetalContext {
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
+            residency_set,
+            timeline_event,
+            timeline_counter,
             allocator: Allocator::new(weak_self.clone()),
             device_capabilities,
             library,
@@ -109,7 +137,16 @@ impl Context for MetalContext {
         &self,
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer)
+        let buffer = self
+            .device
+            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer)?;
+
+        self.residency_set.add_allocation(buffer.as_ref());
+        self.residency_set.commit();
+        self.residency_set.request_residency();
+
+        Ok(buffer)
     }
 
     fn create_allocation(
@@ -128,9 +165,7 @@ impl Context for MetalContext {
     }
 
     fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
-        Ok(MetalCommandBufferInitial::new(
-            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
-        ))
+        MetalCommandBufferInitial::create(&self.device)
     }
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
@@ -152,7 +187,6 @@ impl Context for MetalContext {
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
         capture_descriptor.set_output_path(Some(trace_path));
 
-        self.command_queue.set_label(Some("uzu_command_queue"));
         capture_descriptor.set_capture_object(Some(self.command_queue.as_ref()));
 
         capture_manager

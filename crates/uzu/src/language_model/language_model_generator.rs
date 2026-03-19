@@ -591,7 +591,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         encoder.add_completion_handler(handler);
         drop(token_ids_binding);
 
-        let pending = encoder.end_encoding().submit();
+        let pending = encoder.end_encoding().submit(&self.context.context);
 
         if should_capture {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
@@ -788,7 +788,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample)?
         };
 
-        let pending = executable.submit();
+        let pending = executable.submit(&self.context.context);
 
         if allow_pre_encode {
             let mut next_encoding_key = encoding_key;
@@ -874,9 +874,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
         }
 
-        let pending = encoder.end_encoding().submit();
+        let pending = encoder.end_encoding().submit(&self.context.context);
 
-        if wait_until_completed {
+        if wait_until_completed && true {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
         Ok(())

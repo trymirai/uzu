@@ -9,7 +9,7 @@ use crate::backends::{
         AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferInitial, CommandBufferPending,
     },
-    cpu::error::CpuError,
+    cpu::{context::CpuContext, error::CpuError},
 };
 
 pub struct CpuCommandBuffer {
@@ -122,7 +122,10 @@ impl CommandBufferEncoding for CpuCommandBuffer {
 impl CommandBufferExecutable for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn submit(mut self) -> CpuCommandBuffer {
+    fn submit(
+        mut self,
+        _context: &CpuContext,
+    ) -> CpuCommandBuffer {
         let start = Instant::now();
         for command in &self.commands {
             command()
