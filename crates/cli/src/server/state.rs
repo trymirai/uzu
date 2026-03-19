@@ -13,6 +13,7 @@ use uzu::{
         parameter::PrefillStepSize,
         types::{Error, Input, Output},
     },
+    speculators::ngram_speculator::NGramSpeculator,
 };
 
 pub trait RunSession {
@@ -96,8 +97,7 @@ pub fn load_session(
                 let temperature: Option<f32> =
                     parts.get(2).map(|s| s.parse().expect("invalid temperature, expected float"));
 
-                use uzu::speculators::ngram_speculator::NGramSpeculator;
-                let speculator = Arc::new(NGramSpeculator::load(speculator_path, temperature));
+                let speculator = Arc::new(NGramSpeculator::load_with_temperature(speculator_path, temperature));
 
                 SpeculatorConfig::new(number_of_speculated_tokens, speculator)
             },

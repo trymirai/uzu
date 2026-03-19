@@ -245,7 +245,7 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
 }
 
 impl NGramSpeculator<memmap2::Mmap> {
-    pub fn load(
+    pub fn load_with_temperature(
         path: &str,
         temperature: Option<f32>,
     ) -> Self {
