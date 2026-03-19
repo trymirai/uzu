@@ -195,6 +195,7 @@ fn test_decoder_config() {
                 has_sinks: false,
                 has_qkv_biases: false,
                 has_out_biases: false,
+                partial_rope_dim: None,
             }),
             mlp_config: MLPConfig::Dense(DenseMLPConfig {
                 linear_config: LinearConfig::QLoRA {

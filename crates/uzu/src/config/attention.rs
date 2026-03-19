@@ -22,6 +22,8 @@ pub struct AttentionConfig {
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
+    #[serde(default)]
+    pub partial_rope_dim: Option<usize>,
 }
 
 #[cfg(test)]

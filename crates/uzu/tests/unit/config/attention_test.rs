@@ -76,6 +76,7 @@ fn test_attention_config() {
         has_sinks: false,
         has_qkv_biases: false,
         has_out_biases: false,
+        partial_rope_dim: None,
     };
 
     let deserialized_config: AttentionConfig = from_str(config_str).unwrap();

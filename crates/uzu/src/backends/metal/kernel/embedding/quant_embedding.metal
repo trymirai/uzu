@@ -16,8 +16,8 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     constant uint32_t& vocab_size,
     constant uint32_t& model_dim,
     constant float& input_scale,
-    const constant QuantizationMode& quant_mode,
     const uint32_t group_size SPECIALIZE,
+    const uint32_t quant_mode SPECIALIZE,
     const uint dim_idx AXIS(model_dim, 16),
     const uint batch_idx AXIS(batch_size, 16)
 ) {
