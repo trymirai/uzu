@@ -16,7 +16,10 @@ fn full_hash(seq: &[u32]) -> u64 {
     xxh3_64(cast_slice(seq))
 }
 
-fn apply_temperature(probs: &mut HashMap<u64, f32>, inv_tau: f32) {
+fn apply_temperature(
+    probs: &mut HashMap<u64, f32>,
+    inv_tau: f32,
+) {
     let mut sum = 0.0f32;
     for v in probs.values_mut() {
         *v = v.powf(inv_tau);
@@ -57,7 +60,10 @@ struct TaggedTableLayout {
 }
 
 impl TaggedTableLayout {
-    fn parse(bytes: &[u8], offset: usize) -> (Self, usize) {
+    fn parse(
+        bytes: &[u8],
+        offset: usize,
+    ) -> (Self, usize) {
         let header = TaggedTableHeader::ref_from_bytes(&bytes[offset..offset + HEADER_SIZE]).unwrap();
 
         assert!(header.hashtable_size > 0, "hashtable_size must be > 0");
@@ -125,7 +131,11 @@ impl TaggedTableLayout {
     /// For unigram tables (ngram_n=1), context is empty and hash is deterministic —
     /// this matches the Python serializer which stores the hash of an empty context.
     #[inline]
-    fn lookup(&self, bytes: &[u8], prefix: &[u64]) -> Option<HashMap<u64, f32>> {
+    fn lookup(
+        &self,
+        bytes: &[u8],
+        prefix: &[u64],
+    ) -> Option<HashMap<u64, f32>> {
         let ngram_ctx = (self.ngram_n - 1) as usize;
 
         let mut ctx_buf = [0u32; MAX_CTX];
@@ -190,7 +200,10 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         Self::new_with_temperature(bytes, None)
     }
 
-    pub fn new_with_temperature(bytes: B, temperature: Option<f32>) -> Self {
+    pub fn new_with_temperature(
+        bytes: B,
+        temperature: Option<f32>,
+    ) -> Self {
         let mut off = 0;
 
         let max_order = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
@@ -206,7 +219,8 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
 
             let (layout, parsed_size) = TaggedTableLayout::parse(&bytes, off);
             assert_eq!(
-                parsed_size, table_len,
+                parsed_size,
+                table_len,
                 "table {}: parsed size {parsed_size} != declared size {table_len}",
                 tables.len()
             );
@@ -228,16 +242,27 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         let inv_tau = match temperature {
             Some(tau) => {
                 assert!(tau > 0.0, "temperature must be positive, got {tau}");
-                if tau != 1.0 { 1.0 / tau } else { 0.0 }
+                if tau != 1.0 {
+                    1.0 / tau
+                } else {
+                    0.0
+                }
             },
             None => 0.0, // no temperature scaling
         };
 
-        Self { bytes, tables, inv_tau }
+        Self {
+            bytes,
+            tables,
+            inv_tau,
+        }
     }
 
     /// Cascading backoff: try highest-order table first, fall back to lower orders.
-    fn lookup(&self, prefix: &[u64]) -> Option<HashMap<u64, f32>> {
+    fn lookup(
+        &self,
+        prefix: &[u64],
+    ) -> Option<HashMap<u64, f32>> {
         for table in self.tables.iter().rev() {
             if let Some(result) = table.lookup(&self.bytes, prefix) {
                 return Some(result);
@@ -252,9 +277,11 @@ impl NGramSpeculator<memmap2::Mmap> {
         Self::load_with_temperature(path, None)
     }
 
-    pub fn load_with_temperature(path: &str, temperature: Option<f32>) -> Self {
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
+    pub fn load_with_temperature(
+        path: &str,
+        temperature: Option<f32>,
+    ) -> Self {
+        let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("failed to open speculator file '{path}': {e}"));
         let mmap = unsafe { memmap2::MmapOptions::default().map(&file) }
             .unwrap_or_else(|e| panic!("failed to mmap speculator file '{path}': {e}"));
         Self::new_with_temperature(mmap, temperature)
@@ -262,7 +289,10 @@ impl NGramSpeculator<memmap2::Mmap> {
 }
 
 impl<B: Deref<Target = [u8]> + Send + Sync> Speculator for NGramSpeculator<B> {
-    fn speculate(&self, prefix: &[u64]) -> HashMap<u64, f32> {
+    fn speculate(
+        &self,
+        prefix: &[u64],
+    ) -> HashMap<u64, f32> {
         match self.lookup(prefix) {
             Some(mut probs) => {
                 if self.inv_tau > 0.0 {
