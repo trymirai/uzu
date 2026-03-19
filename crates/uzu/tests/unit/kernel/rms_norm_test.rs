@@ -121,7 +121,6 @@ fn get_output<
     input: &Input<InputT, ScaleT, OutputT>
 ) -> (Vec<OutputT>, f64, Option<Duration>) {
     let context = B::Context::new().expect("Failed to create Context");
-
     let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
         &context,
         InputT::data_type(),

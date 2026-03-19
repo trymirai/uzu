@@ -4,7 +4,7 @@ mod common;
 
 mod activation_mul_test;
 mod attention;
-mod audio_test;
+mod audio;
 mod full_precision_embedding_test;
 mod matmul;
 mod moe;
