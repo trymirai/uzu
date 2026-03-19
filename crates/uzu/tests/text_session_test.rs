@@ -16,6 +16,14 @@ fn build_model_path() -> PathBuf {
     common::get_test_model_path()
 }
 
+fn build_experimental_model_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("models")
+        .join("experimental")
+}
+
 fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::default().with_sampling_seed(SamplingSeed::Custom(42))
 }
@@ -28,7 +36,13 @@ fn build_default_text() -> String {
 #[tag(heavy)]
 #[test]
 fn test_text_session_base() {
-    run(build_default_text(), build_decoding_config(), 128);
+    run(build_model_path(), build_default_text(), build_decoding_config(), 128);
+}
+
+#[tag(heavy)]
+#[test]
+fn test_text_session_rht() {
+    run(build_experimental_model_path(), build_default_text(), build_decoding_config(), 128);
 }
 
 #[tag(heavy)]
@@ -66,11 +80,12 @@ fn test_text_session_stability() {
 }
 
 fn run(
+    model_path: PathBuf,
     text: String,
     decoding_config: DecodingConfig,
     tokens_limit: u64,
 ) {
-    let mut session = Session::new(build_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(model_path, decoding_config).unwrap();
     let input = Input::Text(text);
     let output = session
         .run(

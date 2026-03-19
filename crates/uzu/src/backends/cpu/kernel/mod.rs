@@ -3,6 +3,7 @@ mod activation;
 mod attention;
 mod audio;
 mod embedding;
+mod hadamard_transform;
 mod kv_cache_update;
 mod layer_norm;
 mod mask_update;

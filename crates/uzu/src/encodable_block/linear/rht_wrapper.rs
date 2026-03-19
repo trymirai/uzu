@@ -1,0 +1,226 @@
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
+
+use half::bf16;
+use thiserror::Error;
+
+use super::Linear;
+use crate::{
+    DataType,
+    array::{Array, ArrayContextExt},
+    backends::common::{Backend, CommandBuffer, kernel::{HadamardTransformMulKernel, Kernels}},
+    config::LinearConfig,
+    forward_pass::state::{ArrayId, ForwardPassState},
+    parameters::{ParameterLoaderError, ParameterTree},
+};
+
+use super::LinearBlockError;
+
+#[derive(Debug, Error)]
+pub enum RHTLinearWrapperError<B: Backend> {
+    #[error("Inner linear error: {0}")]
+    InnerLinearError(#[source] Box<LinearBlockError<B>>),
+    #[error("Parameter loading error: {0}")]
+    ParameterError(ParameterLoaderError<B>),
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
+    #[error("Input dimension {input_dimension} is not divisible by block size {block_size}")]
+    InputDimensionNotDivisibleByBlockSize {
+        input_dimension: usize,
+        block_size: usize,
+    },
+    #[error("Output dimension {output_dimension} is not divisible by block size {block_size}")]
+    OutputDimensionNotDivisibleByBlockSize {
+        output_dimension: usize,
+        block_size: usize,
+    },
+    #[error("Input factors shape mismatch: expected [{expected_dimension}], got {actual_shape:?}")]
+    InputFactorsShapeMismatch {
+        expected_dimension: usize,
+        actual_shape: Box<[usize]>,
+    },
+    #[error("Output factors shape mismatch: expected [{expected_dimension}], got {actual_shape:?}")]
+    OutputFactorsShapeMismatch {
+        expected_dimension: usize,
+        actual_shape: Box<[usize]>,
+    },
+}
+
+pub struct RHTLinearWrapper<B: Backend> {
+    inner_linear: Box<dyn Linear<B>>,
+    input_hadamard_kernel: <B::Kernels as Kernels>::HadamardTransformMulKernel,
+    output_hadamard_kernel: <B::Kernels as Kernels>::HadamardTransformMulKernel,
+    input_factors_buffer: Rc<RefCell<B::Buffer>>,
+    output_factors_buffer: Rc<RefCell<B::Buffer>>,
+    input_dimension: usize,
+    output_dimension: usize,
+    input_array_id: ArrayId,
+    output_array_id: ArrayId,
+}
+
+impl<B: Backend> RHTLinearWrapper<B> {
+    pub fn new(
+        context: &B::Context,
+        block_size: usize,
+        inner_config: &LinearConfig,
+        input_dimension: usize,
+        output_dimension: usize,
+        parameter_tree: &ParameterTree<B::Context>,
+        input_array_id: ArrayId,
+        output_array_id: ArrayId,
+    ) -> Result<Self, RHTLinearWrapperError<B>> {
+        if input_dimension % block_size != 0 {
+            return Err(RHTLinearWrapperError::InputDimensionNotDivisibleByBlockSize {
+                input_dimension,
+                block_size,
+            });
+        }
+        if output_dimension % block_size != 0 {
+            return Err(RHTLinearWrapperError::OutputDimensionNotDivisibleByBlockSize {
+                output_dimension,
+                block_size,
+            });
+        }
+
+        let kernel_data_type: DataType = inner_config.activation_precision().into();
+
+        let input_factors_raw = parameter_tree
+            .leaf_array("input_factors")
+            .map_err(RHTLinearWrapperError::ParameterError)?;
+
+        if input_factors_raw.shape() != [input_dimension] {
+            return Err(RHTLinearWrapperError::InputFactorsShapeMismatch {
+                expected_dimension: input_dimension,
+                actual_shape: input_factors_raw.shape().into(),
+            });
+        }
+
+        let output_factors_raw = parameter_tree
+            .leaf_array("output_factors")
+            .map_err(RHTLinearWrapperError::ParameterError)?;
+
+        if output_factors_raw.shape() != [output_dimension] {
+            return Err(RHTLinearWrapperError::OutputFactorsShapeMismatch {
+                expected_dimension: output_dimension,
+                actual_shape: output_factors_raw.shape().into(),
+            });
+        }
+
+        let input_factors = convert_int32_factors_to_kernel_type(
+            context,
+            &input_factors_raw,
+            kernel_data_type,
+        );
+        let output_factors = convert_int32_factors_to_kernel_type(
+            context,
+            &output_factors_raw,
+            kernel_data_type,
+        );
+
+        let input_hadamard_kernel =
+            <B::Kernels as Kernels>::HadamardTransformMulKernel::new(context, kernel_data_type)
+                .map_err(RHTLinearWrapperError::BackendError)?;
+
+        let output_hadamard_kernel =
+            <B::Kernels as Kernels>::HadamardTransformMulKernel::new(context, kernel_data_type)
+                .map_err(RHTLinearWrapperError::BackendError)?;
+
+        let inner_linear_tree = parameter_tree
+            .subtree("inner_linear")
+            .map_err(RHTLinearWrapperError::ParameterError)?;
+
+        let inner_linear = <dyn Linear<B>>::new(
+            inner_config,
+            false,
+            input_dimension,
+            [output_dimension],
+            context,
+            &inner_linear_tree,
+            input_array_id,
+            output_array_id,
+        )
+        .map_err(|error| RHTLinearWrapperError::InnerLinearError(Box::new(error)))?;
+
+        Ok(Self {
+            inner_linear,
+            input_hadamard_kernel,
+            output_hadamard_kernel,
+            input_factors_buffer: input_factors.buffer(),
+            output_factors_buffer: output_factors.buffer(),
+            input_dimension,
+            output_dimension,
+            input_array_id,
+            output_array_id,
+        })
+    }
+}
+
+fn convert_int32_factors_to_kernel_type<B: Backend>(
+    context: &B::Context,
+    source_array: &Array<B>,
+    target_data_type: DataType,
+) -> Array<B> {
+    let int32_values = source_array.as_slice::<i32>();
+
+    match target_data_type {
+        DataType::BF16 => {
+            let converted: Vec<bf16> = int32_values.iter().map(|&value| bf16::from_f32(value as f32)).collect();
+            context.create_array_from(source_array.shape(), &converted, "rht_factors")
+        },
+        DataType::F16 => {
+            let converted: Vec<half::f16> = int32_values
+                .iter()
+                .map(|&value| half::f16::from_f32(value as f32))
+                .collect();
+            context.create_array_from(source_array.shape(), &converted, "rht_factors")
+        },
+        DataType::F32 => {
+            let converted: Vec<f32> = int32_values.iter().map(|&value| value as f32).collect();
+            context.create_array_from(source_array.shape(), &converted, "rht_factors")
+        },
+        other => panic!("Unsupported kernel data type for RHT factors: {other:?}"),
+    }
+}
+
+impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
+    fn encode(
+        &self,
+        state: &mut ForwardPassState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let batch_size = state.active_suffix_length();
+        let input_total_blocks = (batch_size * self.input_dimension / 32) as u32;
+        let output_total_blocks = (batch_size * self.output_dimension / 32) as u32;
+
+        {
+            let arrays = state.arrays(&[self.input_array_id]);
+            let input_array = arrays[0].borrow_mut();
+            self.input_hadamard_kernel.encode(
+                input_array.buffer().borrow_mut().deref_mut(),
+                self.input_factors_buffer.borrow().deref(),
+                input_total_blocks,
+                self.input_dimension as u32,
+                command_buffer,
+            );
+        }
+
+        self.inner_linear.encode(state, command_buffer)?;
+
+        {
+            let arrays = state.arrays(&[self.output_array_id]);
+            let output_array = arrays[0].borrow_mut();
+            self.output_hadamard_kernel.encode(
+                output_array.buffer().borrow_mut().deref_mut(),
+                self.output_factors_buffer.borrow().deref(),
+                output_total_blocks,
+                self.output_dimension as u32,
+                command_buffer,
+            );
+        }
+
+        Ok(())
+    }
+}

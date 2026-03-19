@@ -1,8 +1,10 @@
 mod full_precision;
 mod quantized;
+mod rht_wrapper;
 
 pub use full_precision::{FullPrecisionLinear, FullPrecisionLinearError};
 pub use quantized::{QuantizedLinear, QuantizedLinearError};
+pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
@@ -26,6 +28,8 @@ pub enum LinearBlockError<B: Backend> {
     QuantizedLinearError(#[source] QuantizedLinearError<B>),
     #[error("FullPrecisionLinear error: {0}")]
     FullPrecisionLinearError(#[source] FullPrecisionLinearError<B>),
+    #[error("RHTLinearWrapper error: {0}")]
+    RHTLinearWrapperError(#[source] RHTLinearWrapperError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[source] ParameterLoaderError<B>),
     #[error("QLoRA linear layer not supported")]
@@ -76,6 +80,23 @@ impl<B: Backend> dyn Linear<B> {
             LinearConfig::QLoRA {
                 ..
             } => Err(LinearBlockError::QLoRaNotSupported),
+            LinearConfig::RHTLinearWrapper {
+                block_size,
+                inner_config,
+            } => {
+                let block = RHTLinearWrapper::new(
+                    context,
+                    *block_size,
+                    inner_config,
+                    input_dimension,
+                    output_dimension_sum,
+                    parameter_tree,
+                    input_array_id,
+                    output_array_id,
+                )
+                .map_err(LinearBlockError::RHTLinearWrapperError)?;
+                Ok(Box::new(block))
+            },
         }
     }
 }
