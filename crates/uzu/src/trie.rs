@@ -76,10 +76,6 @@ impl TrieNode {
         self.next.iter_mut().find(|n| n.token == token)
     }
 
-    pub fn token(&self) -> u64 {
-        self.token
-    }
-
     pub fn seed(&self) -> u64 {
         self.seed
     }

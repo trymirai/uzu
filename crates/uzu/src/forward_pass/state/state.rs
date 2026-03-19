@@ -1,16 +1,11 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType, DecoderConfig,
     array::{Array, ArrayCell, ArrayCellExt},
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context},
+    backends::common::{Backend, Context},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -455,27 +450,12 @@ impl<B: Backend> ForwardPassState<B> {
         self.common_aux.suffix_length
     }
 
-    pub fn is_llm(&self) -> bool {
-        matches!(self.mode, ForwardPassMode::LanguageModelGenerator(_))
-    }
-
-    pub fn is_classifier(&self) -> bool {
-        matches!(self.mode, ForwardPassMode::Classifier(_))
-    }
-
     pub fn token_bitmask(&self) -> Option<&ArrayCell<B>> {
         self.token_bitmask.as_ref()
     }
 
     pub fn llm_state(&self) -> &LanguageModelGeneratorModeState<B> {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state,
-            _ => panic!("Not in LLM mode"),
-        }
-    }
-
-    pub fn llm_state_mut(&mut self) -> &mut LanguageModelGeneratorModeState<B> {
-        match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state,
             _ => panic!("Not in LLM mode"),
         }
@@ -675,10 +655,6 @@ impl<B: Backend> ForwardPassState<B> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
     }
 
-    pub fn short_conv_padded_buffer(&self) -> Option<ArrayCell<B>> {
-        self.llm_aux.as_ref().and_then(|aux| aux.short_conv_padded.clone())
-    }
-
     // ========================================================================
     // Public API Methods (formerly trait methods)
     // ========================================================================
@@ -765,32 +741,5 @@ impl<B: Backend> ForwardPassState<B> {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_method,
             ForwardPassMode::Classifier(_) => None,
         }
-    }
-
-    pub fn copy_array(
-        &self,
-        source_array_id: ArrayId,
-        destination_array: RefCell<Array<B>>,
-    ) {
-        destination_array.borrow_mut().copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
-    }
-
-    pub fn encode_copy_array(
-        &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        source_array_id: ArrayId,
-        destination_array: RefCell<Array<B>>,
-    ) {
-        let source_ref = self.arrays(&[source_array_id])[0].clone();
-        let src_borrow = source_ref.borrow();
-        let dst_borrow = destination_array.borrow();
-
-        let src_buf_rc = src_borrow.buffer();
-        let dst_buf_rc = dst_borrow.buffer();
-
-        let copy_size_bytes = dst_borrow.size();
-        debug_assert_eq!(dst_borrow.size(), src_borrow.size());
-
-        command_buffer.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
     }
 }

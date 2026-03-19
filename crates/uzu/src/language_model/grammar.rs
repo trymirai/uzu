@@ -58,16 +58,6 @@ impl CompiledGrammarEngagementState {
             },
         }
     }
-
-    pub fn reset(&mut self) {
-        match self {
-            Self::Always => (),
-            Self::Triggered {
-                trigger_token_id: _,
-                trigger_distance,
-            } => *trigger_distance = None,
-        }
-    }
 }
 
 pub struct CompiledGrammar {
@@ -186,11 +176,6 @@ impl CompiledGrammar {
         if num_grammar_tokens > 0 {
             self.matcher.rollback(num_grammar_tokens as i32);
         }
-    }
-
-    pub fn reset(&mut self) {
-        self.matcher.reset();
-        self.engagement_state.reset();
     }
 
     pub fn is_terminated(&self) -> bool {

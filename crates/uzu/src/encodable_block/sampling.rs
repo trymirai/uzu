@@ -6,7 +6,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, CommandBuffer,
-        kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
+        kernel::sampling::{SamplingError, SamplingKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
@@ -23,20 +23,6 @@ impl<B: Backend> Sampling<B> {
         max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
         let kernel = SamplingKernel::new(context, data_type, max_batch_size, max_vocab_size)?;
-        Ok(Self {
-            kernel,
-        })
-    }
-
-    pub fn new_with_strategy(
-        context: &B::Context,
-        data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
-        argmax_strategy: ArgmaxStrategy,
-    ) -> Result<Self, SamplingError<B>> {
-        let kernel =
-            SamplingKernel::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, argmax_strategy)?;
         Ok(Self {
             kernel,
         })

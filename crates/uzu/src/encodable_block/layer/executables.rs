@@ -17,7 +17,6 @@ use crate::{
 
 /// A single decoder layer with all its components.
 pub struct LayerExecutables<B: Backend> {
-    pub layer_index: usize,
     pub copy_main_to_shortcut: TensorCopy<B>,
     pub pre_attention_norm: RMSNorm<B>,
     pub(crate) mixer: MixerExecutables<B>,
@@ -224,7 +223,6 @@ impl<B: Backend> LayerExecutables<B> {
         };
 
         Self {
-            layer_index,
             copy_main_to_shortcut,
             pre_attention_norm,
             mixer,
