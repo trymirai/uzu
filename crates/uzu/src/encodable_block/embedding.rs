@@ -133,16 +133,16 @@ impl<B: Backend> Embedding<B> {
         config: &EmbeddingConfig,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, EmbeddingError<B>> {
-        Self::new_with_parameter_trees(context, vocab_size, model_dim, config, parameter_tree, parameter_tree)
+        Self::new_with_lookup_and_readout_trees(context, vocab_size, model_dim, config, parameter_tree, parameter_tree)
     }
 
-    pub(crate) fn new_with_parameter_trees(
+    pub(crate) fn new_with_lookup_and_readout_trees(
         context: &B::Context,
         vocab_size: u32,
         model_dim: u32,
         config: &EmbeddingConfig,
-        input_parameter_tree: &ParameterTree<B::Context>,
-        output_parameter_tree: &ParameterTree<B::Context>,
+        lookup_tree: &ParameterTree<B::Context>,
+        readout_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, EmbeddingError<B>> {
         let common = config.common();
 
@@ -153,9 +153,9 @@ impl<B: Backend> Embedding<B> {
             } => {
                 let data_type = (*precision).into();
 
-                let input_weights_leaf = input_parameter_tree.leaf("weights")?;
+                let input_weights_leaf = lookup_tree.leaf("weights")?;
                 validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let output_weights_leaf = output_parameter_tree.leaf("weights")?;
+                let output_weights_leaf = readout_tree.leaf("weights")?;
                 validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -180,9 +180,9 @@ impl<B: Backend> Embedding<B> {
             } => {
                 let data_type = (*precision).into();
 
-                let input_weights_leaf = input_parameter_tree.leaf("input_weights")?;
+                let input_weights_leaf = lookup_tree.leaf("input_weights")?;
                 validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let output_weights_leaf = output_parameter_tree.leaf("output_weights")?;
+                let output_weights_leaf = readout_tree.leaf("output_weights")?;
                 validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -217,26 +217,26 @@ impl<B: Backend> Embedding<B> {
 
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
-                let input_weights_leaf = input_parameter_tree.leaf("weights")?;
+                let input_weights_leaf = lookup_tree.leaf("weights")?;
                 validate_tensor(
                     &input_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let input_scales_leaf = input_parameter_tree.leaf("scales")?;
+                let input_scales_leaf = lookup_tree.leaf("scales")?;
                 validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let input_biases_leaf = input_parameter_tree.leaf("biases")?;
+                let input_biases_leaf = lookup_tree.leaf("biases")?;
                 validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let output_weights_leaf = output_parameter_tree.leaf("weights")?;
+                let output_weights_leaf = readout_tree.leaf("weights")?;
                 validate_tensor(
                     &output_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let output_scales_leaf = output_parameter_tree.leaf("scales")?;
+                let output_scales_leaf = readout_tree.leaf("scales")?;
                 validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = output_parameter_tree.leaf("biases")?;
+                let output_biases_leaf = readout_tree.leaf("biases")?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -300,26 +300,26 @@ impl<B: Backend> Embedding<B> {
 
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
-                let input_weights_leaf = input_parameter_tree.leaf("input_weights")?;
+                let input_weights_leaf = lookup_tree.leaf("input_weights")?;
                 validate_tensor(
                     &input_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let input_scales_leaf = input_parameter_tree.leaf("input_scales")?;
+                let input_scales_leaf = lookup_tree.leaf("input_scales")?;
                 validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let input_biases_leaf = input_parameter_tree.leaf("input_biases")?;
+                let input_biases_leaf = lookup_tree.leaf("input_biases")?;
                 validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let output_weights_leaf = output_parameter_tree.leaf("output_weights")?;
+                let output_weights_leaf = readout_tree.leaf("output_weights")?;
                 validate_tensor(
                     &output_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let output_scales_leaf = output_parameter_tree.leaf("output_scales")?;
+                let output_scales_leaf = readout_tree.leaf("output_scales")?;
                 validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = output_parameter_tree.leaf("output_biases")?;
+                let output_biases_leaf = readout_tree.leaf("output_biases")?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -385,18 +385,18 @@ impl<B: Backend> Embedding<B> {
 
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
-                let input_weights_leaf = input_parameter_tree.leaf("input_weights")?;
+                let input_weights_leaf = lookup_tree.leaf("input_weights")?;
                 validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
-                let output_weights_leaf = output_parameter_tree.leaf("output_weights")?;
+                let output_weights_leaf = readout_tree.leaf("output_weights")?;
                 validate_tensor(
                     &output_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let output_scales_leaf = output_parameter_tree.leaf("output_scales")?;
+                let output_scales_leaf = readout_tree.leaf("output_scales")?;
                 validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = output_parameter_tree.leaf("output_biases")?;
+                let output_biases_leaf = readout_tree.leaf("output_biases")?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;

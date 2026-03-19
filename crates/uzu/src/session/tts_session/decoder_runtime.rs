@@ -36,7 +36,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         )?;
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), decoder_config, model_shape, max_prefix_length, max_suffix_length);
-        let executables = Decoder::new_with_subtrees(
+        let executables = Decoder::new_with_embedding_and_readout_subtrees(
             context.clone(),
             decoder_config.clone(),
             &root_loader_view,

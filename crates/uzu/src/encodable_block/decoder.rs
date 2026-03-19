@@ -37,10 +37,18 @@ impl<B: Backend> Decoder<B> {
         decoder_config: Rc<DecoderConfig>,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
-        Self::new_with_subtrees(context, decoder_config, root_weight_loader, "transformer", "embedding", "embedding")
+        Self::new_with_embedding_and_readout_subtrees(
+            context,
+            decoder_config,
+            root_weight_loader,
+            "transformer",
+            "embedding",
+            "embedding",
+        )
     }
 
-    pub fn new_with_subtrees(
+    /// Used by models whose token lookup weights and logits readout weights
+    pub fn new_with_embedding_and_readout_subtrees(
         context: Rc<B::Context>,
         decoder_config: Rc<DecoderConfig>,
         root_weight_loader: &ParameterTree<B::Context>,
@@ -52,7 +60,7 @@ impl<B: Backend> Decoder<B> {
             root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
         let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
 
-        let embed = Embedding::new_with_parameter_trees(
+        let embed = Embedding::new_with_lookup_and_readout_trees(
             context.as_ref(),
             decoder_config.vocab_size as u32,
             decoder_config.model_dim as u32,
