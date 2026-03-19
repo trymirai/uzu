@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod assert;
 pub mod proptest;
 

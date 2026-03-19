@@ -8,7 +8,7 @@ use uzu::session::{
     types::{Input, Message, Output},
 };
 
-use crate::common::path::get_test_model_path;
+use crate::util::path::get_test_model_path;
 
 fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::default().with_sampling_seed(SamplingSeed::Custom(42))

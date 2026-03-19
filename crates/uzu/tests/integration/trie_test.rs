@@ -6,7 +6,7 @@ use uzu::{
     trie::{TrieCreationConfig, TrieNode},
 };
 
-use crate::common::speculator::StaticSpeculator;
+use crate::util::speculator::StaticSpeculator;
 
 fn verify_sprout(
     trie_root: &TrieNode,

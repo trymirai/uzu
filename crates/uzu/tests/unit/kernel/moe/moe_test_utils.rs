@@ -1,6 +1,6 @@
 //! Shared test utilities for MoE tests
 //!
-//! Contains common helper functions, CPU ground truth implementations,
+//! Contains util helper functions, CPU ground truth implementations,
 //! buffer allocation helpers, and test fixtures used across all MoE test files.
 
 #![cfg(metal_backend)]
