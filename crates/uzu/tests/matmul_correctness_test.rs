@@ -18,15 +18,43 @@ use uzu::{
     },
 };
 
+#[derive(Debug, Clone, Copy)]
+enum DispatchPath {
+    Gemv,
+    Gemm,
+    GemmMppStaged,
+    GemmMppNxu,
+}
+
+impl DispatchPath {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Gemv => "Gemv",
+            Self::Gemm => "Gemm",
+            Self::GemmMppStaged => "GemmMppStaged",
+            Self::GemmMppNxu => "GemmMppNxu",
+        }
+    }
+}
+
+const ALL_DISPATCH_PATHS: [DispatchPath; 4] = [
+    DispatchPath::Gemv,
+    DispatchPath::Gemm,
+    DispatchPath::GemmMppStaged,
+    DispatchPath::GemmMppNxu,
+];
+
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
+    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
     a_data: &[bf16],
     b_data: &[bf16],
     m: usize,
     k: usize,
     n: usize,
     transpose_b: bool,
-) -> Vec<bf16> {
+    dispatch_path: DispatchPath,
+) -> Result<Vec<bf16>, String> {
     let a_buf = ctx
         .device
         .new_buffer_with_data(bytemuck::cast_slice(a_data), MTLResourceOptions::STORAGE_MODE_SHARED)
@@ -46,34 +74,36 @@ fn run_metal_matmul(
         n
     };
 
-    let mut kernel =
-        <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(ctx, DataType::BF16).expect("kernel");
-
     let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
-    kernel.encode(
-        ctx,
-        MatmulArguments {
-            a: &a_buf,
-            a_offset: 0,
-            b: &b_buf,
-            d: &mut d_buf,
-            bias: None,
-            batch: m as i32,
-            input_dim: k as i32,
-            output_dim: n as i32,
-            leading_dimension_a: k as i32,
-            leading_dimension_b: leading_dim_b as i32,
-            leading_dimension_d: n as i32,
-            transpose_b,
-        },
-        &mut command_buffer,
-    );
+    let arguments = MatmulArguments {
+        a: &a_buf,
+        a_offset: 0,
+        b: &b_buf,
+        d: &mut d_buf,
+        bias: None,
+        batch: m as i32,
+        input_dim: k as i32,
+        output_dim: n as i32,
+        leading_dimension_a: k as i32,
+        leading_dimension_b: leading_dim_b as i32,
+        leading_dimension_d: n as i32,
+        transpose_b,
+    };
+
+    let encode_result = match dispatch_path {
+        DispatchPath::Gemv => kernel.encode_gemv(ctx, &mut command_buffer, arguments),
+        DispatchPath::Gemm => kernel.encode_gemm(ctx, &mut command_buffer, arguments),
+        DispatchPath::GemmMppStaged => kernel.encode_gemm_mpp_staged(ctx, &mut command_buffer, arguments),
+        DispatchPath::GemmMppNxu => kernel.encode_gemm_mpp_nxu(ctx, &mut command_buffer, arguments),
+    };
+
+    encode_result.map_err(|e| e.to_string())?;
     command_buffer.end_encoding().submit().wait_until_completed().unwrap();
 
-    unsafe {
+    Ok(unsafe {
         let ptr = d_buf.contents().as_ptr() as *const bf16;
         std::slice::from_raw_parts(ptr, m * n).to_vec()
-    }
+    })
 }
 
 fn run_ndarray_matmul(
@@ -279,60 +309,80 @@ fn matmul_correctness_comprehensive() {
         return;
     };
 
+    let supports_mxu = ctx.device_capabilities().supports_mxu;
     let full_case_matrix = run_full_case_matrix();
     let cases = test_cases(full_case_matrix);
+
     eprintln!(
-        "Running {} matmul correctness case matrix (set {}=1 for exhaustive run)",
-        if full_case_matrix {
-            "exhaustive"
-        } else {
-            "quick"
-        },
-        MATMUL_CORRECTNESS_FULL_ENV
+        "Running {} matmul correctness for all dispatch paths (set {}=1 for exhaustive run)",
+        if full_case_matrix { "exhaustive" } else { "quick" },
+        MATMUL_CORRECTNESS_FULL_ENV,
     );
-    let mut passed = 0;
-    let mut failed = Vec::new();
+    eprintln!("Device: {} (supports_mxu={})", ctx.device_capabilities().family_name, supports_mxu);
+
+    let mut kernel =
+        <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(&ctx, DataType::BF16).expect("kernel");
+
+    let mut passed = 0usize;
+    let mut expected_nxu_failures = 0usize;
+    let mut failed: Vec<(String, f32, usize, usize, f32)> = Vec::new();
 
     for case in &cases {
         let (a, b) = generate_test_data(case.m, case.k, case.n, case.transpose_b);
-        let metal_result = run_metal_matmul(&ctx, &a, &b, case.m, case.k, case.n, case.transpose_b);
         let reference = run_ndarray_matmul(&a, &b, case.m, case.k, case.n, case.transpose_b);
+        let trans_str = if case.transpose_b { "T" } else { "N" };
 
-        let trans_str = if case.transpose_b {
-            "T"
-        } else {
-            "N"
-        };
+        for &path in &ALL_DISPATCH_PATHS {
+            let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
+            let is_nxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppNxu) && !supports_mxu;
 
-        match compare_results(&metal_result, &reference, case.tolerance) {
-            Ok(()) => {
-                passed += 1;
-                eprintln!("✓ m={} k={} n={} B={}", case.m, case.k, case.n, trans_str);
-            },
-            Err((max_diff, idx, count)) => {
-                failed.push((case, max_diff, idx, count));
-                eprintln!(
-                    "✗ m={} k={} n={} B={} max_diff={:.6} at idx {} ({} exceed tol {})",
-                    case.m, case.k, case.n, trans_str, max_diff, idx, count, case.tolerance
-                );
-            },
+            let metal_result = match run_metal_matmul(
+                &ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path,
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    if is_nxu_on_pre_m5 {
+                        eprintln!("⊘ {label}: encode error (expected on pre-M5): {err}");
+                        expected_nxu_failures += 1;
+                    } else {
+                        eprintln!("✗ {label}: encode error: {err}");
+                        failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
+                    }
+                    continue;
+                },
+            };
+
+            match compare_results(&metal_result, &reference, case.tolerance) {
+                Ok(()) => {
+                    passed += 1;
+                    eprintln!("✓ {label}");
+                },
+                Err((max_diff, idx, count)) => {
+                    if is_nxu_on_pre_m5 {
+                        eprintln!(
+                            "⊘ {label}: wrong results (expected on pre-M5) max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
+                            case.tolerance,
+                        );
+                        expected_nxu_failures += 1;
+                    } else {
+                        eprintln!(
+                            "✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
+                            case.tolerance,
+                        );
+                        failed.push((label, max_diff, idx, count, case.tolerance));
+                    }
+                },
+            }
         }
     }
 
-    eprintln!("\n{}/{} tests passed", passed, cases.len());
+    let total = passed + failed.len() + expected_nxu_failures;
+    eprintln!("\n{passed}/{total} passed, {} failed, {expected_nxu_failures} expected NXU failures (pre-M5)", failed.len());
 
     if !failed.is_empty() {
-        eprintln!("\nFailed tests:");
-        for (case, max_diff, idx, count) in &failed {
-            let trans_str = if case.transpose_b {
-                "T"
-            } else {
-                "N"
-            };
-            eprintln!(
-                "  m={} k={} n={} B={}: max_diff={:.6} at idx {}, {} exceed tol {}",
-                case.m, case.k, case.n, trans_str, max_diff, idx, count, case.tolerance
-            );
+        eprintln!("\nUnexpected failures:");
+        for (label, max_diff, idx, count, tolerance) in &failed {
+            eprintln!("  {label}: max_diff={max_diff:.6} at idx {idx}, {count} exceed tol {tolerance}");
         }
         panic!("{} tests failed", failed.len());
     }
