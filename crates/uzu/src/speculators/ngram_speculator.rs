@@ -60,6 +60,8 @@ impl TaggedTableLayout {
     fn parse(bytes: &[u8], offset: usize) -> (Self, usize) {
         let header = TaggedTableHeader::ref_from_bytes(&bytes[offset..offset + HEADER_SIZE]).unwrap();
 
+        assert!(header.hashtable_size > 0, "hashtable_size must be > 0");
+        assert!(header.top_k > 0, "top_k must be > 0");
         assert!(header.ngram_n >= 1, "ngram_n must be >= 1, got {}", header.ngram_n);
         assert!(
             (header.ngram_n - 1) as usize <= MAX_CTX,
@@ -197,7 +199,7 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         let _discount = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
         off += 8;
 
-        let mut tables = Vec::with_capacity(max_order as usize);
+        let mut tables: Vec<TaggedTableLayout> = Vec::with_capacity(max_order as usize);
         for _ in 0..max_order {
             let table_len = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()) as usize;
             off += 8;
@@ -208,6 +210,15 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
                 "table {}: parsed size {parsed_size} != declared size {table_len}",
                 tables.len()
             );
+            // Validate ascending ngram_n order (lookup relies on .iter().rev())
+            if let Some(prev) = tables.last() {
+                assert!(
+                    layout.ngram_n > prev.ngram_n,
+                    "tables must be in ascending ngram_n order: got {} after {}",
+                    layout.ngram_n,
+                    prev.ngram_n
+                );
+            }
             tables.push(layout);
             off += table_len;
         }
