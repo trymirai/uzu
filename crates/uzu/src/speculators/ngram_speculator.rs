@@ -108,11 +108,6 @@ impl TaggedTableLayout {
         // Counts: used during training, skipped at inference time
         off += 4 * hs;
 
-        // Continuation distribution: used for KN interpolation during training,
-        // probabilities in the table are already pre-computed with discounting
-        let cont_len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
-        off += 4 + 8 * cont_len;
-
         (
             Self {
                 hashtable_size: header.hashtable_size,
