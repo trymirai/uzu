@@ -13,7 +13,7 @@ use crate::{
         gpu_types::ArgmaxPair,
         kernel::{
             ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel, MinPKernel,
-            TemperatureKernel, TopKKernel, TopPKernel,
+            UnifiedStochasticKernel, TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
     session::parameter::SamplingMethod,
@@ -36,6 +36,7 @@ enum ArgmaxImplementation<B: Backend> {
     },
 }
 
+
 pub struct SamplingKernel<B: Backend> {
     bitmask: <B::Kernels as Kernels>::BitmaskKernel,
     temperature: <B::Kernels as Kernels>::TemperatureKernel,
@@ -43,6 +44,7 @@ pub struct SamplingKernel<B: Backend> {
     topp: <B::Kernels as Kernels>::TopPKernel,
     minp: <B::Kernels as Kernels>::MinPKernel,
     gumbel: <B::Kernels as Kernels>::GumbelKernel,
+    unified: <B::Kernels as Kernels>::UnifiedStochasticKernel,
     argmax_implementation: ArgmaxImplementation<B>,
     max_batch_size: usize,
     max_vocab_size: usize,
@@ -91,6 +93,8 @@ impl<B: Backend> SamplingKernel<B> {
             <B::Kernels as Kernels>::MinPKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
         let gumbel = <B::Kernels as Kernels>::GumbelKernel::new(context, data_type, true)
             .map_err(SamplingError::BackendError)?;
+        let unified = <B::Kernels as Kernels>::UnifiedStochasticKernel::new(context, data_type)
+            .map_err(SamplingError::BackendError)?;
 
         let argmax_implementation = match argmax_strategy {
             ArgmaxStrategy::SinglePass => {
@@ -135,6 +139,7 @@ impl<B: Backend> SamplingKernel<B> {
             topp,
             minp,
             gumbel,
+            unified,
             argmax_implementation,
             max_batch_size,
             max_vocab_size,
@@ -159,6 +164,41 @@ impl<B: Backend> SamplingKernel<B> {
         }
         if vocab_size > self.max_vocab_size {
             return Err(SamplingError::VocabSizeExceeded(vocab_size, self.max_vocab_size));
+        }
+
+        // Single-pass path: apply bitmask separately (if any), then one kernel
+        // does temperature + top_k/top_p/min_p + inverse-transform sampling in-register.
+        // grain_vec is computed at runtime inside the kernel, so any vocab size is supported.
+        if let SamplingMethod::UnifiedStochastic {
+            temperature,
+            top_k,
+            top_p,
+            min_p,
+        } = sampling_method
+        {
+            if let Some(bitmask_buffer) = bitmask_buffer {
+                self.bitmask.encode(
+                    None::<&B::Buffer>,
+                    (bitmask_buffer, bitmask_offset),
+                    logits_buffer.deref_mut(),
+                    batch_size as u32,
+                    vocab_size as u32,
+                    command_buffer,
+                );
+            }
+            self.unified.encode(
+                logits_buffer.deref(),
+                (seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?, seeds_offset),
+                sampled_tokens_buffer,
+                batch_size as u32,
+                vocab_size as u32,
+                temperature.unwrap_or(1.0),
+                top_k.unwrap_or(0),
+                top_p.unwrap_or(1.0),
+                min_p.unwrap_or(0.0),
+                command_buffer,
+            );
+            return Ok(());
         }
 
         if let Some(bitmask_buffer) = bitmask_buffer {
