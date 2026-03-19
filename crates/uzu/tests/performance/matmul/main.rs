@@ -1,14 +1,7 @@
 #![cfg(all(target_os = "macos", metal_backend))]
 
-mod bench;
-mod error;
-mod output;
-mod shapes;
-
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::MTLDeviceExt;
-use output::print_results_table;
-use shapes::test_shapes;
 use uzu::{
     DataType,
     backends::{
@@ -16,6 +9,8 @@ use uzu::{
         metal::Metal,
     },
 };
+
+use crate::matmul::{bench, output::print_results_table, shapes::test_shapes};
 
 type Ctx = <Metal as Backend>::Context;
 

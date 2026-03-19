@@ -89,5 +89,5 @@ name = "kernel"
 path = "tests_unit/kernel/mod.rs"
 
 [[test]]
-name = "matmul_perf_test"
-path = "tests/matmul_perf_test/main.rs"
+name = "performance"
+path = "tests/performance/mod.rs"
