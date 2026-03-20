@@ -245,6 +245,13 @@ impl<B: Backend> QuantizedLinear<B> {
     }
 }
 
+impl<B: Backend> QuantizedLinear<B> {
+    pub(crate) fn weights_buffer(&self) -> &Rc<RefCell<B::Buffer>> { &self.weights_buffer }
+    pub(crate) fn scales_buffer(&self) -> &Rc<RefCell<B::Buffer>> { &self.scales_buffer }
+    pub(crate) fn zero_points_or_biases_buffer(&self) -> &Rc<RefCell<B::Buffer>> { &self.zero_points_or_biases_buffer }
+    pub(crate) fn quantization_type(&self) -> QuantizedMatmulType { self.quantization_type }
+}
+
 impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     fn encode(
         &self,

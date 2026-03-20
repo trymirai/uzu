@@ -8,22 +8,40 @@ use crate::{
     backends::common::{Backend, CommandBuffer},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{
-        Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer, TensorAddSwap,
-        TensorCopy,
+        Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, RMSNormHadamard, Rope,
+        ShortConvMixer, TensorAddSwap, TensorCopy,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
+pub enum NormBlock<B: Backend> {
+    Plain(RMSNorm<B>),
+    FusedHadamard(RMSNormHadamard<B>),
+}
+
+impl<B: Backend> NormBlock<B> {
+    pub fn encode(
+        &self,
+        state: &mut ForwardPassState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        match self {
+            Self::Plain(norm) => norm.encode(state, command_buffer),
+            Self::FusedHadamard(norm) => norm.encode(state, command_buffer),
+        }
+    }
+}
+
 /// A single decoder layer with all its components.
 pub struct LayerExecutables<B: Backend> {
     pub layer_index: usize,
     pub copy_main_to_shortcut: TensorCopy<B>,
-    pub pre_attention_norm: RMSNorm<B>,
+    pub pre_attention_norm: NormBlock<B>,
     pub(crate) mixer: MixerExecutables<B>,
     pub post_attention_norm: Option<RMSNorm<B>>,
     pub main_shortcut_add_swap: TensorAddSwap<B>,
-    pub pre_mlp_norm: RMSNorm<B>,
+    pub pre_mlp_norm: NormBlock<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
 }
@@ -57,21 +75,13 @@ impl<B: Backend> LayerExecutables<B> {
         )
         .unwrap();
 
-        let pre_attention_norm = RMSNorm::new(
-            ctx,
-            intermediate_data_type,
-            layer_config.pre_attention_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
-            &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
-        )
-        .expect("Failed to create RMS norm kernel");
+        let norm_tree = decoder_layer_loader.subtree("pre_mixer_norm").unwrap();
 
-        let mixer = match &layer_config.mixer_config {
+        let (pre_attention_norm, mixer) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
-                let qkv_projection = <dyn Linear<B>>::new(
+                let (qkv_projection, input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                     &attention_config.qkv_projection_config,
                     attention_config.has_qkv_biases,
                     model_dim,
@@ -82,6 +92,33 @@ impl<B: Backend> LayerExecutables<B> {
                     ArrayId::QKV,
                 )
                 .expect("Failed to create qkv projection");
+
+                let pre_attention_norm = if let Some(factors) = input_hadamard_factors {
+                    NormBlock::FusedHadamard(
+                        RMSNormHadamard::new(
+                            ctx,
+                            intermediate_data_type,
+                            layer_config.pre_attention_norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &norm_tree,
+                            factors,
+                        )
+                        .expect("Failed to create fused RMSNorm+Hadamard kernel"),
+                    )
+                } else {
+                    NormBlock::Plain(
+                        RMSNorm::new(
+                            ctx,
+                            intermediate_data_type,
+                            layer_config.pre_attention_norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &norm_tree,
+                        )
+                        .expect("Failed to create RMS norm kernel"),
+                    )
+                };
 
                 let qk_norm =
                     if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
@@ -126,13 +163,13 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
-                MixerExecutables::Attention {
+                (pre_attention_norm, MixerExecutables::Attention {
                     qkv_projection,
                     qk_norm,
                     rope: rope_block,
                     attention,
                     out_projection,
-                }
+                })
             },
             MixerConfig::Mamba(mamba_config) => {
                 let mixer = MambaMixer::new(
@@ -146,12 +183,15 @@ impl<B: Backend> LayerExecutables<B> {
                     num_groups,
                     decoder_layer_loader,
                 );
-                MixerExecutables::StateSpace {
-                    mixer,
-                }
+                let norm = NormBlock::Plain(
+                    RMSNorm::new(ctx, intermediate_data_type, layer_config.pre_attention_norm_config.clone(),
+                        ArrayId::Main, ArrayId::Main, &norm_tree)
+                        .expect("Failed to create RMS norm kernel"),
+                );
+                (norm, MixerExecutables::StateSpace { mixer })
             },
             MixerConfig::ShortConv(short_conv_config) => {
-                let mixer = ShortConvMixer::new(
+                let (mixer, input_hadamard_factors) = ShortConvMixer::new(
                     ctx,
                     layer_type.clone(),
                     short_conv_config.clone(),
@@ -159,9 +199,21 @@ impl<B: Backend> LayerExecutables<B> {
                     model_dim,
                     decoder_layer_loader,
                 );
-                MixerExecutables::ShortConv {
-                    mixer,
-                }
+                let norm = if let Some(factors) = input_hadamard_factors {
+                    NormBlock::FusedHadamard(
+                        RMSNormHadamard::new(ctx, intermediate_data_type,
+                            layer_config.pre_attention_norm_config.clone(),
+                            ArrayId::Main, ArrayId::Main, &norm_tree, factors)
+                            .expect("Failed to create fused RMSNorm+Hadamard kernel"),
+                    )
+                } else {
+                    NormBlock::Plain(
+                        RMSNorm::new(ctx, intermediate_data_type, layer_config.pre_attention_norm_config.clone(),
+                            ArrayId::Main, ArrayId::Main, &norm_tree)
+                            .expect("Failed to create RMS norm kernel"),
+                    )
+                };
+                (norm, MixerExecutables::ShortConv { mixer })
             },
         };
 
@@ -188,17 +240,9 @@ impl<B: Backend> LayerExecutables<B> {
         )
         .unwrap();
 
-        let pre_mlp_norm = RMSNorm::new(
-            ctx,
-            intermediate_data_type,
-            layer_config.pre_mlp_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
-            &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-        )
-        .expect("Failed to create RMS norm kernel");
+        let mlp_norm_tree = decoder_layer_loader.subtree("pre_mlp_norm").unwrap();
 
-        let mlp = <dyn Mlp<B>>::new(
+        let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,
@@ -206,6 +250,22 @@ impl<B: Backend> LayerExecutables<B> {
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
         .expect("Failed to create mlp block");
+
+        let pre_mlp_norm = if let Some(factors) = mlp_input_hadamard_factors {
+            NormBlock::FusedHadamard(
+                RMSNormHadamard::new(ctx, intermediate_data_type,
+                    layer_config.pre_mlp_norm_config.clone(),
+                    ArrayId::Main, ArrayId::Main, &mlp_norm_tree, factors)
+                    .expect("Failed to create fused RMSNorm+Hadamard kernel"),
+            )
+        } else {
+            NormBlock::Plain(
+                RMSNorm::new(ctx, intermediate_data_type,
+                    layer_config.pre_mlp_norm_config.clone(),
+                    ArrayId::Main, ArrayId::Main, &mlp_norm_tree)
+                    .expect("Failed to create RMS norm kernel"),
+            )
+        };
 
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(

@@ -13,6 +13,7 @@ mod moe;
 mod pooling;
 mod quant_matmul;
 mod rms_norm;
+mod rms_norm_hadamard;
 mod rope;
 mod sampling;
 mod short_conv;
