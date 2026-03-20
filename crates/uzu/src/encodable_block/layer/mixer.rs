@@ -11,6 +11,7 @@ use crate::{
 pub(crate) enum MixerExecutables<B: Backend> {
     Attention {
         qkv_projection: Box<dyn Linear<B>>,
+        gate_projection: Option<Box<dyn Linear<B>>>,
         qk_norm: Option<QKNorm<B>>,
         rope: Rc<Rope<B>>,
         attention: Attention<B>,

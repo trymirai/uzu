@@ -14,6 +14,7 @@ pub enum ArrayId {
     Main,
     Shortcut,
     QKV,
+    Gate,
     AttentionOutput,
     MlpFusedUp,
     MlpHidden,

@@ -26,6 +26,7 @@ pub struct ModelShape {
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
     max_rope_dim: usize,
+    has_gate: bool,
 }
 
 impl ModelShape {
@@ -75,6 +76,7 @@ impl ModelShape {
             }
         }
         let mut max_rope_dim = 0usize;
+        let mut has_gate = false;
 
         let all_layer_configs = decoder_config
             .layer_configs
@@ -86,6 +88,7 @@ impl ModelShape {
             if let MixerConfig::Attention(attn) = &layer_config.mixer_config {
                 let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
                 max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
+                has_gate = has_gate || attn.has_gate;
             }
         }
 
@@ -116,6 +119,7 @@ impl ModelShape {
             max_mamba_state_dim,
             max_mamba_kernel_size,
             max_rope_dim,
+            has_gate,
         }
     }
 
@@ -206,6 +210,13 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 2] {
         [suffix_length, self.num_heads * self.head_dim]
+    }
+
+    pub fn gate_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.has_gate.then(|| [suffix_length, self.num_heads * self.head_dim])
     }
 
     pub fn rotated_queries_shape(

@@ -485,6 +485,7 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::Main => self.common_aux.main.clone(),
             ArrayId::Shortcut => self.common_aux.shortcut.clone(),
             ArrayId::QKV => self.common_aux.qkv.clone(),
+            ArrayId::Gate => self.common_aux.gate.clone().expect("Gate buffer not available"),
             ArrayId::AttentionOutput => self.common_aux.attention_output.clone(),
             ArrayId::MlpFusedUp => self.common_aux.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.common_aux.mlp_hidden.clone(),

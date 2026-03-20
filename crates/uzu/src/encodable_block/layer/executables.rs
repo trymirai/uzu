@@ -84,6 +84,24 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create qkv projection");
 
+                let gate_projection = if attention_config.has_gate {
+                    Some(
+                        <dyn Linear<B>>::new(
+                            &attention_config.qkv_projection_config,
+                            false,
+                            model_dim,
+                            [num_heads * head_dim],
+                            ctx,
+                            &decoder_layer_loader.subtree("mixer.gate_projection").unwrap(),
+                            ArrayId::Main,
+                            ArrayId::Gate,
+                        )
+                        .expect("Failed to create gate projection"),
+                    )
+                } else {
+                    None
+                };
+
                 let qk_norm =
                     if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
                         match QKNorm::new(
@@ -124,11 +142,13 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_sinks,
                     attention_config.is_causal.unwrap_or(true),
                     attention_config.sliding_window_size,
+                    attention_config.has_gate,
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
                 MixerExecutables::Attention {
                     qkv_projection,
+                    gate_projection,
                     qk_norm,
                     rope: rope_block,
                     attention,
@@ -264,12 +284,16 @@ impl<B: Backend> LayerExecutables<B> {
         match &self.mixer {
             MixerExecutables::Attention {
                 qkv_projection,
+                gate_projection,
                 qk_norm,
                 rope,
                 attention,
                 out_projection,
             } => {
                 qkv_projection.encode(state, command_buffer)?;
+                if let Some(gate_proj) = gate_projection {
+                    gate_proj.encode(state, command_buffer)?;
+                }
                 if let Some(norm) = qk_norm {
                     norm.encode(state, command_buffer)?;
                 }

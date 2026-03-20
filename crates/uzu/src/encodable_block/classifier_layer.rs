@@ -191,6 +191,7 @@ impl<B: Backend> ClassifierLayer<B> {
             attention_config.has_sinks,
             false,
             attention_config.sliding_window_size,
+            false,
         )
         .expect("Failed to create attention kernel");
 
