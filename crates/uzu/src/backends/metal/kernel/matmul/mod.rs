@@ -1,6 +1,6 @@
 pub mod gemm;
-pub mod gemm_mpp_nxu;
-pub mod gemm_mpp_staged;
+pub mod gemm_mpp;
+pub mod gemm_mpp_mxu;
 pub mod gemv;
 mod matmul;
 

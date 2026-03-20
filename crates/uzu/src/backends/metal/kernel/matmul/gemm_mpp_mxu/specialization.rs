@@ -1,7 +1,7 @@
 use crate::backends::metal::context::MetalContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GemmMppNxuSpecialization {
+pub struct GemmMppMxuSpecialization {
     pub block_rows: i32,
     pub block_cols: i32,
     pub simdgroups_per_row: u64,
@@ -12,7 +12,7 @@ pub struct GemmMppNxuSpecialization {
     pub align_k: bool,
 }
 
-impl GemmMppNxuSpecialization {
+impl GemmMppMxuSpecialization {
     fn tile_config(
         block_rows: i32,
         block_cols: i32,
@@ -20,6 +20,7 @@ impl GemmMppNxuSpecialization {
         simdgroups_per_column: u64,
         align_m: bool,
         align_n: bool,
+        align_k: bool,
     ) -> Self {
         Self {
             block_rows,
@@ -29,20 +30,22 @@ impl GemmMppNxuSpecialization {
             swizzle_log2: 0,
             align_m,
             align_n,
-            align_k: true,
+            align_k,
         }
     }
 
     pub fn precompile_configs() -> Box<[Self]> {
         [
-            Self::tile_config(64, 64, 2, 2, true, true),
-            Self::tile_config(64, 64, 2, 2, false, true),
-            Self::tile_config(64, 64, 2, 2, true, false),
-            Self::tile_config(64, 64, 2, 2, false, false),
-            Self::tile_config(128, 128, 4, 4, true, true),
-            Self::tile_config(128, 128, 4, 4, false, true),
-            Self::tile_config(128, 128, 4, 4, true, false),
-            Self::tile_config(128, 128, 4, 4, false, false),
+            Self::tile_config(64, 64, 2, 2, true, true, true),
+            Self::tile_config(64, 64, 2, 2, true, true, false),
+            Self::tile_config(64, 64, 2, 2, false, true, false),
+            Self::tile_config(64, 64, 2, 2, true, false, false),
+            Self::tile_config(64, 64, 2, 2, false, false, false),
+            Self::tile_config(128, 128, 4, 4, true, true, true),
+            Self::tile_config(128, 128, 4, 4, true, true, false),
+            Self::tile_config(128, 128, 4, 4, false, true, false),
+            Self::tile_config(128, 128, 4, 4, true, false, false),
+            Self::tile_config(128, 128, 4, 4, false, false, false),
         ]
         .into()
     }

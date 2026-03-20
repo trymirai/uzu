@@ -22,7 +22,7 @@ template <
     short SUBTILE_COLS,
     short MATMUL_K_STEP,
     bool USE_NATIVE_LAYOUT = false>
-METAL_FUNC void gemm_mpp_staged(
+METAL_FUNC void gemm_mpp_core(
     thread LoaderA& loader_a,
     thread LoaderB& loader_b,
     device T* output_matrix,

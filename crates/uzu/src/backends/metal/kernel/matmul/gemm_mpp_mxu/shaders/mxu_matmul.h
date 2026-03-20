@@ -1,22 +1,22 @@
 #pragma once
 
-#include "nxu_fragment_layout.h"
+#include "mxu_fragment_layout.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
 namespace uzu {
 namespace matmul {
 
-// M5+-only types and functions that use NxuFragmentLayout to load data into
+// M5+-only types and functions that use MxuFragmentLayout to load data into
 // registers, then copy linearly to cooperative tensors (ct[i] = frag[i]).
-// On pre-M5, use cooperative_tensor_gemm instead.
+// On pre-M5, use the portable GemmMpp path instead.
 
 template <
     typename T,
     short ROWS_,
     short COLS_,
-    typename FragmentLayout = NxuFragmentLayout>
-struct NxuSubTile {
+    typename FragmentLayout = MxuFragmentLayout>
+struct MxuSubTile {
   METAL_CONST short ROWS = ROWS_;
   METAL_CONST short COLS = COLS_;
   METAL_CONST short FRAGMENT_ROWS = FragmentLayout::FRAGMENT_ROWS;
@@ -219,8 +219,8 @@ template <
     typename RightType,
     bool transpose_left,
     bool transpose_right,
-    typename FragmentLayout = NxuFragmentLayout>
-METAL_FUNC void nxu_paired_matmul(
+    typename FragmentLayout = MxuFragmentLayout>
+METAL_FUNC void mxu_paired_matmul(
     thread
     typename FragmentLayout::template FragmentVectorType<AccumulatorType>&
         c_frag_0,
@@ -298,8 +298,8 @@ template <
     typename T,
     short TILE_ROWS_,
     short TILE_COLS_,
-    class SubtileType = NxuSubTile<T, 16, 16>>
-struct NxuTile {
+    class SubtileType = MxuSubTile<T, 16, 16>>
+struct MxuTile {
   using SubTileType = SubtileType;
   using ElementType = T;
 
@@ -315,7 +315,7 @@ struct NxuTile {
 
   SubtileType value_subtiles[SUBTILES];
 
-  METAL_FUNC NxuTile() thread {}
+  METAL_FUNC MxuTile() thread {}
 
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
@@ -427,7 +427,7 @@ template <
     class RightTile,
     bool transpose_left,
     bool transpose_right>
-METAL_FUNC void nxu_tiled_matmul(
+METAL_FUNC void mxu_tiled_matmul(
     thread AccumulatorTile& accumulator,
     thread LeftTile& left_input,
     metal::bool_constant<transpose_left>,
@@ -442,7 +442,7 @@ METAL_FUNC void nxu_tiled_matmul(
 
   static_assert(
       tiles_n % 2 == 0,
-      "NxuTile N dimension must be even for paired 16x32x16 matmul"
+      "MxuTile N dimension must be even for paired 16x32x16 matmul"
   );
 
   constexpr auto transpose_a_tag = metal::bool_constant<transpose_left>{};
@@ -460,7 +460,7 @@ METAL_FUNC void nxu_tiled_matmul(
         const short b_col_0 = transpose_right ? k : j;
         const short b_row_1 = transpose_right ? (j + 1) : k;
         const short b_col_1 = transpose_right ? k : (j + 1);
-        nxu_paired_matmul<
+        mxu_paired_matmul<
             typename AccumulatorTile::SubTileType::ElementType,
             typename LeftTile::SubTileType::ElementType,
             typename RightTile::SubTileType::ElementType,

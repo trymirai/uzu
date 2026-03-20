@@ -24,8 +24,9 @@ const BENCHMARK_ITERATIONS: usize = 30;
 pub enum DispatchPath {
     Gemv,
     Gemm,
-    GemmMppStaged,
-    GemmMppNxu,
+    GemmMpp,
+    GemmMppMxu,
+    GemmMppNative,
 }
 
 impl DispatchPath {
@@ -33,15 +34,17 @@ impl DispatchPath {
         match self {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
-            Self::GemmMppStaged => "GemmMppStaged",
-            Self::GemmMppNxu => "GemmMppNxu",
+            Self::GemmMpp => "GemmMpp",
+            Self::GemmMppMxu => "GemmMppMxu",
+            Self::GemmMppNative => "GemmMppNative",
         }
     }
 
     pub fn available_paths(context: &Ctx) -> Vec<Self> {
-        let mut paths = vec![Self::Gemv, Self::Gemm, Self::GemmMppStaged];
+        let mut paths = vec![Self::Gemv, Self::Gemm, Self::GemmMpp];
         if context.device_capabilities().supports_mxu {
-            paths.push(Self::GemmMppNxu);
+            paths.push(Self::GemmMppMxu);
+            paths.push(Self::GemmMppNative);
         }
         paths
     }
@@ -87,8 +90,9 @@ fn encode_and_run(
     let encode_result = match dispatch_path {
         DispatchPath::Gemv => kernel.encode_gemv(context, &mut command_buffer, arguments),
         DispatchPath::Gemm => kernel.encode_gemm(context, &mut command_buffer, arguments),
-        DispatchPath::GemmMppStaged => kernel.encode_gemm_mpp_staged(context, &mut command_buffer, arguments),
-        DispatchPath::GemmMppNxu => kernel.encode_gemm_mpp_nxu(context, &mut command_buffer, arguments),
+        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(context, &mut command_buffer, arguments),
+        DispatchPath::GemmMppMxu => kernel.encode_gemm_mpp_mxu(context, &mut command_buffer, arguments),
+        DispatchPath::GemmMppNative => kernel.encode_gemm_mpp_native(context, &mut command_buffer, arguments),
     };
 
     encode_result.map_err(|e| BenchError::Kernel(e.to_string()))?;

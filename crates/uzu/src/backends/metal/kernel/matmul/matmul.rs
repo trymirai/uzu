@@ -5,10 +5,10 @@ use std::{
 
 use super::{
     super::dsl::{
-        MatmulGemmMetalKernel, MatmulGemmMppNxuMetalKernel, MatmulGemmMppStagedMetalKernel, MatmulGemvMetalKernel,
-        TensorAddBiasMetalKernel,
+        MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemmMppMxuMetalKernel, MatmulGemmMppNativeMetalKernel,
+        MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
     },
-    gemm, gemm_mpp_nxu, gemm_mpp_staged, gemv,
+    gemm, gemm_mpp, gemm_mpp_mxu, gemv,
 };
 use crate::{
     DataType,
@@ -28,8 +28,9 @@ pub struct MatmulMetalKernel {
     data_type: DataType,
     gemv_kernels: HashMap<gemv::Specialization, MatmulGemvMetalKernel>,
     gemm_kernels: HashMap<gemm::GemmSpecialization, MatmulGemmMetalKernel>,
-    gemm_mpp_staged_kernels: HashMap<gemm_mpp_staged::GemmMppStagedSpecialization, MatmulGemmMppStagedMetalKernel>,
-    gemm_mpp_nxu_kernels: HashMap<gemm_mpp_nxu::GemmMppNxuSpecialization, MatmulGemmMppNxuMetalKernel>,
+    gemm_mpp_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppMetalKernel>,
+    gemm_mpp_mxu_kernels: HashMap<gemm_mpp_mxu::GemmMppMxuSpecialization, MatmulGemmMppMxuMetalKernel>,
+    gemm_mpp_native_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppNativeMetalKernel>,
     bias_add: Option<TensorAddBiasMetalKernel>,
 }
 
@@ -110,15 +111,15 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn get_or_create_gemm_mpp_staged(
+    fn get_or_create_gemm_mpp(
         &mut self,
         context: &MetalContext,
-        specialization: gemm_mpp_staged::GemmMppStagedSpecialization,
-    ) -> Result<&MatmulGemmMppStagedMetalKernel, MatmulError<Metal>> {
-        match self.gemm_mpp_staged_kernels.entry(specialization) {
+        specialization: gemm_mpp::GemmMppSpecialization,
+    ) -> Result<&MatmulGemmMppMetalKernel, MatmulError<Metal>> {
+        match self.gemm_mpp_kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = MatmulGemmMppStagedMetalKernel::new(
+                let kernel = MatmulGemmMppMetalKernel::new(
                     context,
                     self.data_type,
                     specialization.block_rows as u32,
@@ -134,15 +135,15 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn get_or_create_gemm_mpp_nxu(
+    fn get_or_create_gemm_mpp_mxu(
         &mut self,
         context: &MetalContext,
-        specialization: gemm_mpp_nxu::GemmMppNxuSpecialization,
-    ) -> Result<&MatmulGemmMppNxuMetalKernel, MatmulError<Metal>> {
-        match self.gemm_mpp_nxu_kernels.entry(specialization) {
+        specialization: gemm_mpp_mxu::GemmMppMxuSpecialization,
+    ) -> Result<&MatmulGemmMppMxuMetalKernel, MatmulError<Metal>> {
+        match self.gemm_mpp_mxu_kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = MatmulGemmMppNxuMetalKernel::new(
+                let kernel = MatmulGemmMppMxuMetalKernel::new(
                     context,
                     self.data_type,
                     specialization.block_rows as u32,
@@ -152,6 +153,30 @@ impl MatmulMetalKernel {
                     specialization.align_m,
                     specialization.align_n,
                     specialization.align_k,
+                )
+                .map_err(MatmulError::BackendError)?;
+                Ok(entry.insert(kernel))
+            },
+        }
+    }
+
+    fn get_or_create_gemm_mpp_native(
+        &mut self,
+        context: &MetalContext,
+        specialization: gemm_mpp::GemmMppSpecialization,
+    ) -> Result<&MatmulGemmMppNativeMetalKernel, MatmulError<Metal>> {
+        match self.gemm_mpp_native_kernels.entry(specialization) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = MatmulGemmMppNativeMetalKernel::new(
+                    context,
+                    self.data_type,
+                    specialization.block_rows as u32,
+                    specialization.block_cols as u32,
+                    specialization.simdgroups_per_row as u32,
+                    specialization.simdgroups_per_column as u32,
+                    specialization.align_m,
+                    specialization.align_n,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -348,14 +373,13 @@ impl MatmulMetalKernel {
         (params, tn_swizzled as u32, tm_swizzled as u32)
     }
 
-    pub fn encode_gemm_mpp_staged(
+    pub fn encode_gemm_mpp(
         &mut self,
         context: &MetalContext,
         command_buffer: &mut MetalCommandBufferEncoding,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let specialization =
-            gemm_mpp_staged::GemmMppStagedSpecialization::select(arguments.batch, arguments.output_dim);
+        let specialization = gemm_mpp::GemmMppSpecialization::select(arguments.batch, arguments.output_dim);
         let (params, group_count_x, group_count_y) = Self::make_mpp_params(
             &arguments,
             specialization.block_rows,
@@ -363,7 +387,7 @@ impl MatmulMetalKernel {
             specialization.swizzle_log2,
         );
 
-        let kernel = self.get_or_create_gemm_mpp_staged(context, specialization)?;
+        let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
 
         kernel.encode(
             (arguments.a, arguments.a_offset as usize),
@@ -387,13 +411,13 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    pub fn encode_gemm_mpp_nxu(
+    pub fn encode_gemm_mpp_mxu(
         &mut self,
         context: &MetalContext,
         command_buffer: &mut MetalCommandBufferEncoding,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let specialization = gemm_mpp_nxu::GemmMppNxuSpecialization::select(
+        let specialization = gemm_mpp_mxu::GemmMppMxuSpecialization::select(
             context,
             arguments.batch,
             arguments.output_dim,
@@ -406,7 +430,45 @@ impl MatmulMetalKernel {
             specialization.swizzle_log2,
         );
 
-        let kernel = self.get_or_create_gemm_mpp_nxu(context, specialization)?;
+        let kernel = self.get_or_create_gemm_mpp_mxu(context, specialization)?;
+
+        kernel.encode(
+            (arguments.a, arguments.a_offset as usize),
+            arguments.b,
+            &mut *arguments.d,
+            std::slice::from_ref(&params),
+            group_count_x,
+            group_count_y,
+            command_buffer,
+        );
+
+        self.encode_bias_add(
+            context,
+            arguments.bias,
+            arguments.d,
+            arguments.batch as usize,
+            arguments.output_dim as usize,
+            command_buffer,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn encode_gemm_mpp_native(
+        &mut self,
+        context: &MetalContext,
+        command_buffer: &mut MetalCommandBufferEncoding,
+        arguments: MatmulArguments<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        let specialization = gemm_mpp::GemmMppSpecialization::select(arguments.batch, arguments.output_dim);
+        let (params, group_count_x, group_count_y) = Self::make_mpp_params(
+            &arguments,
+            specialization.block_rows,
+            specialization.block_cols,
+            specialization.swizzle_log2,
+        );
+
+        let kernel = self.get_or_create_gemm_mpp_native(context, specialization)?;
 
         kernel.encode(
             (arguments.a, arguments.a_offset as usize),
@@ -478,8 +540,9 @@ impl MatmulKernel for MatmulMetalKernel {
             data_type,
             gemv_kernels: HashMap::new(),
             gemm_kernels: HashMap::new(),
-            gemm_mpp_staged_kernels: HashMap::new(),
-            gemm_mpp_nxu_kernels: HashMap::new(),
+            gemm_mpp_kernels: HashMap::new(),
+            gemm_mpp_mxu_kernels: HashMap::new(),
+            gemm_mpp_native_kernels: HashMap::new(),
             bias_add: None,
         };
 
@@ -490,8 +553,8 @@ impl MatmulKernel for MatmulMetalKernel {
             kernel.get_or_create_gemm(context, config)?;
         }
         if context.device_capabilities().supports_mxu {
-            for config in gemm_mpp_nxu::GemmMppNxuSpecialization::precompile_configs().iter() {
-                kernel.get_or_create_gemm_mpp_nxu(context, *config)?;
+            for config in gemm_mpp_mxu::GemmMppMxuSpecialization::precompile_configs().iter() {
+                kernel.get_or_create_gemm_mpp_mxu(context, *config)?;
             }
         }
 
@@ -507,7 +570,7 @@ impl MatmulKernel for MatmulMetalKernel {
         if Self::is_gemv_eligible(&arguments) {
             self.encode_gemv(context, command_buffer, arguments).expect("Failed to encode GEMV kernel");
         } else if context.device_capabilities().supports_mxu {
-            self.encode_gemm_mpp_nxu(context, command_buffer, arguments).expect("Failed to encode GEMM MPP NXU kernel");
+            self.encode_gemm_mpp_mxu(context, command_buffer, arguments).expect("Failed to encode GEMM MPP MXU kernel");
         } else {
             self.encode_gemm(context, command_buffer, arguments).expect("Failed to encode GEMM kernel");
         }

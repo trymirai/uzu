@@ -19,7 +19,7 @@ namespace matmul {
 /// WARNING: This layout ONLY matches the cooperative tensor hardware layout on
 /// M5+ Apple Silicon. On pre-M5, cooperative tensors use a different layout and
 /// direct linear copy ct[i]=frag[i] produces incorrect results.
-struct NxuFragmentLayout {
+struct MxuFragmentLayout {
   METAL_CONST short FRAGMENT_ROWS = 16;
   METAL_CONST short FRAGMENT_COLUMNS = 16;
   METAL_CONST short ELEMENTS_PER_FRAGMENT =

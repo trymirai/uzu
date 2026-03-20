@@ -22,8 +22,9 @@ use uzu::{
 enum DispatchPath {
     Gemv,
     Gemm,
-    GemmMppStaged,
-    GemmMppNxu,
+    GemmMpp,
+    GemmMppMxu,
+    GemmMppNative,
 }
 
 impl DispatchPath {
@@ -31,14 +32,20 @@ impl DispatchPath {
         match self {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
-            Self::GemmMppStaged => "GemmMppStaged",
-            Self::GemmMppNxu => "GemmMppNxu",
+            Self::GemmMpp => "GemmMpp",
+            Self::GemmMppMxu => "GemmMppMxu",
+            Self::GemmMppNative => "GemmMppNative",
         }
     }
 }
 
-const ALL_DISPATCH_PATHS: [DispatchPath; 4] =
-    [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMppStaged, DispatchPath::GemmMppNxu];
+const ALL_DISPATCH_PATHS: [DispatchPath; 5] = [
+    DispatchPath::Gemv,
+    DispatchPath::Gemm,
+    DispatchPath::GemmMpp,
+    DispatchPath::GemmMppMxu,
+    DispatchPath::GemmMppNative,
+];
 
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
@@ -89,8 +96,9 @@ fn run_metal_matmul(
     let encode_result = match dispatch_path {
         DispatchPath::Gemv => kernel.encode_gemv(ctx, &mut command_buffer, arguments),
         DispatchPath::Gemm => kernel.encode_gemm(ctx, &mut command_buffer, arguments),
-        DispatchPath::GemmMppStaged => kernel.encode_gemm_mpp_staged(ctx, &mut command_buffer, arguments),
-        DispatchPath::GemmMppNxu => kernel.encode_gemm_mpp_nxu(ctx, &mut command_buffer, arguments),
+        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, &mut command_buffer, arguments),
+        DispatchPath::GemmMppMxu => kernel.encode_gemm_mpp_mxu(ctx, &mut command_buffer, arguments),
+        DispatchPath::GemmMppNative => kernel.encode_gemm_mpp_native(ctx, &mut command_buffer, arguments),
     };
 
     encode_result.map_err(|e| e.to_string())?;
@@ -324,7 +332,7 @@ fn matmul_correctness_comprehensive() {
         <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(&ctx, DataType::BF16).expect("kernel");
 
     let mut passed = 0usize;
-    let mut expected_nxu_failures = 0usize;
+    let mut expected_mxu_failures = 0usize;
     let mut failed: Vec<(String, f32, usize, usize, f32)> = Vec::new();
 
     for case in &cases {
@@ -338,15 +346,15 @@ fn matmul_correctness_comprehensive() {
 
         for &path in &ALL_DISPATCH_PATHS {
             let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
-            let is_nxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppNxu) && !supports_mxu;
+            let is_mxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppMxu) && !supports_mxu;
 
             let metal_result =
                 match run_metal_matmul(&ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path) {
                     Ok(result) => result,
                     Err(err) => {
-                        if is_nxu_on_pre_m5 {
+                        if is_mxu_on_pre_m5 {
                             eprintln!("⊘ {label}: encode error (expected on pre-M5): {err}");
-                            expected_nxu_failures += 1;
+                            expected_mxu_failures += 1;
                         } else {
                             eprintln!("✗ {label}: encode error: {err}");
                             failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
@@ -361,12 +369,12 @@ fn matmul_correctness_comprehensive() {
                     eprintln!("✓ {label}");
                 },
                 Err((max_diff, idx, count)) => {
-                    if is_nxu_on_pre_m5 {
+                    if is_mxu_on_pre_m5 {
                         eprintln!(
                             "⊘ {label}: wrong results (expected on pre-M5) max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
                             case.tolerance,
                         );
-                        expected_nxu_failures += 1;
+                        expected_mxu_failures += 1;
                     } else {
                         eprintln!(
                             "✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
@@ -379,9 +387,9 @@ fn matmul_correctness_comprehensive() {
         }
     }
 
-    let total = passed + failed.len() + expected_nxu_failures;
+    let total = passed + failed.len() + expected_mxu_failures;
     eprintln!(
-        "\n{passed}/{total} passed, {} failed, {expected_nxu_failures} expected NXU failures (pre-M5)",
+        "\n{passed}/{total} passed, {} failed, {expected_mxu_failures} expected MXU failures (pre-M5)",
         failed.len()
     );
 

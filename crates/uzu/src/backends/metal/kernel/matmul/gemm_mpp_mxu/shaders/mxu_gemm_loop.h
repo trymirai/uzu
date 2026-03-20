@@ -1,13 +1,13 @@
 #pragma once
 
-#include "nxu_matmul.h"
+#include "mxu_matmul.h"
 #include "../../../../generated/matmul.h"
 
 namespace uzu {
 namespace matmul {
 
-METAL_CONST short NXU_K_ITERATION_STRIDE = 256;
-METAL_CONST short NXU_SIMDGROUP_K_STEP = 32;
+METAL_CONST short MXU_K_ITERATION_STRIDE = 256;
+METAL_CONST short MXU_SIMDGROUP_K_STEP = 32;
 
 template <
     typename T,
@@ -19,8 +19,8 @@ template <
     bool aligned_n,
     bool aligned_k,
     typename AccumulatorType = float>
-METAL_FUNC NxuTile<AccumulatorType, SIMDGROUP_ROWS / 16, SIMDGROUP_COLS / 16>
-nxu_gemm_loop(
+METAL_FUNC MxuTile<AccumulatorType, SIMDGROUP_ROWS / 16, SIMDGROUP_COLS / 16>
+mxu_gemm_loop(
     const device T* A,
     const device T* B,
     int leading_dimension_a,
@@ -31,7 +31,7 @@ nxu_gemm_loop(
 ) {
   constexpr short TILE_ROWS = SIMDGROUP_ROWS / 16;
   constexpr short TILE_COLS = SIMDGROUP_COLS / 16;
-  constexpr short TILE_K = NXU_SIMDGROUP_K_STEP / 16;
+  constexpr short TILE_K = MXU_SIMDGROUP_K_STEP / 16;
 
   constexpr int A_TILE_ROWS = transpose_a ? TILE_K : TILE_ROWS;
   constexpr int A_TILE_COLS = transpose_a ? TILE_ROWS : TILE_K;
@@ -39,18 +39,16 @@ nxu_gemm_loop(
   constexpr int B_TILE_ROWS = transpose_b ? TILE_COLS : TILE_K;
   constexpr int B_TILE_COLS = transpose_b ? TILE_K : TILE_COLS;
 
-  NxuTile<AccumulatorType, TILE_ROWS, TILE_COLS> accumulator;
+  MxuTile<AccumulatorType, TILE_ROWS, TILE_COLS> accumulator;
   accumulator.clear();
 
-  const int aligned_k_iterations = K / NXU_K_ITERATION_STRIDE;
+  const int aligned_k_iterations = K / MXU_K_ITERATION_STRIDE;
 
   for (int outer_k = 0; outer_k < aligned_k_iterations; outer_k++) {
-    threadgroup_barrier(mem_flags::mem_none);
-
-    for (int inner_k = 0; inner_k < NXU_K_ITERATION_STRIDE;
-         inner_k += NXU_SIMDGROUP_K_STEP) {
-      NxuTile<T, A_TILE_ROWS, A_TILE_COLS> a_tile;
-      NxuTile<T, B_TILE_ROWS, B_TILE_COLS> b_tile;
+    for (int inner_k = 0; inner_k < MXU_K_ITERATION_STRIDE;
+         inner_k += MXU_SIMDGROUP_K_STEP) {
+      MxuTile<T, A_TILE_ROWS, A_TILE_COLS> a_tile;
+      MxuTile<T, B_TILE_ROWS, B_TILE_COLS> b_tile;
 
       const int a_offset =
           transpose_a ? inner_k * leading_dimension_a : inner_k;
@@ -61,9 +59,9 @@ nxu_gemm_loop(
         a_tile.load(A + a_offset, leading_dimension_a);
       } else {
         const short row_max =
-            transpose_a ? NXU_SIMDGROUP_K_STEP : simdgroup_limit_m;
+            transpose_a ? MXU_SIMDGROUP_K_STEP : simdgroup_limit_m;
         const short col_max =
-            transpose_a ? simdgroup_limit_m : NXU_SIMDGROUP_K_STEP;
+            transpose_a ? simdgroup_limit_m : MXU_SIMDGROUP_K_STEP;
         a_tile.load_checked(
             A + a_offset,
             leading_dimension_a,
@@ -75,9 +73,9 @@ nxu_gemm_loop(
         b_tile.load(B + b_offset, leading_dimension_b);
       } else {
         const short row_max =
-            transpose_b ? simdgroup_limit_n : NXU_SIMDGROUP_K_STEP;
+            transpose_b ? simdgroup_limit_n : MXU_SIMDGROUP_K_STEP;
         const short col_max =
-            transpose_b ? NXU_SIMDGROUP_K_STEP : simdgroup_limit_n;
+            transpose_b ? MXU_SIMDGROUP_K_STEP : simdgroup_limit_n;
         b_tile.load_checked(
             B + b_offset,
             leading_dimension_b,
@@ -85,7 +83,7 @@ nxu_gemm_loop(
         );
       }
 
-      nxu_tiled_matmul(
+      mxu_tiled_matmul(
           accumulator,
           a_tile,
           metal::bool_constant<transpose_a>{},
@@ -94,21 +92,19 @@ nxu_gemm_loop(
       );
     }
 
-    A += transpose_a ? (NXU_K_ITERATION_STRIDE * leading_dimension_a)
-                     : NXU_K_ITERATION_STRIDE;
-    B += transpose_b ? NXU_K_ITERATION_STRIDE
-                     : (NXU_K_ITERATION_STRIDE * leading_dimension_b);
+    A += transpose_a ? (MXU_K_ITERATION_STRIDE * leading_dimension_a)
+                     : MXU_K_ITERATION_STRIDE;
+    B += transpose_b ? MXU_K_ITERATION_STRIDE
+                     : (MXU_K_ITERATION_STRIDE * leading_dimension_b);
   }
 
   if constexpr (!aligned_k) {
-    simdgroup_barrier(mem_flags::mem_none);
-
-    const short remaining_k = K - aligned_k_iterations * NXU_K_ITERATION_STRIDE;
+    const short remaining_k = K - aligned_k_iterations * MXU_K_ITERATION_STRIDE;
 
     for (int inner_k = 0; inner_k < remaining_k;
-         inner_k += NXU_SIMDGROUP_K_STEP) {
-      NxuTile<T, A_TILE_ROWS, A_TILE_COLS> a_tile;
-      NxuTile<T, B_TILE_ROWS, B_TILE_COLS> b_tile;
+         inner_k += MXU_SIMDGROUP_K_STEP) {
+      MxuTile<T, A_TILE_ROWS, A_TILE_COLS> a_tile;
+      MxuTile<T, B_TILE_ROWS, B_TILE_COLS> b_tile;
 
       const short partial_k = max(0, remaining_k - inner_k);
 
@@ -127,7 +123,7 @@ nxu_gemm_loop(
       a_tile.load_checked(A + a_offset, leading_dimension_a, a_limits);
       b_tile.load_checked(B + b_offset, leading_dimension_b, b_limits);
 
-      nxu_tiled_matmul(
+      mxu_tiled_matmul(
           accumulator,
           a_tile,
           metal::bool_constant<transpose_a>{},

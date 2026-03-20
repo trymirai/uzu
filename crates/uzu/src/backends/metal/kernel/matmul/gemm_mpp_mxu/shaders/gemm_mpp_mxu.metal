@@ -3,7 +3,7 @@
 #include "../../../common/dsl.h"
 #include "../../../common/thread_context.h"
 
-#include "nxu_gemm_loop.h"
+#include "mxu_gemm_loop.h"
 
 using namespace uzu::matmul;
 
@@ -13,7 +13,7 @@ template <
     short BLOCK_COLS,
     short SIMDGROUPS_PER_ROW,
     short SIMDGROUPS_PER_COLUMN>
-METAL_FUNC void gemm_mpp_nxu_impl(
+METAL_FUNC void gemm_mpp_mxu_impl(
     const device T* left_matrix,
     const device T* right_matrix,
     device T* output_matrix,
@@ -38,8 +38,6 @@ METAL_FUNC void gemm_mpp_nxu_impl(
     return;
   }
 
-  threadgroup_barrier(mem_flags::mem_none);
-
   const int block_row_start = tid_y * BLOCK_ROWS;
   const int block_col_start = tid_x * BLOCK_COLS;
   const size_t block_row_start_long = size_t(block_row_start);
@@ -63,15 +61,15 @@ METAL_FUNC void gemm_mpp_nxu_impl(
 
   auto result = [&] {
     if (align_k && !is_unaligned_m && !is_unaligned_n) {
-      return nxu_gemm_loop<T, SIMDGROUP_ROWS, SIMDGROUP_COLS, false, true, true, true, true, AccumulatorType>(
+      return mxu_gemm_loop<T, SIMDGROUP_ROWS, SIMDGROUP_COLS, false, true, true, true, true, AccumulatorType>(
           A, B, params->leading_dimension_a, params->leading_dimension_b,
           params->K, simdgroup_limit_m, simdgroup_limit_n);
     } else if (!is_unaligned_m && !is_unaligned_n) {
-      return nxu_gemm_loop<T, SIMDGROUP_ROWS, SIMDGROUP_COLS, false, true, true, true, false, AccumulatorType>(
+      return mxu_gemm_loop<T, SIMDGROUP_ROWS, SIMDGROUP_COLS, false, true, true, true, false, AccumulatorType>(
           A, B, params->leading_dimension_a, params->leading_dimension_b,
           params->K, simdgroup_limit_m, simdgroup_limit_n);
     } else {
-      return nxu_gemm_loop<T, SIMDGROUP_ROWS, SIMDGROUP_COLS, false, true, false, false, false, AccumulatorType>(
+      return mxu_gemm_loop<T, SIMDGROUP_ROWS, SIMDGROUP_COLS, false, true, false, false, false, AccumulatorType>(
           A, B, params->leading_dimension_a, params->leading_dimension_b,
           params->K, simdgroup_limit_m, simdgroup_limit_n);
     }
@@ -88,10 +86,10 @@ METAL_FUNC void gemm_mpp_nxu_impl(
   }
 }
 
-#define GEMM_MPP_NXU_DISPATCH(T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN) \
+#define GEMM_MPP_MXU_DISPATCH(T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN) \
   if (block_rows == BLOCK_ROWS && block_cols == BLOCK_COLS && \
       simdgroups_per_row == SIMDGROUPS_PER_ROW && simdgroups_per_column == SIMDGROUPS_PER_COLUMN) { \
-    gemm_mpp_nxu_impl<T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>( \
+    gemm_mpp_mxu_impl<T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>( \
         left_matrix, right_matrix, output_matrix, params, \
         align_m, align_n, align_k, \
         thread_context.threadgroup_index, \
@@ -101,7 +99,7 @@ METAL_FUNC void gemm_mpp_nxu_impl(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MatmulGemmMppNxu)(
+KERNEL(MatmulGemmMppMxu)(
     const device T* left_matrix,
     const device T* right_matrix,
     device T* output_matrix,
@@ -126,9 +124,9 @@ KERNEL(MatmulGemmMppNxu)(
     return;
   }
 
-  GEMM_MPP_NXU_DISPATCH(T, 64, 64, 2, 2)
-  GEMM_MPP_NXU_DISPATCH(T, 128, 128, 4, 4)
+  GEMM_MPP_MXU_DISPATCH(T, 64, 64, 2, 2)
+  GEMM_MPP_MXU_DISPATCH(T, 128, 128, 4, 4)
 }
 
-#undef GEMM_MPP_NXU_DISPATCH
+#undef GEMM_MPP_MXU_DISPATCH
 // clang-format on

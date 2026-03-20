@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GemmMppStagedSpecialization {
+pub struct GemmMppSpecialization {
     pub block_rows: i32,
     pub block_cols: i32,
     pub simdgroups_per_row: u64,
@@ -9,7 +9,7 @@ pub struct GemmMppStagedSpecialization {
     pub align_n: bool,
 }
 
-impl GemmMppStagedSpecialization {
+impl GemmMppSpecialization {
     fn tile_config(
         block_rows: i32,
         block_cols: i32,
