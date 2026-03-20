@@ -510,3 +510,7 @@ fn kernel_key_name(key: KernelKey) -> &'static str {
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposed64x64) => "matrix_matrix_qmm_transposed_64x64",
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/common/kernel/quant_matmul_test.rs"]
+mod tests;

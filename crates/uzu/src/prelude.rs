@@ -11,7 +11,9 @@
 // Speculators
 pub use crate::{
     VERSION,
-    audio::{AudioCodecRuntime, AudioPcmBatch, AudioTokenGrid, AudioTokenPacking},
+    audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
+    backends::metal::MetalContext,
+    parameters::{HeaderLoadingError, ParameterLeaf, ParameterLoaderError, ParameterTree},
     session::{
         ChatSession, ClassificationSession,
         config::{DecodingConfig, RunConfig, SpeculatorConfig},
@@ -20,5 +22,5 @@ pub use crate::{
             Error, FinishReason, Input, Message, Output, ParsedText, Role, RunStats, Stats, StepStats, Text, TotalStats,
         },
     },
-    speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
+    speculators::{empty_speculator::EmptySpeculator, ngram_speculator::NGramSpeculator, speculator::Speculator},
 };

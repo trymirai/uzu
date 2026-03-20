@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use uzu::config::ConfigDataType;
+use uzu::ConfigDataType;
 
 use crate::runner::types::{Device, Task};
 

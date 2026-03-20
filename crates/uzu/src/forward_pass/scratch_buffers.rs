@@ -32,7 +32,6 @@ pub struct ScratchBuffers<B: Backend> {
     pub ssm_inproj: Option<ArrayCell<B>>,
     pub ssm_packed: Option<ArrayCell<B>>,
     pub ssm_conv_padded: Option<ArrayCell<B>>,
-    pub short_conv_padded: Option<ArrayCell<B>>,
     pub ssm_x: Option<ArrayCell<B>>,
     pub ssm_b: Option<ArrayCell<B>>,
     pub ssm_c: Option<ArrayCell<B>>,
@@ -137,9 +136,6 @@ impl<B: Backend> ScratchBuffers<B> {
             ssm_conv_padded: model_shape
                 .ssm_conv_padded_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty, "ssm_conv_padded")),
-            short_conv_padded: model_shape
-                .short_conv_padded_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty, "short_conv_padded")),
             ssm_x: model_shape.ssm_x_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_x")),
             ssm_b: model_shape.ssm_bc_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_b")),
             ssm_c: model_shape.ssm_bc_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_c")),

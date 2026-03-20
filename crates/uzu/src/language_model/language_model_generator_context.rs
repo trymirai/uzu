@@ -109,15 +109,6 @@ impl<B: Backend> AsyncBuffers<B> {
     pub fn reset_counter(&self) {
         self.counter.set(0);
     }
-
-    /// Read sampled token from results buffer at given pass index
-    pub fn read_result(
-        &self,
-        pass_idx: usize,
-    ) -> u32 {
-        let ptr = self.results.borrow().cpu_ptr().as_ptr() as *const u32;
-        unsafe { *ptr.add(pass_idx % self.batch_size) }
-    }
 }
 
 pub struct LanguageModelGeneratorContext<B: Backend> {

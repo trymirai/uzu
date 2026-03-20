@@ -9,7 +9,7 @@ use crate::{
     backends::common::{Backend, CommandBuffer},
     config::LinearConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 pub trait Linear<B: Backend> {
@@ -26,8 +26,6 @@ pub enum LinearBlockError<B: Backend> {
     QuantizedLinearError(#[source] QuantizedLinearError<B>),
     #[error("FullPrecisionLinear error: {0}")]
     FullPrecisionLinearError(#[source] FullPrecisionLinearError<B>),
-    #[error("Parameter loader error: {0}")]
-    ParameterLoaderError(#[source] ParameterLoaderError<B>),
     #[error("QLoRA linear layer not supported")]
     QLoRaNotSupported,
 }

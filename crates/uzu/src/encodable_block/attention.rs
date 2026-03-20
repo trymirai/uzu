@@ -451,3 +451,7 @@ struct KernelKey {
     pub head_dim: u32,
     pub has_mask: bool,
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/encodable_block/attention_test.rs"]
+mod tests;

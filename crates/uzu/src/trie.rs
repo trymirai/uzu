@@ -76,6 +76,7 @@ impl TrieNode {
         self.next.iter_mut().find(|n| n.token == token)
     }
 
+    #[cfg(all(feature = "tracing", test))]
     pub fn token(&self) -> u64 {
         self.token
     }
@@ -262,3 +263,7 @@ impl<'a> FlatTrie<'a> {
         (accepted_tokens, accepted_token_indices)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/trie_test.rs"]
+mod tests;

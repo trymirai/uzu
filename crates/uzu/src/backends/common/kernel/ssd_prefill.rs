@@ -132,3 +132,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/common/kernel/ssd_prefill_test.rs"]
+mod tests;

@@ -29,8 +29,6 @@ pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
-    pub global_rope: Option<Rc<Rope<B>>>,
-    pub local_rope: Option<Rc<Rope<B>>>,
 }
 
 impl<B: Backend> Decoder<B> {
@@ -140,8 +138,6 @@ impl<B: Backend> Decoder<B> {
             embed,
             layers: layers.into_boxed_slice(),
             norm: norm_block,
-            global_rope,
-            local_rope,
         }
     }
 
