@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 pub const MODEL_FILE_NAME: &str = "model.safetensors";
+#[cfg(feature = "tracing")]
 pub const TRACES_FILE_NAME: &str = "traces.safetensors";
 
 pub fn get_version() -> &'static str {
@@ -25,6 +26,7 @@ pub fn get_test_weights_path() -> PathBuf {
     get_test_model_path().join(MODEL_FILE_NAME)
 }
 
+#[cfg(feature = "tracing")]
 pub fn get_traces_path() -> PathBuf {
     get_test_model_path().join(TRACES_FILE_NAME)
 }
