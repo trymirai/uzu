@@ -18,6 +18,10 @@ pub fn assert_eq_float<T: ArrayElement + Float + Display>(
     );
 
     for i in 0..expected.len() {
+        if expected[i] == actual[i] {
+            continue;
+        }
+
         let diff = (expected[i] - actual[i]).to_f32().unwrap().abs();
         assert!(
             diff < eps,
