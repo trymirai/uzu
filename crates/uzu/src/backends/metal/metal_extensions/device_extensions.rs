@@ -1,6 +1,11 @@
 use bytesize::ByteSize;
 use metal::MTLDevice;
-use objc2::{Message, msg_send, rc::Retained, runtime::ProtocolObject};
+use objc2::{
+    Message, msg_send,
+    rc::Retained,
+    runtime::{NSObjectProtocol, ProtocolObject},
+    sel,
+};
 use objc2_foundation::NSString;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,57 +45,86 @@ impl DeviceGeneration {
     }
 }
 
-pub trait DeviceExt: MTLDevice + Message {
-    /// Human-readable chip name, e.g. "M2 Max", "M4 Pro", "A17 Pro".
+pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     fn family_name(&self) -> String {
-        let ns: Retained<NSString> = unsafe { msg_send![self, familyName] };
-        ns.to_string()
+        if self.respondsToSelector(sel!(familyName)) {
+            let ns: Retained<NSString> = unsafe { msg_send![self, familyName] };
+            ns.to_string()
+        } else {
+            "Unknown".into()
+        }
     }
 
-    /// Number of GPU shader cores.
     fn gpu_core_count(&self) -> u32 {
-        unsafe { msg_send![self, gpuCoreCount] }
+        if self.respondsToSelector(sel!(gpuCoreCount)) {
+            unsafe { msg_send![self, gpuCoreCount] }
+        } else {
+            8
+        }
     }
 
-    /// Total unified (shared) memory.
     fn shared_memory_size(&self) -> ByteSize {
-        ByteSize(unsafe { msg_send![self, sharedMemorySize] })
+        if self.respondsToSelector(sel!(sharedMemorySize)) {
+            ByteSize(unsafe { msg_send![self, sharedMemorySize] })
+        } else {
+            ByteSize::gib(8)
+        }
     }
 
-    /// Whether the GPU supports SIMD group (warp-level) operations.
     fn supports_simd_group(&self) -> bool {
-        unsafe { msg_send![self, supportsSIMDGroup] }
+        if self.respondsToSelector(sel!(supportsSIMDGroup)) {
+            unsafe { msg_send![self, supportsSIMDGroup] }
+        } else {
+            false
+        }
     }
 
-    /// Whether the GPU supports `simdgroup_matrix` (8x8 matrix multiply).
     fn supports_simd_group_matrix(&self) -> bool {
-        unsafe { msg_send![self, supportsSIMDGroupMatrix] }
+        if self.respondsToSelector(sel!(supportsSIMDGroupMatrix)) {
+            unsafe { msg_send![self, supportsSIMDGroupMatrix] }
+        } else {
+            false
+        }
     }
 
-    /// Whether the GPU supports SIMD reduction operations.
     fn supports_simd_reduction(&self) -> bool {
-        unsafe { msg_send![self, supportsSIMDReduction] }
+        if self.respondsToSelector(sel!(supportsSIMDReduction)) {
+            unsafe { msg_send![self, supportsSIMDReduction] }
+        } else {
+            false
+        }
     }
 
-    /// Whether the GPU supports SIMD shuffle-and-fill operations.
     fn supports_simd_shuffle_and_fill(&self) -> bool {
-        unsafe { msg_send![self, supportsSIMDShuffleAndFill] }
+        if self.respondsToSelector(sel!(supportsSIMDShuffleAndFill)) {
+            unsafe { msg_send![self, supportsSIMDShuffleAndFill] }
+        } else {
+            false
+        }
     }
 
-    /// Whether the GPU supports SIMD shuffles and broadcast.
     fn supports_simd_shuffles_and_broadcast(&self) -> bool {
-        unsafe { msg_send![self, supportsSIMDShufflesAndBroadcast] }
+        if self.respondsToSelector(sel!(supportsSIMDShufflesAndBroadcast)) {
+            unsafe { msg_send![self, supportsSIMDShufflesAndBroadcast] }
+        } else {
+            false
+        }
     }
 
-    /// Whether the GPU has a Matrix eXtension Unit (neural accelerator for compute).
-    /// True on M5+ (Gen18+), false on M1-M4.
     fn supports_mxu(&self) -> bool {
-        unsafe { msg_send![self, supportsMXU] }
+        if self.respondsToSelector(sel!(supportsMXU)) {
+            unsafe { msg_send![self, supportsMXU] }
+        } else {
+            false
+        }
     }
 
-    /// Whether the GPU supports Thread-Local Storage.
     fn supports_tls(&self) -> bool {
-        unsafe { msg_send![self, supportsTLS] }
+        if self.respondsToSelector(sel!(supportsTLS)) {
+            unsafe { msg_send![self, supportsTLS] }
+        } else {
+            false
+        }
     }
 }
 
