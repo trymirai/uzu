@@ -46,6 +46,7 @@ impl DeviceGeneration {
 }
 
 pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
+    /// Human-readable chip name, e.g. "M2 Max", "M4 Pro", "A17 Pro".
     fn family_name(&self) -> String {
         if self.respondsToSelector(sel!(familyName)) {
             let ns: Retained<NSString> = unsafe { msg_send![self, familyName] };
@@ -55,6 +56,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Number of GPU shader cores.
     fn gpu_core_count(&self) -> u32 {
         if self.respondsToSelector(sel!(gpuCoreCount)) {
             unsafe { msg_send![self, gpuCoreCount] }
@@ -63,6 +65,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Total unified (shared) memory.
     fn shared_memory_size(&self) -> ByteSize {
         if self.respondsToSelector(sel!(sharedMemorySize)) {
             ByteSize(unsafe { msg_send![self, sharedMemorySize] })
@@ -71,6 +74,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU supports SIMD group operations.
     fn supports_simd_group(&self) -> bool {
         if self.respondsToSelector(sel!(supportsSIMDGroup)) {
             unsafe { msg_send![self, supportsSIMDGroup] }
@@ -79,6 +83,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU supports `simdgroup_matrix`.
     fn supports_simd_group_matrix(&self) -> bool {
         if self.respondsToSelector(sel!(supportsSIMDGroupMatrix)) {
             unsafe { msg_send![self, supportsSIMDGroupMatrix] }
@@ -87,6 +92,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU supports SIMD reduction operations.
     fn supports_simd_reduction(&self) -> bool {
         if self.respondsToSelector(sel!(supportsSIMDReduction)) {
             unsafe { msg_send![self, supportsSIMDReduction] }
@@ -95,6 +101,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU supports SIMD shuffle-and-fill operations.
     fn supports_simd_shuffle_and_fill(&self) -> bool {
         if self.respondsToSelector(sel!(supportsSIMDShuffleAndFill)) {
             unsafe { msg_send![self, supportsSIMDShuffleAndFill] }
@@ -103,6 +110,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU supports SIMD shuffles and broadcast.
     fn supports_simd_shuffles_and_broadcast(&self) -> bool {
         if self.respondsToSelector(sel!(supportsSIMDShufflesAndBroadcast)) {
             unsafe { msg_send![self, supportsSIMDShufflesAndBroadcast] }
@@ -111,6 +119,8 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU has a Matrix eXtension Unit (neural accelerator for compute).
+    /// True on M5+ (Gen18+), false on M1-M4.
     fn supports_mxu(&self) -> bool {
         if self.respondsToSelector(sel!(supportsMXU)) {
             unsafe { msg_send![self, supportsMXU] }
@@ -119,6 +129,7 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
         }
     }
 
+    /// Whether the GPU supports Thread-Local Storage.
     fn supports_tls(&self) -> bool {
         if self.respondsToSelector(sel!(supportsTLS)) {
             unsafe { msg_send![self, supportsTLS] }
