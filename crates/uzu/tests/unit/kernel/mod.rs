@@ -6,6 +6,7 @@ mod activation_mul_test;
 mod attention;
 mod audio;
 mod full_precision_embedding_test;
+mod kv_cache_update_test;
 mod matmul;
 mod moe;
 mod qk_norm_test;
