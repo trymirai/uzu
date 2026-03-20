@@ -51,7 +51,10 @@ struct Args {
     warmup: usize,
 }
 
-fn fill_buffer_random(context: &Ctx, byte_count: usize) -> <Metal as Backend>::Buffer {
+fn fill_buffer_random(
+    context: &Ctx,
+    byte_count: usize,
+) -> <Metal as Backend>::Buffer {
     let buffer = context
         .device
         .new_buffer(byte_count, MTLResourceOptions::STORAGE_MODE_SHARED)
@@ -94,9 +97,7 @@ fn run_iteration(
 
     match kernel_choice {
         KernelChoice::Gemm => kernel.encode_gemm(context, &mut command_buffer, arguments).unwrap(),
-        KernelChoice::GemmMppStaged => {
-            kernel.encode_gemm_mpp_staged(context, &mut command_buffer, arguments).unwrap()
-        },
+        KernelChoice::GemmMppStaged => kernel.encode_gemm_mpp_staged(context, &mut command_buffer, arguments).unwrap(),
     }
 
     let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();

@@ -37,12 +37,8 @@ impl DispatchPath {
     }
 }
 
-const ALL_DISPATCH_PATHS: [DispatchPath; 4] = [
-    DispatchPath::Gemv,
-    DispatchPath::Gemm,
-    DispatchPath::GemmMppStaged,
-    DispatchPath::GemmMppNxu,
-];
+const ALL_DISPATCH_PATHS: [DispatchPath; 4] =
+    [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMppStaged, DispatchPath::GemmMppNxu];
 
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
@@ -315,7 +311,11 @@ fn matmul_correctness_comprehensive() {
 
     eprintln!(
         "Running {} matmul correctness for all dispatch paths (set {}=1 for exhaustive run)",
-        if full_case_matrix { "exhaustive" } else { "quick" },
+        if full_case_matrix {
+            "exhaustive"
+        } else {
+            "quick"
+        },
         MATMUL_CORRECTNESS_FULL_ENV,
     );
     eprintln!("Device: {} (supports_mxu={})", ctx.device_capabilities().family_name, supports_mxu);
@@ -330,27 +330,30 @@ fn matmul_correctness_comprehensive() {
     for case in &cases {
         let (a, b) = generate_test_data(case.m, case.k, case.n, case.transpose_b);
         let reference = run_ndarray_matmul(&a, &b, case.m, case.k, case.n, case.transpose_b);
-        let trans_str = if case.transpose_b { "T" } else { "N" };
+        let trans_str = if case.transpose_b {
+            "T"
+        } else {
+            "N"
+        };
 
         for &path in &ALL_DISPATCH_PATHS {
             let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
             let is_nxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppNxu) && !supports_mxu;
 
-            let metal_result = match run_metal_matmul(
-                &ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path,
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    if is_nxu_on_pre_m5 {
-                        eprintln!("⊘ {label}: encode error (expected on pre-M5): {err}");
-                        expected_nxu_failures += 1;
-                    } else {
-                        eprintln!("✗ {label}: encode error: {err}");
-                        failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
-                    }
-                    continue;
-                },
-            };
+            let metal_result =
+                match run_metal_matmul(&ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        if is_nxu_on_pre_m5 {
+                            eprintln!("⊘ {label}: encode error (expected on pre-M5): {err}");
+                            expected_nxu_failures += 1;
+                        } else {
+                            eprintln!("✗ {label}: encode error: {err}");
+                            failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
+                        }
+                        continue;
+                    },
+                };
 
             match compare_results(&metal_result, &reference, case.tolerance) {
                 Ok(()) => {
@@ -377,7 +380,10 @@ fn matmul_correctness_comprehensive() {
     }
 
     let total = passed + failed.len() + expected_nxu_failures;
-    eprintln!("\n{passed}/{total} passed, {} failed, {expected_nxu_failures} expected NXU failures (pre-M5)", failed.len());
+    eprintln!(
+        "\n{passed}/{total} passed, {} failed, {expected_nxu_failures} expected NXU failures (pre-M5)",
+        failed.len()
+    );
 
     if !failed.is_empty() {
         eprintln!("\nUnexpected failures:");

@@ -17,8 +17,8 @@ use super::{error::BenchError, output::PerfResult, shapes::TestShape};
 type Ctx = <Metal as Backend>::Context;
 type Buf = Retained<ProtocolObject<dyn MTLBuffer>>;
 
-const WARMUP_ITERATIONS: usize = 3;
-const BENCHMARK_ITERATIONS: usize = 10;
+const WARMUP_ITERATIONS: usize = 10;
+const BENCHMARK_ITERATIONS: usize = 30;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DispatchPath {
@@ -136,13 +136,11 @@ fn run_benchmark(
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
-        let gpu_ms =
-            encode_and_run(context, &mut kernel, dispatch_path, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(
-                |source| BenchError::Benchmark {
-                    iteration,
-                    source: Box::new(source),
-                },
-            )?;
+        let gpu_ms = encode_and_run(context, &mut kernel, dispatch_path, shape, &a_buffer, &b_buffer, &mut d_buffer)
+            .map_err(|source| BenchError::Benchmark {
+                iteration,
+                source: Box::new(source),
+            })?;
         gpu_time_total_ms += gpu_ms;
     }
 
