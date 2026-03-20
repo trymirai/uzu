@@ -24,18 +24,14 @@ fn format_output(output: Output) -> String {
 
     let style_stats = Style::new().bold();
 
-    let acceptance_info = if let Some(generate_stats) = &stats.generate_stats {
-        if generate_stats.speculator_proposed > 0 {
-            let acceptance_rate = generate_stats.speculator_accepted as f64 / generate_stats.speculator_proposed as f64;
-            format!(
-                ", speculation-rate: {:.0}/{:.0} ({:.0}%)",
-                generate_stats.speculator_accepted,
-                generate_stats.speculator_proposed,
-                acceptance_rate * 100.0
-            )
-        } else {
-            String::new()
-        }
+    let acceptance_info = if let Some(generate_stats) = &stats.generate_stats
+        && generate_stats.speculator_proposed > 0
+    {
+        format!(
+            ", speculation-rate: {:.2}",
+            generate_stats.speculator_accepted as f64
+                / (generate_stats.tokens_count - generate_stats.speculator_accepted) as f64,
+        )
     } else {
         String::new()
     };
