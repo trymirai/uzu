@@ -3,6 +3,7 @@
 mod common;
 
 mod activation_mul_test;
+mod activation_test;
 mod attention;
 mod audio;
 mod full_precision_embedding_test;
