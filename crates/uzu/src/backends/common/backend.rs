@@ -10,5 +10,6 @@ pub trait Backend: Debug + Clone + 'static {
     type Kernels: Kernels<Backend = Self> + MatmulKernels;
     type Error: Error + Debug;
 
+    const MIN_ALLOCATION_ALIGNMENT: usize;
     const MAX_INLINE_BYTES: usize;
 }

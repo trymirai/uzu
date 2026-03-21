@@ -3,8 +3,7 @@ use std::ops::{Deref, DerefMut};
 use uzu::{
     ArrayContextExt, ArrayElement,
     backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        Kernels,
+        Backend, Context, Encoder, Kernels,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
 };
@@ -18,13 +17,9 @@ fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
     let src_array = context.create_array_from(&[1], &[src_value], "");
     let dst_array = context.create_array_uninitialized(&[1], u64::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(
-        src_array.buffer().borrow().deref(),
-        dst_array.buffer().borrow_mut().deref_mut(),
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), &mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output = dst_array.as_slice::<u64>().to_vec();
     assert_eq!(output[0], src_value as u64, "TokenCopySampled failed for backend {}", std::any::type_name::<B>());
@@ -39,13 +34,9 @@ fn test_token_copy_to_results_impl<B: Backend>(src_value: u32) {
     let src_array = context.create_array_from(&[1], &[src_value], "");
     let dst_array = context.create_array_uninitialized(&[1], u32::data_type(), "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(
-        src_array.buffer().borrow().deref(),
-        dst_array.buffer().borrow_mut().deref_mut(),
-        &mut command_buffer,
-    );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(src_array.buffer().borrow().deref(), dst_array.buffer().borrow_mut().deref_mut(), &mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output = dst_array.as_slice::<u32>().to_vec();
     assert_eq!(output[0], src_value, "TokenCopyToResults failed for backend {}", std::any::type_name::<B>());

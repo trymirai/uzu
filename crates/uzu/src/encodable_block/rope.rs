@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, RopeKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
@@ -31,7 +31,7 @@ impl<B: Backend> Rope<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, rope_dim, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -89,7 +89,7 @@ impl<B: Backend> Rope<B> {
             num_groups as u32,
             suffix_length as u32,
             rope_max_seq_len as u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

@@ -9,10 +9,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::TopKKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::TopKKernel},
         cpu::Cpu,
     },
 };
@@ -68,17 +65,17 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         false => context.create_array_uninitialized(&[len], T::data_type(), ""),
     };
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         logits_buffer,
         output_array.buffer().borrow_mut().deref_mut(),
         input.batch_size,
         input.vocab_size,
         input.top_k,
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

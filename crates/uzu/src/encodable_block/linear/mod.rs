@@ -6,7 +6,7 @@ pub use quantized::{QuantizedLinear, QuantizedLinearError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
     config::LinearConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -16,7 +16,7 @@ pub trait Linear<B: Backend> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error>;
 }
 

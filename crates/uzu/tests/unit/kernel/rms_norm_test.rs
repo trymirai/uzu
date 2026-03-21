@@ -10,10 +10,7 @@ use rand::{RngExt, SeedableRng, prelude::StdRng};
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels, kernel::RMSNormKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
 };
@@ -144,7 +141,7 @@ fn get_output<
         false => context.create_array_uninitialized(&[input_size], OutputT::data_type(), ""),
     };
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         input_buffer,
         scales_array.buffer().borrow().deref(),
@@ -154,12 +151,11 @@ fn get_output<
         input.epsilon,
         input.scale_offset,
         input.full_layer,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     let instant = Instant::now();
-    let completed =
-        command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    let completed = encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = completed.gpu_execution_time();
 

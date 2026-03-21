@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::AttentionUpdateKVCacheKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::AttentionUpdateKVCacheKernel},
         cpu::Cpu,
     },
 };
@@ -53,7 +50,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let key_cache_array = context.create_array_from(&[cache_size], &input.key_cache, "");
     let value_cache_array = context.create_array_from(&[cache_size], &input.value_cache, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         rotated_keys_buffer,
         qkv_array.buffer().borrow().deref(),
@@ -65,9 +62,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.suffix_length,
         input.prefix_segment_length,
         input.max_sequence_length,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (key_cache_array.as_slice().to_vec(), value_cache_array.as_slice().to_vec())
 }

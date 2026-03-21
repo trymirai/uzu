@@ -5,10 +5,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::SigmoidGateKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
         cpu::Cpu,
     },
 };
@@ -32,15 +29,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice(), "gate");
     let output_array = context.create_array_from(&[size], &output_data.to_vec().into_boxed_slice(), "output");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let total_elements = config.suffix_length * config.num_heads * config.head_dim;
     kernel.encode(
         &*gate_array.buffer().borrow(),
         output_array.buffer().borrow_mut().deref_mut(),
         total_elements,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

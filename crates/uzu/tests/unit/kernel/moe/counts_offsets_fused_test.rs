@@ -8,8 +8,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
+            Backend, Encoder, Kernels,
             kernel::{MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel},
         },
         metal::Metal,
@@ -76,7 +75,7 @@ fn gen_topk_ids_from_logits(
     let mut topk_probs_buf = alloc_buffer::<bf16>(ctx, t * k);
 
     // Use fused router+topk kernel
-    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
     let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16)
         .expect("router_topk kernel");
     router_topk.encode(
@@ -90,9 +89,9 @@ fn gen_topk_ids_from_logits(
         e as u32,
         k as u32,
         true,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let ids_ptr = topk_ids_buf.contents().as_ptr() as *const i32;
     let ids = unsafe { std::slice::from_raw_parts(ids_ptr, t * k) };
@@ -124,8 +123,7 @@ fn test_counts_offsets_fused_parity_random() {
 
             let kernel =
                 <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-            let mut command_buffer =
-                ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
 
             kernel.encode(
                 &topk_ids_buf,
@@ -135,10 +133,10 @@ fn test_counts_offsets_fused_parity_random() {
                 t as u32,
                 e as u32,
                 k as u32,
-                &mut command_buffer,
+                &mut encoder,
             );
 
-            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             // Verify offsets
             let offsets_ptr = offsets_buf.contents().as_ptr() as *const u32;
@@ -174,7 +172,7 @@ fn test_counts_offsets_fused_edge_cases() {
 
     let kernel =
         <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         &topk_ids_buf,
         &mut offsets_buf,
@@ -183,9 +181,9 @@ fn test_counts_offsets_fused_edge_cases() {
         t as u32,
         e as u32,
         k as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
 
@@ -204,7 +202,7 @@ fn test_counts_offsets_fused_edge_cases() {
 
     let kernel =
         <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         &topk_ids_buf,
         &mut offsets_buf,
@@ -213,9 +211,9 @@ fn test_counts_offsets_fused_edge_cases() {
         t as u32,
         e as u32,
         k as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let offsets_gpu = unsafe { std::slice::from_raw_parts(offsets_buf.contents().as_ptr() as *const u32, e + 1) };
     assert!(offsets_gpu.iter().all(|&v| v == 0));

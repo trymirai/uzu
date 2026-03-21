@@ -7,8 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
+            Backend, Encoder, Kernels,
             kernel::{
                 MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
                 MoeScatterBucketsMapKernel,
@@ -349,7 +348,7 @@ fn run_moe_parity_test_internal(
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
-    let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
 
     // Router + TopK (fused kernel)
     let router_topk =
@@ -365,7 +364,7 @@ fn run_moe_parity_test_internal(
         e as u32,
         k as u32,
         true,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     let fused_kernel =
@@ -378,7 +377,7 @@ fn run_moe_parity_test_internal(
         t as u32,
         e as u32,
         k as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     let scatter_bases_kernel = <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx)
@@ -391,7 +390,7 @@ fn run_moe_parity_test_internal(
         num_blocks as u32,
         num_tiles as u32,
         0u32,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     let scatter_map_kernel =
@@ -411,12 +410,12 @@ fn run_moe_parity_test_internal(
         num_blocks as u32,
         num_tiles as u32,
         &mut tok2row_buf,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("gather");
     gather.encode(
-        &mut command_buffer,
+        &mut encoder,
         DataType::BF16,
         MoeGatherArguments {
             x_buffer: &x_buf,
@@ -464,7 +463,7 @@ fn run_moe_parity_test_internal(
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts.encode(&mut command_buffer, args);
+    experts.encode(&mut encoder, args);
 
     let finalize =
         <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
@@ -476,11 +475,11 @@ fn run_moe_parity_test_internal(
         t as u32,
         d_model as u32,
         k as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
     eprintln!("[E2E] GPU execution completed");
 
     // Read GPU output

@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, QKNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -124,7 +124,7 @@ impl<B: Backend> QKNorm<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let qkv_binding = state.arrays(&[self.qkv_array_id]);
         let qkv_shape = {
@@ -152,7 +152,7 @@ impl<B: Backend> QKNorm<B> {
                 0,
                 self.num_q_heads as u32,
                 query_config.upcast_mode == UpcastMode::FullLayer,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -173,7 +173,7 @@ impl<B: Backend> QKNorm<B> {
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 key_config.upcast_mode == UpcastMode::FullLayer,
-                command_buffer,
+                encoder,
             );
         }
         Ok(())

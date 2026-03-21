@@ -11,8 +11,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context,
+            Backend, Context, Encoder,
             gpu_types::QuantizationMode,
             kernel::quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
@@ -514,9 +513,9 @@ fn execute_quantized_matmul(
                 output_dim,
                 quantization_type,
             };
-            let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
-            kernel.encode(&mut command_buffer, args).unwrap();
-            command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+            let mut encoder = Encoder::new(ctx).unwrap();
+            kernel.encode(&mut encoder, args).unwrap();
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
         }
     }
 
@@ -534,9 +533,9 @@ fn execute_quantized_matmul(
             output_dim,
             quantization_type,
         };
-        let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
-        kernel.encode(&mut command_buffer, args).unwrap();
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let mut encoder = Encoder::new(ctx).unwrap();
+        kernel.encode(&mut encoder, args).unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
     let elapsed = start.elapsed();
 

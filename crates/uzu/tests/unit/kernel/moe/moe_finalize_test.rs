@@ -6,10 +6,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::MoeFinalizeKernel,
-        },
+        common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
         metal::Metal,
     },
 };
@@ -93,7 +90,7 @@ fn test_finalize_correctness() {
         // Execute finalize kernel
         let finalize = <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16)
             .expect("finalize kernel");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         finalize.encode(
             &tok2row_buf,
             &probs_buf,
@@ -102,9 +99,9 @@ fn test_finalize_correctness() {
             t as u32,
             d_model as u32,
             k as u32,
-            &mut command_buffer,
+            &mut encoder,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Compare
         let y_gpu = unsafe { std::slice::from_raw_parts(y_out_buf.contents().as_ptr() as *const bf16, t * d_model) };

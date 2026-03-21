@@ -7,7 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+            Encoder,
             kernel::moe::{MoeGatherArguments, MoeGatherKernels},
         },
         metal::Metal,
@@ -81,9 +81,9 @@ fn test_gather_correctness() {
 
         // Execute gather kernel using kernel struct
         let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("MoeGatherKernel::new");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         gather.encode(
-            &mut command_buffer,
+            &mut encoder,
             DataType::BF16,
             MoeGatherArguments {
                 x_buffer: &x_buf,
@@ -95,7 +95,7 @@ fn test_gather_correctness() {
                 d_model,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Compare
         let x_gpu =

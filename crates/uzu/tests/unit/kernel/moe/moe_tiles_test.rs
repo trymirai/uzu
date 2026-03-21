@@ -4,7 +4,7 @@ use metal::MTLBuffer;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::backends::{
     common::{
-        CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
+        Encoder,
         kernel::moe::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments},
     },
     metal::Metal,
@@ -38,16 +38,16 @@ fn test_tile_counts_correctness() {
 
         // Execute kernel using kernel struct
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         tile_kernel.encode_counts(
-            &mut command_buffer,
+            &mut encoder,
             MoeTileCountsArguments {
                 offsets_buffer: &offsets_buf,
                 tile_counts_buffer: &mut tile_counts_buf,
                 e,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Compare
         let tile_counts_gpu =
@@ -82,9 +82,9 @@ fn test_tile_scan_correctness() {
 
         // Execute kernel using kernel struct
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         tile_kernel.encode_scan(
-            &mut command_buffer,
+            &mut encoder,
             MoeTileScanArguments {
                 tile_counts_buffer: &tile_counts_buf,
                 tile_offsets_buffer: &mut tile_offsets_buf,
@@ -92,7 +92,7 @@ fn test_tile_scan_correctness() {
                 e,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Compare
         let tile_offsets_gpu =
@@ -121,16 +121,16 @@ fn test_tile_edge_cases() {
         let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         tile_kernel.encode_counts(
-            &mut command_buffer,
+            &mut encoder,
             MoeTileCountsArguments {
                 offsets_buffer: &offsets_buf,
                 tile_counts_buffer: &mut tile_counts_buf,
                 e,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let tile_counts_gpu =
             unsafe { std::slice::from_raw_parts(tile_counts_buf.contents().as_ptr() as *const u32, e) };
@@ -151,16 +151,16 @@ fn test_tile_edge_cases() {
         let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
 
         let tile_kernel = MoeTileMapKernels::<Metal>::new(&ctx).expect("MoeTileMapKernel::new");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         tile_kernel.encode_counts(
-            &mut command_buffer,
+            &mut encoder,
             MoeTileCountsArguments {
                 offsets_buffer: &offsets_buf,
                 tile_counts_buffer: &mut tile_counts_buf,
                 e,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let tile_counts_gpu =
             unsafe { std::slice::from_raw_parts(tile_counts_buf.contents().as_ptr() as *const u32, e) };

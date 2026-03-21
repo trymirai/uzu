@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::QKNormKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::QKNormKernel},
         cpu::Cpu,
     },
 };
@@ -132,7 +129,7 @@ fn get_output<
     let qkv_array = context.create_array_from(&[qkv_len], &input.qkv, "");
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         None::<&B::Buffer>,
         scales_array.buffer().borrow().deref(),
@@ -146,10 +143,9 @@ fn get_output<
         input.head_offset,
         input.head_count,
         input.full_layer,
-        &mut command_buffer,
+        &mut encoder,
     );
-
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     qkv_array.as_slice().to_vec()
 }

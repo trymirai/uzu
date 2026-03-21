@@ -280,9 +280,9 @@ impl MetalCompiler {
             use metal::{MTLBuffer, MTLComputeCommandEncoder, MTLComputePipelineState, MTLFunctionConstantValues, MTLSize};
             use objc2::{rc::Retained, runtime::ProtocolObject};
 
+            use crate::backends::common::BufferGpuAddressRangeExt;
             use crate::backends::metal::{
                 context::MetalContext,
-                command_buffer::MetalCommandBufferEncoding,
                 error::MetalError,
                 metal_extensions::{
                     ComputeEncoderSetValue, FunctionConstantValuesSetValue, MetalDataTypeExt,

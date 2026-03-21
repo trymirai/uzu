@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::{
     DataType, EmbeddingConfig,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
@@ -421,7 +421,7 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_lookup(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), EmbeddingError<B>> {
         let batch_size = state.active_suffix_length() as u32;
 
@@ -461,7 +461,7 @@ impl<B: Backend> Embedding<B> {
                 self.vocab_size,
                 self.model_dim,
                 self.input_scale,
-                command_buffer,
+                encoder,
             ),
             EmbeddingTying::Tied {
                 ty:
@@ -493,7 +493,7 @@ impl<B: Backend> Embedding<B> {
                     self.vocab_size,
                     self.model_dim,
                     self.input_scale,
-                    command_buffer,
+                    encoder,
                 );
             },
         };
@@ -504,7 +504,7 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_readout(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), EmbeddingError<B>> {
         let batch_size = state.sampling_length();
 
@@ -561,7 +561,7 @@ impl<B: Backend> Embedding<B> {
                         leading_dimension_d: output_dim as i32,
                         transpose_b: true,
                     },
-                    command_buffer,
+                    encoder,
                 );
             },
             EmbeddingTying::Tied {
@@ -585,7 +585,7 @@ impl<B: Backend> Embedding<B> {
                     },
             } => {
                 readout.encode(
-                    command_buffer,
+                    encoder,
                     QuantizedMatmulArguments {
                         a_buffer: input,
                         a_offset: input_offset,

@@ -8,8 +8,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context,
+            Backend, Encoder,
             kernel::moe::{
                 MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
                 MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
@@ -108,9 +107,9 @@ fn run_decode_case(
     let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     for _ in 0..warmup {
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         experts_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
@@ -140,15 +139,15 @@ fn run_decode_case(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         experts_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
@@ -178,7 +177,7 @@ fn run_decode_case(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -270,7 +269,7 @@ fn run_two_pass_prefill_case(
     let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
 
     for _ in 0..warmup {
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -299,14 +298,14 @@ fn run_two_pass_prefill_case(
             silu_alpha: 1.702,
             data_type: DataType::BF16,
         };
-        experts_kernel.encode(&mut command_buffer, args);
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        experts_kernel.encode(&mut encoder, args);
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
             x_perm_buffer: &x_perm_buf,
             expert_offsets: &offsets_buf,
@@ -335,8 +334,8 @@ fn run_two_pass_prefill_case(
             silu_alpha: 1.702,
             data_type: DataType::BF16,
         };
-        experts_kernel.encode(&mut command_buffer, args);
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        experts_kernel.encode(&mut encoder, args);
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -411,9 +410,9 @@ fn run_fused_single_token_case(
     let mut y_buf = alloc_buffer::<bf16>(ctx, d_model);
 
     for _ in 0..warmup {
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         fused_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsSingleDecodeArguments {
                 x: &x_buf,
                 topk_ids: &topk_ids_buf,
@@ -436,15 +435,15 @@ fn run_fused_single_token_case(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         fused_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsSingleDecodeArguments {
                 x: &x_buf,
                 topk_ids: &topk_ids_buf,
@@ -467,7 +466,7 @@ fn run_fused_single_token_case(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -589,9 +588,9 @@ fn run_indirect_decode_timed(
     let mut row_expert_map_buf = alloc_buffer::<u32>(ctx, sum_k);
 
     for _ in 0..warmup {
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         experts_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
@@ -621,15 +620,15 @@ fn run_indirect_decode_timed(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         experts_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsTwoPassArguments {
                 x_perm_buffer: &x_perm_buf,
                 expert_offsets: &offsets_buf,
@@ -659,7 +658,7 @@ fn run_indirect_decode_timed(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -706,9 +705,9 @@ fn run_fused_decode_timed(
     let mut y_buf = alloc_buffer::<bf16>(ctx, d_model);
 
     for _ in 0..warmup {
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         fused_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsSingleDecodeArguments {
                 x: &x_buf,
                 topk_ids: &topk_ids_buf,
@@ -731,15 +730,15 @@ fn run_fused_decode_timed(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let start = Instant::now();
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         fused_kernel.encode(
-            &mut command_buffer,
+            &mut encoder,
             MoeExpertsSingleDecodeArguments {
                 x: &x_buf,
                 topk_ids: &topk_ids_buf,
@@ -762,7 +761,7 @@ fn run_fused_decode_timed(
                 data_type: DataType::BF16,
             },
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 

@@ -7,10 +7,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        Kernels, kernel::TensorAddBiasKernel,
-    },
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -77,16 +74,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         false => context.create_array_uninitialized(&[size], T::data_type(), ""),
     };
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         input_buffer,
         bias_array.buffer().borrow_mut().deref(),
         output_array.buffer().borrow_mut().deref_mut(),
         input.num_cols,
         input.length,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

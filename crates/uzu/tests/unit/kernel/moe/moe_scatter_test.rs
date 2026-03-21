@@ -7,8 +7,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
+            Backend, Encoder, Kernels,
             kernel::{
                 MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel,
                 MoeScatterBucketsKernel,
@@ -85,7 +84,7 @@ fn test_scatter_buckets_parity() {
         // Use fused router+topk kernel
         let router_topk = <<Metal as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16)
             .expect("router_topk");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         router_topk.encode(
             &input_buf,
             &weight_buf,
@@ -97,9 +96,9 @@ fn test_scatter_buckets_parity() {
             e as u32,
             k as u32,
             true,
-            &mut command_buffer,
+            &mut encoder,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Read back CPU probs for reference compare
         let probs_bf16 =
@@ -114,7 +113,7 @@ fn test_scatter_buckets_parity() {
 
         let fused_kernel =
             <<Metal as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         fused_kernel.encode(
             &topk_ids_buf,
             &mut offsets_buf,
@@ -123,9 +122,9 @@ fn test_scatter_buckets_parity() {
             t as u32,
             e as u32,
             k as u32,
-            &mut command_buffer,
+            &mut encoder,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Partials already created by fused kernel above
         let num_blocks = 1; // Fused kernel uses single block
@@ -138,7 +137,7 @@ fn test_scatter_buckets_parity() {
         let scatter_kernel =
             <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel::new(&ctx, DataType::BF16)
                 .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel");
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let mut block_alloc_buf = alloc_buffer::<u32>(&ctx, entries);
 
         scatter_bases_kernel.encode(
@@ -149,16 +148,16 @@ fn test_scatter_buckets_parity() {
             num_blocks as u32,
             num_tiles as u32,
             0u32,
-            &mut command_buffer,
+            &mut encoder,
         );
 
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let sumk = unsafe { std::slice::from_raw_parts(sumk_buf.contents().as_ptr() as *const u32, 1) }[0] as usize;
         let mut out_ids_buf = alloc_buffer::<i32>(&ctx, sumk);
         let mut out_probs_buf = alloc_buffer::<bf16>(&ctx, sumk);
 
-        let mut command_buffer = ctx.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         scatter_kernel.encode(
             &topk_ids_buf,
             &topk_probs_buf,
@@ -172,10 +171,10 @@ fn test_scatter_buckets_parity() {
             k as u32,
             num_blocks as u32,
             num_tiles as u32,
-            &mut command_buffer,
+            &mut encoder,
         );
 
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let out_ids = unsafe { std::slice::from_raw_parts(out_ids_buf.contents().as_ptr() as *const i32, sumk) };
         let out_probs_h = unsafe { std::slice::from_raw_parts(out_probs_buf.contents().as_ptr() as *const bf16, sumk) };

@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, kernel::attention::AttentionGemmArguments,
-        },
+        common::{Backend, Context, Encoder, kernel::attention::AttentionGemmArguments},
         cpu::Cpu,
     },
 };
@@ -148,10 +145,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             scale: input.scale,
         };
 
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-        block.encode(&context, &mut command_buffer, args).expect("Failed to encode AttentionGemm");
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        block.encode(&context, &mut encoder, args).expect("Failed to encode AttentionGemm");
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     output_array.as_slice().to_vec()

@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[cfg(feature = "tracing")]
-use crate::backends::common::{CommandBuffer, CommandBufferEncoding};
+use crate::backends::common::Encoder;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
@@ -751,7 +751,7 @@ impl<B: Backend> ForwardPassState<B> {
     #[cfg(feature = "tracing")]
     pub fn encode_copy_array(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         source_array_id: ArrayId,
         destination_array: RefCell<Array<B>>,
     ) {
@@ -765,6 +765,6 @@ impl<B: Backend> ForwardPassState<B> {
         let copy_size_bytes = dst_borrow.size();
         debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
-        command_buffer.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
+        encoder.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
     }
 }
