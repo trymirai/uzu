@@ -164,9 +164,9 @@ trait AudioDecoderStreamBackend {
 }
 
 pub(super) trait PendingAudioChunkBackend {
-    fn is_ready(&self) -> bool;
-
     fn step_stats(&self) -> Option<AudioDecodeStepStats>;
+
+    fn try_resolve(&mut self) -> Result<Option<AudioPcmBatch>, Error>;
 
     fn resolve(self: Box<Self>) -> Result<AudioPcmBatch, Error>;
 
@@ -174,6 +174,14 @@ pub(super) trait PendingAudioChunkBackend {
         let start = Instant::now();
         let pcm = self.resolve()?;
         Ok((pcm, start.elapsed()))
+    }
+
+    fn try_resolve_with_decode_duration(&mut self) -> Result<Option<(AudioPcmBatch, std::time::Duration)>, Error> {
+        let start = Instant::now();
+        let Some(pcm) = self.try_resolve()? else {
+            return Ok(None);
+        };
+        Ok(Some((pcm, start.elapsed())))
     }
 }
 
@@ -183,12 +191,12 @@ struct ImmediatePendingAudioChunk {
 }
 
 impl PendingAudioChunkBackend for ImmediatePendingAudioChunk {
-    fn is_ready(&self) -> bool {
-        true
-    }
-
     fn step_stats(&self) -> Option<AudioDecodeStepStats> {
         self.step_stats
+    }
+
+    fn try_resolve(&mut self) -> Result<Option<AudioPcmBatch>, Error> {
+        Ok(Some(self.pcm.take().ok_or(Error::GenerateFailed)?))
     }
 
     fn resolve(mut self: Box<Self>) -> Result<AudioPcmBatch, Error> {
@@ -201,12 +209,18 @@ struct NanoCodecPendingAudioChunk<B: Backend> {
 }
 
 impl<B: Backend> PendingAudioChunkBackend for NanoCodecPendingAudioChunk<B> {
-    fn is_ready(&self) -> bool {
-        self.inner.as_ref().is_none_or(|pending| pending.is_ready())
-    }
-
     fn step_stats(&self) -> Option<AudioDecodeStepStats> {
         self.inner.as_ref().map(|pending| pending.step_stats())
+    }
+
+    fn try_resolve(&mut self) -> Result<Option<AudioPcmBatch>, Error> {
+        let ready = self.inner.as_ref().is_none_or(|pending| pending.is_complete());
+        if !ready {
+            return Ok(None);
+        }
+
+        let pending = self.inner.take().ok_or(Error::GenerateFailed)?;
+        pending.resolve().map(Some).map_err(Error::from)
     }
 
     fn resolve(mut self: Box<Self>) -> Result<AudioPcmBatch, Error> {

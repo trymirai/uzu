@@ -80,7 +80,7 @@ impl MetalCommandBufferEncoding {
         self.encoding_state = MetalCommandBufferEncodingEncodingState::None;
     }
 
-    pub(crate) fn ensure_compute(&mut self) -> &mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>> {
+    pub(super) fn ensure_compute(&mut self) -> &mut Retained<ProtocolObject<dyn MTLComputeCommandEncoder>> {
         if !matches!(self.encoding_state, MetalCommandBufferEncodingEncodingState::Compute(_)) {
             self.ensure_none();
             self.encoding_state = MetalCommandBufferEncodingEncodingState::Compute(
@@ -206,18 +206,8 @@ pub struct MetalCommandBufferPending {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 }
 
-impl MetalCommandBufferPending {
-    pub fn is_completed(&self) -> bool {
-        matches!(self.command_buffer.status(), MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error)
-    }
-}
-
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
-
-    fn is_completed(&self) -> bool {
-        matches!(self.command_buffer.status(), MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error)
-    }
 
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
         self.command_buffer.wait_until_completed();

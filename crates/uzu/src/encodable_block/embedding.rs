@@ -45,18 +45,14 @@ pub enum EmbeddingError<B: Backend> {
 
 enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
-        lookup_weights: B::Buffer,
-        readout_weights: B::Buffer,
+        weights: B::Buffer,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
         readout: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
     },
     Quantized {
-        lookup_weights: B::Buffer,
-        lookup_scales: B::Buffer,
-        lookup_biases: B::Buffer,
-        readout_weights: B::Buffer,
-        readout_scales: B::Buffer,
-        readout_biases: B::Buffer,
+        weights: B::Buffer,
+        scales: B::Buffer,
+        biases: B::Buffer,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
@@ -105,6 +101,33 @@ pub struct Embedding<B: Backend> {
     model_dim: u32,
 }
 
+struct UntiedWeightKeys {
+    lookup_weights: &'static str,
+    lookup_scales: &'static str,
+    lookup_biases: &'static str,
+    readout_weights: &'static str,
+    readout_scales: &'static str,
+    readout_biases: &'static str,
+}
+
+const SHARED_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
+    lookup_weights: "input_weights",
+    lookup_scales: "input_scales",
+    lookup_biases: "input_biases",
+    readout_weights: "output_weights",
+    readout_scales: "output_scales",
+    readout_biases: "output_biases",
+};
+
+const SPLIT_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
+    lookup_weights: "weights",
+    lookup_scales: "scales",
+    lookup_biases: "biases",
+    readout_weights: "weights",
+    readout_scales: "scales",
+    readout_biases: "biases",
+};
+
 fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
     weights_leaf: &ParameterLeaf<'file, 'context, 'leaf, B::Context>,
     expected_shape: [usize; 2],
@@ -133,7 +156,15 @@ impl<B: Backend> Embedding<B> {
         config: &EmbeddingConfig,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, EmbeddingError<B>> {
-        Self::new_with_lookup_and_readout_trees(context, vocab_size, model_dim, config, parameter_tree, parameter_tree)
+        Self::new_with_weight_trees(
+            context,
+            vocab_size,
+            model_dim,
+            config,
+            parameter_tree,
+            parameter_tree,
+            &SHARED_TREE_UNTIED_KEYS,
+        )
     }
 
     pub(crate) fn new_with_lookup_and_readout_trees(
@@ -144,6 +175,26 @@ impl<B: Backend> Embedding<B> {
         lookup_tree: &ParameterTree<B::Context>,
         readout_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, EmbeddingError<B>> {
+        Self::new_with_weight_trees(
+            context,
+            vocab_size,
+            model_dim,
+            config,
+            lookup_tree,
+            readout_tree,
+            &SPLIT_TREE_UNTIED_KEYS,
+        )
+    }
+
+    fn new_with_weight_trees(
+        context: &B::Context,
+        vocab_size: u32,
+        model_dim: u32,
+        config: &EmbeddingConfig,
+        lookup_tree: &ParameterTree<B::Context>,
+        readout_tree: &ParameterTree<B::Context>,
+        untied_keys: &UntiedWeightKeys,
+    ) -> Result<Self, EmbeddingError<B>> {
         let common = config.common();
 
         let tying = match config {
@@ -153,13 +204,9 @@ impl<B: Backend> Embedding<B> {
             } => {
                 let data_type = (*precision).into();
 
-                let input_weights_leaf = lookup_tree.leaf("weights")?;
-                validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let output_weights_leaf = readout_tree.leaf("weights")?;
-                validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let output_weights = output_weights_leaf.read_buffer()?;
+                let weights_leaf = lookup_tree.leaf("weights")?;
+                validate_tensor(&weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
+                let weights = weights_leaf.read_buffer()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -167,8 +214,7 @@ impl<B: Backend> Embedding<B> {
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::FullPrecision {
-                        lookup_weights: input_weights,
-                        readout_weights: output_weights,
+                        weights,
                         lookup,
                         readout,
                     },
@@ -180,9 +226,9 @@ impl<B: Backend> Embedding<B> {
             } => {
                 let data_type = (*precision).into();
 
-                let input_weights_leaf = lookup_tree.leaf("input_weights")?;
+                let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
                 validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let output_weights_leaf = readout_tree.leaf("output_weights")?;
+                let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
                 validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -217,35 +263,20 @@ impl<B: Backend> Embedding<B> {
 
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
-                let input_weights_leaf = lookup_tree.leaf("weights")?;
+                let weights_leaf = lookup_tree.leaf("weights")?;
                 validate_tensor(
-                    &input_weights_leaf,
+                    &weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let input_scales_leaf = lookup_tree.leaf("scales")?;
-                validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let input_biases_leaf = lookup_tree.leaf("biases")?;
-                validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                let scales_leaf = lookup_tree.leaf("scales")?;
+                validate_tensor(&scales_leaf, [vocab_size as usize, num_groups], data_type)?;
+                let biases_leaf = lookup_tree.leaf("biases")?;
+                validate_tensor(&biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let output_weights_leaf = readout_tree.leaf("weights")?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
-                let output_scales_leaf = readout_tree.leaf("scales")?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = readout_tree.leaf("biases")?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
-
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let input_scales = input_scales_leaf.read_buffer()?;
-                let input_biases = input_biases_leaf.read_buffer()?;
-
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let weights = weights_leaf.read_buffer()?;
+                let scales = scales_leaf.read_buffer()?;
+                let biases = biases_leaf.read_buffer()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -275,12 +306,9 @@ impl<B: Backend> Embedding<B> {
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::Quantized {
-                        lookup_weights: input_weights,
-                        lookup_scales: input_scales,
-                        lookup_biases: input_biases,
-                        readout_weights: output_weights,
-                        readout_scales: output_scales,
-                        readout_biases: output_biases,
+                        weights,
+                        scales,
+                        biases,
                         lookup,
                         readout,
                     },
@@ -300,26 +328,26 @@ impl<B: Backend> Embedding<B> {
 
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
-                let input_weights_leaf = lookup_tree.leaf("input_weights")?;
+                let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
                 validate_tensor(
                     &input_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let input_scales_leaf = lookup_tree.leaf("input_scales")?;
+                let input_scales_leaf = lookup_tree.leaf(untied_keys.lookup_scales)?;
                 validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let input_biases_leaf = lookup_tree.leaf("input_biases")?;
+                let input_biases_leaf = lookup_tree.leaf(untied_keys.lookup_biases)?;
                 validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let output_weights_leaf = readout_tree.leaf("output_weights")?;
+                let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
                 validate_tensor(
                     &output_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let output_scales_leaf = readout_tree.leaf("output_scales")?;
+                let output_scales_leaf = readout_tree.leaf(untied_keys.readout_scales)?;
                 validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = readout_tree.leaf("output_biases")?;
+                let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -385,18 +413,18 @@ impl<B: Backend> Embedding<B> {
 
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
-                let input_weights_leaf = lookup_tree.leaf("input_weights")?;
+                let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
                 validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
-                let output_weights_leaf = readout_tree.leaf("output_weights")?;
+                let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
                 validate_tensor(
                     &output_weights_leaf,
                     [vocab_size as usize, model_dim as usize / packing_divisor],
                     storage_data_type,
                 )?;
-                let output_scales_leaf = readout_tree.leaf("output_scales")?;
+                let output_scales_leaf = readout_tree.leaf(untied_keys.readout_scales)?;
                 validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = readout_tree.leaf("output_biases")?;
+                let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_buffer()?;
@@ -476,15 +504,22 @@ impl<B: Backend> Embedding<B> {
 
         match &self.tying {
             EmbeddingTying::Tied {
-                ty:
-                    TiedEmbeddingType::FullPrecision {
-                        lookup_weights: weights,
-                        lookup,
-                        readout_weights: _,
-                        readout: _,
-                    },
-            }
-            | EmbeddingTying::Untied {
+                ty: TiedEmbeddingType::FullPrecision {
+                    weights,
+                    lookup,
+                    readout: _,
+                },
+            } => lookup.encode(
+                token_ids,
+                weights,
+                output,
+                batch_size,
+                self.vocab_size,
+                self.model_dim,
+                self.input_scale,
+                command_buffer,
+            ),
+            EmbeddingTying::Untied {
                 input_ty:
                     UntiedEmbeddingLookupType::FullPrecision {
                         weights,
@@ -502,19 +537,28 @@ impl<B: Backend> Embedding<B> {
                 command_buffer,
             ),
             EmbeddingTying::Tied {
-                ty:
-                    TiedEmbeddingType::Quantized {
-                        lookup_weights: weights,
-                        lookup_scales: scales,
-                        lookup_biases: biases,
-                        lookup,
-                        readout_weights: _,
-                        readout_scales: _,
-                        readout_biases: _,
-                        readout: _,
-                    },
-            }
-            | EmbeddingTying::Untied {
+                ty: TiedEmbeddingType::Quantized {
+                    weights,
+                    scales,
+                    biases,
+                    lookup,
+                    readout: _,
+                },
+            } => {
+                lookup.encode(
+                    token_ids,
+                    weights,
+                    scales,
+                    biases,
+                    output,
+                    batch_size,
+                    self.vocab_size,
+                    self.model_dim,
+                    self.input_scale,
+                    command_buffer,
+                );
+            },
+            EmbeddingTying::Untied {
                 input_ty:
                     UntiedEmbeddingLookupType::Quantized {
                         weights,
@@ -569,15 +613,34 @@ impl<B: Backend> Embedding<B> {
 
         match &self.tying {
             EmbeddingTying::Tied {
-                ty:
-                    TiedEmbeddingType::FullPrecision {
-                        lookup_weights: _,
-                        readout_weights: weights,
-                        lookup: _,
-                        readout,
+                ty: TiedEmbeddingType::FullPrecision {
+                    weights,
+                    lookup: _,
+                    readout,
+                },
+            } => {
+                let input_dim = self.model_dim as usize;
+                let output_dim = self.vocab_size as usize;
+                readout.borrow_mut().encode(
+                    state.context(),
+                    MatmulArguments {
+                        a: input,
+                        a_offset: input_offset as u64,
+                        b: weights,
+                        d: output,
+                        bias: None,
+                        batch: batch_size as i32,
+                        input_dim: input_dim as i32,
+                        output_dim: output_dim as i32,
+                        leading_dimension_a: input_dim as i32,
+                        leading_dimension_b: input_dim as i32,
+                        leading_dimension_d: output_dim as i32,
+                        transpose_b: true,
                     },
-            }
-            | EmbeddingTying::Untied {
+                    command_buffer,
+                );
+            },
+            EmbeddingTying::Untied {
                 input_ty: _,
                 output_ty:
                     UntiedEmbeddingReadoutType::FullPrecision {
@@ -607,19 +670,31 @@ impl<B: Backend> Embedding<B> {
                 );
             },
             EmbeddingTying::Tied {
-                ty:
-                    TiedEmbeddingType::Quantized {
-                        lookup_weights: _,
-                        lookup_scales: _,
-                        lookup_biases: _,
-                        readout_weights: weights,
-                        readout_scales: scales,
-                        readout_biases: biases,
-                        lookup: _,
-                        readout,
+                ty: TiedEmbeddingType::Quantized {
+                    weights,
+                    scales,
+                    biases,
+                    lookup: _,
+                    readout,
+                },
+            } => {
+                readout.encode(
+                    command_buffer,
+                    QuantizedMatmulArguments {
+                        a_buffer: input,
+                        a_offset: input_offset,
+                        b_buffer: weights,
+                        scales_buffer: scales,
+                        zero_points_or_biases_buffer: biases,
+                        output_buffer: output,
+                        batch: batch_size,
+                        input_dim: self.model_dim as usize,
+                        output_dim: self.vocab_size as usize,
+                        quantization_type: QuantizedMatmulType::Mlx,
                     },
-            }
-            | EmbeddingTying::Untied {
+                )?;
+            },
+            EmbeddingTying::Untied {
                 input_ty: _,
                 output_ty:
                     UntiedEmbeddingReadoutType::Quantized {

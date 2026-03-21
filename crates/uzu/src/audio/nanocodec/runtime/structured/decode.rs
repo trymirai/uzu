@@ -1,4 +1,7 @@
+use std::sync::mpsc::channel;
+
 use super::*;
+use crate::audio::nanocodec::runtime::profile::SubmittedDecodedPaddedAudio;
 
 impl StructuredAudioCodecGraph {
     fn run_residual_unit_enqueued<B: Backend>(
@@ -90,6 +93,7 @@ impl StructuredAudioCodecGraph {
                 frames: out_lengths.iter().copied().max().unwrap_or(0),
                 lengths: out_lengths,
                 final_command_buffer: None,
+                completion_notification: None,
             });
         }
 
@@ -346,6 +350,12 @@ impl StructuredAudioCodecGraph {
             &kernels,
         )?;
 
+        let (completion_sender, completion_notification) = channel();
+        command_buffer.add_completion_handler({
+            move |_| {
+                let _ = completion_sender.send(());
+            }
+        });
         let final_command_buffer = Some(command_buffer.end_encoding().submit());
         let out_lengths = lengths_i32
             .into_iter()
@@ -361,6 +371,7 @@ impl StructuredAudioCodecGraph {
             frames: current_frames,
             lengths: out_lengths,
             final_command_buffer,
+            completion_notification: Some(completion_notification),
         })
     }
 

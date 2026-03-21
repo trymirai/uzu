@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
+
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -122,6 +125,24 @@ impl FishAudioEmbeddingConfig {
                 logit_soft_cap,
                 precision,
             } => EmbeddingConfig::Tied {
+                common: EmbeddingConfigCommon {
+                    input_scale: *input_scale,
+                    logit_soft_cap: *logit_soft_cap,
+                },
+                precision: *precision,
+            },
+        }
+    }
+
+    #[cfg(feature = "audio-runtime")]
+    pub(crate) fn to_text_decoder_embedding_config(&self) -> EmbeddingConfig {
+        match self {
+            FishAudioEmbeddingConfig::Tagged(config) => config.clone(),
+            FishAudioEmbeddingConfig::UntaggedFullPrecision {
+                input_scale,
+                logit_soft_cap,
+                precision,
+            } => EmbeddingConfig::Untied {
                 common: EmbeddingConfigCommon {
                     input_scale: *input_scale,
                     logit_soft_cap: *logit_soft_cap,

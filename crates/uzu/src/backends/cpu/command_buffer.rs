@@ -141,10 +141,6 @@ impl CommandBufferExecutable for CpuCommandBuffer {
 impl CommandBufferPending for CpuCommandBuffer {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn is_completed(&self) -> bool {
-        true
-    }
-
     fn wait_until_completed(self) -> Result<CpuCommandBuffer, CpuError> {
         Ok(self)
     }

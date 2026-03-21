@@ -172,29 +172,25 @@ impl<B: Backend> SamplingKernel<B> {
             );
         }
 
-        let stochastic_config = match sampling_method {
-            SamplingMethod::Greedy => None,
-            SamplingMethod::Stochastic {
-                temperature,
-                top_k,
-                top_p,
-                min_p,
-                processing_order,
-            } => Some((temperature, top_k, top_p, min_p, processing_order)),
-        };
-
-        if let Some((temperature, top_k, top_p, min_p, processing_order)) = stochastic_config {
-            if processing_order == SamplingProcessingOrder::TemperatureThenFilters {
-                if let Some(temperature) = temperature {
-                    self.temperature.encode(
-                        None::<&B::Buffer>,
-                        logits_buffer.deref_mut(),
-                        batch_size as u32,
-                        vocab_size as u32,
-                        temperature,
-                        command_buffer,
-                    );
-                }
+        if let SamplingMethod::Stochastic {
+            temperature,
+            top_k,
+            top_p,
+            min_p,
+            processing_order,
+        } = sampling_method
+        {
+            if let Some(temperature) = temperature
+                && processing_order == SamplingProcessingOrder::TemperatureThenFilters
+            {
+                self.temperature.encode(
+                    None::<&B::Buffer>,
+                    logits_buffer.deref_mut(),
+                    batch_size as u32,
+                    vocab_size as u32,
+                    temperature,
+                    command_buffer,
+                );
             }
 
             if let Some(top_k) = top_k {
@@ -228,17 +224,17 @@ impl<B: Backend> SamplingKernel<B> {
                 );
             }
 
-            if processing_order == SamplingProcessingOrder::FiltersThenTemperature {
-                if let Some(temperature) = temperature {
-                    self.temperature.encode(
-                        None::<&B::Buffer>,
-                        logits_buffer.deref_mut(),
-                        batch_size as u32,
-                        vocab_size as u32,
-                        temperature,
-                        command_buffer,
-                    );
-                }
+            if let Some(temperature) = temperature
+                && processing_order == SamplingProcessingOrder::FiltersThenTemperature
+            {
+                self.temperature.encode(
+                    None::<&B::Buffer>,
+                    logits_buffer.deref_mut(),
+                    batch_size as u32,
+                    vocab_size as u32,
+                    temperature,
+                    command_buffer,
+                );
             }
 
             self.gumbel.encode(

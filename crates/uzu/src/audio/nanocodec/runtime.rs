@@ -44,7 +44,6 @@ mod support;
 
 use loaders::load_audio_runtime_from_tts_config;
 pub(crate) use profile::PendingStreamPcmChunk;
-use profile::SubmittedDecodedPaddedAudio;
 pub use stream::{AudioDecodeStepStats, AudioDecodeStreamState, AudioDecodeStreamingMode};
 use stream::{extract_delta_from_padded_with_offset_snapshot, pack_pcm_to_padded, unpack_padded_to_pcm};
 use structured::{StructuredAudioCodecGraph, StructuredAudioRuntimeResources};

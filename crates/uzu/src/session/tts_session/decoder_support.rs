@@ -331,22 +331,52 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
         count_in_loop: bool,
         config: &TtsRunConfig,
     ) -> Result<(), Error> {
-        let should_flush =
-            self.pending_chunk.as_ref().map(|pending| force || pending.chunk.is_ready()).unwrap_or(false);
-        if !should_flush {
-            return Ok(());
-        }
+        let (step_stats, ready_frames, next_chunk_frames, submission_decode_duration, partial_pcm, resolve_decode_duration) =
+            if force {
+                let pending = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+                let step_stats = pending.chunk.step_stats();
+                let ready_frames = pending.ready_frames;
+                let next_chunk_frames = pending.next_chunk_frames;
+                let submission_decode_duration = pending.submission_decode_duration;
+                let (partial_pcm, resolve_decode_duration) = pending.chunk.resolve_with_decode_duration()?;
+                (
+                    step_stats,
+                    ready_frames,
+                    next_chunk_frames,
+                    submission_decode_duration,
+                    partial_pcm,
+                    resolve_decode_duration,
+                )
+            } else {
+                let Some(pending) = self.pending_chunk.as_mut() else {
+                    return Ok(());
+                };
+                let Some((partial_pcm, resolve_decode_duration)) = pending.chunk.try_resolve_with_decode_duration()? else {
+                    return Ok(());
+                };
+                let step_stats = pending.chunk.step_stats();
+                let ready_frames = pending.ready_frames;
+                let next_chunk_frames = pending.next_chunk_frames;
+                let submission_decode_duration = pending.submission_decode_duration;
+                let _ = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+                (
+                    step_stats,
+                    ready_frames,
+                    next_chunk_frames,
+                    submission_decode_duration,
+                    partial_pcm,
+                    resolve_decode_duration,
+                )
+            };
 
-        let pending = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
         accumulate_audio_decode_step_stats(
             &mut self.audio_decode_calls,
             &mut self.audio_input_frames,
             &mut self.audio_decoded_window_frames,
             &mut self.audio_max_decoded_window_frames,
-            pending.chunk.step_stats(),
+            step_stats,
         );
-        let (partial_pcm, resolve_decode_duration) = pending.chunk.resolve_with_decode_duration()?;
-        let decode_elapsed = pending.submission_decode_duration.saturating_add(resolve_decode_duration);
+        let decode_elapsed = submission_decode_duration.saturating_add(resolve_decode_duration);
         if count_in_loop {
             self.audio_decode_seconds_in_loop += decode_elapsed.as_secs_f64();
         }
@@ -363,12 +393,12 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
             (self.on_chunk)(&partial_pcm);
         }
         self.callback_seconds += callback_start.elapsed().as_secs_f64();
-        self.chunk_controller.observe(config, pending.ready_frames, decode_elapsed, pending.next_chunk_frames);
+        self.chunk_controller.observe(config, ready_frames, decode_elapsed, next_chunk_frames);
 
         if emitted_frames > 0 {
             self.chunk_controller.adapt_up_for_realtime(
                 config,
-                pending.ready_frames,
+                ready_frames,
                 partial_sample_rate,
                 decode_elapsed,
                 emitted_frames,

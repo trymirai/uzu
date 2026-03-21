@@ -8,7 +8,7 @@ use uzu::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
+            Context, Kernels, gpu_types::ActivationType,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
                 AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,
@@ -772,7 +772,7 @@ fn audio_kernel_perf() {
                         let i = i.borrow();
                         let o = output.buffer();
                         let mut o = o.borrow_mut();
-                        k_act.encode(Some(&*i), &mut *o, n as u32, 1_u32, &mut cb);
+                        k_act.encode(Some(&*i), &mut *o, n as u32, ActivationType::GELU, &mut cb);
                     }
                     cb.end_encoding().submit().wait_until_completed().unwrap();
                 });
@@ -1077,7 +1077,7 @@ fn audio_kernel_perf() {
         {
             let i = sa.borrow();
             let mut o = sb.borrow_mut();
-            k_act.encode(Some(&*i), &mut *o, (c0_ch * f_up0) as u32, 1_u32, &mut cb);
+            k_act.encode(Some(&*i), &mut *o, (c0_ch * f_up0) as u32, ActivationType::GELU, &mut cb);
         }
         {
             let i = sb.borrow();
@@ -1222,7 +1222,7 @@ fn audio_kernel_perf() {
         {
             let i = sb.borrow();
             let mut o = sa.borrow_mut();
-            k_act.encode(Some(&*i), &mut *o, (c1_ch * f_up1) as u32, 1_u32, &mut cb);
+            k_act.encode(Some(&*i), &mut *o, (c1_ch * f_up1) as u32, ActivationType::GELU, &mut cb);
         }
         {
             let i = sa.borrow();
@@ -1544,7 +1544,7 @@ fn audio_kernel_perf() {
             );
         }
         cur_in_sa = !cur_in_sa;
-        // tanh (activation id=2)
+        // tanh
         {
             let (i_buf, o_buf) = if cur_in_sa {
                 (&sa, &sb)
@@ -1553,7 +1553,7 @@ fn audio_kernel_perf() {
             };
             let i = i_buf.borrow();
             let mut o = o_buf.borrow_mut();
-            k_act.encode(Some(&*i), &mut *o, f_dec3 as u32, 2_u32, &mut cb);
+            k_act.encode(Some(&*i), &mut *o, f_dec3 as u32, ActivationType::TANH, &mut cb);
         }
 
         cb.end_encoding().submit().wait_until_completed().unwrap();

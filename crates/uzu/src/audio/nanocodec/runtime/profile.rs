@@ -1,3 +1,5 @@
+use std::sync::mpsc::Receiver;
+
 use super::*;
 
 pub struct SubmittedDecodedPaddedAudio<B: Backend> {
@@ -6,11 +8,17 @@ pub struct SubmittedDecodedPaddedAudio<B: Backend> {
     pub(in crate::audio::nanocodec::runtime) frames: usize,
     pub(in crate::audio::nanocodec::runtime) lengths: Vec<usize>,
     pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<<B::CommandBuffer as CommandBuffer>::Pending>,
+    pub(in crate::audio::nanocodec::runtime) completion_notification: Option<Receiver<()>>,
 }
 
 impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
-    pub(in crate::audio::nanocodec::runtime) fn is_ready(&self) -> bool {
-        self.final_command_buffer.as_ref().is_none_or(|command_buffer| command_buffer.is_completed())
+    pub(crate) fn is_complete(&self) -> bool {
+        use std::sync::mpsc::TryRecvError;
+
+        self.completion_notification.as_ref().is_none_or(|notification| match notification.try_recv() {
+            Ok(()) | Err(TryRecvError::Disconnected) => true,
+            Err(TryRecvError::Empty) => false,
+        })
     }
 
     pub(in crate::audio::nanocodec::runtime) fn resolve(mut self) -> AudioResult<DecodedPaddedAudio> {
@@ -45,12 +53,12 @@ pub(crate) struct PendingStreamPcmChunk<B: Backend> {
 }
 
 impl<B: Backend> PendingStreamPcmChunk<B> {
-    pub(crate) fn is_ready(&self) -> bool {
-        self.submitted.is_ready()
-    }
-
     pub(crate) fn step_stats(&self) -> AudioDecodeStepStats {
         self.step_stats
+    }
+
+    pub(crate) fn is_complete(&self) -> bool {
+        self.submitted.is_complete()
     }
 
     pub(crate) fn resolve(self) -> AudioResult<AudioPcmBatch> {

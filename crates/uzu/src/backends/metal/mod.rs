@@ -1,6 +1,6 @@
 mod backend;
 mod buffer;
-pub mod command_buffer;
+mod command_buffer;
 mod context;
 mod device_capabilities;
 mod error;
