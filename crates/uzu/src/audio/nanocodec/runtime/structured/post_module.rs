@@ -4,7 +4,7 @@ impl StructuredAudioCodecGraph {
     pub(super) fn apply_convnext_ncs_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         input: &Array<B>,
         layer: &StructuredAudioConvNeXt<B>,
         lengths: &[i32],
@@ -20,7 +20,7 @@ impl StructuredAudioCodecGraph {
 
         let residual = input.clone();
         let x = causal_conv1d_grouped_enqueue(
-            command_buffer,
+            encoder,
             input,
             ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_dw"),
             &layer.depthwise_conv,
@@ -32,7 +32,7 @@ impl StructuredAudioCodecGraph {
             kernels,
         )?;
         let x = norm_ncs_enqueue(
-            command_buffer,
+            encoder,
             &x,
             ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_norm"),
             &layer.norm,
@@ -44,7 +44,7 @@ impl StructuredAudioCodecGraph {
             kernels,
         )?;
         let x = conv1d_pointwise_ncs_enqueue(
-            command_buffer,
+            encoder,
             &x,
             ws.next_scratch(ctx, &[batch_size, layer.pwconv1.cout, seq_len], data_type, "cnxt_pw1"),
             &layer.pwconv1,
@@ -54,9 +54,9 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = gelu_enqueue(command_buffer, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu"), kernels)?;
+        let x = gelu_enqueue(encoder, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu"), kernels)?;
         let x = conv1d_pointwise_ncs_enqueue(
-            command_buffer,
+            encoder,
             &x,
             ws.next_scratch(ctx, &[batch_size, layer.pwconv2.cout, seq_len], data_type, "cnxt_pw2"),
             &layer.pwconv2,
@@ -66,7 +66,7 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        add_enqueue(command_buffer, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add"), kernels)
+        add_enqueue(encoder, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add"), kernels)
     }
 
     pub(super) fn build_post_module_runtime<B: Backend>(
@@ -305,17 +305,17 @@ impl StructuredAudioCodecGraph {
     pub(super) fn encode_post_module_layers<B: Backend>(
         runtime: &StructuredAudioPostModuleRuntime<B>,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> AudioResult<()> {
         let encoding_parameters = EncodingParameters::new();
         for layer in runtime.layers.iter() {
             layer
-                .encode(state, &encoding_parameters, command_buffer)
+                .encode(state, &encoding_parameters, encoder)
                 .map_err(|err| AudioError::Runtime(format!("post_module layer encode failed: {err}")))?;
         }
         runtime
             .output_norm
-            .encode(state, command_buffer)
+            .encode(state, encoder)
             .map_err(|err| AudioError::Runtime(format!("post_module output norm encode failed: {err}")))?;
         Ok(())
     }
@@ -323,7 +323,7 @@ impl StructuredAudioCodecGraph {
     pub(super) fn apply_post_module_single_batch_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         latent_nsc: &Array<B>,
         frames: usize,
     ) -> AudioResult<Array<B>> {
@@ -382,14 +382,14 @@ impl StructuredAudioCodecGraph {
             let main_output_buffer = main_output.buffer();
             let latent_buffer = latent_buffer.borrow();
             let mut main_output_buffer = main_output_buffer.borrow_mut();
-            command_buffer.encode_copy(
+            encoder.encode_copy(
                 &latent_buffer,
                 latent_nsc.offset()..latent_nsc.offset() + copy_bytes,
                 &mut main_output_buffer,
                 main_output.offset()..main_output.offset() + copy_bytes,
             );
         }
-        Self::encode_post_module_layers(&runtime, &mut state, command_buffer)?;
+        Self::encode_post_module_layers(&runtime, &mut state, encoder)?;
 
         Ok(main_output)
     }
@@ -398,7 +398,7 @@ impl StructuredAudioCodecGraph {
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         context: &Rc<B::Context>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         latent_nsc: &Array<B>,
         lengths: &[usize],
         batch_size: usize,
@@ -418,7 +418,7 @@ impl StructuredAudioCodecGraph {
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_single_batch_enqueued(resources, command_buffer, latent_nsc, frames);
+            return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
         }
 
         let output = context.create_array(
@@ -490,7 +490,7 @@ impl StructuredAudioCodecGraph {
                         let output_buffer = output.buffer();
                         let latent_buffer = latent_buffer.borrow();
                         let mut output_buffer = output_buffer.borrow_mut();
-                        command_buffer.encode_copy(
+                        encoder.encode_copy(
                             &latent_buffer,
                             latent_nsc.offset()..latent_nsc.offset() + full_copy_bytes,
                             &mut output_buffer,
@@ -505,21 +505,21 @@ impl StructuredAudioCodecGraph {
                     let main_output_buffer = main_output.buffer();
                     let source_buffer = source_buffer.borrow();
                     let mut main_output_buffer = main_output_buffer.borrow_mut();
-                    command_buffer.encode_copy(
+                    encoder.encode_copy(
                         &source_buffer,
                         source.offset()..source.offset() + source.size(),
                         &mut main_output_buffer,
                         main_output.offset()..main_output.offset() + source.size(),
                     );
                 }
-                Self::encode_post_module_layers(&runtime, &mut state, command_buffer)?;
+                Self::encode_post_module_layers(&runtime, &mut state, encoder)?;
                 let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
                 {
                     let main_output_buffer = main_output.buffer();
                     let destination_buffer = destination.buffer();
                     let main_output_buffer = main_output_buffer.borrow();
                     let mut destination_buffer = destination_buffer.borrow_mut();
-                    command_buffer.encode_copy(
+                    encoder.encode_copy(
                         &main_output_buffer,
                         main_output.offset()..main_output.offset() + destination.size(),
                         &mut destination_buffer,

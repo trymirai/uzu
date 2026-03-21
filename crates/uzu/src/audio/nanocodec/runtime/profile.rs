@@ -7,7 +7,7 @@ pub struct SubmittedDecodedPaddedAudio<B: Backend> {
     pub(in crate::audio::nanocodec::runtime) channels: usize,
     pub(in crate::audio::nanocodec::runtime) frames: usize,
     pub(in crate::audio::nanocodec::runtime) lengths: Vec<usize>,
-    pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<<B::CommandBuffer as CommandBuffer>::Pending>,
+    pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<Pending<B>>,
     pub(in crate::audio::nanocodec::runtime) completion_notification: Option<Receiver<()>>,
 }
 

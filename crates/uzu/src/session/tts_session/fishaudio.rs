@@ -513,7 +513,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         output_embedding: &ArrayCell<B>,
         slow_model_dim: usize,
         fast_model_dim: usize,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), Error> {
         let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
 
@@ -550,7 +550,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     leading_dimension_d: fast_model_dim as i32,
                     transpose_b: false,
                 },
-                command_buffer,
+                encoder,
             );
             return Ok(());
         }
@@ -572,7 +572,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             (&*hidden_buffer, hidden.offset()),
             (&mut *output_buffer, output.offset()),
             model_dim_u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }
@@ -592,7 +592,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         num_codebooks: usize,
         codebook_size: usize,
         slow_model_dim: usize,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), Error> {
         if num_codebooks == 0 {
             return Err(Error::UnableToLoadConfig);
@@ -616,7 +616,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             let token_indices_buffer = token_indices.buffer();
             let mut token_indices_buffer = token_indices_buffer.borrow_mut();
             source_runner.copy_async_chain_results_to_on(
-                command_buffer,
+                encoder,
                 source_slot,
                 (&mut *token_indices_buffer, token_indices.offset() + dst_byte_offset),
                 residual_count,
@@ -654,7 +654,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             total_vocab_u32,
             slow_model_dim_u32,
             codebook_size_u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }
@@ -678,24 +678,20 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 
         self.fast_runner.reset();
 
-        let mut shared_cb = self
-            .fast_runner
-            .context()
-            .create_command_buffer()
-            .expect("Failed to create command buffer")
-            .start_encoding();
+        let context = Rc::clone(self.fast_runner.context());
+        let mut shared_encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
         let total_fast_count =
-            self.encode_fast_passes_on(&mut shared_cb, first_code, fast_vocab_limit, followup_count, sampling)?;
+            self.encode_fast_passes_on(&mut shared_encoder, first_code, fast_vocab_limit, followup_count, sampling)?;
         self.encode_slow_pass_on(
-            &mut shared_cb,
+            &mut shared_encoder,
             current_semantic_token,
             first_code,
             post_scale,
             sampling,
             by_codebook,
         )?;
-        self.slow_runner.submit_and_wait_command_buffer(shared_cb)?;
+        self.slow_runner.submit_and_wait_command_buffer(shared_encoder)?;
 
         for pass in 0..total_fast_count {
             let sampled = self.fast_runner.read_async_chain_result(pass)?;
@@ -714,7 +710,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     /// command buffer.
     fn encode_fast_passes_on(
         &mut self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         first_code: u32,
         fast_vocab_limit: usize,
         followup_count: usize,
@@ -729,7 +725,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let mut pre_projection =
             |runner: &TokenDecoderRunner<B>,
              _state: &ForwardPassState<B>,
-             command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+             encoder: &mut Encoder<B>| {
                 Self::encode_project_slow_hidden_to_fast_on(
                     runner.context().as_ref(),
                     semantic_bridge,
@@ -737,12 +733,12 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     &runner.single_override_embedding,
                     slow_model_dim,
                     fast_model_dim,
-                    command_buffer,
+                    encoder,
                 )
             };
 
         fast_runner.encode_first_and_followup_tokens_on(
-            command_buffer,
+            encoder,
             &[0, u64::from(first_code)],
             EmbeddingInjection::OverrideFirstRowInternal,
             Some(&mut pre_projection),
@@ -755,7 +751,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     /// Encode the slow runner's forward pass onto the shared command buffer.
     fn encode_slow_pass_on(
         &mut self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         current_semantic_token: u64,
         first_code: u32,
         post_scale: Option<f32>,
@@ -782,7 +778,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let mut pre_codebook_sum =
             |runner: &TokenDecoderRunner<B>,
              _state: &ForwardPassState<B>,
-             cb: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+             encoder: &mut Encoder<B>| {
                 Self::encode_slow_codebook_sum_from_gpu_tokens_on(
                     semantic_bridge,
                     &runner.single_override_embedding,
@@ -792,12 +788,12 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     num_codebooks,
                     codebook_size,
                     slow_model_dim,
-                    cb,
+                    encoder,
                 )
             };
 
         slow_runner.encode_next_step_on(
-            command_buffer,
+            encoder,
             &[current_semantic_token],
             EmbeddingInjection::AddPreloaded {
                 post_scale,

@@ -2,7 +2,7 @@ use super::*;
 use crate::backends::common::gpu_types::ActivationType;
 
 pub(super) fn snake1d_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     alpha: &Array<B>,
@@ -53,7 +53,7 @@ pub(super) fn snake1d_enqueue<B: Backend>(
         0.0,
         1e-9,
         batch_i32,
-        command_buffer,
+        encoder,
     );
 
     Ok(output)
@@ -105,7 +105,7 @@ fn validate_grouped_conv_params<B: Backend>(
 }
 
 pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     layer: &StructuredAudioConv1d<B>,
@@ -149,7 +149,7 @@ pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
             dilation_i32,
             input_layout_i32,
             batch_i32,
-            command_buffer,
+            encoder,
         );
     } else {
         let groups_i32 = usize_to_i32(layer.groups, "groups")?;
@@ -177,7 +177,7 @@ pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
             groups_i32,
             input_layout_i32,
             batch_i32,
-            command_buffer,
+            encoder,
         );
     }
 
@@ -185,7 +185,7 @@ pub(super) fn causal_conv1d_grouped_enqueue<B: Backend>(
 }
 
 pub(super) fn causal_conv1d_grouped_residual_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     residual: &Array<B>,
     output: Array<B>,
@@ -242,14 +242,14 @@ pub(super) fn causal_conv1d_grouped_residual_enqueue<B: Backend>(
         dilation_i32,
         groups_i32,
         batch_i32,
-        command_buffer,
+        encoder,
     );
 
     Ok(output)
 }
 
 pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     layer: &StructuredAudioConvTranspose1d<B>,
@@ -333,14 +333,14 @@ pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
         groups_i32,
         input_layout_i32,
         batch_i32,
-        command_buffer,
+        encoder,
     );
 
     Ok(output)
 }
 
 pub(super) fn conv1d_pointwise_ncs_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     layer: &StructuredAudioPointwiseConv<B>,
@@ -415,14 +415,14 @@ pub(super) fn conv1d_pointwise_ncs_enqueue<B: Backend>(
         0,
         0,
         batch_i32,
-        command_buffer,
+        encoder,
     );
 
     Ok(output)
 }
 
 pub(super) fn norm_ncs_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     norm: &StructuredAudioNorm<B>,
@@ -494,14 +494,14 @@ pub(super) fn norm_ncs_enqueue<B: Backend>(
         norm.epsilon,
         subtract_mean,
         batch_i32,
-        command_buffer,
+        encoder,
     );
 
     Ok(output)
 }
 
 pub(super) fn gelu_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     kernels: &StructuredAudioKernelCache<B>,
@@ -512,12 +512,12 @@ pub(super) fn gelu_enqueue<B: Backend>(
     let input_buffer = input_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, ActivationType::GELU, command_buffer);
+    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, ActivationType::GELU, encoder);
     Ok(output)
 }
 
 pub(super) fn add_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     a: &Array<B>,
     b: &Array<B>,
     output: Array<B>,
@@ -544,12 +544,12 @@ pub(super) fn add_enqueue<B: Backend>(
     let b_buffer = b_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.add.encode(&*a_buffer, &*b_buffer, &mut *output_buffer, n_i32, command_buffer);
+    kernels.add.encode(&*a_buffer, &*b_buffer, &mut *output_buffer, n_i32, encoder);
     Ok(output)
 }
 
 pub(super) fn tanh_enqueue<B: Backend>(
-    command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
     kernels: &StructuredAudioKernelCache<B>,
@@ -560,6 +560,6 @@ pub(super) fn tanh_enqueue<B: Backend>(
     let input_buffer = input_buffer.borrow();
     let output_buffer = output.buffer();
     let mut output_buffer = output_buffer.borrow_mut();
-    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, ActivationType::TANH, command_buffer);
+    kernels.activation.encode(Some(&*input_buffer), &mut *output_buffer, n_u32, ActivationType::TANH, encoder);
     Ok(output)
 }

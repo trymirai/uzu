@@ -1,7 +1,7 @@
-use super::{AudioError, AudioTokenGrid, AudioTokenPacking};
+use super::{AudioError, AudioTokenGrid};
 
 #[test]
-fn packing_conversion_roundtrip_is_lossless() {
+fn token_grid_get_reads_expected_slots() {
     let grid = AudioTokenGrid::new(
         vec![
             0, 1, 2, 3, // b0 f0, f1
@@ -12,14 +12,13 @@ fn packing_conversion_roundtrip_is_lossless() {
         2,
         2,
         vec![2, 2].into_boxed_slice(),
-        AudioTokenPacking::FrameMajor,
     )
     .expect("valid grid");
 
-    let converted = grid.to_packing(AudioTokenPacking::CodebookMajor);
-    let restored = converted.to_packing(AudioTokenPacking::FrameMajor);
-
-    assert_eq!(restored, grid);
+    assert_eq!(grid.get(0, 0, 0), 0);
+    assert_eq!(grid.get(0, 1, 1), 3);
+    assert_eq!(grid.get(1, 0, 0), 4);
+    assert_eq!(grid.get(1, 1, 1), 7);
 }
 
 #[test]
@@ -30,7 +29,6 @@ fn invalid_grid_shape_is_rejected() {
         2,
         2,
         vec![2].into_boxed_slice(),
-        AudioTokenPacking::FrameMajor,
     )
     .expect_err("shape mismatch should fail");
 

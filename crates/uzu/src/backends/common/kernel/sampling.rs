@@ -233,7 +233,7 @@ impl<B: Backend> SamplingKernel<B> {
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
-                    command_buffer,
+                    encoder,
                 );
             }
 

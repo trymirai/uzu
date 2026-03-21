@@ -15,7 +15,7 @@ use crate::{
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     backends::common::{
         Backend, Buffer, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-        CommandBufferPending, Context, Kernels,
+        CommandBufferPending, Context, Encoder, Kernels, Pending,
         kernel::{
             ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dGroupedResidualKernel,
             AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel,
@@ -323,10 +323,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             "nanocodec_fsq_decode_output",
         );
 
-        let mut command_buffer = context
-            .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
-            .start_encoding();
+        let mut encoder =
+            Encoder::new(context.as_ref()).map_err(|err| AudioError::Runtime(format!("failed to create encoder: {err}")))?;
 
         let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
@@ -350,12 +348,13 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
                 self.config.num_levels_per_group(),
                 self.config.dim_base_index(),
                 batch_size_i32,
-                &mut command_buffer,
+                &mut encoder,
             );
         }
 
-        let command_buffer = command_buffer.end_encoding().submit();
-        command_buffer
+        encoder
+            .end_encoding()
+            .submit()
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
 
@@ -414,10 +413,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             "nanocodec_fsq_encode_tokens",
         );
 
-        let mut command_buffer = context
-            .create_command_buffer()
-            .map_err(|err| AudioError::Runtime(format!("failed to create command buffer: {err}")))?
-            .start_encoding();
+        let mut encoder =
+            Encoder::new(context.as_ref()).map_err(|err| AudioError::Runtime(format!("failed to create encoder: {err}")))?;
 
         let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
@@ -442,12 +439,13 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
                 self.config.dim_base_index(),
                 self.config.eps(),
                 batch_size_i32,
-                &mut command_buffer,
+                &mut encoder,
             );
         }
 
-        let command_buffer = command_buffer.end_encoding().submit();
-        command_buffer
+        encoder
+            .end_encoding()
+            .submit()
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
 

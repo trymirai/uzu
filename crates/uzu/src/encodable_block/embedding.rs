@@ -517,7 +517,7 @@ impl<B: Backend> Embedding<B> {
                 self.vocab_size,
                 self.model_dim,
                 self.input_scale,
-                command_buffer,
+                encoder,
             ),
             EmbeddingTying::Untied {
                 input_ty:
@@ -555,7 +555,7 @@ impl<B: Backend> Embedding<B> {
                     self.vocab_size,
                     self.model_dim,
                     self.input_scale,
-                    command_buffer,
+                    encoder,
                 );
             },
             EmbeddingTying::Untied {
@@ -634,10 +634,10 @@ impl<B: Backend> Embedding<B> {
                         output_dim: output_dim as i32,
                         leading_dimension_a: input_dim as i32,
                         leading_dimension_b: input_dim as i32,
-                        leading_dimension_d: output_dim as i32,
-                        transpose_b: true,
-                    },
-                    command_buffer,
+                    leading_dimension_d: output_dim as i32,
+                    transpose_b: true,
+                },
+                    encoder,
                 );
             },
             EmbeddingTying::Untied {
@@ -679,7 +679,7 @@ impl<B: Backend> Embedding<B> {
                 },
             } => {
                 readout.encode(
-                    command_buffer,
+                    encoder,
                     QuantizedMatmulArguments {
                         a_buffer: input,
                         a_offset: input_offset,

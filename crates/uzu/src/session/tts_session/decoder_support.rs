@@ -3,7 +3,7 @@ use super::*;
 pub(super) type PreInjectionEncodeCallback<'a, B> = dyn FnMut(
         &TokenDecoderRunner<B>,
         &ForwardPassState<B>,
-        &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+        &mut Encoder<B>,
     ) -> Result<(), Error>
     + 'a;
 

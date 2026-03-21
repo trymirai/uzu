@@ -32,7 +32,7 @@ use crate::{
     },
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-        CommandBufferPending, Context as BackendContext, Kernels,
+        CommandBufferPending, Context as BackendContext, Encoder, Kernels,
         kernel::{
             EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
             TokenCopyToResultsKernel,

@@ -98,7 +98,7 @@ impl StructuredAudioCodecGraph {
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         context: &Rc<B::Context>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         tokens: &[u32],
         lengths: &[usize],
         batch_size: usize,
@@ -198,7 +198,7 @@ impl StructuredAudioCodecGraph {
             residual_quantizers_i32,
             semantic_cardinality_i32,
             residual_cardinality_i32,
-            command_buffer,
+            encoder,
         );
 
         Ok(output)
