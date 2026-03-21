@@ -547,10 +547,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     .embed
                     .encode_readout(&mut state, encoder)
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                self.ctx
-                    .sampler
-                    .encode(&mut state, encoder)
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+                self.ctx.sampler.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
 
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
@@ -563,11 +560,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 let sampling_output_buffer = sampling_output_buffer.borrow();
                 let mut token_ids_buffer = token_ids_buffer.borrow_mut();
                 if pass + 1 < followup_count {
-                    self.ctx.token_copy_sampled.encode(
-                        &*sampling_output_buffer,
-                        &mut *token_ids_buffer,
-                        encoder,
-                    );
+                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, encoder);
                 }
                 let results_offset = results_slot * std::mem::size_of::<u32>();
                 let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
@@ -578,12 +571,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 );
             }
 
-            self.ctx.cache_layers.borrow_mut().update_after_acceptance(
-                &[0],
-                None,
-                encoder,
-                &self.ctx.kv_cache_update,
-            );
+            self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
             self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&[self.next_position + pass]);
         }
         Ok(())
@@ -759,12 +747,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             EmbeddingInjection::AddPreloaded {
                 post_scale,
             } => {
-                self.encode_add_scale_from_single_bias_on(
-                    encoder,
-                    &state,
-                    token_count,
-                    post_scale.unwrap_or(1.0),
-                )?;
+                self.encode_add_scale_from_single_bias_on(encoder, &state, token_count, post_scale.unwrap_or(1.0))?;
             },
             EmbeddingInjection::OverrideFirstRowInternal => {
                 self.encode_override_first_row_from_device_on(encoder, &state, &self.single_override_embedding)?;
@@ -778,11 +761,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         if capture_hidden {
             self.encode_capture_last_hidden_into_single_buffer_on(encoder, &state, token_count)?;
         }
-        self.ctx
-            .executables
-            .norm
-            .encode(&mut state, encoder)
-            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        self.ctx.executables.norm.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         self.ctx
             .executables
             .embed
@@ -1160,12 +1139,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 count,
             })?;
         let results_buffer = self.ctx.async_chain_results.borrow();
-        encoder.encode_copy(
-            &results_buffer,
-            src_offset..src_offset + copy_size,
-            dst.0,
-            dst.1..dst.1 + copy_size,
-        );
+        encoder.encode_copy(&results_buffer, src_offset..src_offset + copy_size, dst.0, dst.1..dst.1 + copy_size);
         Ok(())
     }
 

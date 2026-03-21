@@ -723,9 +723,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let fast_model_dim = self.fast_model_dim;
 
         let mut pre_projection =
-            |runner: &TokenDecoderRunner<B>,
-             _state: &ForwardPassState<B>,
-             encoder: &mut Encoder<B>| {
+            |runner: &TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
                 Self::encode_project_slow_hidden_to_fast_on(
                     runner.context().as_ref(),
                     semantic_bridge,
@@ -776,9 +774,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         };
 
         let mut pre_codebook_sum =
-            |runner: &TokenDecoderRunner<B>,
-             _state: &ForwardPassState<B>,
-             encoder: &mut Encoder<B>| {
+            |runner: &TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
                 Self::encode_slow_codebook_sum_from_gpu_tokens_on(
                     semantic_bridge,
                     &runner.single_override_embedding,

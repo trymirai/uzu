@@ -323,8 +323,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             "nanocodec_fsq_decode_output",
         );
 
-        let mut encoder =
-            Encoder::new(context.as_ref()).map_err(|err| AudioError::Runtime(format!("failed to create encoder: {err}")))?;
+        let mut encoder = Encoder::new(context.as_ref())
+            .map_err(|err| AudioError::Runtime(format!("failed to create encoder: {err}")))?;
 
         let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
@@ -413,8 +413,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             "nanocodec_fsq_encode_tokens",
         );
 
-        let mut encoder =
-            Encoder::new(context.as_ref()).map_err(|err| AudioError::Runtime(format!("failed to create encoder: {err}")))?;
+        let mut encoder = Encoder::new(context.as_ref())
+            .map_err(|err| AudioError::Runtime(format!("failed to create encoder: {err}")))?;
 
         let num_groups_i32 = usize_to_i32(self.config.num_groups(), "num_groups")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;

@@ -8,7 +8,8 @@ use uzu::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, gpu_types::ActivationType,
+            Context, Kernels,
+            gpu_types::ActivationType,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
                 AudioCausalConv1dGroupedResidualKernel, AudioCausalConv1dKernel,

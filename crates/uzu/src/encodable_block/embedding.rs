@@ -504,11 +504,12 @@ impl<B: Backend> Embedding<B> {
 
         match &self.tying {
             EmbeddingTying::Tied {
-                ty: TiedEmbeddingType::FullPrecision {
-                    weights,
-                    lookup,
-                    readout: _,
-                },
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights,
+                        lookup,
+                        readout: _,
+                    },
             } => lookup.encode(
                 token_ids,
                 weights,
@@ -537,13 +538,14 @@ impl<B: Backend> Embedding<B> {
                 encoder,
             ),
             EmbeddingTying::Tied {
-                ty: TiedEmbeddingType::Quantized {
-                    weights,
-                    scales,
-                    biases,
-                    lookup,
-                    readout: _,
-                },
+                ty:
+                    TiedEmbeddingType::Quantized {
+                        weights,
+                        scales,
+                        biases,
+                        lookup,
+                        readout: _,
+                    },
             } => {
                 lookup.encode(
                     token_ids,
@@ -613,11 +615,12 @@ impl<B: Backend> Embedding<B> {
 
         match &self.tying {
             EmbeddingTying::Tied {
-                ty: TiedEmbeddingType::FullPrecision {
-                    weights,
-                    lookup: _,
-                    readout,
-                },
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        weights,
+                        lookup: _,
+                        readout,
+                    },
             } => {
                 let input_dim = self.model_dim as usize;
                 let output_dim = self.vocab_size as usize;
@@ -634,9 +637,9 @@ impl<B: Backend> Embedding<B> {
                         output_dim: output_dim as i32,
                         leading_dimension_a: input_dim as i32,
                         leading_dimension_b: input_dim as i32,
-                    leading_dimension_d: output_dim as i32,
-                    transpose_b: true,
-                },
+                        leading_dimension_d: output_dim as i32,
+                        transpose_b: true,
+                    },
                     encoder,
                 );
             },
@@ -670,13 +673,14 @@ impl<B: Backend> Embedding<B> {
                 );
             },
             EmbeddingTying::Tied {
-                ty: TiedEmbeddingType::Quantized {
-                    weights,
-                    scales,
-                    biases,
-                    lookup: _,
-                    readout,
-                },
+                ty:
+                    TiedEmbeddingType::Quantized {
+                        weights,
+                        scales,
+                        biases,
+                        lookup: _,
+                        readout,
+                    },
             } => {
                 readout.encode(
                     encoder,

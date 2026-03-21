@@ -9,10 +9,10 @@
 // Session Parameters
 // Session Types
 // Speculators
-#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
-pub use crate::session::TtsSession;
 #[cfg(metal_backend)]
 pub use crate::backends::metal::MetalContext;
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+pub use crate::session::TtsSession;
 pub use crate::{
     VERSION,
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},

@@ -1,11 +1,7 @@
 use super::*;
 
-pub(super) type PreInjectionEncodeCallback<'a, B> = dyn FnMut(
-        &TokenDecoderRunner<B>,
-        &ForwardPassState<B>,
-        &mut Encoder<B>,
-    ) -> Result<(), Error>
-    + 'a;
+pub(super) type PreInjectionEncodeCallback<'a, B> =
+    dyn FnMut(&TokenDecoderRunner<B>, &ForwardPassState<B>, &mut Encoder<B>) -> Result<(), Error> + 'a;
 
 pub(super) enum EmbeddingInjection {
     None,
@@ -331,43 +327,49 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
         count_in_loop: bool,
         config: &TtsRunConfig,
     ) -> Result<(), Error> {
-        let (step_stats, ready_frames, next_chunk_frames, submission_decode_duration, partial_pcm, resolve_decode_duration) =
-            if force {
-                let pending = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
-                let step_stats = pending.chunk.step_stats();
-                let ready_frames = pending.ready_frames;
-                let next_chunk_frames = pending.next_chunk_frames;
-                let submission_decode_duration = pending.submission_decode_duration;
-                let (partial_pcm, resolve_decode_duration) = pending.chunk.resolve_with_decode_duration()?;
-                (
-                    step_stats,
-                    ready_frames,
-                    next_chunk_frames,
-                    submission_decode_duration,
-                    partial_pcm,
-                    resolve_decode_duration,
-                )
-            } else {
-                let Some(pending) = self.pending_chunk.as_mut() else {
-                    return Ok(());
-                };
-                let Some((partial_pcm, resolve_decode_duration)) = pending.chunk.try_resolve_with_decode_duration()? else {
-                    return Ok(());
-                };
-                let step_stats = pending.chunk.step_stats();
-                let ready_frames = pending.ready_frames;
-                let next_chunk_frames = pending.next_chunk_frames;
-                let submission_decode_duration = pending.submission_decode_duration;
-                let _ = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
-                (
-                    step_stats,
-                    ready_frames,
-                    next_chunk_frames,
-                    submission_decode_duration,
-                    partial_pcm,
-                    resolve_decode_duration,
-                )
+        let (
+            step_stats,
+            ready_frames,
+            next_chunk_frames,
+            submission_decode_duration,
+            partial_pcm,
+            resolve_decode_duration,
+        ) = if force {
+            let pending = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+            let step_stats = pending.chunk.step_stats();
+            let ready_frames = pending.ready_frames;
+            let next_chunk_frames = pending.next_chunk_frames;
+            let submission_decode_duration = pending.submission_decode_duration;
+            let (partial_pcm, resolve_decode_duration) = pending.chunk.resolve_with_decode_duration()?;
+            (
+                step_stats,
+                ready_frames,
+                next_chunk_frames,
+                submission_decode_duration,
+                partial_pcm,
+                resolve_decode_duration,
+            )
+        } else {
+            let Some(pending) = self.pending_chunk.as_mut() else {
+                return Ok(());
             };
+            let Some((partial_pcm, resolve_decode_duration)) = pending.chunk.try_resolve_with_decode_duration()? else {
+                return Ok(());
+            };
+            let step_stats = pending.chunk.step_stats();
+            let ready_frames = pending.ready_frames;
+            let next_chunk_frames = pending.next_chunk_frames;
+            let submission_decode_duration = pending.submission_decode_duration;
+            let _ = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+            (
+                step_stats,
+                ready_frames,
+                next_chunk_frames,
+                submission_decode_duration,
+                partial_pcm,
+                resolve_decode_duration,
+            )
+        };
 
         accumulate_audio_decode_step_stats(
             &mut self.audio_decode_calls,
