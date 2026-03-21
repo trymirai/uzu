@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, LayerNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -71,7 +71,7 @@ impl<B: Backend> LayerNorm<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
@@ -103,7 +103,7 @@ impl<B: Backend> LayerNorm<B> {
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             full_layer,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

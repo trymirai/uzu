@@ -5,7 +5,7 @@ use std::ops::DerefMut;
 use crate::{
     DataType,
     backends::common::{
-        ActivationConfig, Backend, CommandBuffer,
+        ActivationConfig, Backend, Encoder,
         gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
@@ -40,7 +40,7 @@ impl<B: Backend> Activation<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let input_array = arrays[0].borrow();
@@ -58,7 +58,7 @@ impl<B: Backend> Activation<B> {
             output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
             self.activation.act_type(),
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

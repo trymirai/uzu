@@ -1,19 +1,25 @@
 mod activation_config;
+mod allocator;
 mod backend;
 mod buffer;
 mod command_buffer;
 mod context;
+mod encoder;
 mod event;
 pub mod gpu_types;
+mod hazard_tracker;
 pub mod kernel;
 
 pub use activation_config::ActivationConfig;
+pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
-pub use buffer::Buffer;
+pub use buffer::{Buffer, BufferGpuAddressRangeExt};
 pub use command_buffer::{
-    CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-    CommandBufferPending,
+    AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+    CommandBufferInitial, CommandBufferPending,
 };
 pub use context::Context;
+pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
+pub use hazard_tracker::Access;
 pub use kernel::Kernels;

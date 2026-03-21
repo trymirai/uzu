@@ -1,5 +1,5 @@
 use crate::backends::common::{
-    Backend, CommandBuffer,
+    Backend, Encoder,
     kernel::{
         Kernels, MoePassABuildRowMapKernel, MoePassABuildTileMapKernel, MoePassATileCountsKernel,
         MoePassATileScanKernel, MoePassAWriteDispatchArgsKernel,
@@ -68,37 +68,31 @@ impl<B: Backend> MoePassATileKernels<B> {
 
     pub fn encode_counts(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoePassATileCountsArguments<B>,
     ) {
-        self.counts.encode(args.expert_offsets, args.tile_counts, args.e as u32, args.h_blocks, command_buffer);
+        self.counts.encode(args.expert_offsets, args.tile_counts, args.e as u32, args.h_blocks, encoder);
     }
 
     pub fn encode_scan(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoePassATileScanArguments<B>,
     ) {
-        self.scan.encode(args.tile_counts, args.tile_offsets, args.total_tiles, args.e as u32, command_buffer);
+        self.scan.encode(args.tile_counts, args.tile_offsets, args.total_tiles, args.e as u32, encoder);
     }
 
     pub fn encode_row_map(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoePassARowMapArguments<B>,
     ) {
-        self.row_map.encode(
-            args.expert_offsets,
-            args.row_expert_map,
-            args.total_rows as u32,
-            args.e as u32,
-            command_buffer,
-        );
+        self.row_map.encode(args.expert_offsets, args.row_expert_map, args.total_rows as u32, args.e as u32, encoder);
     }
 
     pub fn encode_build_map(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoePassATileBuildArguments<B>,
     ) {
         self.build_map.encode(
@@ -108,15 +102,15 @@ impl<B: Backend> MoePassATileKernels<B> {
             args.tile_map,
             args.total_rows as u32,
             args.h_blocks,
-            command_buffer,
+            encoder,
         );
     }
 
     pub fn encode_dispatch_args(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: MoePassATileDispatchArguments<B>,
     ) {
-        self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_y, command_buffer);
+        self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_y, encoder);
     }
 }

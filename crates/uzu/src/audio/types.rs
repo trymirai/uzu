@@ -221,20 +221,5 @@ impl AudioTokenGrid {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{AudioError, AudioTokenGrid};
-
-    #[test]
-    fn invalid_grid_shape_is_rejected() {
-        let error = AudioTokenGrid::new(vec![0, 1, 2].into_boxed_slice(), 1, 2, 2, vec![2].into_boxed_slice())
-            .expect_err("shape mismatch should fail");
-
-        assert!(matches!(
-            error,
-            AudioError::InvalidTokenShape {
-                expected_tokens: 4,
-                actual_tokens: 3
-            }
-        ));
-    }
-}
+#[path = "../../tests/unit/audio/types_test.rs"]
+mod tests;

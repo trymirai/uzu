@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, CommandBuffer, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KVSlice},
@@ -276,13 +276,13 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, command_buffer, kv_cache_update);
+                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
             } else if let Some(layer) = layer.as_short_conv() {
                 layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
             }

@@ -1,7 +1,7 @@
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
     },
 };
@@ -34,7 +34,7 @@ impl<B: Backend> MoeGatherKernels<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         dtype: DataType,
         args: MoeGatherArguments<B>,
     ) {
@@ -47,7 +47,7 @@ impl<B: Backend> MoeGatherKernels<B> {
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
-                command_buffer,
+                encoder,
             ),
             DataType::F16 => self.f16.encode(
                 args.x_buffer,
@@ -57,7 +57,7 @@ impl<B: Backend> MoeGatherKernels<B> {
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
-                command_buffer,
+                encoder,
             ),
             DataType::BF16 => self.bf16.encode(
                 args.x_buffer,
@@ -67,7 +67,7 @@ impl<B: Backend> MoeGatherKernels<B> {
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
-                command_buffer,
+                encoder,
             ),
             _ => panic!("Unsupported data type: {:?}", dtype),
         };

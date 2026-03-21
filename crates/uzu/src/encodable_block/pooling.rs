@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, PoolingClsKernel, PoolingMeanKernel},
     },
     config::PoolingType,
@@ -25,11 +25,11 @@ impl<B: Backend> PoolingKernel<B> {
         seq_len: u32,
         hidden_dim: u32,
         batch_size: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) {
         match self {
-            Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, command_buffer),
-            Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, command_buffer),
+            Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
+            Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
         }
     }
 }
@@ -61,7 +61,7 @@ impl<B: Backend> Pooling<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let batch_size = 1;
         let seq_len = state.aux_buffers_suffix_length();
@@ -76,13 +76,13 @@ impl<B: Backend> Pooling<B> {
             seq_len as u32,
             self.model_dim as u32,
             batch_size,
-            command_buffer,
+            encoder,
         );
 
         #[cfg(feature = "tracing")]
         {
             let output_pooling_trace = state.traces().borrow().output_pooling().clone();
-            state.encode_copy_array(command_buffer, ArrayId::ClassifierPooling, output_pooling_trace);
+            state.encode_copy_array(encoder, ArrayId::ClassifierPooling, output_pooling_trace);
         }
         Ok(())
     }

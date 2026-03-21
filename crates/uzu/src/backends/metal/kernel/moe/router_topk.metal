@@ -123,10 +123,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
       if (lid == 0) {
         logits_shared[winner_idx] = NEG_INF;
         idx_shared[winner_idx] = 0xFFFFFFFFu;
-        device int* out_ids = topk_ids + token_idx * k;
-        device ScalarT* out_probs = topk_probs + token_idx * k;
-        out_ids[sel] = int(winner_idx);
-        out_probs[sel] = static_cast<ScalarT>(winner_val);
+        topk_ids[token_idx * k + sel] = int(winner_idx);
+        topk_probs[token_idx * k + sel] = static_cast<ScalarT>(winner_val);
       }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);

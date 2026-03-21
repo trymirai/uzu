@@ -9,8 +9,8 @@ use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use super::Metal;
 use crate::backends::{
     common::{
-        CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-        CommandBufferPending,
+        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferInitial, CommandBufferPending,
     },
     metal::error::MetalError,
 };
@@ -142,6 +142,13 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
 
         self.ensure_blit().fill_buffer_range_value(dst, range, value);
+    }
+
+    fn encode_barrier(
+        &mut self,
+        _after: AccessFlags,
+        _before: AccessFlags,
+    ) {
     }
 
     fn encode_wait_for_event(

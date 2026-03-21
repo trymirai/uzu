@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, RMSNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
@@ -85,7 +85,7 @@ impl<B: Backend> RMSNorm<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
@@ -130,7 +130,7 @@ impl<B: Backend> RMSNorm<B> {
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             self.config.upcast_mode == UpcastMode::FullLayer,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

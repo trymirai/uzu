@@ -5,8 +5,8 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
-        kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
+        Backend, Encoder,
+        kernel::sampling::{SamplingError, SamplingKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
@@ -28,24 +28,10 @@ impl<B: Backend> Sampling<B> {
         })
     }
 
-    pub fn new_with_strategy(
-        context: &B::Context,
-        data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
-        argmax_strategy: ArgmaxStrategy,
-    ) -> Result<Self, SamplingError<B>> {
-        let kernel =
-            SamplingKernel::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, argmax_strategy)?;
-        Ok(Self {
-            kernel,
-        })
-    }
-
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 
@@ -91,10 +77,14 @@ impl<B: Backend> Sampling<B> {
             sampling_method,
             batch_size,
             vocab_size,
-            command_buffer,
+            encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
         }
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/encodable_block/sampling_test.rs"]
+mod tests;

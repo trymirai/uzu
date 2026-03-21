@@ -6,14 +6,13 @@ use std::{
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use uzu::{
-    prelude::{SamplingSeed, SpeculatorConfig},
+    prelude::{NGramSpeculator, SamplingSeed, SpeculatorConfig},
     session::{
         Session,
         config::{DecodingConfig, RunConfig},
         parameter::PrefillStepSize,
         types::{Error, Input, Output},
     },
-    speculators::ngram_speculator::NGramSpeculator,
 };
 
 pub trait RunSession {
@@ -98,7 +97,6 @@ pub fn load_session(
                     parts.get(2).map(|s| s.parse().expect("invalid temperature, expected float"));
 
                 let speculator = Arc::new(NGramSpeculator::load_with_temperature(speculator_path, temperature));
-
                 SpeculatorConfig::new(number_of_speculated_tokens, speculator)
             },
             None => SpeculatorConfig::default(),

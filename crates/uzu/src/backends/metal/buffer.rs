@@ -20,11 +20,11 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
         self.contents()
     }
 
-    fn length(&self) -> usize {
-        (**self).length()
+    fn gpu_ptr(&self) -> usize {
+        self.gpu_address() as usize
     }
 
-    fn id(&self) -> usize {
-        Retained::as_ptr(self) as usize
+    fn length(&self) -> usize {
+        (**self).length()
     }
 }

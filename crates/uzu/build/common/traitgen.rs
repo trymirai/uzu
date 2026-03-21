@@ -76,7 +76,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
             fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
-            fn encode<#(#encode_generics, )* 'command_buffer>(&self, #(#args ,)* command_buffer: &'command_buffer mut <<Self::Backend as crate::backends::common::Backend>::CommandBuffer as crate::backends::common::CommandBuffer>::Encoding);
+            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#args ,)* encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend>);
         }
     };
 
@@ -123,25 +123,53 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
             }
         }
 
+        impl<'a, B: crate::backends::common::Backend> BufferArg<'a, B::Buffer> for &'a crate::backends::common::Allocation<B> {
+            fn into_parts(self) -> (&'a B::Buffer, usize) {
+                let (buffer, range) = self.as_buffer_range();
+                (buffer, range.start)
+            }
+        }
+
         impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for (&'a B, usize) {
             fn into_parts(self) -> (&'a B, usize) {
                 self
             }
         }
 
+        impl<'a, B: crate::backends::common::Backend> BufferArg<'a, B::Buffer> for (&'a crate::backends::common::Allocation<B>, usize) {
+            fn into_parts(self) -> (&'a B::Buffer, usize) {
+                let (buffer, range) = self.0.as_buffer_range();
+                (buffer, range.start + self.1)
+            }
+        }
+
         pub trait BufferArgMut<'a, B: crate::backends::common::Buffer> {
-            fn into_parts(self) -> (&'a mut B, usize);
+            fn into_parts(self) -> (&'a B, usize);
         }
 
         impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for &'a mut B {
-            fn into_parts(self) -> (&'a mut B, usize) {
+            fn into_parts(self) -> (&'a B, usize) {
                 (self, 0)
             }
         }
 
+        impl<'a, B: crate::backends::common::Backend> BufferArgMut<'a, B::Buffer> for &'a mut crate::backends::common::Allocation<B> {
+            fn into_parts(self) -> (&'a B::Buffer, usize) {
+                let (buffer, range) = self.as_buffer_range();
+                (buffer, range.start)
+            }
+        }
+
         impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for (&'a mut B, usize) {
-            fn into_parts(self) -> (&'a mut B, usize) {
-                self
+            fn into_parts(self) -> (&'a B, usize) {
+                (&*self.0, self.1)
+            }
+        }
+
+        impl<'a, B: crate::backends::common::Backend> BufferArgMut<'a, B::Buffer> for (&'a mut crate::backends::common::Allocation<B>, usize) {
+            fn into_parts(self) -> (&'a B::Buffer, usize) {
+                let (buffer, range) = self.0.as_buffer_range();
+                (buffer, range.start + self.1)
             }
         }
 

@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     DataType, DecoderConfig,
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
     config::{DecoderLayerType, MixerConfig},
     encodable_block::{Embedding, EncodingParameters, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
     forward_pass::{
@@ -207,30 +207,30 @@ impl<B: Backend> Decoder<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), DecoderError<B>> {
-        self.embed.encode_lookup(state, command_buffer)?;
+        self.embed.encode_lookup(state, encoder)?;
 
         for layer in self.layers.iter() {
-            layer.encode(state, parameters, command_buffer).map_err(DecoderError::BackendError)?;
+            layer.encode(state, parameters, encoder).map_err(DecoderError::BackendError)?;
         }
 
         if state.is_prefilling() {
             return Ok(());
         }
 
-        self.norm.encode(state, command_buffer).map_err(DecoderError::BackendError)?;
+        self.norm.encode(state, encoder).map_err(DecoderError::BackendError)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.embed.encode_readout(state, command_buffer)?;
+        self.embed.encode_readout(state, encoder)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
+            state.encode_copy_array(encoder, ArrayId::Logits, traces.borrow().logits.clone());
         }
         Ok(())
     }
