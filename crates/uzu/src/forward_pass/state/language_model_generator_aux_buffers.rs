@@ -1,8 +1,7 @@
 use crate::{
-    DecoderConfig,
     array::{ArrayCell, ArrayCellExt},
     backends::common::Backend,
-    config::MLPConfig,
+    config::{DecoderConfig, MLPConfig},
     forward_pass::{model_shape::ModelShape, scratch_buffers::ScratchBuffers},
 };
 

@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{PoolingType, PredictionHeadConfig};
-use crate::{
-    DecoderConfig, DecoderLayerConfig, EmbeddingConfig, LinearConfig, NormalizationConfig, TransformerConfig,
-    config::ConfigError,
+use crate::config::{
+    ConfigError, DecoderConfig, DecoderLayerConfig, EmbeddingConfig, LinearConfig, NormalizationConfig,
+    TransformerConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

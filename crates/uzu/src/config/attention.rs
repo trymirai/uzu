@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LinearConfig, NormalizationConfig};
+use super::{LinearConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AttentionConfig {

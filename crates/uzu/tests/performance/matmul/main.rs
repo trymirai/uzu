@@ -1,4 +1,4 @@
-#![cfg(all(target_os = "macos", metal_backend))]
+#![cfg(metal_backend)]
 
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::MTLDeviceExt;

@@ -4,9 +4,9 @@ use std::rc::Rc;
 
 use super::MixerExecutables;
 use crate::{
-    DataType, DecoderLayerConfig,
+    DataType,
     backends::common::{Backend, Encoder},
-    config::{DecoderLayerType, MixerConfig},
+    config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer, TensorAddSwap,
         TensorCopy,

@@ -6,6 +6,7 @@ use std::{
 
 use half::{bf16, f16};
 use num_traits::Float;
+#[cfg(metal_backend)]
 use rand::{RngExt, SeedableRng, prelude::StdRng};
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -231,6 +232,7 @@ fn test_edge<
     }
 }
 
+#[cfg(metal_backend)]
 fn test_performance<B: Backend>(
     batch_size: usize,
     model_dim: usize,

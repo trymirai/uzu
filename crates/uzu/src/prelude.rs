@@ -12,7 +12,6 @@
 pub use crate::{
     VERSION,
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid, AudioTokenPacking},
-    backends::metal::MetalContext,
     parameters::{HeaderLoadingError, ParameterLeaf, ParameterLoaderError, ParameterTree},
     session::{
         ChatSession, ClassificationSession,

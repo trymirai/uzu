@@ -19,7 +19,7 @@ use crate::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
         metal::command_buffer::MetalCommandBufferInitial,
     },
-    utils::ModelSize,
+    utils::model_size::ModelSize,
 };
 
 pub struct MetalContext {
