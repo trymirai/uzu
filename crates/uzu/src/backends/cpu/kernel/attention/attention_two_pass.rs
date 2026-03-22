@@ -2,7 +2,10 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::ArrayElement;
+use crate::{
+    ArrayElement,
+    backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
+};
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;
 const SEQUENCE_BLOCK_SIZE_1: u32 = 8;
@@ -23,25 +26,39 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     k_seq_stride: u32,
     v_head_stride: u32,
     v_seq_stride: u32,
+    #[optional(is_kv_cache_ring)] ring_params: Option<crate::backends::common::gpu_types::ring::RingParams>,
     scale: f32,
     num_heads: u32,
     suffix_length: u32,
-    #[optional(float_mask)] fmask: Option<*const T>,
-    #[optional(has_mask)] mask_kv_seq_stride: Option<u32>,
-    #[optional(has_mask)] mask_q_seq_stride: Option<u32>,
-    #[optional(has_mask)] mask_head_stride: Option<u32>,
+    #[optional(is_trie)] trie: Option<*const TrieNode>,
+    #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
     #[optional(has_sinks)] sinks: Option<*const f32>,
-    #[specialize] float_mask: bool,
-    #[specialize] has_mask: bool,
     #[specialize] has_sinks: bool,
-    #[specialize] do_causal: bool,
+    #[specialize] is_kv_cache_ring: bool,
+    #[specialize] is_causal: bool,
+    #[specialize] is_trie: bool,
+    #[specialize] is_sliding_window: bool,
 ) {
     let value_dim = HEAD_DIM;
     let mut q = vec![0.0f32; HEAD_DIM as usize];
     let mut o = vec![0.0f32; HEAD_DIM as usize];
 
+    let prefix_length = sequence_length - suffix_length;
+    let suffix_position = if let Some(ring_params) = ring_params {
+        ring_params.ring_length
+    } else {
+        prefix_length
+    };
+
     for head_idx in 0..num_heads {
         for q_seq_idx in 0..suffix_length {
+            let query_position = if is_trie {
+                let trie_node = unsafe { &*trie.unwrap().add(q_seq_idx as usize) };
+                suffix_position + trie_node.height
+            } else {
+                suffix_position + q_seq_idx
+            };
+
             for block_idx in 0..TOTAL_BLOCKS_COUNT {
                 let o_offset = q_seq_idx * num_heads + head_idx;
                 let q_offset = head_idx * suffix_length + q_seq_idx;
@@ -52,13 +69,6 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                 let values_base: *const T = unsafe { values.add((kv_head_idx * v_head_stride) as usize) };
                 let out_base: *mut f32 =
                     unsafe { out.add((o_offset * TOTAL_BLOCKS_COUNT * value_dim + block_idx * value_dim) as usize) };
-
-                let fmask_base: Option<*const T> = if float_mask {
-                    let offset = head_idx * mask_head_stride.unwrap_or(0) + q_seq_idx * mask_q_seq_stride.unwrap_or(0);
-                    Some(unsafe { fmask.unwrap().add(offset as usize) })
-                } else {
-                    None
-                };
 
                 // Read the query and scale
                 for j in 0..HEAD_DIM as usize {
@@ -84,19 +94,23 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                             break;
                         }
 
-                        let use_key = !do_causal || i <= (sequence_length - suffix_length + q_seq_idx);
-                        if use_key {
+                        if should_use_key(
+                            ring_params,
+                            trie,
+                            sliding_window_size,
+                            q_seq_idx,
+                            prefix_length,
+                            suffix_position,
+                            query_position,
+                            i,
+                            is_causal,
+                        ) {
                             let keys_ptr = unsafe { keys_base.add((i * k_seq_stride) as usize) };
 
                             // Compute the i-th score
                             let mut score = 0.0f32;
                             for j in 0..HEAD_DIM as usize {
                                 score += q[j] * unsafe { *keys_ptr.add(j) }.to_f32().unwrap();
-                            }
-                            if float_mask {
-                                let fmask_ptr =
-                                    unsafe { fmask_base.unwrap().add((i * mask_kv_seq_stride.unwrap()) as usize) };
-                                score += f32::max(-1e9, unsafe { *fmask_ptr }.to_f32().unwrap());
                             }
 
                             // Update the accumulators

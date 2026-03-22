@@ -161,8 +161,7 @@ impl<B: Backend> ClassifierContext<B> {
         .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("output norm: {:?}", e))))?;
 
         let context_length = classifier_model_config.model_config.context_length;
-        let scratch_buffers =
-            ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, context_length, context_length);
+        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, context_length);
 
         let embedding_norm_tree = root_loader_view
             .subtree("embedding_norm")

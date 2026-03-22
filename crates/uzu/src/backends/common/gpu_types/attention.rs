@@ -34,16 +34,3 @@ pub struct AttnParams {
     /// Key tiling: k_len % BK
     pub k_rem: i32,
 }
-
-/// Parameters describing the additive attention mask.
-///
-/// Mask is treated as a 2D matrix [qL, kL] with:
-/// - per-batch base offset (`m_strides[0]`)
-/// - per-head base offset (`m_strides[1]`)
-/// - row stride in elements (`m_strides[2]`)
-/// Column stride is assumed to be 1.
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct AttnMaskParams {
-    pub m_strides: [i64; 3],
-}

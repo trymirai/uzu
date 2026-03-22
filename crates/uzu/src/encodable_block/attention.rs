@@ -5,10 +5,13 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use itertools::iproduct;
+
 use crate::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
+        gpu_types::ring::RingParams,
         kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
             SigmoidGateKernel,
@@ -16,7 +19,10 @@ use crate::{
         },
     },
     encodable_block::EncodingParameters,
-    forward_pass::state::{ArrayId, ForwardPassState, HashMapId},
+    forward_pass::{
+        kv_cache_layer::KVCacheLayerState,
+        state::{ArrayId, ForwardPassState},
+    },
 };
 
 fn env_gemm_attention_enabled() -> bool {
@@ -65,28 +71,39 @@ impl<B: Backend> Attention<B> {
         let mut two_pass_1_kernels = HashMap::new();
         let mut two_pass_2_kernels = HashMap::new();
 
-        let supported_head_dims = [64u32, 128u32, 256u32];
-        for head_dim in supported_head_dims {
-            for has_mask in [false, true] {
-                let key = KernelKey {
-                    head_dim,
-                    has_mask,
-                };
-                let float_mask = has_mask;
+        for (head_dim, is_trie, is_kv_cache_ring) in iproduct!([64u32, 128u32, 256u32], [false, true], [false, true]) {
+            let key = KernelKey {
+                head_dim,
+                is_trie,
+                is_kv_cache_ring,
+            };
 
-                let sp_kernel = <B::Kernels as Kernels>::AttentionSinglePassKernel::new(
-                    context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
-                )?;
-                single_pass_kernels.insert(key, sp_kernel);
+            let sp_kernel = <B::Kernels as Kernels>::AttentionSinglePassKernel::new(
+                context,
+                data_type,
+                head_dim,
+                has_sinks,
+                is_kv_cache_ring,
+                is_causal,
+                is_trie,
+                sliding_window_size.is_some(),
+            )?;
+            single_pass_kernels.insert(key, sp_kernel);
 
-                let tp1_kernel = <B::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
-                    context, data_type, head_dim, float_mask, has_mask, has_sinks, is_causal,
-                )?;
-                two_pass_1_kernels.insert(key, tp1_kernel);
+            let tp1_kernel = <B::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
+                context,
+                data_type,
+                head_dim,
+                has_sinks,
+                is_kv_cache_ring,
+                is_causal,
+                is_trie,
+                sliding_window_size.is_some(),
+            )?;
+            two_pass_1_kernels.insert(key, tp1_kernel);
 
-                let tp2_kernel = <B::Kernels as Kernels>::AttentionTwoPass2Kernel::new(context, data_type, head_dim)?;
-                two_pass_2_kernels.insert(head_dim, tp2_kernel);
-            }
+            let tp2_kernel = <B::Kernels as Kernels>::AttentionTwoPass2Kernel::new(context, data_type, head_dim)?;
+            two_pass_2_kernels.insert(head_dim, tp2_kernel);
         }
 
         let update_kv_cache_kernel =
@@ -122,7 +139,8 @@ impl<B: Backend> Attention<B> {
         suffix_length: usize,
         head_dim: usize,
         sequence_length: usize,
-        use_mask: bool,
+        is_trie: bool,
+        is_kv_cache_ring: bool,
     ) -> KernelVariant {
         let use_gemm = gemm_enabled && suffix_length > 8 && matches!(head_dim, 64 | 128 | 256);
         if use_gemm {
@@ -131,7 +149,8 @@ impl<B: Backend> Attention<B> {
 
         let kernel_key = KernelKey {
             head_dim: head_dim as u32,
-            has_mask: use_mask,
+            is_trie,
+            is_kv_cache_ring,
         };
         if sequence_length > 1024
             && self.two_pass_1_kernels.contains_key(&kernel_key)
@@ -168,18 +187,34 @@ impl<B: Backend> Attention<B> {
             suffix_length
         };
 
-        let (segment_prefix_length, window_length) = if let Some(cache_layers) = state.cache_layers() {
+        let is_trie = state.token_subtrie_ranges.is_some();
+
+        let (segment_prefix_length, ring_params) = if let Some(cache_layers) = state.cache_layers() {
+            let projection_step = parameters.projection_step.unwrap_or(0);
             let cache = cache_layers.borrow();
             let layer = cache.data[self.layer_index]
                 .as_transformer()
                 .expect("Attention kernel expects transformer layer state");
-            (layer.projected_segment_prefix_length(parameters.projection_step.unwrap_or(0)), layer.window_length())
+            let ring_params = match layer.state {
+                KVCacheLayerState::Windowed {
+                    ring_offset,
+                    ring_length,
+                    window_length,
+                } => {
+                    let overflow = (ring_length + projection_step).saturating_sub(window_length);
+                    Some(RingParams {
+                        ring_offset: ((ring_offset + overflow) % window_length) as u32,
+                        ring_length: (ring_length + projection_step).min(window_length) as u32,
+                    })
+                },
+                _ => None,
+            };
+            (layer.projected_segment_prefix_length(projection_step), ring_params)
         } else {
-            // For classifiers without KV cache: no prefix, use configured sliding window
-            (0, self.sliding_window_size)
+            (0, None)
         };
 
-        let use_mask = window_length.is_some();
+        let is_kv_cache_ring = ring_params.is_some();
 
         let sequence_length = segment_prefix_length + suffix_length;
 
@@ -193,14 +228,11 @@ impl<B: Backend> Attention<B> {
                 eprintln!("[uzu] Gemm attention disabled via UZU_USE_GEMM_ATTENTION");
             });
         }
-        let variant = self.select_variant(gemm_enabled, suffix_length, head_dim, sequence_length, use_mask);
+        let variant =
+            self.select_variant(gemm_enabled, suffix_length, head_dim, sequence_length, is_trie, is_kv_cache_ring);
 
-        let attention_bias_binding = state.hashmaps(&[HashMapId::AttentionBias]);
         let gate_array = self.gate_kernel.as_ref().map(|_| state.array(ArrayId::Gate));
 
-        let mask_kv_seq_stride = 1;
-        let mask_q_seq_stride = sequence_length as i32;
-        let mask_head_stride = 0;
         let sinks_array = self.has_sinks.then(|| state.array(ArrayId::AttentionSinks(self.layer_index)));
 
         let rotated_keys_buf_rc = rotated_keys_array.buffer();
@@ -248,18 +280,9 @@ impl<B: Backend> Attention<B> {
         let attention_output_buf_rc = attention_output_array.buffer();
         let mut attention_output_buf_borrow = attention_output_buf_rc.borrow_mut();
 
-        let attention_bias_array_borrow = if use_mask {
-            Some(
-                attention_bias_binding[0]
-                    .get(&window_length)
-                    .unwrap_or_else(|| panic!("Attention bias buffer not found for window length {:?}", window_length)),
-            )
-        } else {
-            None
-        };
-        let attention_bias_buf_rc = attention_bias_array_borrow.as_ref().map(|a| a.buffer());
-        let attention_bias_buf_borrow = attention_bias_buf_rc.as_ref().map(|rc| rc.borrow());
-        let attention_bias_buffer: Option<&B::Buffer> = attention_bias_buf_borrow.as_ref().map(|b| b.deref());
+        let trie_buf_rc = state.token_subtrie_ranges.as_ref().map(|a| a.buffer());
+        let trie_buf_borrow = trie_buf_rc.as_ref().map(|rc| rc.borrow());
+        let trie_buffer: Option<&B::Buffer> = trie_buf_borrow.as_ref().map(|b| b.deref());
 
         let partials_buf_rc = partials_array.buffer();
         let mut partials_buf_borrow = partials_buf_rc.borrow_mut();
@@ -309,17 +332,9 @@ impl<B: Backend> Attention<B> {
 
         let kernel_key = KernelKey {
             head_dim: head_dim as u32,
-            has_mask: use_mask,
+            is_trie,
+            is_kv_cache_ring,
         };
-
-        let mut mask_kv_seq_stride_opt: Option<u32> = None;
-        let mut mask_q_seq_stride_opt: Option<u32> = None;
-        let mut mask_head_stride_opt: Option<u32> = None;
-        if attention_bias_buffer.is_some() {
-            mask_kv_seq_stride_opt = Some(mask_kv_seq_stride as u32);
-            mask_q_seq_stride_opt = Some(mask_q_seq_stride as u32);
-            mask_head_stride_opt = Some(mask_head_stride as u32);
-        }
 
         match variant {
             KernelVariant::Gemm => {
@@ -328,7 +343,7 @@ impl<B: Backend> Attention<B> {
                     keys_buffer: key_cache_buffer,
                     values_buffer: value_cache_buffer,
                     output_buffer: attention_output_buf_borrow.deref_mut(),
-                    mask_buffer: attention_bias_buffer,
+                    trie_buffer,
                     sinks_buffer,
                     num_heads,
                     num_groups,
@@ -336,8 +351,10 @@ impl<B: Backend> Attention<B> {
                     sequence_length,
                     segment_prefix_length,
                     max_sequence_length,
+                    ring_params,
                     head_dim,
                     is_causal: self.is_causal,
+                    sliding_window_size: self.sliding_window_size,
                     scale,
                 };
                 self.gemm_block.encode(state.context(), encoder, args).expect("Failed to encode AttentionGemmBlock");
@@ -358,11 +375,10 @@ impl<B: Backend> Attention<B> {
                     k_seq_stride as u32,
                     v_head_stride as u32,
                     v_seq_stride as u32,
+                    ring_params,
                     scale,
-                    attention_bias_buffer,
-                    mask_kv_seq_stride_opt,
-                    mask_q_seq_stride_opt,
-                    mask_head_stride_opt,
+                    trie_buffer,
+                    self.sliding_window_size.map(|s| s as u32),
                     sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
@@ -391,13 +407,12 @@ impl<B: Backend> Attention<B> {
                     k_seq_stride as u32,
                     v_head_stride as u32,
                     v_seq_stride as u32,
+                    ring_params,
                     scale,
                     num_heads as u32,
                     suffix_length as u32,
-                    attention_bias_buffer,
-                    mask_kv_seq_stride_opt,
-                    mask_q_seq_stride_opt,
-                    mask_head_stride_opt,
+                    trie_buffer,
+                    self.sliding_window_size.map(|s| s as u32),
                     sinks_buffer,
                     encoder,
                 );
@@ -439,7 +454,8 @@ enum KernelVariant {
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 struct KernelKey {
     pub head_dim: u32,
-    pub has_mask: bool,
+    pub is_trie: bool,
+    pub is_kv_cache_ring: bool,
 }
 
 #[cfg(test)]

@@ -46,16 +46,6 @@ typedef struct {
   int32_t k_rem;
 } AttnParams;
 
-/**Parameters describing the additive attention mask. */
-/**Mask is treated as a 2D matrix [qL, kL] with: */
-/**- per-batch base offset (`m_strides[0]`) */
-/**- per-head base offset (`m_strides[1]`) */
-/**- row stride in elements (`m_strides[2]`) */
-/**Column stride is assumed to be 1. */
-typedef struct {
-  int64_t m_strides[3];
-} AttnMaskParams;
-
 #ifdef __METAL_VERSION__
 } // namespace attention
 } // namespace uzu

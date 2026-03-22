@@ -7,7 +7,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
-        gpu_types::{AttnMaskParams, AttnParams},
+        gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
 };
@@ -15,19 +15,21 @@ use crate::{
 const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a, B: Backend> {
-    pub queries_buffer: &'a B::Buffer,       // buffer(0)
-    pub keys_buffer: &'a B::Buffer,          // buffer(1)
-    pub values_buffer: &'a B::Buffer,        // buffer(2)
-    pub output_buffer: &'a mut B::Buffer,    // buffer(3)
-    pub mask_buffer: Option<&'a B::Buffer>,  // buffer(6)
-    pub sinks_buffer: Option<&'a B::Buffer>, // buffer(7)
+    pub queries_buffer: &'a B::Buffer,
+    pub keys_buffer: &'a B::Buffer,
+    pub values_buffer: &'a B::Buffer,
+    pub output_buffer: &'a mut B::Buffer,
+    pub trie_buffer: Option<&'a B::Buffer>,
+    pub sinks_buffer: Option<&'a B::Buffer>,
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
     pub sequence_length: usize,       // kL (prefix + suffix)
     pub segment_prefix_length: usize, // qL_off
     pub max_sequence_length: usize,   // stride for K/V cache
+    pub ring_params: Option<RingParams>,
     pub head_dim: usize,
+    pub sliding_window_size: Option<usize>,
     pub is_causal: bool,
     pub scale: f32,
 }
@@ -57,17 +59,23 @@ impl<B: Backend> AttentionGemmBlock<B> {
         } else {
             16
         };
+        let head_dim = args.head_dim;
         let align_q = (args.suffix_length % BQ) == 0;
         let align_k = (args.sequence_length % bk) == 0;
-        let has_mask = args.mask_buffer.is_some();
+        let is_kv_cache_ring = args.ring_params.is_some();
+        let is_causal = args.is_causal;
+        let is_trie = args.trie_buffer.is_some();
+        let is_sliding_window = args.sliding_window_size.is_some();
         let has_sinks = args.sinks_buffer.is_some();
         let key = KernelKey {
             bk,
-            head_dim: args.head_dim,
+            head_dim,
             align_q,
             align_k,
-            is_causal: args.is_causal,
-            has_mask,
+            is_kv_cache_ring,
+            is_causal,
+            is_trie,
+            is_sliding_window,
             has_sinks,
         };
 
@@ -79,11 +87,13 @@ impl<B: Backend> AttentionGemmBlock<B> {
                     context,
                     self.data_type,
                     bk as u32,
-                    args.head_dim as u32,
+                    head_dim as u32,
                     align_q,
                     align_k,
-                    args.is_causal,
-                    has_mask,
+                    is_kv_cache_ring,
+                    is_causal,
+                    is_trie,
+                    is_sliding_window,
                     has_sinks,
                 )?;
                 entry.insert(kernel)
@@ -91,14 +101,14 @@ impl<B: Backend> AttentionGemmBlock<B> {
         };
 
         // Params (all strides in elements)
-        let q_head_stride = (args.suffix_length * args.head_dim) as i64;
-        let q_seq_stride = args.head_dim as i64;
+        let q_head_stride = (args.suffix_length * head_dim) as i64;
+        let q_seq_stride = head_dim as i64;
 
-        let kv_head_stride = (args.max_sequence_length * args.head_dim) as i64;
-        let kv_seq_stride = args.head_dim as i64;
+        let kv_head_stride = (args.max_sequence_length * head_dim) as i64;
+        let kv_seq_stride = head_dim as i64;
 
-        let o_head_stride = args.head_dim as i64;
-        let o_seq_stride = (args.num_heads * args.head_dim) as i64;
+        let o_head_stride = head_dim as i64;
+        let o_seq_stride = (args.num_heads * head_dim) as i64;
 
         let nk = (args.sequence_length + bk - 1) / bk;
         let nq_aligned = args.suffix_length / BQ;
@@ -121,20 +131,15 @@ impl<B: Backend> AttentionGemmBlock<B> {
             k_rem: (args.sequence_length - nk_aligned * bk) as i32,
         };
 
-        let attn_mask_params = AttnMaskParams {
-            // We use a shared bias matrix for all heads/batches.
-            m_strides: [0, 0, args.sequence_length as i64],
-        };
-        let attn_mask_params_opt = args.mask_buffer.map(|_| attn_mask_params);
-
         kernel.encode(
             args.queries_buffer,
             args.keys_buffer,
             args.values_buffer,
             args.output_buffer,
             params,
-            attn_mask_params_opt,
-            args.mask_buffer,
+            args.ring_params,
+            args.trie_buffer,
+            args.sliding_window_size.map(|s| s as u32),
             args.sinks_buffer,
             args.num_heads as u32,
             args.suffix_length as u32,
@@ -151,7 +156,9 @@ struct KernelKey {
     head_dim: usize,
     align_q: bool,
     align_k: bool,
+    is_kv_cache_ring: bool,
     is_causal: bool,
-    has_mask: bool,
+    is_trie: bool,
+    is_sliding_window: bool,
     has_sinks: bool,
 }

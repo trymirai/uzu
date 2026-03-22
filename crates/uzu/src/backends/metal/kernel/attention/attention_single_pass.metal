@@ -2,9 +2,15 @@
 #include <metal_simdgroup>
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../generated/ring.h"
+#include "../generated/trie.h"
+#include "mask.h"
 
 #define SEQUENCE_BLOCK_SIZE 32
 #define HEAD_BLOCK_SIZE 32
+
+using namespace uzu::ring;
+using namespace uzu::trie;
 
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
@@ -20,27 +26,26 @@ PUBLIC KERNEL(AttentionSinglePass)(
     const constant uint& k_seq_stride,
     const constant uint& v_head_stride,
     const constant uint& v_seq_stride,
+    const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
     const constant float& scale,
-    const device T* fmask OPTIONAL(float_mask),
-    const constant uint& mask_kv_seq_stride OPTIONAL(has_mask),
-    const constant uint& mask_q_seq_stride OPTIONAL(has_mask),
-    const constant uint& mask_head_stride OPTIONAL(has_mask),
+    const device TrieNode* trie OPTIONAL(is_trie),
+    const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     const device float* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
     threadgroup float shared_max_scores[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
     threadgroup float shared_sum_exp_scores[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
     threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
-    const bool float_mask SPECIALIZE,
-    const bool has_mask SPECIALIZE,
     const bool has_sinks SPECIALIZE,
-    const bool do_causal SPECIALIZE,
+    const bool is_kv_cache_ring SPECIALIZE,
+    const bool is_causal SPECIALIZE,
+    const bool is_trie SPECIALIZE,
+    const bool is_sliding_window SPECIALIZE,
     const ThreadContext thread_context,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
     const uint tid THREADS(1024)
 ) {
-  const uint3 tpg = {num_heads, suffix_length, 1};
   constexpr bool query_transposed = false;
 
   constexpr uint value_dim = HEAD_DIM;
@@ -56,9 +61,17 @@ PUBLIC KERNEL(AttentionSinglePass)(
   thread U o[value_elements_per_thread];
 
   const uint kv_head_idx = head_idx / gqa_factor;
-  const uint o_offset = q_seq_idx * tpg.x + head_idx;
-  const uint q_offset = query_transposed ? tpg.x * q_seq_idx + head_idx
-                                         : head_idx * tpg.y + q_seq_idx;
+  const uint o_offset = q_seq_idx * num_heads + head_idx;
+  const uint q_offset = query_transposed ? num_heads * q_seq_idx + head_idx
+                                         : head_idx * suffix_length + q_seq_idx;
+
+  const uint prefix_length = sequence_length - suffix_length;
+
+  const uint suffix_position =
+      is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
+
+  const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height
+                                      : suffix_position + q_seq_idx;
 
   queries += q_offset * HEAD_DIM +
              thread_context.simdgroup_index * qk_elements_per_thread;
@@ -68,12 +81,6 @@ PUBLIC KERNEL(AttentionSinglePass)(
   values += kv_head_idx * v_head_stride +
             thread_context.threadgroup_index * v_seq_stride +
             thread_context.simdgroup_index * value_elements_per_thread;
-
-  if (float_mask) {
-    fmask += head_idx * mask_head_stride +
-             thread_context.threadgroup_index * mask_kv_seq_stride +
-             q_seq_idx * mask_q_seq_stride;
-  }
 
   out += o_offset * value_dim +
          thread_context.threadgroup_index * value_elements_per_thread;
@@ -89,7 +96,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
   U max_score = -INFINITY;
   U sum_exp_score = 0;
   if (has_sinks && thread_context.threadgroup_index == 0) {
-    const int num_q_heads = static_cast<int>(tpg.x);
+    const int num_q_heads = static_cast<int>(num_heads);
     int q_head_idx = head_idx % num_q_heads;
     max_score = static_cast<U>(sinks[q_head_idx]);
     sum_exp_score = 1;
@@ -98,12 +105,20 @@ PUBLIC KERNEL(AttentionSinglePass)(
   // For each key
   for (uint i = thread_context.threadgroup_index; i < sequence_length;
        i += SEQUENCE_BLOCK_SIZE) {
-    bool use_key = true;
-    if (do_causal) {
-      use_key = i <= (sequence_length - tpg.y + q_seq_idx);
-    }
-
-    if (use_key) {
+    if (should_use_key(
+            ring_params,
+            trie,
+            sliding_window_size,
+            q_seq_idx,
+            prefix_length,
+            suffix_position,
+            query_position,
+            i,
+            is_kv_cache_ring,
+            is_causal,
+            is_trie,
+            is_sliding_window
+        )) {
       // Read the key
       for (uint j = 0; j < qk_elements_per_thread; j++) {
         k[j] = keys[j];
@@ -115,9 +130,6 @@ PUBLIC KERNEL(AttentionSinglePass)(
         score += q[j] * k[j];
       }
       score = simd_sum(score);
-      if (float_mask) {
-        score += max(-1e9f, static_cast<U>(fmask[0]));
-      }
 
       // Update the accumulators
       U new_max = max(max_score, score);
@@ -136,9 +148,6 @@ PUBLIC KERNEL(AttentionSinglePass)(
     // Move the pointers to the next kv
     keys += inner_k_stride;
     values += inner_v_stride;
-    if (float_mask) {
-      fmask += SEQUENCE_BLOCK_SIZE * mask_kv_seq_stride;
-    }
   }
 
   // Each thread has a partial part of the output so we need to combine them.

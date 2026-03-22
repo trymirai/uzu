@@ -9,7 +9,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Buffer, Context, Kernels,
-        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
+        kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
@@ -128,8 +128,6 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     /// Kernels for copying sampled tokens in async pipeline
     pub token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
     pub token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
-    /// Kernel for updating attention mask between async passes
-    pub mask_update: Option<<B::Kernels as Kernels>::MaskUpdateKernel>,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers<B>,
 }
@@ -164,8 +162,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
         shared_buffers.borrow_mut().update_data(&root_loader_view);
 
-        let scratch_buffers =
-            ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
+        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_suffix_length);
 
         let executables = Decoder::new(context.as_ref(), &decoder_config, &root_loader_view);
 
@@ -191,16 +188,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(&context)
             .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
-        // Create mask update kernel if model has attention layers
-        let mask_update = if decoder_config.has_attention_layers() {
-            Some(
-                <B::Kernels as Kernels>::MaskUpdateKernel::new(&context, intermediate_data_type)
-                    .map_err(|e| Error::UnableToCreateContext(e.into()))?,
-            )
-        } else {
-            None
-        };
-
         let async_batch_size = decoding_config.async_batch_size.resolve::<B>(model_path, context.as_ref());
         let async_buffers = AsyncBuffers::new(context.as_ref(), max_prefix_length, async_batch_size);
 
@@ -220,7 +207,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             seed,
             token_copy_sampled,
             token_copy_results,
-            mask_update,
             async_buffers,
         };
 

@@ -18,13 +18,13 @@ use super::{
 use crate::{
     backends::common::{
         Backend, Buffer, CommandBuffer, Context, Encoder, Executable,
-        kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
+        kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
     config::ModelMetadata,
     encodable_block::EncodingParameters,
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
-        kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
+        kv_cache_layer::INVALID_POSITION,
         state::ForwardPassState,
     },
     session::{
@@ -39,6 +39,7 @@ use crate::{
 #[derive(Debug, Clone)]
 struct Task<'a> {
     token_ids: &'a [u64],
+    token_subtrie_ranges: Option<&'a [[u32; 3]]>,
     token_positions: &'a [usize],
     token_bitmask: Option<&'a [u32]>,
     token_seeds: &'a [u64],
@@ -152,7 +153,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let speculator = &self.decoding_config.speculator_config.speculator;
 
         let suffix_length = if sample_suffix {
-            self.decoding_config.generate_suffix_length().saturating_sub(1)
+            self.decoding_config.generate_suffix_length().saturating_sub(1).min(prefill_size - tokens_length)
         } else {
             prefill_size - tokens_length
         };
@@ -171,6 +172,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_ids =
             tokens.iter().copied().take(tokens_length - 1).chain(flat_trie.token_ids()).chunks(prefill_step_size);
 
+        let token_subtrie_ranges = repeat_n(None, tokens_length - 1)
+            .chain(flat_trie.token_subtrie_ranges().map(Some))
+            .chunks(prefill_step_size);
+
         let token_positions = (prefix_offset..prefix_offset + tokens_length - 1)
             .chain(flat_trie.token_positions().map(|trie_position| prefix_offset + tokens_length - 1 + trie_position))
             .chunks(prefill_step_size);
@@ -184,13 +189,38 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
-        for (step, (step_token_ids, step_token_positions, step_token_bitmasks, step_token_seeds)) in
-            izip!(&token_ids, &token_positions, &token_bitmasks, &token_seeds).enumerate()
+        for (
+            step,
+            (step_token_ids, step_token_subtrie_ranges, step_token_positions, step_token_bitmasks, step_token_seeds),
+        ) in izip!(&token_ids, &token_subtrie_ranges, &token_positions, &token_bitmasks, &token_seeds).enumerate()
         {
             let tokens_start_index = step * prefill_step_size;
             let tokens_end_index = tokens_start_index + prefill_step_size;
 
             let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
+            let step_token_subtrie_ranges = step_token_subtrie_ranges.collect::<Box<[Option<[u32; 3]>]>>();
+            let step_token_subtrie_ranges: Option<Box<[[u32; 3]]>> =
+                if let Some(trie_start) = step_token_subtrie_ranges.iter().position(|e| e.is_some()) {
+                    Some(
+                        step_token_subtrie_ranges
+                            .iter()
+                            .enumerate()
+                            .map(|(i, me)| {
+                                if let Some([subtrie_start, subtrie_end, height]) = me {
+                                    [
+                                        trie_start as u32 + subtrie_start,
+                                        trie_start as u32 + subtrie_end,
+                                        trie_start as u32 + height,
+                                    ]
+                                } else {
+                                    [i as u32, step_token_subtrie_ranges.len() as u32 - 1, i as u32]
+                                }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
             let step_token_positions = step_token_positions.collect::<Box<[usize]>>();
             let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
 
@@ -241,6 +271,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
             let task = Task {
                 token_ids: &step_token_ids,
+                token_subtrie_ranges: step_token_subtrie_ranges.as_deref(),
                 token_positions: &step_token_positions,
                 token_bitmask: step_token_bitmask.as_deref(),
                 token_seeds: &step_token_seeds,
@@ -251,8 +282,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 is_prefilling: !should_sample_after_step,
             };
 
-            let (state, run_time) =
-                self.run_model(task, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
+            let (state, run_time) = self.run_model(task, self.allow_pre_encode(), sampling_method)?;
 
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
@@ -260,28 +290,18 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
             // Register the accepted prompt tokens from this step.
             let step_end_token_index = std::cmp::min(tokens_end_index, tokens_length);
-            let tokens_processed_this_step = step_end_token_index - tokens_start_index;
+            let mut tokens_processed_this_step = step_end_token_index - tokens_start_index;
+
+            if step == prefill_steps - 1 && sample_suffix {
+                tokens_processed_this_step = tokens_processed_this_step.saturating_sub(1);
+            }
 
             if tokens_processed_this_step > 0 {
-                let mut positions_for_step: Vec<usize> =
-                    (tokens_start_index..step_end_token_index).map(|idx| idx + prefix_offset).collect();
-                if step == prefill_steps - 1 && sample_suffix {
-                    // Exclude the last token because it belongs to the suffix for sampling.
-                    positions_for_step.pop();
-                }
+                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, true)?;
 
-                if !positions_for_step.is_empty() {
-                    let accept_indices_for_step: Vec<usize> = (0..positions_for_step.len()).collect();
-                    if !accept_indices_for_step.is_empty() {
-                        self.update_cache_layers(&accept_indices_for_step, None, true)?;
-                    }
+                self.context.cache_layers.borrow_mut().register_accepted_tokens(tokens_processed_this_step);
 
-                    self.context.cache_layers.borrow_mut().register_accepted_tokens(&positions_for_step);
-
-                    if let Some(&last_idx) = positions_for_step.last() {
-                        self.registered_prefix_len = last_idx + 1;
-                    }
-                }
+                self.registered_prefix_len = prefix_offset + tokens_start_index + tokens_processed_this_step;
             }
 
             last_state = Some(state);
@@ -342,6 +362,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_ids =
             flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_suffix_length)).collect::<Box<[u64]>>();
 
+        let token_subtrie_ranges = flat_trie
+            .token_subtrie_ranges()
+            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_suffix_length))
+            .collect::<Box<[[u32; 3]]>>();
+
         let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
             let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
             flat_trie
@@ -372,6 +397,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let task = Task {
             token_ids: &token_ids,
+            token_subtrie_ranges: Some(&token_subtrie_ranges),
             token_positions: &token_positions,
             token_bitmask: token_bitmask.as_deref(),
             token_seeds: &token_seeds,
@@ -382,8 +408,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             is_prefilling: false,
         };
 
-        let (mut state, run_time) =
-            self.run_model(task, self.allow_pre_encode(), sampling_method, self.should_fill_attention_bias())?;
+        let (mut state, run_time) = self.run_model(task, self.allow_pre_encode(), sampling_method)?;
 
         let sampled_tokens = self.read_sampling_output(&mut state)?;
 
@@ -412,17 +437,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         tokens_to_generate: usize,
     ) {
         let prefill_count = self.tokens.len();
-        let first_decode_position = prefill_count.saturating_sub(1);
-
-        // Fill attention bias from KV cache state for the first decode position.
-        // Windowed buffers get the correct mask; GPU patches maintain it for subsequent passes.
-        // Full-attention buffers also get filled (masking beyond-prefix positions).
-        self.context.cache_layers.borrow().fill_attention_bias_scratch(
-            &mut self.context.scratch_buffers.attention_window_size_to_bias,
-            &[first_decode_position],
-            1,
-            &self.context.context,
-        );
 
         self.context.async_buffers.prepare_positions(prefill_count, tokens_to_generate);
         self.context.async_buffers.prepare_seeds(&self.context.seed, prefill_count, tokens_to_generate);
@@ -462,6 +476,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let task = Task {
             token_ids: &[last_token],
+            token_subtrie_ranges: None,
             token_positions: &[token_position],
             token_bitmask: None,
             token_seeds: &[0], // Ignored, using async buffer
@@ -475,7 +490,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let async_positions = Some((async_positions_buffer.clone(), pass_idx));
         let async_seeds = Some((async_seeds_buffer.clone(), pass_idx));
 
-        let should_fill_attention_bias = false; // we fill it once in prepare
         let skip_token_ids_copy = pass_idx > 0;
 
         let is_first_decode = !is_continuation;
@@ -492,6 +506,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             self.context.cache_layers.clone(),
             self.context.shared_buffers.clone(),
             &task.token_ids,
+            task.token_subtrie_ranges,
             &task.token_positions,
             task.token_bitmask,
             &task.token_seeds,
@@ -499,9 +514,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             /*sampling_start=*/ 0,
             /*sampling_length=*/ task.active_suffix_length,
             task.is_prefilling,
-            None,
             skip_token_ids_copy,
-            should_fill_attention_bias,
             async_positions,
             async_seeds,
         );
@@ -552,26 +565,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &mut encoder,
             &self.context.kv_cache_update,
         );
-        self.context.cache_layers.borrow_mut().register_accepted_tokens(&[token_position]);
-
-        if let Some(mask_update) = &self.context.mask_update {
-            let updates: Vec<AttentionBiasUpdate> =
-                self.context.cache_layers.borrow().attention_bias_updates_after_acceptance(1);
-            for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
-                if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
-                    if update.unmask_col >= 0 || update.mask_col >= 0 {
-                        let mask_buf_rc = mask_buffer.buffer();
-                        let mut mask_buf_borrow = mask_buf_rc.borrow_mut();
-                        mask_update.encode(
-                            mask_buf_borrow.deref_mut(),
-                            update.unmask_col,
-                            update.mask_col,
-                            &mut encoder,
-                        );
-                    }
-                }
-            }
-        }
+        self.context.cache_layers.borrow_mut().register_accepted_tokens(1);
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
@@ -671,7 +665,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                         dst.values.copy_slice(&src.values, 1, 0..copy_rows, 0);
                     }
                     dst.state = src.state.clone();
-                    dst.prefix_token_positions = src.prefix_token_positions.clone();
                 },
                 (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
                     dst.conv_state.copy_from_array(&src.conv_state);
@@ -711,7 +704,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
         task: Task,
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
-        should_fill_attention_bias: bool,
     ) -> Result<(ForwardPassState<B>, f64), Error> {
         let run_start = Instant::now();
 
@@ -723,6 +715,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.context.cache_layers.clone(),
             self.context.shared_buffers.clone(),
             task.token_ids,
+            task.token_subtrie_ranges,
             task.token_positions,
             task.token_bitmask,
             task.token_seeds,
@@ -730,9 +723,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             task.sampling_start,
             task.sampling_length,
             task.is_prefilling,
-            None,
             false,
-            should_fill_attention_bias,
             None,
             None,
         );
@@ -879,19 +870,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let desired_prefix_len = self.tokens.len() - 1;
         if desired_prefix_len > self.registered_prefix_len {
-            let positions: Vec<usize> = (self.registered_prefix_len..desired_prefix_len).collect();
-            if !positions.is_empty() {
-                self.context.cache_layers.borrow_mut().register_accepted_tokens(&positions);
-            }
+            let number_of_accepted_tokens = desired_prefix_len - self.registered_prefix_len;
+            self.context.cache_layers.borrow_mut().register_accepted_tokens(number_of_accepted_tokens);
             self.registered_prefix_len = desired_prefix_len;
         }
-    }
-
-    fn should_fill_attention_bias(&self) -> bool {
-        let sliding_window_sizes = self.context.model_shape.sliding_window_length_per_layer.clone();
-        let has_sliding_window = sliding_window_sizes.iter().any(|size| size.is_some());
-        let has_speculative_suffix = self.decoding_config.generate_suffix_length() > 1;
-
-        has_sliding_window || has_speculative_suffix
     }
 }
