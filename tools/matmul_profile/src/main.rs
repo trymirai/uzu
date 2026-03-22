@@ -4,8 +4,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context,
+            Backend, Context, Encoder,
             kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         metal::Metal,
@@ -78,7 +77,7 @@ fn run_iteration(
     k: i32,
     n: i32,
 ) -> f64 {
-    let mut command_buffer = context.create_command_buffer().unwrap().start_encoding();
+    let mut encoder = Encoder::<Metal>::new(context).unwrap();
 
     let arguments = MatmulArguments {
         a: a_buffer,
@@ -96,11 +95,11 @@ fn run_iteration(
     };
 
     match kernel_choice {
-        KernelChoice::Gemm => kernel.encode_gemm(context, &mut command_buffer, arguments).unwrap(),
-        KernelChoice::GemmMpp => kernel.encode_gemm_mpp(context, &mut command_buffer, arguments).unwrap(),
+        KernelChoice::Gemm => kernel.encode_gemm(context, arguments, &mut encoder).unwrap(),
+        KernelChoice::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut encoder).unwrap(),
     }
 
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
 }
 

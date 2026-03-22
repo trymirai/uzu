@@ -12,7 +12,6 @@ DISPATCH_STYLES: dict[str, dict] = {
     "Gemm": dict(color="#EA4335", marker="v", linestyle="--"),
     "GemmMpp": dict(color="#4285F4", marker="o", linestyle="-"),
     "GemmMppDirect": dict(color="#7B1FA2", marker="s", linestyle="-."),
-    "GemmMppNative": dict(color="#FF6D00", marker="D", linestyle=":"),
 }
 
 DEFAULT_STYLE = dict(color="#757575", marker="x", linestyle="-.")
