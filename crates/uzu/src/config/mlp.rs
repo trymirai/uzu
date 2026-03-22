@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LinearConfig, backends::common::ActivationConfig};
+use crate::{backends::common::ActivationConfig, config::LinearConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelConfig, ModelType};
+use super::{ModelConfig, ModelType};
 
 fn default_model_type() -> ModelType {
     ModelType::LanguageModel

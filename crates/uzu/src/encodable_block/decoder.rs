@@ -5,9 +5,9 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use crate::{
-    DataType, DecoderConfig,
+    DataType,
     backends::common::{Backend, Encoder},
-    config::{DecoderLayerType, MixerConfig},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig},
     encodable_block::{Embedding, EncodingParameters, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
     forward_pass::{
         model_shape::ModelShape,

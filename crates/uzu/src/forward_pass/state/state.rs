@@ -7,9 +7,10 @@ use crate::backends::common::Encoder;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
-    DataType, DecoderConfig,
+    DataType,
     array::{Array, ArrayCell, ArrayCellExt},
     backends::common::{Backend, Context},
+    config::DecoderConfig,
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,

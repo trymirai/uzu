@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ClassifierModelConfig, LanguageModelConfig};
+use super::{ClassifierModelConfig, LanguageModelConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(untagged)]

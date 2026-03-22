@@ -11,7 +11,7 @@ authors = ["Mirai Tech <https://trymirai.com>"]
 repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
-benchmarks = { path = "crates/benchmarks" }
+benchmarks = { path = "crates/benchmarks", default-features = false }
 dsl = { path = "crates/dsl" }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
