@@ -570,7 +570,7 @@ impl MatmulKernel for MatmulMetalKernel {
         if Self::is_gemv_eligible(&arguments) {
             self.encode_gemv(context, command_buffer, arguments).expect("Failed to encode GEMV kernel");
         } else if context.device_capabilities().supports_mxu {
-            self.encode_gemm_mpp_mxu(context, command_buffer, arguments).expect("Failed to encode GEMM MPP MXU kernel");
+            self.encode_gemm_mpp(context, command_buffer, arguments).expect("Failed to encode GEMM MPP kernel");
         } else {
             self.encode_gemm(context, command_buffer, arguments).expect("Failed to encode GEMM kernel");
         }
