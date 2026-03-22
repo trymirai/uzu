@@ -10,35 +10,16 @@ pub struct GemmMppSpecialization {
 }
 
 impl GemmMppSpecialization {
-    fn tile_config(
-        block_rows: i32,
-        block_cols: i32,
-        simdgroups_per_row: u64,
-        simdgroups_per_column: u64,
-        align_m: bool,
-        align_n: bool,
-    ) -> Self {
-        Self {
-            block_rows,
-            block_cols,
-            simdgroups_per_row,
-            simdgroups_per_column,
-            swizzle_log2: 0,
-            align_m,
-            align_n,
-        }
-    }
-
     pub fn precompile_configs() -> Box<[Self]> {
         [
-            Self::tile_config(64, 64, 2, 2, true, true),
-            Self::tile_config(64, 64, 2, 2, false, true),
-            Self::tile_config(64, 64, 2, 2, true, false),
-            Self::tile_config(64, 64, 2, 2, false, false),
-            Self::tile_config(32, 64, 2, 2, true, true),
-            Self::tile_config(32, 64, 2, 2, false, true),
-            Self::tile_config(64, 32, 4, 1, true, true),
-            Self::tile_config(64, 32, 4, 1, true, false),
+            Self { block_rows: 64, block_cols: 64, simdgroups_per_row: 2, simdgroups_per_column: 2, swizzle_log2: 0, align_m: true,  align_n: true },
+            Self { block_rows: 64, block_cols: 64, simdgroups_per_row: 2, simdgroups_per_column: 2, swizzle_log2: 0, align_m: false, align_n: true },
+            Self { block_rows: 64, block_cols: 64, simdgroups_per_row: 2, simdgroups_per_column: 2, swizzle_log2: 0, align_m: true,  align_n: false },
+            Self { block_rows: 64, block_cols: 64, simdgroups_per_row: 2, simdgroups_per_column: 2, swizzle_log2: 0, align_m: false, align_n: false },
+            Self { block_rows: 32, block_cols: 64, simdgroups_per_row: 2, simdgroups_per_column: 2, swizzle_log2: 0, align_m: true,  align_n: true },
+            Self { block_rows: 32, block_cols: 64, simdgroups_per_row: 2, simdgroups_per_column: 2, swizzle_log2: 0, align_m: false, align_n: true },
+            Self { block_rows: 64, block_cols: 32, simdgroups_per_row: 4, simdgroups_per_column: 1, swizzle_log2: 0, align_m: true,  align_n: true },
+            Self { block_rows: 64, block_cols: 32, simdgroups_per_row: 4, simdgroups_per_column: 1, swizzle_log2: 0, align_m: true,  align_n: false },
         ]
         .into()
     }

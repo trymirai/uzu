@@ -23,7 +23,7 @@ enum DispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppMxu,
+    GemmMppDirect,
     GemmMppNative,
 }
 
@@ -33,7 +33,7 @@ impl DispatchPath {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
             Self::GemmMpp => "GemmMpp",
-            Self::GemmMppMxu => "GemmMppMxu",
+            Self::GemmMppDirect => "GemmMppDirect",
             Self::GemmMppNative => "GemmMppNative",
         }
     }
@@ -43,7 +43,7 @@ const ALL_DISPATCH_PATHS: [DispatchPath; 5] = [
     DispatchPath::Gemv,
     DispatchPath::Gemm,
     DispatchPath::GemmMpp,
-    DispatchPath::GemmMppMxu,
+    DispatchPath::GemmMppDirect,
     DispatchPath::GemmMppNative,
 ];
 
@@ -97,7 +97,7 @@ fn run_metal_matmul(
         DispatchPath::Gemv => kernel.encode_gemv(ctx, &mut command_buffer, arguments),
         DispatchPath::Gemm => kernel.encode_gemm(ctx, &mut command_buffer, arguments),
         DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, &mut command_buffer, arguments),
-        DispatchPath::GemmMppMxu => kernel.encode_gemm_mpp_mxu(ctx, &mut command_buffer, arguments),
+        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(ctx, &mut command_buffer, arguments),
         DispatchPath::GemmMppNative => kernel.encode_gemm_mpp_native(ctx, &mut command_buffer, arguments),
     };
 
@@ -346,7 +346,7 @@ fn matmul_correctness_comprehensive() {
 
         for &path in &ALL_DISPATCH_PATHS {
             let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
-            let is_mxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppMxu) && !supports_mxu;
+            let is_mxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppDirect) && !supports_mxu;
 
             let metal_result =
                 match run_metal_matmul(&ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path) {

@@ -25,7 +25,7 @@ pub enum DispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppMxu,
+    GemmMppDirect,
     GemmMppNative,
 }
 
@@ -35,7 +35,7 @@ impl DispatchPath {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
             Self::GemmMpp => "GemmMpp",
-            Self::GemmMppMxu => "GemmMppMxu",
+            Self::GemmMppDirect => "GemmMppDirect",
             Self::GemmMppNative => "GemmMppNative",
         }
     }
@@ -43,7 +43,7 @@ impl DispatchPath {
     pub fn available_paths(context: &Ctx) -> Vec<Self> {
         let mut paths = vec![Self::Gemv, Self::Gemm, Self::GemmMpp];
         if context.device_capabilities().supports_mxu {
-            paths.push(Self::GemmMppMxu);
+            paths.push(Self::GemmMppDirect);
             paths.push(Self::GemmMppNative);
         }
         paths
@@ -91,7 +91,7 @@ fn encode_and_run(
         DispatchPath::Gemv => kernel.encode_gemv(context, &mut command_buffer, arguments),
         DispatchPath::Gemm => kernel.encode_gemm(context, &mut command_buffer, arguments),
         DispatchPath::GemmMpp => kernel.encode_gemm_mpp(context, &mut command_buffer, arguments),
-        DispatchPath::GemmMppMxu => kernel.encode_gemm_mpp_mxu(context, &mut command_buffer, arguments),
+        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, &mut command_buffer, arguments),
         DispatchPath::GemmMppNative => kernel.encode_gemm_mpp_native(context, &mut command_buffer, arguments),
     };
 

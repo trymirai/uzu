@@ -1,7 +1,7 @@
 use crate::backends::metal::context::MetalContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GemmMppMxuSpecialization {
+pub struct GemmMppDirectSpecialization {
     pub block_rows: i32,
     pub block_cols: i32,
     pub simdgroups_per_row: u64,
@@ -12,7 +12,7 @@ pub struct GemmMppMxuSpecialization {
     pub align_k: bool,
 }
 
-impl GemmMppMxuSpecialization {
+impl GemmMppDirectSpecialization {
     fn tile_config(
         block_rows: i32,
         block_cols: i32,

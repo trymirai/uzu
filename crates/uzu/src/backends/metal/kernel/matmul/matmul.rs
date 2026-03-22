@@ -5,10 +5,10 @@ use std::{
 
 use super::{
     super::dsl::{
-        MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemmMppMxuMetalKernel, MatmulGemmMppNativeMetalKernel,
+        MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemmMppDirectMetalKernel, MatmulGemmMppNativeMetalKernel,
         MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
     },
-    gemm, gemm_mpp, gemm_mpp_mxu, gemv,
+    gemm, gemm_mpp, gemm_mpp_direct, gemv,
 };
 use crate::{
     DataType,
@@ -29,7 +29,7 @@ pub struct MatmulMetalKernel {
     gemv_kernels: HashMap<gemv::Specialization, MatmulGemvMetalKernel>,
     gemm_kernels: HashMap<gemm::GemmSpecialization, MatmulGemmMetalKernel>,
     gemm_mpp_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppMetalKernel>,
-    gemm_mpp_mxu_kernels: HashMap<gemm_mpp_mxu::GemmMppMxuSpecialization, MatmulGemmMppMxuMetalKernel>,
+    gemm_mpp_direct_kernels: HashMap<gemm_mpp_direct::GemmMppDirectSpecialization, MatmulGemmMppDirectMetalKernel>,
     gemm_mpp_native_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppNativeMetalKernel>,
     bias_add: Option<TensorAddBiasMetalKernel>,
 }
@@ -135,15 +135,15 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn get_or_create_gemm_mpp_mxu(
+    fn get_or_create_gemm_mpp_direct(
         &mut self,
         context: &MetalContext,
-        specialization: gemm_mpp_mxu::GemmMppMxuSpecialization,
-    ) -> Result<&MatmulGemmMppMxuMetalKernel, MatmulError<Metal>> {
-        match self.gemm_mpp_mxu_kernels.entry(specialization) {
+        specialization: gemm_mpp_direct::GemmMppDirectSpecialization,
+    ) -> Result<&MatmulGemmMppDirectMetalKernel, MatmulError<Metal>> {
+        match self.gemm_mpp_direct_kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = MatmulGemmMppMxuMetalKernel::new(
+                let kernel = MatmulGemmMppDirectMetalKernel::new(
                     context,
                     self.data_type,
                     specialization.block_rows as u32,
@@ -411,13 +411,13 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    pub fn encode_gemm_mpp_mxu(
+    pub fn encode_gemm_mpp_direct(
         &mut self,
         context: &MetalContext,
         command_buffer: &mut MetalCommandBufferEncoding,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let specialization = gemm_mpp_mxu::GemmMppMxuSpecialization::select(
+        let specialization = gemm_mpp_direct::GemmMppDirectSpecialization::select(
             context,
             arguments.batch,
             arguments.output_dim,
@@ -430,7 +430,7 @@ impl MatmulMetalKernel {
             specialization.swizzle_log2,
         );
 
-        let kernel = self.get_or_create_gemm_mpp_mxu(context, specialization)?;
+        let kernel = self.get_or_create_gemm_mpp_direct(context, specialization)?;
 
         kernel.encode(
             (arguments.a, arguments.a_offset as usize),
@@ -541,7 +541,7 @@ impl MatmulKernel for MatmulMetalKernel {
             gemv_kernels: HashMap::new(),
             gemm_kernels: HashMap::new(),
             gemm_mpp_kernels: HashMap::new(),
-            gemm_mpp_mxu_kernels: HashMap::new(),
+            gemm_mpp_direct_kernels: HashMap::new(),
             gemm_mpp_native_kernels: HashMap::new(),
             bias_add: None,
         };
@@ -553,8 +553,12 @@ impl MatmulKernel for MatmulMetalKernel {
             kernel.get_or_create_gemm(context, config)?;
         }
         if context.device_capabilities().supports_mxu {
-            for config in gemm_mpp_mxu::GemmMppMxuSpecialization::precompile_configs().iter() {
-                kernel.get_or_create_gemm_mpp_mxu(context, *config)?;
+            for &config in gemm_mpp::GemmMppSpecialization::precompile_configs().iter() {
+                kernel.get_or_create_gemm_mpp(context, config)?;
+                kernel.get_or_create_gemm_mpp_native(context, config)?;
+            }
+            for config in gemm_mpp_direct::GemmMppDirectSpecialization::precompile_configs().iter() {
+                kernel.get_or_create_gemm_mpp_direct(context, *config)?;
             }
         }
 

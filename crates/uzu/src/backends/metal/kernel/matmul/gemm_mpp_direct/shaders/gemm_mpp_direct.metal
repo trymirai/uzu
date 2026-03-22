@@ -13,7 +13,7 @@ template <
     short BLOCK_COLS,
     short SIMDGROUPS_PER_ROW,
     short SIMDGROUPS_PER_COLUMN>
-METAL_FUNC void gemm_mpp_mxu_impl(
+METAL_FUNC void gemm_mpp_direct_impl(
     const device T* left_matrix,
     const device T* right_matrix,
     device T* output_matrix,
@@ -86,10 +86,10 @@ METAL_FUNC void gemm_mpp_mxu_impl(
   }
 }
 
-#define GEMM_MPP_MXU_DISPATCH(T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN) \
+#define GEMM_MPP_DIRECT_DISPATCH(T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN) \
   if (block_rows == BLOCK_ROWS && block_cols == BLOCK_COLS && \
       simdgroups_per_row == SIMDGROUPS_PER_ROW && simdgroups_per_column == SIMDGROUPS_PER_COLUMN) { \
-    gemm_mpp_mxu_impl<T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>( \
+    gemm_mpp_direct_impl<T, BLOCK_ROWS, BLOCK_COLS, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>( \
         left_matrix, right_matrix, output_matrix, params, \
         align_m, align_n, align_k, \
         thread_context.threadgroup_index, \
@@ -99,7 +99,7 @@ METAL_FUNC void gemm_mpp_mxu_impl(
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
-KERNEL(MatmulGemmMppMxu)(
+KERNEL(MatmulGemmMppDirect)(
     const device T* left_matrix,
     const device T* right_matrix,
     device T* output_matrix,
@@ -124,9 +124,9 @@ KERNEL(MatmulGemmMppMxu)(
     return;
   }
 
-  GEMM_MPP_MXU_DISPATCH(T, 64, 64, 2, 2)
-  GEMM_MPP_MXU_DISPATCH(T, 128, 128, 4, 4)
+  GEMM_MPP_DIRECT_DISPATCH(T, 64, 64, 2, 2)
+  GEMM_MPP_DIRECT_DISPATCH(T, 128, 128, 4, 4)
 }
 
-#undef GEMM_MPP_MXU_DISPATCH
+#undef GEMM_MPP_DIRECT_DISPATCH
 // clang-format on
