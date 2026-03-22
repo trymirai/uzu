@@ -1,16 +1,16 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+#[cfg(feature = "tracing")]
+use std::ops::{Deref, DerefMut};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+#[cfg(feature = "tracing")]
+use crate::backends::common::Encoder;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
-    DataType, DecoderConfig,
+    DataType,
     array::{Array, ArrayCell, ArrayCellExt},
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context},
+    backends::common::{Backend, Context},
+    config::DecoderConfig,
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -455,27 +455,12 @@ impl<B: Backend> ForwardPassState<B> {
         self.common_aux.suffix_length
     }
 
-    pub fn is_llm(&self) -> bool {
-        matches!(self.mode, ForwardPassMode::LanguageModelGenerator(_))
-    }
-
-    pub fn is_classifier(&self) -> bool {
-        matches!(self.mode, ForwardPassMode::Classifier(_))
-    }
-
     pub fn token_bitmask(&self) -> Option<&ArrayCell<B>> {
         self.token_bitmask.as_ref()
     }
 
     pub fn llm_state(&self) -> &LanguageModelGeneratorModeState<B> {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state,
-            _ => panic!("Not in LLM mode"),
-        }
-    }
-
-    pub fn llm_state_mut(&mut self) -> &mut LanguageModelGeneratorModeState<B> {
-        match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state,
             _ => panic!("Not in LLM mode"),
         }
@@ -501,6 +486,7 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::Main => self.common_aux.main.clone(),
             ArrayId::Shortcut => self.common_aux.shortcut.clone(),
             ArrayId::QKV => self.common_aux.qkv.clone(),
+            ArrayId::Gate => self.common_aux.gate.clone().expect("Gate buffer not available"),
             ArrayId::AttentionOutput => self.common_aux.attention_output.clone(),
             ArrayId::MlpFusedUp => self.common_aux.mlp_fused_up.clone(),
             ArrayId::MlpHidden => self.common_aux.mlp_hidden.clone(),
@@ -675,10 +661,6 @@ impl<B: Backend> ForwardPassState<B> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
     }
 
-    pub fn short_conv_padded_buffer(&self) -> Option<ArrayCell<B>> {
-        self.llm_aux.as_ref().and_then(|aux| aux.short_conv_padded.clone())
-    }
-
     // ========================================================================
     // Public API Methods (formerly trait methods)
     // ========================================================================
@@ -767,17 +749,10 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn copy_array(
-        &self,
-        source_array_id: ArrayId,
-        destination_array: RefCell<Array<B>>,
-    ) {
-        destination_array.borrow_mut().copy_from_array(&self.arrays(&[source_array_id])[0].borrow());
-    }
-
+    #[cfg(feature = "tracing")]
     pub fn encode_copy_array(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         source_array_id: ArrayId,
         destination_array: RefCell<Array<B>>,
     ) {
@@ -791,6 +766,6 @@ impl<B: Backend> ForwardPassState<B> {
         let copy_size_bytes = dst_borrow.size();
         debug_assert_eq!(dst_borrow.size(), src_borrow.size());
 
-        command_buffer.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
+        encoder.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
     }
 }

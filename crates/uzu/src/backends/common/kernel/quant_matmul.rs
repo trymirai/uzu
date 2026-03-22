@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         gpu_types::QuantizationMode,
         kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
@@ -161,7 +161,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
 
     pub fn encode(
         &self,
-        encoder: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: QuantizedMatmulArguments<B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
         if arguments.quantization_type != self.quantization_type {
@@ -510,3 +510,7 @@ fn kernel_key_name(key: KernelKey) -> &'static str {
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposed64x64) => "matrix_matrix_qmm_transposed_64x64",
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/backends/common/kernel/quant_matmul_test.rs"]
+mod tests;

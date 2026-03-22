@@ -9,7 +9,7 @@ use crate::{
     DataType,
     array::Array,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
             ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
@@ -146,7 +146,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_split_inproj(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -179,14 +179,14 @@ impl<B: Backend> MambaMixer<B> {
             conv_dim as u32,
             inner_dim as u32,
             num_heads as u32,
-            command_buffer,
+            encoder,
         )
     }
 
     fn run_conv_scan(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -231,7 +231,7 @@ impl<B: Backend> MambaMixer<B> {
                     inner_dim as u32,
                     proj_dim as u32,
                     self.config.activation.act_type(),
-                    command_buffer,
+                    encoder,
                 );
             }
         } else {
@@ -247,7 +247,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_dim as u32,
                     suffix_length as u32,
                     conv_dim as u32,
-                    command_buffer,
+                    encoder,
                 );
 
                 Some(buffer)
@@ -276,7 +276,7 @@ impl<B: Backend> MambaMixer<B> {
                     inner_dim as u32,
                     proj_dim as u32,
                     self.config.activation.act_type(),
-                    command_buffer,
+                    encoder,
                 )
             }
         }
@@ -285,7 +285,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_prefill_ssm(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         let base_arrays = state.arrays(&[
@@ -309,7 +309,7 @@ impl<B: Backend> MambaMixer<B> {
         let skip_rc = self.skip_connection_weight.buffer();
         let skip_borrow = skip_rc.borrow();
         self.ssd_prefill.encode(
-            command_buffer,
+            encoder,
             SSDPrefillArguments {
                 x: x.buffer().borrow().deref(),
                 dt: dt.buffer().borrow().deref(),
@@ -336,7 +336,7 @@ impl<B: Backend> MambaMixer<B> {
     fn run_decode_ssm(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         let arrays = state.arrays(&[
@@ -390,29 +390,29 @@ impl<B: Backend> MambaMixer<B> {
             suffix_length as u32,
             h,
             dh,
-            command_buffer,
+            encoder,
         );
     }
 
     pub(crate) fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let active_suffix_length = state.active_suffix_length();
         if active_suffix_length == 0 {
             return Ok(());
         }
 
-        self.in_projection.encode(state, command_buffer)?;
-        self.run_split_inproj(state, command_buffer, active_suffix_length);
-        self.run_conv_scan(state, command_buffer, active_suffix_length);
+        self.in_projection.encode(state, encoder)?;
+        self.run_split_inproj(state, encoder, active_suffix_length);
+        self.run_conv_scan(state, encoder, active_suffix_length);
         if active_suffix_length == 1 {
-            self.run_decode_ssm(state, command_buffer, active_suffix_length);
+            self.run_decode_ssm(state, encoder, active_suffix_length);
         } else {
-            self.run_prefill_ssm(state, command_buffer, active_suffix_length);
+            self.run_prefill_ssm(state, encoder, active_suffix_length);
         }
-        self.out_projection.encode(state, command_buffer)?;
+        self.out_projection.encode(state, encoder)?;
         Ok(())
     }
 }

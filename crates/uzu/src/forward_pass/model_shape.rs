@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    config::{DecoderConfig, DecoderLayerType},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig},
 };
 
 #[derive(Debug)]
@@ -25,6 +25,8 @@ pub struct ModelShape {
     max_mamba_conv_dim: usize,
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
+    max_rope_dim: usize,
+    has_gate: bool,
 }
 
 impl ModelShape {
@@ -73,6 +75,27 @@ impl ModelShape {
                 max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
             }
         }
+        let mut max_rope_dim = 0usize;
+        let mut has_gate = false;
+
+        let all_layer_configs = decoder_config
+            .layer_configs
+            .as_ref()
+            .map(|configs| configs.iter().collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
+
+        for layer_config in &all_layer_configs {
+            if let MixerConfig::Attention(attn) = &layer_config.mixer_config {
+                let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
+                max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
+                has_gate = has_gate || attn.has_gate;
+            }
+        }
+
+        if max_rope_dim == 0 {
+            max_rope_dim = decoder_config.head_dim;
+        }
+
         Self {
             activation_type,
             kv_cache_type: activation_type,
@@ -95,6 +118,8 @@ impl ModelShape {
             max_mamba_conv_dim,
             max_mamba_state_dim,
             max_mamba_kernel_size,
+            max_rope_dim,
+            has_gate,
         }
     }
 
@@ -112,6 +137,10 @@ impl ModelShape {
 
     pub fn head_dim(&self) -> usize {
         self.head_dim
+    }
+
+    pub fn rope_dim(&self) -> usize {
+        self.max_rope_dim
     }
 
     pub fn num_groups(&self) -> usize {
@@ -181,6 +210,13 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 2] {
         [suffix_length, self.num_heads * self.head_dim]
+    }
+
+    pub fn gate_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.has_gate.then(|| [suffix_length, self.num_heads * self.head_dim])
     }
 
     pub fn rotated_queries_shape(

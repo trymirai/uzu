@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
+    backends::common::{Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
 };
 
 pub struct KVLayerData<B: Backend> {
@@ -58,7 +58,7 @@ impl<B: Backend> KVCacheUpdate<B> {
         in_place_data: &[KVLayerData<B>],
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), KVCacheUpdateError<B>> {
         if source_indices.len() != destination_indices.len() {
             return Err(KVCacheUpdateError::IndicesCountMismatch);
@@ -87,7 +87,7 @@ impl<B: Backend> KVCacheUpdate<B> {
                     num_heads as u32,
                     max_sequence_length as u32,
                     head_dim as u32,
-                    command_buffer,
+                    encoder,
                 );
             }
         }
@@ -119,20 +119,5 @@ pub fn create_swaps_direct(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_direct_swaps() {
-        let sources = [0, 2, 4];
-        let destinations = [1, 3, 5];
-        let swaps = create_swaps_direct(&sources, &destinations);
-        assert_eq!(swaps.len(), 3);
-        assert_eq!(swaps[0].source, 0);
-        assert_eq!(swaps[0].destination, 1);
-        assert_eq!(swaps[1].source, 2);
-        assert_eq!(swaps[1].destination, 3);
-        assert_eq!(swaps[2].source, 4);
-        assert_eq!(swaps[2].destination, 5);
-    }
-}
+#[path = "../../../../tests/unit/backends/common/kernel/kv_cache_update_test.rs"]
+mod tests;

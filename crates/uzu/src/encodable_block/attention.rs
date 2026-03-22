@@ -8,9 +8,10 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
+            SigmoidGateKernel,
             attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
     },
@@ -40,6 +41,7 @@ pub struct Attention<B: Backend> {
     two_pass_2_kernels: HashMap<u32, <B::Kernels as Kernels>::AttentionTwoPass2Kernel>,
     update_kv_cache_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
     update_kv_cache_inplace_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
+    gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     gemm_block: AttentionGemmBlock<B>,
     layer_index: usize,
     attention_scale: Option<f32>,
@@ -57,6 +59,7 @@ impl<B: Backend> Attention<B> {
         has_sinks: bool,
         is_causal: bool,
         sliding_window_size: Option<usize>,
+        has_gate: bool,
     ) -> Result<Self, B::Error> {
         let mut single_pass_kernels = HashMap::new();
         let mut two_pass_1_kernels = HashMap::new();
@@ -90,6 +93,11 @@ impl<B: Backend> Attention<B> {
             <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, false)?;
         let update_kv_cache_inplace_kernel =
             <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, true)?;
+        let gate_kernel = if has_gate {
+            Some(<B::Kernels as Kernels>::SigmoidGateKernel::new(context, data_type)?)
+        } else {
+            None
+        };
         let gemm_block = AttentionGemmBlock::new(data_type);
 
         Ok(Self {
@@ -98,6 +106,7 @@ impl<B: Backend> Attention<B> {
             two_pass_2_kernels,
             update_kv_cache_kernel,
             update_kv_cache_inplace_kernel,
+            gate_kernel,
             gemm_block,
             layer_index,
             attention_scale,
@@ -138,7 +147,7 @@ impl<B: Backend> Attention<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
@@ -198,6 +207,7 @@ impl<B: Backend> Attention<B> {
         let qkv_binding = state.arrays(&[ArrayId::QKV]);
         let attention_bias_binding = state.hashmaps(&[HashMapId::AttentionBias]);
         let attention_output_binding = state.arrays(&[ArrayId::AttentionOutput]);
+        let gate_binding = self.gate_kernel.as_ref().map(|_| state.arrays(&[ArrayId::Gate]));
 
         let mask_kv_seq_stride = 1;
         let mask_q_seq_stride = sequence_length as i32;
@@ -248,7 +258,7 @@ impl<B: Backend> Attention<B> {
                 suffix_length as u32,
                 0u32,
                 max_sequence_length as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -308,7 +318,7 @@ impl<B: Backend> Attention<B> {
                 suffix_length as u32,
                 segment_prefix_length as u32,
                 max_sequence_length as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -361,9 +371,7 @@ impl<B: Backend> Attention<B> {
                     is_causal: self.is_causal,
                     scale,
                 };
-                self.gemm_block
-                    .encode(state.context(), command_buffer, args)
-                    .expect("Failed to encode AttentionGemmBlock");
+                self.gemm_block.encode(state.context(), encoder, args).expect("Failed to encode AttentionGemmBlock");
             },
             KernelVariant::SinglePass => {
                 let kernel = match self.single_pass_kernels.get(&kernel_key) {
@@ -389,7 +397,7 @@ impl<B: Backend> Attention<B> {
                     sinks_buffer,
                     num_heads as u32,
                     suffix_length as u32,
-                    command_buffer,
+                    encoder,
                 )
             },
             KernelVariant::TwoPass => {
@@ -422,7 +430,7 @@ impl<B: Backend> Attention<B> {
                     mask_q_seq_stride_opt,
                     mask_head_stride_opt,
                     sinks_buffer,
-                    command_buffer,
+                    encoder,
                 );
                 kernel_pass2.encode(
                     partials_buf_borrow.deref(),
@@ -431,9 +439,22 @@ impl<B: Backend> Attention<B> {
                     attention_output_buf_borrow.deref_mut(),
                     num_heads as u32,
                     suffix_length as u32,
-                    command_buffer,
+                    encoder,
                 );
             },
+        }
+
+        if let Some(gate_kernel) = &self.gate_kernel {
+            let gate_array = gate_binding.as_ref().unwrap()[0].borrow();
+            let gate_buf_rc = gate_array.buffer();
+            let gate_buf_borrow = gate_buf_rc.borrow();
+            let total_elements = (suffix_length * num_heads * head_dim) as u32;
+            gate_kernel.encode(
+                gate_buf_borrow.deref(),
+                attention_output_buf_borrow.deref_mut(),
+                total_elements,
+                encoder,
+            );
         }
 
         Ok(())
@@ -451,3 +472,7 @@ struct KernelKey {
     pub head_dim: u32,
     pub has_mask: bool,
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/encodable_block/attention_test.rs"]
+mod tests;

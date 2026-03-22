@@ -26,13 +26,13 @@ pub struct ScratchBuffers<B: Backend> {
     pub main: ArrayCell<B>,
     pub shortcut: ArrayCell<B>,
     pub qkv: ArrayCell<B>,
+    pub gate: Option<ArrayCell<B>>,
     pub attention_output: ArrayCell<B>,
     pub mlp_fused_up: ArrayCell<B>,
     pub mlp_hidden: ArrayCell<B>,
     pub ssm_inproj: Option<ArrayCell<B>>,
     pub ssm_packed: Option<ArrayCell<B>>,
     pub ssm_conv_padded: Option<ArrayCell<B>>,
-    pub short_conv_padded: Option<ArrayCell<B>>,
     pub ssm_x: Option<ArrayCell<B>>,
     pub ssm_b: Option<ArrayCell<B>>,
     pub ssm_c: Option<ArrayCell<B>>,
@@ -129,6 +129,7 @@ impl<B: Backend> ScratchBuffers<B> {
             main: alloc(&model_shape.main_shape(max_suffix_len), act_ty, "main"),
             shortcut: alloc(&model_shape.main_shape(max_suffix_len), act_ty, "shortcut"),
             qkv: alloc(&model_shape.qkv_shape(max_suffix_len), act_ty, "qkv"),
+            gate: model_shape.gate_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "gate")),
             attention_output: alloc(&model_shape.attention_output_shape(max_suffix_len), act_ty, "attention_output"),
             mlp_fused_up: alloc(&model_shape.mlp_fused_up_shape(max_suffix_len), act_ty, "mlp_fused_up"),
             mlp_hidden: alloc(&model_shape.mlp_hidden_shape(max_suffix_len), act_ty, "mlp_hidden"),
@@ -137,9 +138,6 @@ impl<B: Backend> ScratchBuffers<B> {
             ssm_conv_padded: model_shape
                 .ssm_conv_padded_shape(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty, "ssm_conv_padded")),
-            short_conv_padded: model_shape
-                .short_conv_padded_shape(max_suffix_len)
-                .map(|shape| alloc(&shape, act_ty, "short_conv_padded")),
             ssm_x: model_shape.ssm_x_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_x")),
             ssm_b: model_shape.ssm_bc_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_b")),
             ssm_c: model_shape.ssm_bc_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_c")),

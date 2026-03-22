@@ -15,13 +15,17 @@ use super::{
     metal_extensions::{DeviceGeneration, LibraryPipelineExtensions},
 };
 use crate::{
-    backends::{common::Context, metal::command_buffer::MetalCommandBufferInitial},
-    utils::ModelSize,
+    backends::{
+        common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+        metal::command_buffer::MetalCommandBufferInitial,
+    },
+    utils::model_size::ModelSize,
 };
 
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    allocator: Rc<Allocator<Metal>>,
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
@@ -70,9 +74,10 @@ impl Context for MetalContext {
 
         let device_capabilities = MetalDeviceCapabilities::from_device(&device);
 
-        Ok(Rc::new(Self {
+        Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
+            allocator: Allocator::new(weak_self.clone()),
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
@@ -109,6 +114,21 @@ impl Context for MetalContext {
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
         self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer)
+    }
+
+    fn create_allocation(
+        &self,
+        size: usize,
+        allocation_type: AllocationType<Metal>,
+    ) -> Result<Allocation<Metal>, MetalError> {
+        self.allocator.allocate(size, allocation_type)
+    }
+
+    fn create_allocation_pool(
+        &self,
+        reusable: bool,
+    ) -> AllocationPool<Metal> {
+        self.allocator.create_pool(reusable)
     }
 
     fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {

@@ -1,7 +1,7 @@
 use crate::{
     array::{Array, ArrayCell, ArrayContextExt},
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
     utils::attention::fill_attention_bias,
@@ -163,7 +163,7 @@ impl<B: Backend> KVCacheLayer<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         match &mut self.state {
@@ -182,7 +182,7 @@ impl<B: Backend> KVCacheLayer<B> {
                 let destination_indices: Vec<usize> =
                     (*prefix_len..*prefix_len + accepted_suffix_indices.len()).collect();
 
-                self.scatter_if_required(&source_indices, &destination_indices, command_buffer, kv_cache_update);
+                self.scatter_if_required(&source_indices, &destination_indices, encoder, kv_cache_update);
             },
 
             KVCacheLayerState::Windowed {
@@ -204,7 +204,7 @@ impl<B: Backend> KVCacheLayer<B> {
                     destination_indices.push((*ring_length + *ring_offset + i) % *window_length);
                 }
 
-                self.scatter_if_required(&source_indices, &destination_indices, command_buffer, kv_cache_update);
+                self.scatter_if_required(&source_indices, &destination_indices, encoder, kv_cache_update);
             },
         }
     }
@@ -213,7 +213,7 @@ impl<B: Backend> KVCacheLayer<B> {
         &self,
         source_indices: &[usize],
         destination_indices: &[usize],
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         if source_indices == destination_indices {
@@ -230,7 +230,7 @@ impl<B: Backend> KVCacheLayer<B> {
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, command_buffer);
+        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, encoder);
     }
 
     pub fn register_accepted_tokens(
@@ -464,3 +464,7 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/forward_pass/kv_cache_state_test.rs"]
+mod tests;

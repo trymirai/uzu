@@ -5,7 +5,7 @@ on:
     branches:
       - main
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [ opened, reopened, ready_for_review, synchronize ]
   workflow_dispatch:
 
 concurrency:
@@ -23,7 +23,7 @@ defaults:
 jobs:
   linters:
     name: linters
-    runs-on: [self-hosted, macos, x64, mac, m3max, runner2]
+    runs-on: [ self-hosted, macos, x64, mac, m3max ]
 
     steps:
       - uses: actions/checkout@v6
@@ -47,14 +47,15 @@ jobs:
           git diff --exit-code -- Cargo.lock
 
   tests:
-    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }}
-    runs-on: [self-hosted, macos, x64, mac, m3max, runner1]
+    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }} ${{ matrix.audio && ' (audio-runtime)' || '' }}
+    runs-on: [ self-hosted, macos, x64, mac, m3max, runner1 ]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
     strategy:
       matrix:
-        backend: ['cpu', 'metal']
-        tracing: [false, true]
+        backend: [ 'cpu', 'metal' ]
+        tracing: [ false, true ]
+        audio: [ false, true ]
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
@@ -69,8 +70,14 @@ jobs:
 
       - name: Build crates
         run: |
-          cargo +stable build --no-default-features ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo +stable build --no-default-features \
+            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.tracing && '--features tracing' || '' }} \
+            ${{ matrix.audio && '--features audio-runtime' || '' }}
 
       - name: Run tests
         run: |
-          cargo +stable nextest run --profile=ci --no-default-features ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} ${{ matrix.tracing && '--features tracing' || '' }}
+          cargo +stable nextest run --profile=ci --no-default-features \
+            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.tracing && '--features tracing' || '' }} \
+            ${{ matrix.audio && '--features audio-runtime' || '' }}

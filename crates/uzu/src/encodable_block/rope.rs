@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, RopeKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
@@ -31,9 +31,9 @@ impl<B: Backend> Rope<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len) = {
+        let (suffix_length, num_heads, head_dim, num_groups, rope_dim, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
             let qkv_array = qkv_binding[0].borrow();
             let suffix_length = qkv_array.shape()[0];
@@ -51,8 +51,9 @@ impl<B: Backend> Rope<B> {
             let cos_array = cos_binding[0].borrow();
             let cos_shape = cos_array.shape();
             let rope_max_seq_len = cos_shape[0];
+            let rope_dim = cos_shape[1];
 
-            (suffix_length, num_heads, head_dim, num_groups, rope_max_seq_len)
+            (suffix_length, num_heads, head_dim, num_groups, rope_dim, rope_max_seq_len)
         };
 
         let qkv_buffer_binding = state.arrays(&[ArrayId::QKV]);
@@ -83,11 +84,12 @@ impl<B: Backend> Rope<B> {
             rotated_queries.buffer().borrow_mut().deref_mut(),
             rotated_keys.buffer().borrow_mut().deref_mut(),
             head_dim as u32,
+            rope_dim as u32,
             num_heads as u32,
             num_groups as u32,
             suffix_length as u32,
             rope_max_seq_len as u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

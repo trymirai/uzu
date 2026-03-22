@@ -4,9 +4,9 @@ use std::rc::Rc;
 
 use super::MixerExecutables;
 use crate::{
-    DataType, DecoderLayerConfig,
-    backends::common::{Backend, CommandBuffer},
-    config::{DecoderLayerType, MixerConfig},
+    DataType,
+    backends::common::{Backend, Encoder},
+    config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer, TensorAddSwap,
         TensorCopy,
@@ -17,6 +17,7 @@ use crate::{
 
 /// A single decoder layer with all its components.
 pub struct LayerExecutables<B: Backend> {
+    #[cfg(feature = "tracing")]
     pub layer_index: usize,
     pub copy_main_to_shortcut: TensorCopy<B>,
     pub pre_attention_norm: RMSNorm<B>,
@@ -83,6 +84,24 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create qkv projection");
 
+                let gate_projection = if attention_config.has_gate {
+                    Some(
+                        <dyn Linear<B>>::new(
+                            &attention_config.qkv_projection_config,
+                            false,
+                            model_dim,
+                            [num_heads * head_dim],
+                            ctx,
+                            &decoder_layer_loader.subtree("mixer.gate_projection").unwrap(),
+                            ArrayId::Main,
+                            ArrayId::Gate,
+                        )
+                        .expect("Failed to create gate projection"),
+                    )
+                } else {
+                    None
+                };
+
                 let qk_norm =
                     if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
                         match QKNorm::new(
@@ -123,11 +142,13 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_sinks,
                     attention_config.is_causal.unwrap_or(true),
                     attention_config.sliding_window_size,
+                    attention_config.has_gate,
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
                 MixerExecutables::Attention {
                     qkv_projection,
+                    gate_projection,
                     qk_norm,
                     rope: rope_block,
                     attention,
@@ -224,6 +245,7 @@ impl<B: Backend> LayerExecutables<B> {
         };
 
         Self {
+            #[cfg(feature = "tracing")]
             layer_index,
             copy_main_to_shortcut,
             pre_attention_norm,
@@ -240,113 +262,113 @@ impl<B: Backend> LayerExecutables<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         #[cfg(feature = "tracing")]
         let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut.encode(state, command_buffer)?;
+        self.copy_main_to_shortcut.encode(state, encoder)?;
         // shortcut = input
 
-        self.pre_attention_norm.encode(state, command_buffer)?;
+        self.pre_attention_norm.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
         }
 
         match &self.mixer {
             MixerExecutables::Attention {
                 qkv_projection,
+                gate_projection,
                 qk_norm,
                 rope,
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode(state, command_buffer)?;
-                if let Some(norm) = qk_norm {
-                    norm.encode(state, command_buffer)?;
+                qkv_projection.encode(state, encoder)?;
+                if let Some(gate_proj) = gate_projection {
+                    gate_proj.encode(state, encoder)?;
                 }
-                rope.encode(state, command_buffer)?;
-                attention.encode(state, parameters, command_buffer)?;
-                out_projection.encode(state, command_buffer)?;
+                if let Some(norm) = qk_norm {
+                    norm.encode(state, encoder)?;
+                }
+                rope.encode(state, encoder)?;
+                attention.encode(state, parameters, encoder)?;
+                out_projection.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
             },
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer)?;
+                mixer.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
             },
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer)?;
+                mixer.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
             },
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode(state, command_buffer)?;
+            post_attention_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
-                    command_buffer,
-                    ArrayId::Main,
-                    layer_traces.borrow().post_attention_norm.clone(),
-                );
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_attention_norm.clone());
             }
         }
         //main = attention_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer)?;
+        self.main_shortcut_add_swap.encode(state, encoder)?;
         // shortcut = input + attention_result
         // main = input + attention_result
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
 
-        self.pre_mlp_norm.encode(state, command_buffer)?;
+        self.pre_mlp_norm.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer)?;
+        self.mlp.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer)?;
+            post_mlp_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
         }
         // main = mlp_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer)?;
+        self.main_shortcut_add_swap.encode(state, encoder)?;
         // shortcut = input + attention_result + mlp_result
         // main = input + attention_result + mlp_result
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().outputs.clone());
         }
 
         Ok(())

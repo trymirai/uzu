@@ -1,8 +1,7 @@
 use crate::{
-    DecoderConfig,
     array::{ArrayCell, ArrayCellExt},
     backends::common::Backend,
-    config::MLPConfig,
+    config::{DecoderConfig, MLPConfig},
     forward_pass::{model_shape::ModelShape, scratch_buffers::ScratchBuffers},
 };
 
@@ -10,7 +9,6 @@ pub struct LanguageModelGeneratorAuxBuffers<B: Backend> {
     pub ssm_inproj: Option<ArrayCell<B>>,
     pub ssm_packed: Option<ArrayCell<B>>,
     pub ssm_conv_padded: Option<ArrayCell<B>>,
-    pub short_conv_padded: Option<ArrayCell<B>>,
     pub ssm_x: Option<ArrayCell<B>>,
     pub ssm_b: Option<ArrayCell<B>>,
     pub ssm_c: Option<ArrayCell<B>>,
@@ -69,11 +67,6 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
                 .ssm_conv_padded
                 .as_ref()
                 .zip(model_shape.ssm_conv_padded_shape(suffix_length))
-                .map(|(buf, shape)| buf.view(&shape)),
-            short_conv_padded: scratch
-                .short_conv_padded
-                .as_ref()
-                .zip(model_shape.short_conv_padded_shape(suffix_length))
                 .map(|(buf, shape)| buf.view(&shape)),
             ssm_x: scratch
                 .ssm_x

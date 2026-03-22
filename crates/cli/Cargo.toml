@@ -25,4 +25,4 @@ comfy-table.workspace = true
 [features]
 default = ["metal"]
 
-metal = ["uzu/metal"]
+metal = ["benchmarks/metal", "uzu/metal"]

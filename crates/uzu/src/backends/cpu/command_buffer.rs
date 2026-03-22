@@ -1,13 +1,13 @@
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::{OnceCell, RefCell, UnsafeCell},
     time::{Duration, Instant},
 };
 
 use super::Cpu;
 use crate::backends::{
     common::{
-        CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-        CommandBufferPending,
+        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferInitial, CommandBufferPending,
     },
     cpu::error::CpuError,
 };
@@ -58,12 +58,12 @@ impl CommandBufferEncoding for CpuCommandBuffer {
 
     fn encode_copy(
         &mut self,
-        src: &Box<[u8]>,
-        dst: &mut Box<[u8]>,
+        src: &UnsafeCell<Box<[u8]>>,
+        dst: &mut UnsafeCell<Box<[u8]>>,
         size: usize,
     ) {
-        let src = src.as_ptr();
-        let dst = dst.as_ptr() as *mut u8;
+        let src = unsafe { &*src.get() }.as_ptr();
+        let dst = dst.get_mut().as_mut_ptr();
         self.push_command(Box::new(move || unsafe {
             std::ptr::copy(src, dst, size);
         }))
@@ -71,15 +71,22 @@ impl CommandBufferEncoding for CpuCommandBuffer {
 
     fn encode_fill(
         &mut self,
-        dst: &mut Box<[u8]>,
+        dst: &mut UnsafeCell<Box<[u8]>>,
         range: std::ops::Range<usize>,
         value: u8,
     ) {
         let size = range.end - range.start;
-        let dst = dst[range].as_ptr() as *mut u8;
+        let dst = dst.get_mut()[range].as_ptr() as *mut u8;
         self.push_command(Box::new(move || unsafe {
             dst.write_bytes(value, size);
         }))
+    }
+
+    fn encode_barrier(
+        &mut self,
+        _after: AccessFlags,
+        _before: AccessFlags,
+    ) {
     }
 
     fn encode_wait_for_event(

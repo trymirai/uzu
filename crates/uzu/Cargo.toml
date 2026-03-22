@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
+rangemap.workspace = true
 bytemuck.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
@@ -81,13 +82,13 @@ tracing = []
 audio-runtime = []
 
 [[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
+[[test]]
 name = "kernel"
-path = "tests/kernel/mod.rs"
+path = "tests/unit/kernel/mod.rs"
 
 [[test]]
-name = "moe"
-path = "tests/moe/mod.rs"
-
-[[test]]
-name = "matmul_perf_test"
-path = "tests/matmul_perf_test/main.rs"
+name = "performance"
+path = "tests/performance/mod.rs"
