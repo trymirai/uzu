@@ -4,7 +4,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigDataType, EmbeddingConfig, EmbeddingConfigCommon, LinearConfig, TransformerConfig};
+use super::{EmbeddingConfig, EmbeddingConfigCommon, LinearConfig, TransformerConfig};
+use crate::ConfigDataType;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TtsMessageProcessorConfig {

@@ -9,7 +9,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
+    DataType,
     array::Array,
     backends::common::{
         Backend, Encoder, Kernels,
@@ -23,6 +23,7 @@ use crate::{
             },
         },
     },
+    config::{LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig},
     encodable_block::mlp::Mlp,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},

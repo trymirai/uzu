@@ -29,5 +29,11 @@ macro_rules! for_each_non_cpu_backend {
             type $B = uzu::backends::metal::Metal;
             $body
         }
+        {
+            if false {
+                type $B = uzu::backends::cpu::Cpu;
+                $body
+            }
+        }
     }};
 }

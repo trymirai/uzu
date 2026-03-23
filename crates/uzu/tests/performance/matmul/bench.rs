@@ -1,3 +1,5 @@
+#![cfg(metal_backend)]
+
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{

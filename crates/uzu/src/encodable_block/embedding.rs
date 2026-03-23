@@ -6,7 +6,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    DataType, EmbeddingConfig,
+    DataType,
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
@@ -18,6 +18,7 @@ use crate::{
             },
         },
     },
+    config::EmbeddingConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLeaf, ParameterLoaderError, ParameterTree},
 };

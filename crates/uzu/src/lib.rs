@@ -18,10 +18,10 @@ pub mod prelude;
 pub mod session;
 
 pub use array::{Array, ArrayContextExt};
-pub use config::*;
-pub use data_type::*;
+pub use config::ConfigDataType;
+pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
 #[cfg(feature = "tracing")]
 pub use tracer::TraceValidator;
-pub use utils::*;
+pub use utils::VERSION;

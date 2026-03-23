@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig, MessageProcessorConfig,
-    MixerConfig, TransformerConfig, config::ConfigError,
+use crate::config::{
+    ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig,
+    MessageProcessorConfig, MixerConfig, TransformerConfig,
 };
 
 struct AttentionDims {
