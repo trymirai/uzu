@@ -417,7 +417,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         // Windowed buffers get the correct mask; GPU patches maintain it for subsequent passes.
         // Full-attention buffers also get filled (masking beyond-prefix positions).
         self.context.cache_layers.borrow().fill_attention_bias_scratch(
-            &self.context.scratch_buffers.attention_window_size_to_bias,
+            &mut self.context.scratch_buffers.attention_window_size_to_bias,
             &[first_decode_position],
             1,
             &self.context.context,
@@ -527,11 +527,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
-        let sampling_output_binding = sampling_output.borrow();
-        let sampling_output_buf_rc = sampling_output_binding.buffer();
+        let sampling_output_buf_rc = sampling_output.buffer();
         let sampling_output_buf_borrow = sampling_output_buf_rc.borrow();
-        let token_ids_binding = self.context.scratch_buffers.token_ids.borrow();
-        let token_ids_buf_rc = token_ids_binding.buffer();
+        let token_ids_buf_rc = self.context.scratch_buffers.token_ids.buffer();
         let mut token_ids_buf_borrow = token_ids_buf_rc.borrow_mut();
 
         self.context.token_copy_sampled.encode(
@@ -561,7 +559,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             for (window_size, mask_buffer) in &self.context.scratch_buffers.attention_window_size_to_bias {
                 if let Some(update) = updates.iter().find(|u| &u.key == window_size) {
                     if update.unmask_col >= 0 || update.mask_col >= 0 {
-                        let mask_buf_rc = mask_buffer.borrow().buffer();
+                        let mask_buf_rc = mask_buffer.buffer();
                         let mut mask_buf_borrow = mask_buf_rc.borrow_mut();
                         mask_update.encode(
                             mask_buf_borrow.deref_mut(),
@@ -589,7 +587,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         encoder.add_completion_handler(handler);
-        drop(token_ids_binding);
 
         let pending = encoder.end_encoding().submit();
 
@@ -669,31 +666,15 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
                     let copy_rows = src.prefix_segment_length();
                     if copy_rows > 0 {
-                        {
-                            let mut dst_keys = dst.keys.borrow_mut();
-                            let src_keys = src.keys.borrow();
-                            dst_keys.copy_slice(&src_keys, 1, 0..copy_rows, 0);
-                        }
-                        {
-                            let mut dst_values = dst.values.borrow_mut();
-                            let src_values = src.values.borrow();
-                            dst_values.copy_slice(&src_values, 1, 0..copy_rows, 0);
-                        }
+                        dst.keys.copy_slice(&src.keys, 1, 0..copy_rows, 0);
+                        dst.values.copy_slice(&src.values, 1, 0..copy_rows, 0);
                     }
                     dst.state = src.state.clone();
                     dst.prefix_token_positions = src.prefix_token_positions.clone();
                 },
                 (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
-                    {
-                        let mut dst_conv = dst.conv_state.borrow_mut();
-                        let src_conv = src.conv_state.borrow();
-                        dst_conv.copy_from_array(&src_conv);
-                    }
-                    {
-                        let mut dst_ssm = dst.ssm_state.borrow_mut();
-                        let src_ssm = src.ssm_state.borrow();
-                        dst_ssm.copy_from_array(&src_ssm);
-                    }
+                    dst.conv_state.copy_from_array(&src.conv_state);
+                    dst.ssm_state.copy_from_array(&src.ssm_state);
                 },
                 _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
             }
@@ -843,8 +824,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             .sampling_output()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
 
-        let output_buffer = sampling_output.borrow();
-        let output_view = output_buffer.as_view::<u32>();
+        let output_view = sampling_output.as_view::<u32>();
         let batch_size = state.sampling_length();
 
         let mut result = Vec::with_capacity(batch_size);

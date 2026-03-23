@@ -90,13 +90,9 @@ impl<B: Backend> RMSNorm<B> {
         let input_binding = state.arrays(&[self.input_array_id]);
         let output_binding = state.arrays(&[self.output_array_id]);
 
-        let input_shape = {
-            let input_array = input_binding[0].borrow();
-            input_array.shape().to_vec()
-        };
-
-        let input_array = input_binding[0].borrow();
-        let output_array = output_binding[0].borrow_mut();
+        let input_array = &input_binding[0];
+        let input_shape = input_array.shape().to_vec();
+        let output_array = &output_binding[0];
 
         let suffix_length = input_shape[0];
         let input_elem_size = input_array.data_type().size_in_bytes();

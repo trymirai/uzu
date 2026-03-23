@@ -1,11 +1,9 @@
-use std::cell::RefCell;
-
 use half::{bf16, f16};
 
 use super::RopeBuffers;
 use crate::{
     DataType,
-    array::{ArrayCell, ArrayContextExt},
+    array::{Array, ArrayContextExt},
     backends::common::Backend,
     config::DecoderConfig,
     forward_pass::model_shape::ModelShape,
@@ -15,7 +13,7 @@ use crate::{
 pub struct SharedBuffers<B: Backend> {
     pub global_rope: Option<RopeBuffers<B>>,
     pub local_rope: Option<RopeBuffers<B>>,
-    pub attention_sinks: Option<Vec<ArrayCell<B>>>,
+    pub attention_sinks: Option<Vec<Array<B>>>,
 }
 
 impl<B: Backend> SharedBuffers<B> {
@@ -32,11 +30,7 @@ impl<B: Backend> SharedBuffers<B> {
             let num_heads = decoder_config.num_heads;
             (0..decoder_config.num_layers)
                 .map(|_| {
-                    RefCell::new(context.create_array_uninitialized(
-                        &[num_heads],
-                        DataType::F32,
-                        "shared_buffers_attention_sinks",
-                    ))
+                    context.create_array_uninitialized(&[num_heads], DataType::F32, "shared_buffers_attention_sinks")
                 })
                 .collect()
         });
@@ -66,8 +60,7 @@ impl<B: Backend> SharedBuffers<B> {
                 let layer_tree = transformer_tree.subtree(&format!("layers.{}", layer_idx)).unwrap();
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf_array("sinks").unwrap();
-                let mut dst = sink_cell.borrow_mut();
-                let dst_slice = dst.as_slice_mut::<f32>();
+                let dst_slice = sink_cell.as_slice_mut::<f32>();
 
                 match sinks_arr.data_type() {
                     DataType::F32 => {

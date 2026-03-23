@@ -1,22 +1,16 @@
 use bytemuck::fill_zeroes;
 
-use crate::{array::ArrayCell, backends::common::Backend};
+use crate::{array::Array, backends::common::Backend};
 
 #[derive(Debug)]
 pub struct SSMLayer<B: Backend> {
-    pub conv_state: ArrayCell<B>,
-    pub ssm_state: ArrayCell<B>,
+    pub conv_state: Array<B>,
+    pub ssm_state: Array<B>,
 }
 
 impl<B: Backend> SSMLayer<B> {
-    pub fn zero(&self) {
-        {
-            let mut conv = self.conv_state.borrow_mut();
-            fill_zeroes(conv.as_bytes_mut());
-        }
-        {
-            let mut ssm = self.ssm_state.borrow_mut();
-            fill_zeroes(ssm.as_bytes_mut());
-        }
+    pub fn zero(&mut self) {
+        fill_zeroes(self.conv_state.as_bytes_mut());
+        fill_zeroes(self.ssm_state.as_bytes_mut());
     }
 }
