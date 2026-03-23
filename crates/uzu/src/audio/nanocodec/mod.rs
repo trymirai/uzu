@@ -1,5 +1,3 @@
-pub mod fsq;
-
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 pub mod runtime;
 

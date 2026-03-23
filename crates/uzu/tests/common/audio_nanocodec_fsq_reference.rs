@@ -1,4 +1,4 @@
-use uzu::audio::{AudioError, AudioResult};
+use uzu::prelude::{AudioError, AudioResult};
 
 fn checked_product(values: &[usize]) -> AudioResult<usize> {
     values

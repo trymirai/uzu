@@ -5,15 +5,16 @@ using namespace metal;
 
 template <typename T>
 void quantizer_decode(
-    device const uint* tokens,          // [B, K, T]
-    device const int* lengths,          // [B]
-    device const T* semantic_codebook,  // [semantic_cardinality, codebook_dim]
-    device const T* semantic_out_proj,  // [input_dim, codebook_dim]
-    device const T* semantic_out_bias,  // [input_dim]
-    device const T* residual_codebooks, // [R, residual_cardinality, codebook_dim]
-    device const T* residual_out_proj,  // [R, input_dim, codebook_dim]
-    device const T* residual_out_bias,  // [R, input_dim]
-    device T* output,                   // [B, T, input_dim]
+    device const uint* tokens,         // [B, K, T]
+    device const int* lengths,         // [B]
+    device const T* semantic_codebook, // [semantic_cardinality, codebook_dim]
+    device const T* semantic_out_proj, // [input_dim, codebook_dim]
+    device const T* semantic_out_bias, // [input_dim]
+    device const T*
+        residual_codebooks, // [R, residual_cardinality, codebook_dim]
+    device const T* residual_out_proj, // [R, input_dim, codebook_dim]
+    device const T* residual_out_bias, // [R, input_dim]
+    device T* output,                  // [B, T, input_dim]
     const constant int& batch_size,
     const constant int& total_codebooks,
     const constant int& seq_len,
@@ -62,8 +63,7 @@ void quantizer_decode(
     const uint code_base =
         ((uint)r * (uint)residual_cardinality + (uint)residual_token) *
         (uint)codebook_dim;
-    const uint proj_base =
-        ((uint)r * (uint)input_dim + d) * (uint)codebook_dim;
+    const uint proj_base = ((uint)r * (uint)input_dim + d) * (uint)codebook_dim;
     for (uint k = 0; k < (uint)codebook_dim; ++k) {
       acc += float(residual_out_proj[proj_base + k]) *
              float(residual_codebooks[code_base + k]);

@@ -6,7 +6,6 @@ use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_ref
 use uzu::{
     audio::{
         AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
-        nanocodec::fsq::compute_dim_base_index,
     },
     backends::metal::Metal,
 };
@@ -80,7 +79,6 @@ fn nanocodec_runtime_encode_matches_fsq_reference() {
     let tokens = runtime.encode(&pcm).expect("encode");
 
     let (padded_input, lengths_i32, frames) = pack_for_reference(&pcm);
-    let dim_base_index = compute_dim_base_index(runtime.config().num_levels_per_group()).expect("dim base index");
     let expected_i32 = fsq_encode_reference(
         &padded_input,
         &lengths_i32,
@@ -89,7 +87,7 @@ fn nanocodec_runtime_encode_matches_fsq_reference() {
         frames,
         runtime.config().codebook_dim_per_group(),
         runtime.config().num_levels_per_group(),
-        &dim_base_index,
+        runtime.config().dim_base_index(),
         runtime.config().eps(),
     )
     .expect("fsq reference encode");

@@ -1,13 +1,6 @@
 mod common;
 
 use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
-use uzu::audio::nanocodec::fsq::compute_dim_base_index;
-
-#[test]
-fn dim_base_index_is_computed_correctly() {
-    let result = compute_dim_base_index(&[8, 6, 5]).expect("dim_base_index");
-    assert_eq!(result, vec![1, 8, 48]);
-}
 
 #[test]
 fn fsq_decode_reference_masks_values_beyond_lengths() {

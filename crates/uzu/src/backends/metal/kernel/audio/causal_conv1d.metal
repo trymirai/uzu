@@ -74,7 +74,8 @@ void causal_conv1d(
             acc2 += w * float(input[x_idx + 2]);
             acc3 += w * float(input[x_idx + 3]);
           } else {
-            const uint x_idx0 = (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
+            const uint x_idx0 =
+                (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
             acc0 += w * float(input[x_idx0]);
             acc1 += w * float(input[x_idx0 + (uint)cin]);
             acc2 += w * float(input[x_idx0 + (uint)(2 * cin)]);
@@ -83,27 +84,34 @@ void causal_conv1d(
           continue;
         }
         if (valid_count > 0 && x_t >= 0 && x_t < seq_len) {
-          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
-              ? (x_base_ncs + (uint)x_t)
-              : ((b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic);
+          const uint x_idx =
+              (input_layout == AUDIO_LAYOUT_NCS)
+                  ? (x_base_ncs + (uint)x_t)
+                  : ((b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic);
           acc0 += w * float(input[x_idx]);
         }
         if (valid_count > 1 && x_t + 1 >= 0 && x_t + 1 < seq_len) {
-          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
-              ? (x_base_ncs + (uint)(x_t + 1))
-              : ((b * (uint)seq_len + (uint)(x_t + 1)) * (uint)cin + (uint)ic);
+          const uint x_idx =
+              (input_layout == AUDIO_LAYOUT_NCS)
+                  ? (x_base_ncs + (uint)(x_t + 1))
+                  : ((b * (uint)seq_len + (uint)(x_t + 1)) * (uint)cin +
+                     (uint)ic);
           acc1 += w * float(input[x_idx]);
         }
         if (valid_count > 2 && x_t + 2 >= 0 && x_t + 2 < seq_len) {
-          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
-              ? (x_base_ncs + (uint)(x_t + 2))
-              : ((b * (uint)seq_len + (uint)(x_t + 2)) * (uint)cin + (uint)ic);
+          const uint x_idx =
+              (input_layout == AUDIO_LAYOUT_NCS)
+                  ? (x_base_ncs + (uint)(x_t + 2))
+                  : ((b * (uint)seq_len + (uint)(x_t + 2)) * (uint)cin +
+                     (uint)ic);
           acc2 += w * float(input[x_idx]);
         }
         if (valid_count > 3 && x_t + 3 >= 0 && x_t + 3 < seq_len) {
-          const uint x_idx = (input_layout == AUDIO_LAYOUT_NCS)
-              ? (x_base_ncs + (uint)(x_t + 3))
-              : ((b * (uint)seq_len + (uint)(x_t + 3)) * (uint)cin + (uint)ic);
+          const uint x_idx =
+              (input_layout == AUDIO_LAYOUT_NCS)
+                  ? (x_base_ncs + (uint)(x_t + 3))
+                  : ((b * (uint)seq_len + (uint)(x_t + 3)) * (uint)cin +
+                     (uint)ic);
           acc3 += w * float(input[x_idx]);
         }
       }

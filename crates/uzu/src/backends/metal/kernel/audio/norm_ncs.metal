@@ -48,12 +48,13 @@ void norm_ncs(
     }
   }
 
-  const float sum = threadgroup_cooperative_reduce_sum<AUDIO_NORM_NCS_BLOCK_SIZE>(
-      partial_sum,
-      shared_mean,
-      (ushort)lid,
-      thread_context
-  );
+  const float sum =
+      threadgroup_cooperative_reduce_sum<AUDIO_NORM_NCS_BLOCK_SIZE>(
+          partial_sum,
+          shared_mean,
+          (ushort)lid,
+          thread_context
+      );
   const float mean = (subtract_mean != 0) ? (sum / (float)channels) : 0.0f;
 
   float partial_variance = 0.0f;
@@ -64,12 +65,13 @@ void norm_ncs(
     partial_variance += centered * centered;
   }
 
-  const float variance_sum = threadgroup_cooperative_reduce_sum<AUDIO_NORM_NCS_BLOCK_SIZE>(
-      partial_variance,
-      shared_variance,
-      (ushort)lid,
-      thread_context
-  );
+  const float variance_sum =
+      threadgroup_cooperative_reduce_sum<AUDIO_NORM_NCS_BLOCK_SIZE>(
+          partial_variance,
+          shared_variance,
+          (ushort)lid,
+          thread_context
+      );
   const float inv_std = rsqrt(variance_sum / (float)channels + epsilon);
 
   for (uint c = lid; c < (uint)channels; c += AUDIO_NORM_NCS_BLOCK_SIZE) {

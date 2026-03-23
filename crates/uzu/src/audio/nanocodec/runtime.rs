@@ -8,7 +8,6 @@ use std::{
 
 use serde::Deserialize;
 
-use super::fsq::compute_dim_base_index;
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
@@ -51,6 +50,25 @@ use support::{DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize
 
 fn default_eps() -> f32 {
     1e-3
+}
+
+fn compute_dim_base_index(num_levels: &[i32]) -> AudioResult<Box<[i32]>> {
+    if num_levels.is_empty() {
+        return Err(AudioError::InvalidTokenCardinality);
+    }
+
+    let mut out = vec![0_i32; num_levels.len()];
+    let mut base = 1_i32;
+
+    for (index, &levels) in num_levels.iter().enumerate() {
+        if levels <= 1 {
+            return Err(AudioError::InvalidTokenCardinality);
+        }
+        out[index] = base;
+        base = base.checked_mul(levels).ok_or(AudioError::Runtime("dim_base_index overflow".to_string()))?;
+    }
+
+    Ok(out.into_boxed_slice())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,7 +156,7 @@ impl NanoCodecFsqRuntimeConfig {
             sample_rate,
             num_groups,
             num_levels_per_group,
-            dim_base_index: dim_base_index.into_boxed_slice(),
+            dim_base_index,
             codebook_dim_per_group,
             channels,
             codec_cardinality,

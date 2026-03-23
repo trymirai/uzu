@@ -22,10 +22,7 @@ inline T activate_gelu(T x) {
 }
 
 template <typename T>
-inline T activate_leaky_relu(
-    T x,
-    float alpha
-) {
+inline T activate_leaky_relu(T x, float alpha) {
   const float xf = float(x);
   const float yf = (xf >= 0.0f) ? xf : (alpha * xf);
   return static_cast<T>(yf);
