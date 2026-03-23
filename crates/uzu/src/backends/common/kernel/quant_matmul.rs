@@ -7,6 +7,7 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
+            QuantizedMatmulQmmTransposedWideKernel,
             QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
         },
     },
@@ -81,6 +82,7 @@ enum EncodableVariant<B: Backend> {
     Qmm(<B::Kernels as Kernels>::QuantizedMatmulQmmKernel),
     QmmTransposed(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel),
     QmmTransposed64x64(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel),
+    QmmTransposedWide(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,6 +105,7 @@ enum MatrixMatrixFamily {
     QmmTransposedAlignedN,
     QmmTransposedUnalignedN,
     QmmTransposed64x64,
+    QmmTransposedWide,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +271,20 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     encoder,
                 );
             },
+            EncodableVariant::QmmTransposedWide(kernel) => {
+                kernel.encode(
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
+                );
+            },
         }
 
         Ok(())
@@ -408,6 +425,17 @@ fn create_matrix_matrix_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
+        MatrixMatrixFamily::QmmTransposedWide => EncodableVariant::QmmTransposedWide(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
     };
 
     Ok(kernel)
@@ -446,12 +474,19 @@ fn select_matrix_matrix_family(
 ) -> MatrixMatrixFamily {
     if configuration.weights_transposed {
         let aligned_n = configuration.output_dim % 32 == 0;
-        let use_64x64 = aligned_n
+        let aligned_n_64 = configuration.output_dim % 64 == 0;
+        let use_64x64 = aligned_n_64
             && configuration.data_type == DataType::BF16
             && matches!(configuration.group_size, 64 | 128)
             && matches!(bits, 4 | 8);
+        let use_wide = aligned_n_64
+            && configuration.data_type == DataType::BF16
+            && matches!(bits, 4 | 8)
+            && !use_64x64;
         if use_64x64 {
             MatrixMatrixFamily::QmmTransposed64x64
+        } else if use_wide {
+            MatrixMatrixFamily::QmmTransposedWide
         } else if aligned_n {
             MatrixMatrixFamily::QmmTransposedAlignedN
         } else {
@@ -508,6 +543,7 @@ fn kernel_key_name(key: KernelKey) -> &'static str {
             "matrix_matrix_qmm_transposed_unaligned_n"
         },
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposed64x64) => "matrix_matrix_qmm_transposed_64x64",
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedWide) => "matrix_matrix_qmm_transposed_wide",
     }
 }
 

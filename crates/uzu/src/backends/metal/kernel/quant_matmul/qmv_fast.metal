@@ -19,10 +19,10 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const bool use_zero_points SPECIALIZE,
     const bool use_mlx_quant SPECIALIZE,
     const uint tgid_x GROUPS(m),
-    const uint tgid_y GROUPS((n + 8 - 1) / 8),
+    const uint tgid_y GROUPS((n + 32 - 1) / 32),
     const uint tgid_z GROUPS(1),
     const uint tid_x THREADS(32),
-    const uint tid_y THREADS(2)
+    const uint tid_y THREADS(8)
 ) {
   const uint3 tid = uint3(tgid_x, tgid_y, tgid_z);
   const uint simd_gid = tid_y;
