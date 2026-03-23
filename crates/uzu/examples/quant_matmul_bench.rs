@@ -37,15 +37,48 @@ struct BenchmarkShape {
 }
 
 const BENCHMARK_SHAPES: &[BenchmarkShape] = &[
-    BenchmarkShape { label: "decode_out_proj", batch_size: 1, input_dimension: 2048, output_dimension: 2048 },
-    BenchmarkShape { label: "decode_in_proj", batch_size: 1, input_dimension: 2048, output_dimension: 6144 },
-    BenchmarkShape { label: "decode_mlp_up", batch_size: 1, input_dimension: 2048, output_dimension: 16384 },
-    BenchmarkShape { label: "decode_mlp_down", batch_size: 1, input_dimension: 8192, output_dimension: 2048 },
-    BenchmarkShape { label: "prefill_128_out_proj", batch_size: 128, input_dimension: 2048, output_dimension: 2048 },
-    BenchmarkShape { label: "prefill_128_in_proj", batch_size: 128, input_dimension: 2048, output_dimension: 6144 },
+    BenchmarkShape {
+        label: "decode_out_proj",
+        batch_size: 1,
+        input_dimension: 2048,
+        output_dimension: 2048,
+    },
+    BenchmarkShape {
+        label: "decode_in_proj",
+        batch_size: 1,
+        input_dimension: 2048,
+        output_dimension: 6144,
+    },
+    BenchmarkShape {
+        label: "decode_mlp_up",
+        batch_size: 1,
+        input_dimension: 2048,
+        output_dimension: 16384,
+    },
+    BenchmarkShape {
+        label: "decode_mlp_down",
+        batch_size: 1,
+        input_dimension: 8192,
+        output_dimension: 2048,
+    },
+    BenchmarkShape {
+        label: "prefill_128_out_proj",
+        batch_size: 128,
+        input_dimension: 2048,
+        output_dimension: 2048,
+    },
+    BenchmarkShape {
+        label: "prefill_128_in_proj",
+        batch_size: 128,
+        input_dimension: 2048,
+        output_dimension: 6144,
+    },
 ];
 
-fn fill_buffer_deterministic(buffer: &ProtocolObject<dyn MTLBuffer>, byte_count: usize) {
+fn fill_buffer_deterministic(
+    buffer: &ProtocolObject<dyn MTLBuffer>,
+    byte_count: usize,
+) {
     let pointer = buffer.contents().as_ptr() as *mut u8;
     let slice = unsafe { std::slice::from_raw_parts_mut(pointer, byte_count) };
     for (index, byte) in slice.iter_mut().enumerate() {
@@ -53,7 +86,10 @@ fn fill_buffer_deterministic(buffer: &ProtocolObject<dyn MTLBuffer>, byte_count:
     }
 }
 
-fn allocate_buffer(context: &MetalContext, byte_count: usize) -> MetalBuffer {
+fn allocate_buffer(
+    context: &MetalContext,
+    byte_count: usize,
+) -> MetalBuffer {
     context
         .device
         .new_buffer(byte_count, MTLResourceOptions::STORAGE_MODE_SHARED)
@@ -68,7 +104,10 @@ struct QuantizedMatmulBuffers {
     output_buffer: MetalBuffer,
 }
 
-fn allocate_quantized_matmul_buffers(context: &MetalContext, shape: &BenchmarkShape) -> QuantizedMatmulBuffers {
+fn allocate_quantized_matmul_buffers(
+    context: &MetalContext,
+    shape: &BenchmarkShape,
+) -> QuantizedMatmulBuffers {
     let activation_element_size = DataType::BF16.size_in_bytes();
     let groups_per_row = (shape.input_dimension + GROUP_SIZE - 1) / GROUP_SIZE;
     let zero_point_entries = (groups_per_row + PACKING_DIVISOR - 1) / PACKING_DIVISOR;
@@ -99,10 +138,7 @@ fn run_plain_quantized_matmul(
     shape: &BenchmarkShape,
     buffers: &mut QuantizedMatmulBuffers,
 ) -> f64 {
-    let mut command_buffer = context
-        .create_command_buffer()
-        .expect("Failed to create command buffer")
-        .start_encoding();
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     kernel
         .encode(
@@ -122,16 +158,10 @@ fn run_plain_quantized_matmul(
         )
         .expect("Failed to encode quantized matmul");
 
-    let completed = command_buffer
-        .end_encoding()
-        .submit()
-        .wait_until_completed()
-        .expect("Command buffer execution failed");
+    let completed =
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Command buffer execution failed");
 
-    completed
-        .gpu_execution_time()
-        .map(|duration| duration.as_secs_f64() * 1e6)
-        .expect("GPU timestamps not available")
+    completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1e6).expect("GPU timestamps not available")
 }
 
 fn run_rht_quantized_matmul(
@@ -147,10 +177,7 @@ fn run_rht_quantized_matmul(
     let input_total_blocks = (shape.batch_size * shape.input_dimension / 32) as u32;
     let output_total_blocks = (shape.batch_size * shape.output_dimension / 32) as u32;
 
-    let mut command_buffer = context
-        .create_command_buffer()
-        .expect("Failed to create command buffer")
-        .start_encoding();
+    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
 
     input_hadamard_kernel.encode(
         &mut buffers.input_buffer,
@@ -186,19 +213,17 @@ fn run_rht_quantized_matmul(
         &mut command_buffer,
     );
 
-    let completed = command_buffer
-        .end_encoding()
-        .submit()
-        .wait_until_completed()
-        .expect("Command buffer execution failed");
+    let completed =
+        command_buffer.end_encoding().submit().wait_until_completed().expect("Command buffer execution failed");
 
-    completed
-        .gpu_execution_time()
-        .map(|duration| duration.as_secs_f64() * 1e6)
-        .expect("GPU timestamps not available")
+    completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1e6).expect("GPU timestamps not available")
 }
 
-fn benchmark_shape(context: &MetalContext, shape: &BenchmarkShape, use_rht: bool) -> f64 {
+fn benchmark_shape(
+    context: &MetalContext,
+    shape: &BenchmarkShape,
+    use_rht: bool,
+) -> f64 {
     let quantized_matmul_kernel = QuantizedMatmulKernelEncodable::<Metal>::new(
         context,
         QuantizedMatmulConfiguration {
@@ -216,10 +241,8 @@ fn benchmark_shape(context: &MetalContext, shape: &BenchmarkShape, use_rht: bool
     let mut buffers = allocate_quantized_matmul_buffers(context, shape);
 
     let activation_element_size = DataType::BF16.size_in_bytes();
-    let input_factors_buffer =
-        allocate_buffer(context, shape.input_dimension * activation_element_size);
-    let output_factors_buffer =
-        allocate_buffer(context, shape.output_dimension * activation_element_size);
+    let input_factors_buffer = allocate_buffer(context, shape.input_dimension * activation_element_size);
+    let output_factors_buffer = allocate_buffer(context, shape.output_dimension * activation_element_size);
     fill_buffer_deterministic(&input_factors_buffer, shape.input_dimension * activation_element_size);
     fill_buffer_deterministic(&output_factors_buffer, shape.output_dimension * activation_element_size);
 
@@ -271,17 +294,18 @@ fn benchmark_shape(context: &MetalContext, shape: &BenchmarkShape, use_rht: bool
 
 fn main() {
     let use_rht = std::env::args().any(|argument| argument == "--rht");
-    let mode_label = if use_rht { "RHT + QuantizedMatmul" } else { "QuantizedMatmul" };
+    let mode_label = if use_rht {
+        "RHT + QuantizedMatmul"
+    } else {
+        "QuantizedMatmul"
+    };
 
     let context = MetalContext::new().expect("Failed to create Metal context");
 
     println!("Mode: {mode_label}");
     println!("Warmup: {WARMUP_ITERATIONS}, Iterations: {BENCHMARK_ITERATIONS}");
     println!("{:-<80}", "");
-    println!(
-        "{:<25} {:>6} {:>10} {:>10} {:>12}",
-        "Shape", "Batch", "InputDim", "OutputDim", "Avg GPU (us)"
-    );
+    println!("{:<25} {:>6} {:>10} {:>10} {:>12}", "Shape", "Batch", "InputDim", "OutputDim", "Avg GPU (us)");
     println!("{:-<80}", "");
 
     for shape in BENCHMARK_SHAPES {
