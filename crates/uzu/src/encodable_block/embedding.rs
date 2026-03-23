@@ -511,17 +511,8 @@ impl<B: Backend> Embedding<B> {
                         lookup,
                         readout: _,
                     },
-            } => lookup.encode(
-                token_ids,
-                weights,
-                output,
-                batch_size,
-                self.vocab_size,
-                self.model_dim,
-                self.input_scale,
-                encoder,
-            ),
-            EmbeddingTying::Untied {
+            }
+            | EmbeddingTying::Untied {
                 input_ty:
                     UntiedEmbeddingLookupType::FullPrecision {
                         weights,
@@ -547,21 +538,8 @@ impl<B: Backend> Embedding<B> {
                         lookup,
                         readout: _,
                     },
-            } => {
-                lookup.encode(
-                    token_ids,
-                    weights,
-                    scales,
-                    biases,
-                    output,
-                    batch_size,
-                    self.vocab_size,
-                    self.model_dim,
-                    self.input_scale,
-                    encoder,
-                );
-            },
-            EmbeddingTying::Untied {
+            }
+            | EmbeddingTying::Untied {
                 input_ty:
                     UntiedEmbeddingLookupType::Quantized {
                         weights,
@@ -622,29 +600,8 @@ impl<B: Backend> Embedding<B> {
                         lookup: _,
                         readout,
                     },
-            } => {
-                let input_dim = self.model_dim as usize;
-                let output_dim = self.vocab_size as usize;
-                readout.borrow_mut().encode(
-                    state.context(),
-                    MatmulArguments {
-                        a: input,
-                        a_offset: input_offset as u64,
-                        b: weights,
-                        d: output,
-                        bias: None,
-                        batch: batch_size as i32,
-                        input_dim: input_dim as i32,
-                        output_dim: output_dim as i32,
-                        leading_dimension_a: input_dim as i32,
-                        leading_dimension_b: input_dim as i32,
-                        leading_dimension_d: output_dim as i32,
-                        transpose_b: true,
-                    },
-                    encoder,
-                );
-            },
-            EmbeddingTying::Untied {
+            }
+            | EmbeddingTying::Untied {
                 input_ty: _,
                 output_ty:
                     UntiedEmbeddingReadoutType::FullPrecision {
@@ -682,24 +639,8 @@ impl<B: Backend> Embedding<B> {
                         lookup: _,
                         readout,
                     },
-            } => {
-                readout.encode(
-                    encoder,
-                    QuantizedMatmulArguments {
-                        a_buffer: input,
-                        a_offset: input_offset,
-                        b_buffer: weights,
-                        scales_buffer: scales,
-                        zero_points_or_biases_buffer: biases,
-                        output_buffer: output,
-                        batch: batch_size,
-                        input_dim: self.model_dim as usize,
-                        output_dim: self.vocab_size as usize,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                    },
-                )?;
-            },
-            EmbeddingTying::Untied {
+            }
+            | EmbeddingTying::Untied {
                 input_ty: _,
                 output_ty:
                     UntiedEmbeddingReadoutType::Quantized {
