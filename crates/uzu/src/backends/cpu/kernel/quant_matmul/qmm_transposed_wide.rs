@@ -8,11 +8,7 @@ use crate::ArrayElement;
 #[variants(T, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qmm_transposed_wide<
-    T: ArrayElement + Float,
-    const GROUP_SIZE: i32,
-    const BITS: i32,
->(
+pub fn quantized_matmul_qmm_transposed_wide<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
     #[allow(unused)] w: *const u32,
     #[allow(unused)] scales: *const T,
     #[allow(unused)]

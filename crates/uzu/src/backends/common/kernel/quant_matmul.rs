@@ -7,8 +7,8 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
-            QuantizedMatmulQmmTransposedWideKernel,
-            QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
+            QuantizedMatmulQmmTransposedWideKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
+            QuantizedMatmulQvmKernel,
         },
     },
 };
@@ -479,10 +479,7 @@ fn select_matrix_matrix_family(
             && configuration.data_type == DataType::BF16
             && matches!(configuration.group_size, 64 | 128)
             && matches!(bits, 4 | 8);
-        let use_wide = aligned_n_64
-            && configuration.data_type == DataType::BF16
-            && matches!(bits, 4 | 8)
-            && !use_64x64;
+        let use_wide = aligned_n_64 && configuration.data_type == DataType::BF16 && matches!(bits, 4 | 8) && !use_64x64;
         if use_64x64 {
             MatrixMatrixFamily::QmmTransposed64x64
         } else if use_wide {
