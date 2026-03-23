@@ -1,16 +1,19 @@
 mod dense;
 mod moe;
 
+use std::{cell::RefCell, rc::Rc};
+
 pub use dense::DenseMlp;
 pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
-use std::{cell::RefCell, rc::Rc};
-
 use super::linear::{Linear, LinearBlockError};
 use crate::{
     DataType,
-    backends::common::{Backend, CommandBuffer, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
+    backends::common::{
+        Backend, CommandBuffer,
+        kernel::mlp_gate_act_mul::{MlpGateActMulEncodable, MlpGateActMulHadamardEncodable},
+    },
     config::MLPConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -58,11 +61,7 @@ impl<B: Backend> dyn Mlp<B> {
                 ArrayId::MlpFusedUp,
             )?;
 
-            let gate_activation =
-                MlpGateActMulEncodable::new(context, data_type, dense_config.activation.clone(), hidden_dimension)
-                    .map_err(MlpBlockError::BackendError)?;
-
-            let down_projection = <dyn Linear<B>>::new(
+            let (down_projection, down_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                 &dense_config.linear_config,
                 false,
                 hidden_dimension,
@@ -73,7 +72,26 @@ impl<B: Backend> dyn Mlp<B> {
                 ArrayId::Main,
             )?;
 
-            return Ok((Box::new(DenseMlp::new(up_projection, gate_activation, down_projection)), up_input_hadamard_factors));
+            let fused_gate_hadamard =
+                down_input_hadamard_factors.filter(|_| hidden_dimension % 32 == 0).and_then(|factors| {
+                    MlpGateActMulHadamardEncodable::new(
+                        context,
+                        data_type,
+                        dense_config.activation.clone(),
+                        hidden_dimension,
+                        factors,
+                    )
+                    .ok()
+                });
+
+            let gate_activation =
+                MlpGateActMulEncodable::new(context, data_type, dense_config.activation.clone(), hidden_dimension)
+                    .map_err(MlpBlockError::BackendError)?;
+
+            return Ok((
+                Box::new(DenseMlp::new(up_projection, gate_activation, fused_gate_hadamard, down_projection)),
+                up_input_hadamard_factors,
+            ));
         }
 
         if let MLPConfig::MixtureOfExperts(mixture_of_experts_config) = config {

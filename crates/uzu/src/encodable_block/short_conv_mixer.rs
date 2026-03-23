@@ -1,4 +1,8 @@
-use std::{cell::RefCell, ops::{Deref, DerefMut}, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use crate::{
     DataType,
@@ -86,19 +90,22 @@ impl<B: Backend> ShortConvMixer<B> {
         let short_conv_trie = <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
             .expect("Failed to create short conv trie kernel");
 
-        (Self {
-            layer_index,
-            config: short_conv_config,
-            model_dim,
-            in_projection,
-            out_projection,
-            short_conv_pack,
-            short_conv_prefill,
-            short_conv_decode,
-            short_conv_trie,
-            conv_weight,
-            conv_bias,
-        }, in_proj_input_hadamard_factors)
+        (
+            Self {
+                layer_index,
+                config: short_conv_config,
+                model_dim,
+                in_projection,
+                out_projection,
+                short_conv_pack,
+                short_conv_prefill,
+                short_conv_decode,
+                short_conv_trie,
+                conv_weight,
+                conv_bias,
+            },
+            in_proj_input_hadamard_factors,
+        )
     }
 
     fn clear_suffix_state_valid_range(

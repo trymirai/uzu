@@ -2,11 +2,11 @@ mod full_precision;
 mod quantized;
 mod rht_wrapper;
 
+use std::{cell::RefCell, rc::Rc};
+
 pub use full_precision::{FullPrecisionLinear, FullPrecisionLinearError};
 pub use quantized::{QuantizedLinear, QuantizedLinearError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
-use std::{cell::RefCell, rc::Rc};
-
 use thiserror::Error;
 
 use crate::{
@@ -133,7 +133,16 @@ impl<B: Backend> dyn Linear<B> {
                 Ok((Box::new(block), factors))
             },
             other => {
-                let linear = Self::new(other, _has_biases, input_dimension, output_dimensions, context, parameter_tree, input_array_id, output_array_id)?;
+                let linear = Self::new(
+                    other,
+                    _has_biases,
+                    input_dimension,
+                    output_dimensions,
+                    context,
+                    parameter_tree,
+                    input_array_id,
+                    output_array_id,
+                )?;
                 Ok((linear, None))
             },
         }

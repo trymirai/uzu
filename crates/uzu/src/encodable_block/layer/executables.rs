@@ -1,15 +1,25 @@
 //! Layer executables - a single decoder layer with mixer, norms, and MLP.
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use super::MixerExecutables;
 use crate::{
     DataType, DecoderLayerConfig,
-    backends::common::{Backend, CommandBuffer},
-    config::{DecoderLayerType, MixerConfig},
+    backends::common::{
+        Backend, CommandBuffer,
+        kernel::{
+            Kernels, RMSNormCopyHadamardMulKernel, RMSNormCopyKernel, ResidualAddRMSNormHadamardMulKernel,
+            ResidualAddRMSNormKernel,
+        },
+    },
+    config::{DecoderLayerType, MixerConfig, NormalizationConfig, UpcastMode},
     encodable_block::{
-        Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, RMSNormHadamard, Rope,
-        ShortConvMixer, TensorAddSwap, TensorCopy,
+        Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, RMSNormHadamard, Rope, ShortConvMixer,
+        TensorAddSwap, TensorCopy,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -33,6 +43,232 @@ impl<B: Backend> NormBlock<B> {
     }
 }
 
+enum FusedCopyNorm<B: Backend> {
+    Plain {
+        kernel: <B::Kernels as Kernels>::RMSNormCopyKernel,
+        config: NormalizationConfig,
+        scales_buffer: Rc<RefCell<B::Buffer>>,
+    },
+    Hadamard {
+        kernel: <B::Kernels as Kernels>::RMSNormCopyHadamardMulKernel,
+        config: NormalizationConfig,
+        scales_buffer: Rc<RefCell<B::Buffer>>,
+        hadamard_factors: Rc<RefCell<B::Buffer>>,
+    },
+}
+
+impl<B: Backend> FusedCopyNorm<B> {
+    fn encode(
+        &self,
+        state: &mut ForwardPassState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Shortcut]);
+        let main_array = arrays[0].borrow_mut();
+        let shortcut_array = arrays[1].borrow_mut();
+        let batch_len = main_array.shape()[0].min(state.active_suffix_length()) as u32;
+        let element_count = main_array.shape()[1] as u32;
+        let main_buf_rc = main_array.buffer();
+        let shortcut_buf_rc = shortcut_array.buffer();
+        let mut main_borrow = main_buf_rc.borrow_mut();
+        let mut shortcut_borrow = shortcut_buf_rc.borrow_mut();
+
+        match self {
+            Self::Plain {
+                kernel,
+                config,
+                scales_buffer,
+            } => {
+                kernel.encode(
+                    (main_borrow.deref_mut(), 0),
+                    (shortcut_borrow.deref_mut(), 0),
+                    scales_buffer.borrow().deref(),
+                    batch_len,
+                    element_count,
+                    config.epsilon,
+                    config.scale_offset.unwrap_or(0.0),
+                    config.upcast_mode == UpcastMode::FullLayer,
+                    command_buffer,
+                );
+            },
+            Self::Hadamard {
+                kernel,
+                config,
+                scales_buffer,
+                hadamard_factors,
+            } => {
+                kernel.encode(
+                    (main_borrow.deref_mut(), 0),
+                    (shortcut_borrow.deref_mut(), 0),
+                    scales_buffer.borrow().deref(),
+                    hadamard_factors.borrow().deref(),
+                    batch_len,
+                    element_count,
+                    config.epsilon,
+                    config.scale_offset.unwrap_or(0.0),
+                    config.upcast_mode == UpcastMode::FullLayer,
+                    command_buffer,
+                );
+            },
+        }
+        Ok(())
+    }
+}
+
+enum FusedResidualAddNorm<B: Backend> {
+    Plain {
+        kernel: <B::Kernels as Kernels>::ResidualAddRMSNormKernel,
+        config: NormalizationConfig,
+        scales_buffer: Rc<RefCell<B::Buffer>>,
+    },
+    Hadamard {
+        kernel: <B::Kernels as Kernels>::ResidualAddRMSNormHadamardMulKernel,
+        config: NormalizationConfig,
+        scales_buffer: Rc<RefCell<B::Buffer>>,
+        hadamard_factors: Rc<RefCell<B::Buffer>>,
+    },
+}
+
+impl<B: Backend> FusedResidualAddNorm<B> {
+    fn encode(
+        &self,
+        state: &mut ForwardPassState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Shortcut]);
+        let main_array = arrays[0].borrow_mut();
+        let shortcut_array = arrays[1].borrow_mut();
+        let batch_len = main_array.shape()[0].min(state.active_suffix_length()) as u32;
+        let element_count = main_array.shape()[1] as u32;
+        let main_buf_rc = main_array.buffer();
+        let shortcut_buf_rc = shortcut_array.buffer();
+        let mut main_borrow = main_buf_rc.borrow_mut();
+        let mut shortcut_borrow = shortcut_buf_rc.borrow_mut();
+
+        match self {
+            Self::Plain {
+                kernel,
+                config,
+                scales_buffer,
+            } => {
+                kernel.encode(
+                    (main_borrow.deref_mut(), 0),
+                    (shortcut_borrow.deref_mut(), 0),
+                    scales_buffer.borrow().deref(),
+                    batch_len,
+                    element_count,
+                    config.epsilon,
+                    config.scale_offset.unwrap_or(0.0),
+                    config.upcast_mode == UpcastMode::FullLayer,
+                    command_buffer,
+                );
+            },
+            Self::Hadamard {
+                kernel,
+                config,
+                scales_buffer,
+                hadamard_factors,
+            } => {
+                kernel.encode(
+                    (main_borrow.deref_mut(), 0),
+                    (shortcut_borrow.deref_mut(), 0),
+                    scales_buffer.borrow().deref(),
+                    hadamard_factors.borrow().deref(),
+                    batch_len,
+                    element_count,
+                    config.epsilon,
+                    config.scale_offset.unwrap_or(0.0),
+                    config.upcast_mode == UpcastMode::FullLayer,
+                    command_buffer,
+                );
+            },
+        }
+        Ok(())
+    }
+}
+
+fn try_create_fused_copy_norm<B: Backend>(
+    context: &B::Context,
+    intermediate_data_type: DataType,
+    config: &NormalizationConfig,
+    norm_tree: &ParameterTree<B::Context>,
+    hadamard_factors: Option<Rc<RefCell<B::Buffer>>>,
+) -> Option<FusedCopyNorm<B>> {
+    let scales = norm_tree.leaf_array("scales").ok()?;
+    let scale_data_type: DataType = config.scale_precision.into();
+    let accumulation_data_type: DataType = config.accumulation_precision.into();
+
+    if let Some(factors) = hadamard_factors {
+        let kernel = <B::Kernels as Kernels>::RMSNormCopyHadamardMulKernel::new(
+            context,
+            scale_data_type,
+            intermediate_data_type,
+            accumulation_data_type,
+        )
+        .ok()?;
+        Some(FusedCopyNorm::Hadamard {
+            kernel,
+            config: config.clone(),
+            scales_buffer: scales.buffer(),
+            hadamard_factors: factors,
+        })
+    } else {
+        let kernel = <B::Kernels as Kernels>::RMSNormCopyKernel::new(
+            context,
+            scale_data_type,
+            intermediate_data_type,
+            accumulation_data_type,
+        )
+        .ok()?;
+        Some(FusedCopyNorm::Plain {
+            kernel,
+            config: config.clone(),
+            scales_buffer: scales.buffer(),
+        })
+    }
+}
+
+fn try_create_fused_residual_add_norm<B: Backend>(
+    context: &B::Context,
+    intermediate_data_type: DataType,
+    config: &NormalizationConfig,
+    norm_tree: &ParameterTree<B::Context>,
+    hadamard_factors: Option<Rc<RefCell<B::Buffer>>>,
+) -> Option<FusedResidualAddNorm<B>> {
+    let scales = norm_tree.leaf_array("scales").ok()?;
+    let scale_data_type: DataType = config.scale_precision.into();
+    let accumulation_data_type: DataType = config.accumulation_precision.into();
+
+    if let Some(factors) = hadamard_factors {
+        let kernel = <B::Kernels as Kernels>::ResidualAddRMSNormHadamardMulKernel::new(
+            context,
+            scale_data_type,
+            intermediate_data_type,
+            accumulation_data_type,
+        )
+        .ok()?;
+        Some(FusedResidualAddNorm::Hadamard {
+            kernel,
+            config: config.clone(),
+            scales_buffer: scales.buffer(),
+            hadamard_factors: factors,
+        })
+    } else {
+        let kernel = <B::Kernels as Kernels>::ResidualAddRMSNormKernel::new(
+            context,
+            scale_data_type,
+            intermediate_data_type,
+            accumulation_data_type,
+        )
+        .ok()?;
+        Some(FusedResidualAddNorm::Plain {
+            kernel,
+            config: config.clone(),
+            scales_buffer: scales.buffer(),
+        })
+    }
+}
+
 /// A single decoder layer with all its components.
 pub struct LayerExecutables<B: Backend> {
     pub layer_index: usize,
@@ -44,6 +280,8 @@ pub struct LayerExecutables<B: Backend> {
     pub pre_mlp_norm: NormBlock<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
+    fused_pre_attn: Option<FusedCopyNorm<B>>,
+    fused_pre_mlp: Option<FusedResidualAddNorm<B>>,
 }
 
 impl<B: Backend> LayerExecutables<B> {
@@ -77,7 +315,7 @@ impl<B: Backend> LayerExecutables<B> {
 
         let norm_tree = decoder_layer_loader.subtree("pre_mixer_norm").unwrap();
 
-        let (pre_attention_norm, mixer) = match &layer_config.mixer_config {
+        let (pre_attention_norm, mixer, fused_pre_attn) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
@@ -92,6 +330,14 @@ impl<B: Backend> LayerExecutables<B> {
                     ArrayId::QKV,
                 )
                 .expect("Failed to create qkv projection");
+
+                let fused_pre_attn = try_create_fused_copy_norm(
+                    ctx,
+                    intermediate_data_type,
+                    &layer_config.pre_attention_norm_config,
+                    &norm_tree,
+                    input_hadamard_factors.clone(),
+                );
 
                 let pre_attention_norm = if let Some(factors) = input_hadamard_factors {
                     NormBlock::FusedHadamard(
@@ -163,13 +409,17 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
-                (pre_attention_norm, MixerExecutables::Attention {
-                    qkv_projection,
-                    qk_norm,
-                    rope: rope_block,
-                    attention,
-                    out_projection,
-                })
+                (
+                    pre_attention_norm,
+                    MixerExecutables::Attention {
+                        qkv_projection,
+                        qk_norm,
+                        rope: rope_block,
+                        attention,
+                        out_projection,
+                    },
+                    fused_pre_attn,
+                )
             },
             MixerConfig::Mamba(mamba_config) => {
                 let mixer = MambaMixer::new(
@@ -184,11 +434,30 @@ impl<B: Backend> LayerExecutables<B> {
                     decoder_layer_loader,
                 );
                 let norm = NormBlock::Plain(
-                    RMSNorm::new(ctx, intermediate_data_type, layer_config.pre_attention_norm_config.clone(),
-                        ArrayId::Main, ArrayId::Main, &norm_tree)
-                        .expect("Failed to create RMS norm kernel"),
+                    RMSNorm::new(
+                        ctx,
+                        intermediate_data_type,
+                        layer_config.pre_attention_norm_config.clone(),
+                        ArrayId::Main,
+                        ArrayId::Main,
+                        &norm_tree,
+                    )
+                    .expect("Failed to create RMS norm kernel"),
                 );
-                (norm, MixerExecutables::StateSpace { mixer })
+                let fused_pre_attn = try_create_fused_copy_norm(
+                    ctx,
+                    intermediate_data_type,
+                    &layer_config.pre_attention_norm_config,
+                    &norm_tree,
+                    None,
+                );
+                (
+                    norm,
+                    MixerExecutables::StateSpace {
+                        mixer,
+                    },
+                    fused_pre_attn,
+                )
             },
             MixerConfig::ShortConv(short_conv_config) => {
                 let (mixer, input_hadamard_factors) = ShortConvMixer::new(
@@ -199,21 +468,46 @@ impl<B: Backend> LayerExecutables<B> {
                     model_dim,
                     decoder_layer_loader,
                 );
+                let fused_pre_attn = try_create_fused_copy_norm(
+                    ctx,
+                    intermediate_data_type,
+                    &layer_config.pre_attention_norm_config,
+                    &norm_tree,
+                    input_hadamard_factors.clone(),
+                );
                 let norm = if let Some(factors) = input_hadamard_factors {
                     NormBlock::FusedHadamard(
-                        RMSNormHadamard::new(ctx, intermediate_data_type,
+                        RMSNormHadamard::new(
+                            ctx,
+                            intermediate_data_type,
                             layer_config.pre_attention_norm_config.clone(),
-                            ArrayId::Main, ArrayId::Main, &norm_tree, factors)
-                            .expect("Failed to create fused RMSNorm+Hadamard kernel"),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &norm_tree,
+                            factors,
+                        )
+                        .expect("Failed to create fused RMSNorm+Hadamard kernel"),
                     )
                 } else {
                     NormBlock::Plain(
-                        RMSNorm::new(ctx, intermediate_data_type, layer_config.pre_attention_norm_config.clone(),
-                            ArrayId::Main, ArrayId::Main, &norm_tree)
-                            .expect("Failed to create RMS norm kernel"),
+                        RMSNorm::new(
+                            ctx,
+                            intermediate_data_type,
+                            layer_config.pre_attention_norm_config.clone(),
+                            ArrayId::Main,
+                            ArrayId::Main,
+                            &norm_tree,
+                        )
+                        .expect("Failed to create RMS norm kernel"),
                     )
                 };
-                (norm, MixerExecutables::ShortConv { mixer })
+                (
+                    norm,
+                    MixerExecutables::ShortConv {
+                        mixer,
+                    },
+                    fused_pre_attn,
+                )
             },
         };
 
@@ -251,19 +545,38 @@ impl<B: Backend> LayerExecutables<B> {
         )
         .expect("Failed to create mlp block");
 
+        let fused_pre_mlp = try_create_fused_residual_add_norm(
+            ctx,
+            intermediate_data_type,
+            &layer_config.pre_mlp_norm_config,
+            &mlp_norm_tree,
+            mlp_input_hadamard_factors.clone(),
+        );
+
         let pre_mlp_norm = if let Some(factors) = mlp_input_hadamard_factors {
             NormBlock::FusedHadamard(
-                RMSNormHadamard::new(ctx, intermediate_data_type,
+                RMSNormHadamard::new(
+                    ctx,
+                    intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
-                    ArrayId::Main, ArrayId::Main, &mlp_norm_tree, factors)
-                    .expect("Failed to create fused RMSNorm+Hadamard kernel"),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &mlp_norm_tree,
+                    factors,
+                )
+                .expect("Failed to create fused RMSNorm+Hadamard kernel"),
             )
         } else {
             NormBlock::Plain(
-                RMSNorm::new(ctx, intermediate_data_type,
+                RMSNorm::new(
+                    ctx,
+                    intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
-                    ArrayId::Main, ArrayId::Main, &mlp_norm_tree)
-                    .expect("Failed to create RMS norm kernel"),
+                    ArrayId::Main,
+                    ArrayId::Main,
+                    &mlp_norm_tree,
+                )
+                .expect("Failed to create RMS norm kernel"),
             )
         };
 
@@ -293,6 +606,8 @@ impl<B: Backend> LayerExecutables<B> {
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
+            fused_pre_attn,
+            fused_pre_mlp,
         }
     }
 
@@ -310,10 +625,18 @@ impl<B: Backend> LayerExecutables<B> {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
-        self.copy_main_to_shortcut.encode(state, command_buffer)?;
-        // shortcut = input
-
-        self.pre_attention_norm.encode(state, command_buffer)?;
+        if self.layer_index == 0 {
+            if let Some(ref fused) = self.fused_pre_attn {
+                fused.encode(state, command_buffer)?;
+            } else {
+                self.copy_main_to_shortcut.encode(state, command_buffer)?;
+                self.pre_attention_norm.encode(state, command_buffer)?;
+            }
+        } else {
+            // For layers > 0 the previous layer's TensorAddSwap already wrote the
+            // identical value to both Main and Shortcut, so the copy is a no-op.
+            self.pre_attention_norm.encode(state, command_buffer)?;
+        }
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
@@ -372,15 +695,16 @@ impl<B: Backend> LayerExecutables<B> {
         }
         //main = attention_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer)?;
-        // shortcut = input + attention_result
-        // main = input + attention_result
+        if let Some(ref fused) = self.fused_pre_mlp {
+            fused.encode(state, command_buffer)?;
+        } else {
+            self.main_shortcut_add_swap.encode(state, command_buffer)?;
+            self.pre_mlp_norm.encode(state, command_buffer)?;
+        }
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
-
-        self.pre_mlp_norm.encode(state, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());

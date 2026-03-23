@@ -31,7 +31,7 @@ pub struct RMSNormHadamard<B: Backend> {
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     scales_buffer: Rc<RefCell<B::Buffer>>,
-    hadamard_factors_buffer: Rc<RefCell<B::Buffer>>,
+    pub(crate) hadamard_factors_buffer: Rc<RefCell<B::Buffer>>,
 }
 
 impl<B: Backend> RMSNormHadamard<B> {
@@ -44,9 +44,7 @@ impl<B: Backend> RMSNormHadamard<B> {
         norm_parameter_tree: &ParameterTree<B::Context>,
         hadamard_factors_buffer: Rc<RefCell<B::Buffer>>,
     ) -> Result<Self, RMSNormHadamardError<B>> {
-        let scales = norm_parameter_tree
-            .leaf_array("scales")
-            .map_err(RMSNormHadamardError::ParameterError)?;
+        let scales = norm_parameter_tree.leaf_array("scales").map_err(RMSNormHadamardError::ParameterError)?;
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
