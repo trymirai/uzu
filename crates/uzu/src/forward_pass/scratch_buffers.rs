@@ -1,11 +1,8 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     DataType,
-    array::{ArrayCell, ArrayContextExt},
+    array::{Array, ArrayContextExt},
     backends::common::Backend,
     config::{DecoderConfig, MLPConfig},
     forward_pass::model_shape::ModelShape,
@@ -13,61 +10,61 @@ use crate::{
 
 pub struct ScratchBuffers<B: Backend> {
     // 1-D
-    pub token_ids: ArrayCell<B>,
-    pub token_positions: ArrayCell<B>,
-    pub token_parents: ArrayCell<B>,
-    pub token_bitmask: ArrayCell<B>,
-    pub token_seeds: ArrayCell<B>,
-    pub sampling_output: ArrayCell<B>,
+    pub token_ids: Array<B>,
+    pub token_positions: Array<B>,
+    pub token_parents: Array<B>,
+    pub token_bitmask: Array<B>,
+    pub token_seeds: Array<B>,
+    pub sampling_output: Array<B>,
 
     // 2-D
-    pub attention_window_size_to_bias: HashMap<Option<usize>, ArrayCell<B>>,
-    pub logits: ArrayCell<B>,
-    pub main: ArrayCell<B>,
-    pub shortcut: ArrayCell<B>,
-    pub qkv: ArrayCell<B>,
-    pub gate: Option<ArrayCell<B>>,
-    pub attention_output: ArrayCell<B>,
-    pub mlp_fused_up: ArrayCell<B>,
-    pub mlp_hidden: ArrayCell<B>,
-    pub ssm_inproj: Option<ArrayCell<B>>,
-    pub ssm_packed: Option<ArrayCell<B>>,
-    pub ssm_conv_padded: Option<ArrayCell<B>>,
-    pub ssm_x: Option<ArrayCell<B>>,
-    pub ssm_b: Option<ArrayCell<B>>,
-    pub ssm_c: Option<ArrayCell<B>>,
-    pub ssm_dt: Option<ArrayCell<B>>,
-    pub ssm_z: Option<ArrayCell<B>>,
+    pub attention_window_size_to_bias: HashMap<Option<usize>, Array<B>>,
+    pub logits: Array<B>,
+    pub main: Array<B>,
+    pub shortcut: Array<B>,
+    pub qkv: Array<B>,
+    pub gate: Option<Array<B>>,
+    pub attention_output: Array<B>,
+    pub mlp_fused_up: Array<B>,
+    pub mlp_hidden: Array<B>,
+    pub ssm_inproj: Option<Array<B>>,
+    pub ssm_packed: Option<Array<B>>,
+    pub ssm_conv_padded: Option<Array<B>>,
+    pub ssm_x: Option<Array<B>>,
+    pub ssm_b: Option<Array<B>>,
+    pub ssm_c: Option<Array<B>>,
+    pub ssm_dt: Option<Array<B>>,
+    pub ssm_z: Option<Array<B>>,
 
     // 3-D
-    pub rotated_queries: ArrayCell<B>,
-    pub rotated_keys: ArrayCell<B>,
-    pub extracted_values: ArrayCell<B>,
+    pub rotated_queries: Array<B>,
+    pub rotated_keys: Array<B>,
+    pub extracted_values: Array<B>,
 
     // 2-pass attention intermediate buffers
-    pub attention_partials: ArrayCell<B>, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
-    pub attention_sums: ArrayCell<B>,     // [num_heads * max_suffix_len * total_blocks_count]
-    pub attention_maxs: ArrayCell<B>,     // [num_heads * max_suffix_len * total_blocks_count]
+    pub attention_partials: Array<B>, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
+    pub attention_sums: Array<B>,     // [num_heads * max_suffix_len * total_blocks_count]
+    pub attention_maxs: Array<B>,     // [num_heads * max_suffix_len * total_blocks_count]
 
-    pub moe_topk_ids: Option<ArrayCell<B>>,
-    pub moe_topk_probs: Option<ArrayCell<B>>,
-    pub moe_offsets: Option<ArrayCell<B>>,
-    pub moe_sumk: Option<ArrayCell<B>>,
-    pub moe_bucketed_token_ids: Option<ArrayCell<B>>,
-    pub moe_bucketed_probs: Option<ArrayCell<B>>,
-    pub moe_x_perm: Option<ArrayCell<B>>,
-    pub moe_tok2row: Option<ArrayCell<B>>,
-    pub moe_y_partial: Option<ArrayCell<B>>,
-    pub moe_hidden: Option<ArrayCell<B>>,
-    pub moe_two_pass_row_expert_map: Option<ArrayCell<B>>,
-    pub moe_tile_counts: Option<ArrayCell<B>>,
-    pub moe_tile_offsets: Option<ArrayCell<B>>,
-    pub moe_tile_map: Option<ArrayCell<B>>,
-    pub moe_total_tiles: Option<ArrayCell<B>>,
-    pub moe_dispatch_args: Option<ArrayCell<B>>,
-    pub moe_scatter_partials: Option<ArrayCell<B>>,
-    pub moe_scatter_block_bases: Option<ArrayCell<B>>,
-    pub moe_block_alloc: Option<ArrayCell<B>>,
+    pub moe_topk_ids: Option<Array<B>>,
+    pub moe_topk_probs: Option<Array<B>>,
+    pub moe_offsets: Option<Array<B>>,
+    pub moe_sumk: Option<Array<B>>,
+    pub moe_bucketed_token_ids: Option<Array<B>>,
+    pub moe_bucketed_probs: Option<Array<B>>,
+    pub moe_x_perm: Option<Array<B>>,
+    pub moe_tok2row: Option<Array<B>>,
+    pub moe_y_partial: Option<Array<B>>,
+    pub moe_hidden: Option<Array<B>>,
+    pub moe_two_pass_row_expert_map: Option<Array<B>>,
+    pub moe_tile_counts: Option<Array<B>>,
+    pub moe_tile_offsets: Option<Array<B>>,
+    pub moe_tile_map: Option<Array<B>>,
+    pub moe_total_tiles: Option<Array<B>>,
+    pub moe_dispatch_args: Option<Array<B>>,
+    pub moe_scatter_partials: Option<Array<B>>,
+    pub moe_scatter_block_bases: Option<Array<B>>,
+    pub moe_block_alloc: Option<Array<B>>,
 }
 
 impl<B: Backend> ScratchBuffers<B> {
@@ -79,9 +76,8 @@ impl<B: Backend> ScratchBuffers<B> {
         max_suffix_len: usize,
     ) -> Self {
         // Helper closure for allocation
-        let alloc = |shape: &[usize], dtype: DataType, label: &str| -> ArrayCell<B> {
-            let array = context.create_array_uninitialized(shape, dtype, &format!("scratch_buffers_{label}"));
-            RefCell::new(array)
+        let alloc = |shape: &[usize], dtype: DataType, label: &str| -> Array<B> {
+            context.create_array_uninitialized(shape, dtype, &format!("scratch_buffers_{label}"))
         };
 
         let act_ty = model_shape.activation_data_type();

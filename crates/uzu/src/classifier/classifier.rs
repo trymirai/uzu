@@ -183,7 +183,7 @@ impl<B: Backend> Classifier<B> {
         state: &ForwardPassState<B>,
     ) -> Result<Box<[f32]>, Error> {
         let logits_arrays = state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
-        let logits_array = logits_arrays[0].borrow();
+        let logits_array = &logits_arrays[0];
 
         let num_labels = self.context.model_config.model_config.num_labels;
         let buffer = logits_array.as_bytes();

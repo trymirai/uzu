@@ -39,8 +39,8 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
 
         // Gate act+mul (fused_up -> hidden)
         let arrays = state.arrays(&[ArrayId::MlpFusedUp, ArrayId::MlpHidden]);
-        let fused = arrays[0].borrow_mut();
-        let hidden = arrays[1].borrow_mut();
+        let fused = &arrays[0];
+        let hidden = &arrays[1];
         let m = fused.shape()[0] as i32;
         let fused_buf_rc = fused.buffer();
         let fused_buf_borrow = fused_buf_rc.borrow();
@@ -51,8 +51,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
             .expect("Failed to encode MLP activation/mul kernel");
         drop(hidden_buf_borrow);
         drop(fused_buf_borrow);
-        drop(fused);
-        drop(hidden);
+        drop(arrays);
 
         // Down
         self.down.encode(state, encoder)?;

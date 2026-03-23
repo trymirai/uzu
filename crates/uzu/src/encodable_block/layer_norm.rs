@@ -77,12 +77,12 @@ impl<B: Backend> LayerNorm<B> {
         let output_binding = state.arrays(&[self.output_array_id]);
 
         let input_shape = {
-            let input_array = input_binding[0].borrow();
+            let input_array = &input_binding[0];
             input_array.shape().to_vec()
         };
 
-        let input_array = input_binding[0].borrow();
-        let output_array = output_binding[0].borrow_mut();
+        let input_array = &input_binding[0];
+        let output_array = &output_binding[0];
 
         let batch_size = input_shape[0] as u32;
         let model_dim = input_shape[1] as u32;

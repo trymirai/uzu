@@ -178,9 +178,9 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let arrays =
             state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
-        let in_proj = arrays[0].borrow_mut();
-        let conv_state = arrays[1].borrow_mut();
-        let out = arrays[2].borrow_mut();
+        let in_proj = &arrays[0];
+        let conv_state = &arrays[1];
+        let out = &arrays[2];
 
         let weight_buf_rc = self.conv_weight.buffer();
         let weight_buf_borrow = weight_buf_rc.borrow();
@@ -242,11 +242,11 @@ impl<B: Backend> ShortConvMixer<B> {
             ArrayId::AttentionOutput,
         ]);
 
-        let in_proj = arrays[0].borrow_mut();
-        let parents = arrays[1].borrow_mut();
-        let conv_state = arrays[2].borrow_mut();
-        let suffix_state = arrays[3].borrow_mut();
-        let out = arrays[4].borrow_mut();
+        let in_proj = &arrays[0];
+        let parents = &arrays[1];
+        let conv_state = &arrays[2];
+        let suffix_state = &arrays[3];
+        let out = &arrays[4];
 
         let data_type: DataType = self.config.in_projection_config.activation_precision().into();
         let elem_bytes = data_type.size_in_bytes();
@@ -294,9 +294,9 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let arrays =
             state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
-        let in_proj = arrays[0].borrow_mut();
-        let conv_state = arrays[1].borrow_mut();
-        let out = arrays[2].borrow_mut();
+        let in_proj = &arrays[0];
+        let conv_state = &arrays[1];
+        let out = &arrays[2];
 
         let decode_weight_buf_rc = self.conv_weight.buffer();
         let decode_weight_buf_borrow = decode_weight_buf_rc.borrow();
