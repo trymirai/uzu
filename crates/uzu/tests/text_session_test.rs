@@ -17,11 +17,7 @@ fn build_model_path() -> PathBuf {
 }
 
 fn build_experimental_model_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("models")
-        .join("experimental")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("models").join("experimental")
 }
 
 fn build_decoding_config() -> DecodingConfig {

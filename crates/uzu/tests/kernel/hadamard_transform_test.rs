@@ -1,4 +1,7 @@
-use std::{fmt::Debug, ops::{Deref, DerefMut}};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 use half::{bf16, f16};
 use num_traits::Float;
@@ -13,7 +16,11 @@ use uzu::{
 
 const BLOCK_SIZE: usize = 32;
 
-fn reference_hadamard_transform_mul(data: &[f64], factors: &[f64], channel_count: usize) -> Vec<f64> {
+fn reference_hadamard_transform_mul(
+    data: &[f64],
+    factors: &[f64],
+    channel_count: usize,
+) -> Vec<f64> {
     let batch_count = data.len() / channel_count;
     let normalization_factor = 1.0 / (BLOCK_SIZE as f64).sqrt();
     let mut result = data.to_vec();
@@ -60,15 +67,22 @@ struct TestInput<T: ArrayElement + Float> {
     batch_count: usize,
 }
 
-fn generate_test_input<T: ArrayElement + Float>(batch_count: usize, channel_count: usize) -> (TestInput<T>, Vec<f64>) {
+fn generate_test_input<T: ArrayElement + Float>(
+    batch_count: usize,
+    channel_count: usize,
+) -> (TestInput<T>, Vec<f64>) {
     let total_elements = batch_count * channel_count;
 
-    let data_f64: Vec<f64> = (0..total_elements)
-        .map(|index| ((index as f64) * 0.1).sin() * 2.0)
-        .collect();
+    let data_f64: Vec<f64> = (0..total_elements).map(|index| ((index as f64) * 0.1).sin() * 2.0).collect();
 
     let factors_f64: Vec<f64> = (0..channel_count)
-        .map(|index| if index % 3 == 0 { -1.0 } else { 1.0 })
+        .map(|index| {
+            if index % 3 == 0 {
+                -1.0
+            } else {
+                1.0
+            }
+        })
         .collect();
 
     let expected = reference_hadamard_transform_mul(&data_f64, &factors_f64, channel_count);

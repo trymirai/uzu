@@ -6,8 +6,8 @@ mod matmul;
 mod sampling;
 
 mod activation_mul_test;
-mod hadamard_transform_test;
 mod full_precision_embedding_test;
+mod hadamard_transform_test;
 mod qk_norm_test;
 mod rms_norm_test;
 mod rope_test;
