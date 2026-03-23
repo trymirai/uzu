@@ -9,50 +9,52 @@ using namespace metal;
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 4
 
-template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
-VARIANTS(InputT, float, half, bfloat)
+template <typename ScaleT, typename DataT, typename AccumT>
 VARIANTS(ScaleT, float, half, bfloat)
-VARIANTS(OutputT, float, half, bfloat)
+VARIANTS(DataT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
-PUBLIC KERNEL(RMSNormHadamardMul)(
-    const device InputT* input OPTIONAL(!in_place),
+PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
+    device DataT* main_buffer,
+    device DataT* shortcut_buffer,
     const device ScaleT* scales,
-    device OutputT* output,
-    const device OutputT* hadamard_factors,
+    const device DataT* hadamard_factors,
     constant uint& batch_size,
     constant uint& element_count,
     constant float& epsilon,
     constant float& scale_offset,
     constant bool& full_layer,
-    const bool in_place SPECIALIZE,
     threadgroup float staging[8192],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
 ) {
-  if (in_place) {
-    input = reinterpret_cast<const device InputT*>(output);
-  }
-
   threadgroup AccumT* shared_sum = reinterpret_cast<threadgroup AccumT*>(staging);
 
-  const uint input_offset = batch_idx * element_count;
-  const device InputT* input_data = input + input_offset;
+  const uint offset = batch_idx * element_count;
+  device DataT* main_data = main_buffer + offset;
+  device DataT* shortcut_data = shortcut_buffer + offset;
   const device ScaleT* scales_data = scales;
-  device OutputT* output_data = output + input_offset;
-
-  // ── Phase 1: RMSNorm reduction + cache to staging ──────────────────
 
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
+  // Pass 1: compute residual sum, write to shortcut + staging, accumulate sum-of-squares
   for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
        base_i += BLOCK_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
+
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
-      if (i < element_count) staging[i] = float(vals[j]);
+      if (i < element_count) {
+        AccumT residual = static_cast<AccumT>(main_data[i]) +
+                          static_cast<AccumT>(shortcut_data[i]);
+        vals[j] = residual;
+        shortcut_data[i] = static_cast<DataT>(residual);
+        staging[i] = float(residual);
+      } else {
+        vals[j] = 0.0f;
+      }
     }
+
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       partial_sum += vals[j] * vals[j];
     }
@@ -63,10 +65,9 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
 
   AccumT mean_square =
       static_cast<AccumT>(total_sum) / static_cast<AccumT>(element_count);
-  AccumT rms_norm = rsqrt(mean_square + static_cast<AccumT>(epsilon));
+  AccumT rms_norm_val = rsqrt(mean_square + static_cast<AccumT>(epsilon));
 
-  // ── Phase 1b: Normalize + scale, write to staging ──────────────────
-
+  // Pass 2: normalize + scale, write to staging
   for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
        base_i += BLOCK_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
@@ -80,7 +81,7 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
       uint i = base_i + j;
       if (i >= element_count) continue;
 
-      AccumT normalized_high = vals[j] * rms_norm;
+      AccumT normalized_high = vals[j] * rms_norm_val;
       float result;
 
       if (full_layer) {
@@ -88,8 +89,8 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
                                   static_cast<AccumT>(scale_offset);
         result = float(normalized_high * scale_value_high);
       } else {
-        OutputT normalized_low = static_cast<OutputT>(normalized_high);
-        OutputT scale_value_low = static_cast<OutputT>(
+        DataT normalized_low = static_cast<DataT>(normalized_high);
+        DataT scale_value_low = static_cast<DataT>(
             static_cast<AccumT>(scales_data[i]) +
             static_cast<AccumT>(scale_offset));
         result = float(normalized_low * scale_value_low);
@@ -101,8 +102,7 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  // ── Phase 2: Hadamard transform from staging to device ─────────────
-
+  // Pass 3: Hadamard transform from staging to main
   const uint lane = thread_in_row % METAL_SIMD_SIZE;
   const uint simd_group_id = thread_in_row / METAL_SIMD_SIZE;
   const uint total_simd_groups = BLOCK_SIZE / METAL_SIMD_SIZE;
@@ -120,6 +120,6 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
     }
 
     constexpr float normalization_factor = 1.0f / 5.656854249f;
-    output_data[elem_idx] = OutputT(value * normalization_factor);
+    main_data[elem_idx] = DataT(value * normalization_factor);
   }
 }

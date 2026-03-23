@@ -15,7 +15,9 @@ pub fn rms_norm_hadamard_mul<
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
-    #[optional(!in_place)] #[allow(unused)] input: Option<*const InputT>,
+    #[optional(!in_place)]
+    #[allow(unused)]
+    input: Option<*const InputT>,
     #[allow(unused)] scales: *const ScaleT,
     #[allow(unused)] output: *mut OutputT,
     #[allow(unused)] hadamard_factors: *const OutputT,
@@ -24,7 +26,9 @@ pub fn rms_norm_hadamard_mul<
     #[allow(unused)] epsilon: f32,
     #[allow(unused)] scale_offset: f32,
     #[allow(unused)] full_layer: bool,
-    #[specialize] #[allow(unused)] in_place: bool,
+    #[specialize]
+    #[allow(unused)]
+    in_place: bool,
 ) {
     todo!()
 }
