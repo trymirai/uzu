@@ -5,4 +5,5 @@ use serde::{Deserialize, Serialize};
 pub enum ModelType {
     LanguageModel,
     ClassifierModel,
+    TtsModel,
 }

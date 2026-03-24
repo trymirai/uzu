@@ -20,6 +20,7 @@ mod rope;
 mod short_conv;
 mod transformer;
 mod transformer_layer;
+mod tts_model;
 
 pub use attention::*;
 pub use classifier::*;
@@ -43,3 +44,4 @@ pub use rope::*;
 pub use short_conv::*;
 pub use transformer::*;
 pub use transformer_layer::*;
+pub use tts_model::*;

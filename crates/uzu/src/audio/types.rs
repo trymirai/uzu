@@ -1,5 +1,7 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 
+use crate::{backends::common::Backend, parameters::ParameterLoaderError};
+
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum AudioError {
     #[error("sample_rate must be > 0")]
@@ -47,11 +49,10 @@ pub enum AudioError {
 
 pub type AudioResult<T> = Result<T, AudioError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AudioTokenPacking {
-    #[default]
-    FrameMajor,
-    CodebookMajor,
+impl<B: Backend> From<ParameterLoaderError<B>> for AudioError {
+    fn from(value: ParameterLoaderError<B>) -> Self {
+        Self::Runtime(value.to_string())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,7 +124,6 @@ pub struct AudioTokenGrid {
     codebooks: usize,
     frames: usize,
     lengths: Box<[usize]>,
-    packing: AudioTokenPacking,
 }
 
 impl AudioTokenGrid {
@@ -133,7 +133,6 @@ impl AudioTokenGrid {
         codebooks: usize,
         frames: usize,
         lengths: Box<[usize]>,
-        packing: AudioTokenPacking,
     ) -> AudioResult<Self> {
         if codebooks == 0 {
             return Err(AudioError::InvalidTokenCardinality);
@@ -173,7 +172,6 @@ impl AudioTokenGrid {
             codebooks,
             frames,
             lengths,
-            packing,
         })
     }
 
@@ -193,16 +191,12 @@ impl AudioTokenGrid {
         &self.lengths
     }
 
-    pub fn packing(&self) -> AudioTokenPacking {
-        self.packing
-    }
-
     pub fn tokens(&self) -> &[u32] {
         &self.tokens
     }
 
-    pub fn into_parts(self) -> (Box<[u32]>, usize, usize, usize, Box<[usize]>, AudioTokenPacking) {
-        (self.tokens, self.batch_size, self.codebooks, self.frames, self.lengths, self.packing)
+    pub fn into_parts(self) -> (Box<[u32]>, usize, usize, usize, Box<[usize]>) {
+        (self.tokens, self.batch_size, self.codebooks, self.frames, self.lengths)
     }
 
     pub fn get(
@@ -211,73 +205,18 @@ impl AudioTokenGrid {
         codebook: usize,
         frame: usize,
     ) -> u32 {
-        let index =
-            Self::token_index(self.packing, self.batch_size, self.codebooks, self.frames, batch, codebook, frame);
+        let index = Self::token_index(self.codebooks, self.frames, batch, codebook, frame);
         self.tokens[index]
     }
 
-    pub fn to_packing(
-        &self,
-        packing: AudioTokenPacking,
-    ) -> Self {
-        if packing == self.packing {
-            return self.clone();
-        }
-
-        let mut tokens = vec![0u32; self.tokens.len()];
-        for batch in 0..self.batch_size {
-            for frame in 0..self.frames {
-                for codebook in 0..self.codebooks {
-                    let src_idx = Self::token_index(
-                        self.packing,
-                        self.batch_size,
-                        self.codebooks,
-                        self.frames,
-                        batch,
-                        codebook,
-                        frame,
-                    );
-                    let dst_idx = Self::token_index(
-                        packing,
-                        self.batch_size,
-                        self.codebooks,
-                        self.frames,
-                        batch,
-                        codebook,
-                        frame,
-                    );
-                    tokens[dst_idx] = self.tokens[src_idx];
-                }
-            }
-        }
-
-        Self {
-            tokens: tokens.into_boxed_slice(),
-            batch_size: self.batch_size,
-            codebooks: self.codebooks,
-            frames: self.frames,
-            lengths: self.lengths.clone(),
-            packing,
-        }
-    }
-
     fn token_index(
-        packing: AudioTokenPacking,
-        batch_size: usize,
         codebooks: usize,
         frames: usize,
         batch: usize,
         codebook: usize,
         frame: usize,
     ) -> usize {
-        debug_assert!(batch < batch_size);
-        debug_assert!(codebook < codebooks);
-        debug_assert!(frame < frames);
-
-        match packing {
-            AudioTokenPacking::FrameMajor => ((batch * frames + frame) * codebooks) + codebook,
-            AudioTokenPacking::CodebookMajor => ((batch * codebooks + codebook) * frames) + frame,
-        }
+        ((batch * codebooks + codebook) * frames) + frame
     }
 }
 

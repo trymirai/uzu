@@ -16,7 +16,7 @@ use uzu::{
         },
         cpu::Cpu,
     },
-    session::parameter::SamplingMethod,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 const TEST_SAMPLING_SEED: u64 = 42;
@@ -293,6 +293,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
                     top_k: None,
                     top_p: Some(p),
                     min_p: None,
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 batch_size,
                 vocab_size,
@@ -397,6 +398,7 @@ fn test_topp_sampling_statistical_large() {
                         top_k: None,
                         top_p: Some(TOP_P),
                         min_p: None,
+                        processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                     },
                     BATCH,
                     VOCAB,
@@ -473,6 +475,7 @@ fn perf_topp_128k_vocab() {
                     top_k: None,
                     top_p: Some(TOP_P),
                     min_p: None,
+                    processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
                 BATCH,
                 VOCAB,
@@ -484,14 +487,14 @@ fn perf_topp_128k_vocab() {
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-        match completed.gpu_execution_time() {
-            Some(gpu_time) => {
+        match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
+            Some(gpu_time_ms) => {
                 println!(
                     "Top-p sampling perf (batch={}, vocab={}, backend={}): GPU={:.2} ms, Host-side={:.2} ms",
                     BATCH,
                     VOCAB,
                     std::any::type_name::<B>(),
-                    gpu_time.as_secs_f64() * 1e3,
+                    gpu_time_ms,
                     host_elapsed_ms
                 );
             },

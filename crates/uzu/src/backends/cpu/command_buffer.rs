@@ -59,13 +59,19 @@ impl CommandBufferEncoding for CpuCommandBuffer {
     fn encode_copy(
         &mut self,
         src: &UnsafeCell<Box<[u8]>>,
+        src_range: std::ops::Range<usize>,
         dst: &mut UnsafeCell<Box<[u8]>>,
-        size: usize,
+        dst_range: std::ops::Range<usize>,
     ) {
-        let src = unsafe { &*src.get() }.as_ptr();
-        let dst = dst.get_mut().as_mut_ptr();
+        let size = src_range.end - src_range.start;
+        assert_eq!(size, dst_range.end - dst_range.start);
+        assert!(unsafe { &*src.get() }.len() >= src_range.end);
+        assert!(dst.get_mut().len() >= dst_range.end);
+
+        let src_ptr = unsafe { (&*src.get()).as_ptr().add(src_range.start) };
+        let dst_ptr = unsafe { dst.get_mut().as_mut_ptr().add(dst_range.start) };
         self.push_command(Box::new(move || unsafe {
-            std::ptr::copy(src, dst, size);
+            std::ptr::copy(src_ptr, dst_ptr, size);
         }))
     }
 

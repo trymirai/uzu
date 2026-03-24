@@ -757,6 +757,11 @@ impl<B: Backend> ForwardPassState<B> {
         let copy_size_bytes = destination_array.size();
         debug_assert_eq!(destination_array.size(), source_ref.size());
 
-        encoder.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
+        encoder.encode_copy(
+            src_buf_rc.borrow().deref(),
+            0..copy_size_bytes,
+            dst_buf_rc.borrow_mut().deref_mut(),
+            0..copy_size_bytes,
+        );
     }
 }
