@@ -47,7 +47,7 @@ impl ClassificationSession {
         let input_processor =
             Box::new(InputProcessorDefault::new(classifier_model_config.message_processor_config.clone()))
                 as Box<dyn InputProcessor>;
-        let classifier = Box::new(Classifier::<B>::new(&model_path)?);
+        let classifier = Box::new(Classifier::<B>::new(&model_path, &model_metadata)?);
 
         Ok(Self {
             model_path,

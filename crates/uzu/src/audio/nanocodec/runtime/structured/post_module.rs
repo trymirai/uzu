@@ -124,8 +124,8 @@ impl StructuredAudioCodecGraph {
             max_sequence_length,
         );
         let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
-            context.clone(),
-            decoder_config,
+            context.as_ref(),
+            &decoder_config,
             &root_loader_view,
             transformer_subtree_name,
         );

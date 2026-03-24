@@ -137,8 +137,10 @@ impl ChatSession {
         let output_parser =
             OutputParser::new(language_model_config.message_processor_config.output_parser_regex.clone())?;
 
-        let llm =
-            Box::new(LanguageModelGenerator::<B>::new(&model_path, decoding_config.clone()).map_err(Error::from)?);
+        let llm = Box::new(
+            LanguageModelGenerator::<B>::new(&model_path, decoding_config.clone(), &model_metadata)
+                .map_err(Error::from)?,
+        );
 
         Ok(Self {
             model_path,

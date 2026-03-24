@@ -1,7 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
     fs::File,
-    io::BufReader,
     path::Path,
     rc::Rc,
 };
@@ -139,16 +138,9 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,
+        model_metadata: &ModelMetadata,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
-
-        let config_path = model_path.join("config.json");
-        if !config_path.exists() {
-            return Err(Error::UnableToLoadConfig);
-        }
-        let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         // Extract language model config
         let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
