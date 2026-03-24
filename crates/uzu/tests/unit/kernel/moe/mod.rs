@@ -15,6 +15,7 @@ mod experts_test;
 mod finalize_test;
 #[path = "moe_gather_test.rs"]
 mod gather_test;
+mod moe_perf_test;
 #[path = "moe_perf_test.rs"]
 mod perf_test;
 #[path = "moe_router_topk_test.rs"]

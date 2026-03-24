@@ -236,9 +236,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
             <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(unable_to_create_context)?;
         let single_hidden_capture =
-            context.create_array(&[1, model_dim], activation_data_type, "tts_single_hidden_capture");
+            context.create_array_zeros(&[1, model_dim], activation_data_type, "tts_single_hidden_capture");
         let single_override_embedding =
-            context.create_array(&[1, model_dim], activation_data_type, "tts_single_override_embedding");
+            context.create_array_zeros(&[1, model_dim], activation_data_type, "tts_single_override_embedding");
 
         Ok(Self {
             ctx,

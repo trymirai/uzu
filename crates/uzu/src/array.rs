@@ -228,7 +228,7 @@ pub trait ArrayContextExt {
         label: &str,
     ) -> Array<Self::Backend>;
 
-    fn create_array(
+    fn create_array_zeros(
         &self,
         shape: &[usize],
         data_type: DataType,

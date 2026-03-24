@@ -12,7 +12,7 @@ use uzu::session::{
     types::Input,
 };
 
-use crate::util::{path::get_test_model_path, speculator::RepeatSpeculator};
+use crate::{common::path::get_test_model_path, util::speculator::RepeatSpeculator};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Address {

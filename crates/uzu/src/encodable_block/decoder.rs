@@ -33,8 +33,8 @@ pub struct Decoder<B: Backend> {
 
 impl<B: Backend> Decoder<B> {
     pub fn new(
-        context: Rc<B::Context>,
-        decoder_config: Rc<DecoderConfig>,
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
         Self::new_with_embedding_and_readout_subtrees(
@@ -49,8 +49,8 @@ impl<B: Backend> Decoder<B> {
 
     /// Used by models whose token lookup weights and logits readout weights
     pub fn new_with_embedding_and_readout_subtrees(
-        context: Rc<B::Context>,
-        decoder_config: Rc<DecoderConfig>,
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B::Context>,
         transformer_subtree: &str,
         embedding_subtree: &str,
@@ -61,7 +61,7 @@ impl<B: Backend> Decoder<B> {
         let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
 
         let embed = Embedding::new_with_lookup_and_readout_trees(
-            context.as_ref(),
+            context,
             decoder_config.vocab_size as u32,
             decoder_config.model_dim as u32,
             &decoder_config.embedding_config,
@@ -70,12 +70,8 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create embedding");
 
-        let (layers, norm) = Self::build_transformer_layers_and_norm(
-            context,
-            decoder_config.clone(),
-            root_weight_loader,
-            transformer_subtree,
-        );
+        let (layers, norm) =
+            Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, transformer_subtree);
 
         Self {
             embed,
@@ -85,8 +81,8 @@ impl<B: Backend> Decoder<B> {
     }
 
     pub(crate) fn build_transformer_layers_and_norm(
-        context: Rc<B::Context>,
-        decoder_config: Rc<DecoderConfig>,
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B::Context>,
         transformer_subtree: &str,
     ) -> (Box<[LayerExecutables<B>]>, RMSNorm<B>) {
@@ -133,13 +129,13 @@ impl<B: Backend> Decoder<B> {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
-                        let mut rope_block = global_rope.clone().expect("Global rope missing for transformer layer");
-                        if let (Some(_), Some(local_rope_block)) =
-                            (sliding_window_sizes[layer_index], local_rope.clone())
+                        if let Some(_) = sliding_window_sizes[layer_index]
+                            && let Some(local_rope_block) = local_rope.clone()
                         {
-                            rope_block = local_rope_block;
+                            Some(local_rope_block)
+                        } else {
+                            Some(global_rope.clone().expect("Global rope missing for transformer layer"))
                         }
-                        Some(rope_block)
                     },
                     DecoderLayerType::StateSpace {
                         ..
@@ -152,7 +148,7 @@ impl<B: Backend> Decoder<B> {
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
                 LayerExecutables::new(
-                    context.clone(),
+                    context,
                     layer_config,
                     layer_type,
                     layer_index,
@@ -169,7 +165,7 @@ impl<B: Backend> Decoder<B> {
             .collect::<Vec<_>>();
 
         let norm_block = RMSNorm::new(
-            context.as_ref(),
+            context,
             norm_data_type,
             decoder_config.output_norm_config.clone(),
             ArrayId::Main,

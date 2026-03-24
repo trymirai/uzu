@@ -119,7 +119,7 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub scratch_buffers: ScratchBuffers<B>,
 
     pub model_config: LanguageModelConfig,
-    pub decoder_config: Rc<DecoderConfig>,
+    pub decoder_config: DecoderConfig,
     pub model_shape: ModelShape,
     pub executables: Decoder<B>,
     pub kv_cache_update: Box<KVCacheUpdate<B>>,
@@ -153,7 +153,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         // Extract language model config
         let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config = Rc::new(language_model_config.decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+        let decoder_config = language_model_config.decoder_config().map_err(|_| Error::UnableToLoadConfig)?;
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let prefill_step_size = decoding_config.prefill_step_size.resolve(language_model_config);
@@ -175,7 +175,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
 
-        let executables = Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view);
+        let executables = Decoder::new(context.as_ref(), &decoder_config, &root_loader_view);
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
