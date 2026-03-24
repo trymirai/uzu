@@ -4,10 +4,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        Kernels, kernel::TensorAddSwapKernel,
-    },
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -48,14 +45,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let skip_array = context.create_array_from(&[size], &input.skip_buffer, "");
     let main_array = context.create_array_from(&[size], &input.main_buffer, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         skip_array.buffer().borrow_mut().deref_mut(),
         main_array.buffer().borrow_mut().deref_mut(),
         input.length,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (skip_array.as_slice().to_vec(), main_array.as_slice().to_vec())
 }

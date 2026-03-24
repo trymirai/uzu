@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LinearConfig, NormalizationConfig, backends::common::ActivationConfig};
+use crate::{
+    backends::common::ActivationConfig,
+    config::{LinearConfig, NormalizationConfig},
+};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct PredictionHeadConfig {

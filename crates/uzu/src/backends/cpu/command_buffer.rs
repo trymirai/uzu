@@ -1,13 +1,13 @@
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::{OnceCell, RefCell, UnsafeCell},
     time::{Duration, Instant},
 };
 
 use super::Cpu;
 use crate::backends::{
     common::{
-        CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-        CommandBufferPending,
+        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        CommandBufferInitial, CommandBufferPending,
     },
     cpu::error::CpuError,
 };
@@ -58,28 +58,41 @@ impl CommandBufferEncoding for CpuCommandBuffer {
 
     fn encode_copy(
         &mut self,
-        src: &Box<[u8]>,
-        dst: &mut Box<[u8]>,
-        size: usize,
+        src: &UnsafeCell<Box<[u8]>>,
+        src_range: std::ops::Range<usize>,
+        dst: &mut UnsafeCell<Box<[u8]>>,
+        dst_range: std::ops::Range<usize>,
     ) {
-        let src = src.as_ptr();
-        let dst = dst.as_ptr() as *mut u8;
+        let size = src_range.end - src_range.start;
+        assert_eq!(size, dst_range.end - dst_range.start);
+        assert!(unsafe { &*src.get() }.len() >= src_range.end);
+        assert!(dst.get_mut().len() >= dst_range.end);
+
+        let src_ptr = unsafe { (&*src.get()).as_ptr().add(src_range.start) };
+        let dst_ptr = unsafe { dst.get_mut().as_mut_ptr().add(dst_range.start) };
         self.push_command(Box::new(move || unsafe {
-            std::ptr::copy(src, dst, size);
+            std::ptr::copy(src_ptr, dst_ptr, size);
         }))
     }
 
     fn encode_fill(
         &mut self,
-        dst: &mut Box<[u8]>,
+        dst: &mut UnsafeCell<Box<[u8]>>,
         range: std::ops::Range<usize>,
         value: u8,
     ) {
         let size = range.end - range.start;
-        let dst = dst[range].as_ptr() as *mut u8;
+        let dst = dst.get_mut()[range].as_ptr() as *mut u8;
         self.push_command(Box::new(move || unsafe {
             dst.write_bytes(value, size);
         }))
+    }
+
+    fn encode_barrier(
+        &mut self,
+        _after: AccessFlags,
+        _before: AccessFlags,
+    ) {
     }
 
     fn encode_wait_for_event(

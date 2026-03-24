@@ -11,7 +11,7 @@ authors = ["Mirai Tech <https://trymirai.com>"]
 repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
-benchmarks = { path = "crates/benchmarks" }
+benchmarks = { path = "crates/benchmarks", default-features = false }
 dsl = { path = "crates/dsl" }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
@@ -50,6 +50,7 @@ walkdir = "2.5"
 depfile = "0.1"
 tempfile = "3.24"
 clang-ast = "0.1"
+rangemap = "1.7.1"
 futures = "0.3"
 tokio = { version = "1.49", features = ["full"] }
 blake3 = "1.8"

@@ -76,7 +76,7 @@ impl TrieNode {
         self.next.iter_mut().find(|n| n.token == token)
     }
 
-    #[cfg(all(feature = "tracing", test))]
+    #[cfg(test)]
     pub fn token(&self) -> u64 {
         self.token
     }

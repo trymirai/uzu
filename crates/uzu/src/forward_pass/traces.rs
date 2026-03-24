@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     DataType,
-    array::{ArrayCell, ArrayContextExt},
+    array::{Array, ArrayContextExt},
     backends::common::Backend,
     forward_pass::model_shape::ModelShape,
 };
@@ -12,8 +12,8 @@ fn create_trace_array<B: Backend>(
     shape: &[usize],
     data_type: DataType,
     label: &str,
-) -> ArrayCell<B> {
-    RefCell::new(context.create_array_uninitialized(shape, data_type, label))
+) -> Array<B> {
+    context.create_array_uninitialized(shape, data_type, label)
 }
 
 fn create_layer_results<B: Backend>(
@@ -27,15 +27,15 @@ fn create_layer_results<B: Backend>(
 }
 
 pub struct LayerActivationTrace<B: Backend> {
-    pub inputs: ArrayCell<B>,
-    pub pre_attention_norm: ArrayCell<B>,
-    pub attention: ArrayCell<B>,
-    pub post_attention_norm: ArrayCell<B>,
-    pub mlp_inputs: ArrayCell<B>,
-    pub pre_mlp_norm: ArrayCell<B>,
-    pub mlp: ArrayCell<B>,
-    pub post_mlp_norm: ArrayCell<B>,
-    pub outputs: ArrayCell<B>,
+    pub inputs: Array<B>,
+    pub pre_attention_norm: Array<B>,
+    pub attention: Array<B>,
+    pub post_attention_norm: Array<B>,
+    pub mlp_inputs: Array<B>,
+    pub pre_mlp_norm: Array<B>,
+    pub mlp: Array<B>,
+    pub post_mlp_norm: Array<B>,
+    pub outputs: Array<B>,
 }
 
 impl<B: Backend> LayerActivationTrace<B> {
@@ -63,11 +63,11 @@ impl<B: Backend> LayerActivationTrace<B> {
 }
 
 pub struct ActivationTrace<B: Backend> {
-    pub embedding_norm: Option<ArrayCell<B>>,
+    pub embedding_norm: Option<Array<B>>,
     pub layer_results: Vec<Rc<RefCell<LayerActivationTrace<B>>>>,
-    pub output_norm: ArrayCell<B>,
-    pub output_pooling: Option<ArrayCell<B>>,
-    pub logits: ArrayCell<B>,
+    pub output_norm: Array<B>,
+    pub output_pooling: Option<Array<B>>,
+    pub logits: Array<B>,
 }
 
 impl<B: Backend> ActivationTrace<B> {
@@ -124,11 +124,11 @@ impl<B: Backend> ActivationTrace<B> {
         }
     }
 
-    pub fn embedding_norm(&self) -> &ArrayCell<B> {
+    pub fn embedding_norm(&self) -> &Array<B> {
         self.embedding_norm.as_ref().expect("embedding_norm is only available for classifier traces")
     }
 
-    pub fn output_pooling(&self) -> &ArrayCell<B> {
+    pub fn output_pooling(&self) -> &Array<B> {
         self.output_pooling.as_ref().expect("output_pooling is only available for classifier traces")
     }
 }

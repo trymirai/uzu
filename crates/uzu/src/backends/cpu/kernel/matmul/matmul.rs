@@ -3,8 +3,11 @@ use half::{bf16, f16};
 use crate::{
     DataType,
     backends::{
-        common::kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
-        cpu::{Cpu, command_buffer::CpuCommandBuffer, context::CpuContext},
+        common::{
+            Encoder,
+            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
+        },
+        cpu::{Cpu, context::CpuContext},
     },
 };
 
@@ -31,8 +34,9 @@ impl MatmulKernel for MatmulCpuKernel {
         &mut self,
         _context: &CpuContext,
         arguments: MatmulArguments<Cpu>,
-        command_buffer: &mut CpuCommandBuffer,
+        encoder: &mut Encoder<Cpu>,
     ) {
+        let command_buffer = encoder.as_command_buffer_mut();
         let m = arguments.batch as usize;
         let n = arguments.output_dim as usize;
         let k = arguments.input_dim as usize;
@@ -42,10 +46,10 @@ impl MatmulKernel for MatmulCpuKernel {
         let a_offset = arguments.a_offset as usize;
         let data_type = self.data_type;
 
-        let a_ptr = arguments.a.as_ptr().wrapping_byte_add(a_offset);
-        let b_ptr = arguments.b.as_ptr();
-        let d_ptr = arguments.d.as_mut_ptr();
-        let bias_ptr = arguments.bias.map(|b| b.as_ptr());
+        let a_ptr = unsafe { &*arguments.a.get() }.as_ptr().wrapping_byte_add(a_offset);
+        let b_ptr = unsafe { &*arguments.b.get() }.as_ptr();
+        let d_ptr = arguments.d.get_mut().as_mut_ptr();
+        let bias_ptr = arguments.bias.map(|b| unsafe { &*b.get() }.as_ptr());
 
         command_buffer.push_command(move || match data_type {
             DataType::F32 => {

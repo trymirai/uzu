@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 pub mod assert;
+pub mod audio_nanocodec_fsq_reference;
+pub mod audio_nanocodec_ops_reference;
 pub mod proptest;
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
@@ -26,6 +28,12 @@ macro_rules! for_each_non_cpu_backend {
         {
             type $B = uzu::backends::metal::Metal;
             $body
+        }
+        {
+            if false {
+                type $B = uzu::backends::cpu::Cpu;
+                $body
+            }
         }
     }};
 }

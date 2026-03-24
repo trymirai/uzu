@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LinearConfig, NormalizationConfig};
+use super::{LinearConfig, NormalizationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AttentionConfig {
@@ -22,6 +22,8 @@ pub struct AttentionConfig {
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
+    #[serde(default)]
+    pub has_gate: bool,
     #[serde(default)]
     pub partial_rope_dim: Option<usize>,
 }

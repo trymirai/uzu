@@ -1,4 +1,4 @@
-use crate::backends::common::{Backend, CommandBuffer};
+use crate::backends::common::{Backend, Encoder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioPadMode {
@@ -120,68 +120,68 @@ pub struct AudioClampArguments<'a, B: Backend> {
 pub trait AudioKernelRuntime<B: Backend> {
     fn encode_fsq_decode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioFsqDecodeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_fsq_encode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioFsqEncodeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_conv1d(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioConv1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv1d(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioCausalConv1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv_transpose1d(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioCausalConvTranspose1dArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_half_snake(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioHalfSnakeArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_leaky_relu(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioElementwiseArguments<'_, B>,
         negative_slope: f32,
     ) -> Result<(), B::Error>;
 
     fn encode_tanh(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioElementwiseArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_add(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioAddArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_scale(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioScaleArguments<'_, B>,
     ) -> Result<(), B::Error>;
 
     fn encode_clamp(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         arguments: AudioClampArguments<'_, B>,
     ) -> Result<(), B::Error>;
 }

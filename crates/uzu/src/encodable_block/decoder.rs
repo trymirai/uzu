@@ -5,9 +5,9 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use crate::{
-    DataType, DecoderConfig,
-    backends::common::{Backend, CommandBuffer},
-    config::{DecoderLayerType, MixerConfig},
+    DataType,
+    backends::common::{Backend, Encoder},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig},
     encodable_block::{Embedding, EncodingParameters, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
     forward_pass::{
         model_shape::ModelShape,
@@ -37,16 +37,61 @@ impl<B: Backend> Decoder<B> {
         decoder_config: Rc<DecoderConfig>,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
-        let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
+        Self::new_with_embedding_and_readout_subtrees(
+            context,
+            decoder_config,
+            root_weight_loader,
+            "transformer",
+            "embedding",
+            "embedding",
+        )
+    }
 
-        let embed = Embedding::new(
+    /// Used by models whose token lookup weights and logits readout weights
+    pub fn new_with_embedding_and_readout_subtrees(
+        context: Rc<B::Context>,
+        decoder_config: Rc<DecoderConfig>,
+        root_weight_loader: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+        embedding_subtree: &str,
+        readout_subtree: &str,
+    ) -> Self {
+        let embedding_weight_loader =
+            root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
+        let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
+
+        let embed = Embedding::new_with_lookup_and_readout_trees(
             context.as_ref(),
             decoder_config.vocab_size as u32,
             decoder_config.model_dim as u32,
             &decoder_config.embedding_config,
-            &root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree"),
+            &embedding_weight_loader,
+            &readout_weight_loader,
         )
         .expect("Failed to create embedding");
+
+        let (layers, norm) = Self::build_transformer_layers_and_norm(
+            context,
+            decoder_config.clone(),
+            root_weight_loader,
+            transformer_subtree,
+        );
+
+        Self {
+            embed,
+            layers,
+            norm,
+        }
+    }
+
+    pub(crate) fn build_transformer_layers_and_norm(
+        context: Rc<B::Context>,
+        decoder_config: Rc<DecoderConfig>,
+        root_weight_loader: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+    ) -> (Box<[LayerExecutables<B>]>, RMSNorm<B>) {
+        let decoder_weight_loader =
+            root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer =
@@ -134,11 +179,7 @@ impl<B: Backend> Decoder<B> {
         .map(RMSNorm::with_sampling_range)
         .expect("Failed to create output RMS norm kernel");
 
-        Self {
-            embed,
-            layers: layers.into_boxed_slice(),
-            norm: norm_block,
-        }
+        (layers.into_boxed_slice(), norm_block)
     }
 
     fn create_rope_block(
@@ -166,30 +207,30 @@ impl<B: Backend> Decoder<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), DecoderError<B>> {
-        self.embed.encode_lookup(state, command_buffer)?;
+        self.embed.encode_lookup(state, encoder)?;
 
         for layer in self.layers.iter() {
-            layer.encode(state, parameters, command_buffer).map_err(DecoderError::BackendError)?;
+            layer.encode(state, parameters, encoder).map_err(DecoderError::BackendError)?;
         }
 
         if state.is_prefilling() {
             return Ok(());
         }
 
-        self.norm.encode(state, command_buffer).map_err(DecoderError::BackendError)?;
+        self.norm.encode(state, encoder).map_err(DecoderError::BackendError)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.embed.encode_readout(state, command_buffer)?;
+        self.embed.encode_readout(state, encoder)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
+            state.encode_copy_array(encoder, ArrayId::Logits, traces.borrow().logits.clone());
         }
         Ok(())
     }

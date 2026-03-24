@@ -12,8 +12,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
@@ -317,7 +316,7 @@ fn run_single_pass_attention(
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -347,9 +346,9 @@ fn run_single_pass_attention(
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -386,7 +385,7 @@ fn run_single_pass_attention_with_is_causal(
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -415,9 +414,9 @@ fn run_single_pass_attention_with_is_causal(
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -453,7 +452,7 @@ fn run_gemm_attention(
         .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let args = AttentionGemmArguments {
         queries_buffer: &query_buffer,
@@ -473,8 +472,8 @@ fn run_gemm_attention(
         scale,
     };
 
-    kernel.encode(context, &mut command_buffer, args)?;
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    kernel.encode(context, &mut encoder, args)?;
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -923,7 +922,7 @@ fn run_two_pass_attention(
         )
         .expect("Failed to create buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let mut mask_kv_seq_stride: Option<u32> = None;
     let mut mask_q_seq_stride: Option<u32> = None;
@@ -954,7 +953,7 @@ fn run_two_pass_attention(
         mask_q_seq_stride,
         mask_head_stride,
         sinks_buffer.as_ref().map(|b| b),
-        &mut command_buffer,
+        &mut encoder,
     );
     kernel_pass2.encode(
         &partials_buffer,
@@ -963,9 +962,9 @@ fn run_two_pass_attention(
         &mut output_buffer,
         num_heads as u32,
         seq_len as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output_ptr = output_buffer.contents().as_ptr() as *const f32;
     let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
@@ -1158,7 +1157,7 @@ fn perf_two_pass_attention() {
         .expect("Failed to create buffer");
 
     // ---- Launch and time ----
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
     let mask_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
     let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
@@ -1183,7 +1182,7 @@ fn perf_two_pass_attention() {
         None,
         None,
         sinks_buffer.as_ref().map(|b| b),
-        &mut command_buffer,
+        &mut encoder,
     );
     kernel_pass2.encode(
         &partials_buffer,
@@ -1192,22 +1191,22 @@ fn perf_two_pass_attention() {
         &mut output_buffer,
         num_heads as u32,
         suffix_length as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
     // Time both host-side and GPU execution
     let host_timer = Instant::now();
-    let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    match completed.gpu_execution_time() {
-        Some(gpu_time) => {
+    match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
+        Some(gpu_time_ms) => {
             println!(
                 "Two-pass attention perf (heads={}, prefix={}, suffix={}, head_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
                 num_heads,
                 seq_len - suffix_length,
                 suffix_length,
                 head_dim,
-                gpu_time.as_secs_f64() * 1e3,
+                gpu_time_ms,
                 host_elapsed_ms
             );
         },

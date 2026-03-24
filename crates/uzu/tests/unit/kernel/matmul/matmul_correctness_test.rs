@@ -10,8 +10,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context,
+            Backend, Context, Encoder,
             kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         metal::Metal,
@@ -49,7 +48,7 @@ fn run_metal_matmul(
     let mut kernel =
         <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(ctx, DataType::BF16).expect("kernel");
 
-    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+    let mut encoder = Encoder::new(ctx).unwrap();
     kernel.encode(
         ctx,
         MatmulArguments {
@@ -66,9 +65,9 @@ fn run_metal_matmul(
             leading_dimension_d: n as i32,
             transpose_b,
         },
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     unsafe {
         let ptr = d_buf.contents().as_ptr() as *const bf16;

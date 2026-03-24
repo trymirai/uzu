@@ -23,7 +23,7 @@ defaults:
 jobs:
   linters:
     name: linters
-    runs-on: [ self-hosted, macos, x64, mac, m3max, runner2 ]
+    runs-on: [ self-hosted, macos, x64, mac, m3max ]
 
     steps:
       - uses: actions/checkout@v6
@@ -77,8 +77,7 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo +stable nextest run --profile=ci \
-            --no-default-features \
+          cargo +stable nextest run --profile=ci --no-default-features \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
-            --features tracing \
-            --features audio-runtime
+            ${{ matrix.tracing && '--features tracing' || '' }} \
+            ${{ matrix.audio && '--features audio-runtime' || '' }}

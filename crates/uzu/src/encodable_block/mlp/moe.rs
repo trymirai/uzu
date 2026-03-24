@@ -9,10 +9,10 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    DataType, LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig,
+    DataType,
     array::Array,
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
@@ -23,6 +23,7 @@ use crate::{
             },
         },
     },
+    config::{LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig},
     encodable_block::mlp::Mlp,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -182,6 +183,9 @@ impl<B: Backend> MoeBlock<B> {
             ActivationType::SILU {
                 ..
             } => 2,
+            ActivationType::TANH => {
+                panic!("Tanh activation is not supported for MoE kernels")
+            },
             ActivationType::IDENTITY => {
                 panic!("Identity activation is not supported for MoE kernels")
             },
@@ -193,7 +197,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let suffix_length = state.active_suffix_length();
         let arrays = state.arrays(&[
@@ -219,7 +223,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<RefCell<B::Buffer>> { array.borrow().buffer() };
+        let clone_buffer = |array: &Array<B>| -> Rc<RefCell<B::Buffer>> { array.buffer() };
 
         let mut array_iter = arrays.iter();
         let main_buf = clone_buffer(array_iter.next().unwrap());
@@ -256,28 +260,28 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
             // Clear topk_ids and tok2row buffers
             if topk_bytes > 0 {
-                command_buffer.encode_fill(topk_ids_buf.borrow_mut().deref_mut(), 0..topk_bytes, 0xFF);
+                encoder.encode_fill(topk_ids_buf.borrow_mut().deref_mut(), 0..topk_bytes, 0xFF);
             }
             if tok2row_bytes > 0 {
-                command_buffer.encode_fill(tok2row_buf.borrow_mut().deref_mut(), 0..tok2row_bytes, 0xFF);
+                encoder.encode_fill(tok2row_buf.borrow_mut().deref_mut(), 0..tok2row_bytes, 0xFF);
             }
 
             // Clear hidden buffer
             let hidden_bytes = suffix_length * k * self.hidden_dim * self.data_type.size_in_bytes();
             if hidden_bytes > 0 {
-                command_buffer.encode_fill(hidden_buf.borrow_mut().deref_mut(), 0..hidden_bytes, 0);
+                encoder.encode_fill(hidden_buf.borrow_mut().deref_mut(), 0..hidden_bytes, 0);
             }
 
             // Clear y_partial buffer
             let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
             if y_partial_bytes > 0 {
-                command_buffer.encode_fill(y_partial_buf.borrow_mut().deref_mut(), 0..y_partial_bytes, 0);
+                encoder.encode_fill(y_partial_buf.borrow_mut().deref_mut(), 0..y_partial_bytes, 0);
             }
 
             // Clear x_perm buffer
             let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
             if x_perm_bytes > 0 {
-                command_buffer.encode_fill(x_perm_buf.borrow_mut().deref_mut(), 0..x_perm_bytes, 0);
+                encoder.encode_fill(x_perm_buf.borrow_mut().deref_mut(), 0..x_perm_bytes, 0);
             }
         }
 
@@ -305,7 +309,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                 e as u32,
                 k as u32,
                 self.router_renorm,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -317,7 +321,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             suffix_length as u32,
             e as u32,
             k as u32,
-            command_buffer,
+            encoder,
         );
 
         let num_blocks = ((suffix_length + 255) / 256).max(1);
@@ -330,7 +334,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             num_blocks as u32,
             num_tiles as u32,
             0u32,
-            command_buffer,
+            encoder,
         );
         self.scatter_map_kernel.encode(
             topk_ids_buf.borrow().deref(),
@@ -346,11 +350,11 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             num_blocks as u32,
             num_tiles as u32,
             tok2row_buf.borrow_mut().deref_mut(),
-            command_buffer,
+            encoder,
         );
 
         self.gather_kernels.encode(
-            command_buffer,
+            encoder,
             self.data_type,
             MoeGatherArguments {
                 x_buffer: main_buf.borrow().deref(),
@@ -377,7 +381,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_decode_kernel.encode(
-                command_buffer,
+                encoder,
                 MoeExpertsTwoPassArguments {
                     x_perm_buffer: x_perm_buf.borrow().deref(),
                     expert_offsets: offsets_buf.borrow().deref(),
@@ -454,7 +458,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                 silu_alpha,
                 data_type: self.data_type,
             };
-            self.experts_two_pass_prefill_kernel.encode(command_buffer, args);
+            self.experts_two_pass_prefill_kernel.encode(encoder, args);
         }
 
         self.finalize_kernel.encode(
@@ -465,7 +469,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             suffix_length as u32,
             self.model_dim as u32,
             k as u32,
-            command_buffer,
+            encoder,
         );
 
         Ok(())

@@ -10,8 +10,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             gpu_types::ActivationType,
             kernel::{
                 Conv1dScanKernel,
@@ -248,9 +247,9 @@ fn run_prefill_kernel_mode(
         head_dim: fixture.head_dim,
     };
 
-    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
-    kernel.encode(&mut command_buffer, args, mode);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let mut encoder = Encoder::new(ctx).unwrap();
+    kernel.encode(&mut encoder, args, mode);
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = read_buffer(&y_buf, fixture.total_x);
     let state_vec = read_buffer(&state_buf, fixture.total_state);
@@ -318,7 +317,7 @@ fn run_conv_scan_once(
         write_buffer(&padded_buf, &host);
     }
 
-    let mut command_buffer = ctx.create_command_buffer().unwrap().start_encoding();
+    let mut encoder = Encoder::new(ctx).unwrap();
     let mut b_out = y_buf.clone();
     let mut c_out = y_buf.clone();
     let mut state_out = scratch_buf.as_ref().unwrap_or(&state_buf).clone();
@@ -338,17 +337,17 @@ fn run_conv_scan_once(
         channels as u32,
         0u32,
         ActivationType::SILU,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     if let Some(ref scratch) = scratch_buf {
         let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            command_buffer.encode_copy(scratch, &mut state_buf, bytes);
+            encoder.encode_copy(scratch, 0..bytes, &mut state_buf, 0..bytes);
         }
     }
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = read_buffer(&y_buf, total_x);
     let state_vec = read_buffer(&state_buf, total_state);

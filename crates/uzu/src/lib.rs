@@ -18,10 +18,12 @@ pub mod prelude;
 pub mod session;
 
 pub use array::{Array, ArrayContextExt};
-pub use config::*;
-pub use data_type::*;
+#[cfg(all(feature = "audio-runtime", metal_backend))]
+pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
+pub use config::ConfigDataType;
+pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
 #[cfg(feature = "tracing")]
 pub use tracer::TraceValidator;
-pub use utils::*;
+pub use utils::VERSION;

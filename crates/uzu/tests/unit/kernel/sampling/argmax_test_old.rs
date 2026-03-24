@@ -9,8 +9,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending, Context,
-        Kernels,
+        Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
@@ -71,16 +70,16 @@ fn get_output_single<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> V
     let logits_array = context.create_array_from(&[len], &input.logits, "");
     let output_array = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         logits_array.buffer().borrow().deref(),
         output_array.buffer().borrow_mut().deref_mut(),
         input.batch_size,
         input.vocab_size,
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice::<u32>().to_vec()
 }
@@ -106,23 +105,23 @@ fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) ->
         .create_buffer(partial_results_count * size_of::<ArgmaxPair>())
         .expect("Failed to create partial results buffer");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     main_kernel.encode(
         logits_array.buffer().borrow().deref(),
         &mut partial_results_buffer,
         input.batch_size,
         input.vocab_size,
-        &mut command_buffer,
+        &mut encoder,
     );
     final_kernel.encode(
         &partial_results_buffer,
         output_array.buffer().borrow_mut().deref_mut(),
         input.batch_size,
         input.vocab_size,
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice::<u32>().to_vec()
 }

@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::AttentionSinglePassKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::AttentionSinglePassKernel},
         cpu::Cpu,
     },
 };
@@ -133,7 +130,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let mask_q_seq_stride: Option<u32> = input.has_mask.then_some(input.sequence_length);
     let mask_head_stride: Option<u32> = input.has_mask.then_some(0);
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         queries_array.buffer().borrow().deref(),
         keys_array.buffer().borrow().deref(),
@@ -153,9 +150,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         None::<&B::Buffer>,
         input.num_heads,
         input.suffix_length,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     output_array.as_slice().to_vec()
 }

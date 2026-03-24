@@ -9,8 +9,7 @@ use uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context,
+            Backend, Context, Encoder,
             kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         cpu::Cpu,
@@ -68,7 +67,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let mut kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         &context,
         MatmulArguments {
@@ -85,9 +84,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             leading_dimension_d: n,
             transpose_b: true,
         },
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     drop(d_ref);
     d_array.as_slice().to_vec()
