@@ -4,10 +4,9 @@ mod common;
 
 use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 use uzu::{
-    audio::{
-        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
-    },
+    NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
     backends::metal::Metal,
+    prelude::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid},
 };
 
 fn create_runtime() -> NanoCodecFsqRuntime<Metal> {
@@ -136,7 +135,7 @@ fn nanocodec_runtime_decode_matches_fsq_reference() {
 
     for (index, (&got, &expected)) in decoded.samples().iter().zip(expected_samples.iter()).enumerate() {
         let delta = (got - expected).abs();
-        assert!(delta <= 1e-5, "decode mismatch at index={index}: got={got}, expected={expected}, delta={delta}");
+        assert!(delta <= 1e-5_f32, "decode mismatch at index={index}: got={got}, expected={expected}, delta={delta}");
     }
 }
 

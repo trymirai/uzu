@@ -1,10 +1,5 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AudioDecodeStreamingMode {
-    IncrementalStateful,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AudioDecodeStepStats {
     pub input_frames: usize,

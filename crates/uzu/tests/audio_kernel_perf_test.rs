@@ -3,12 +3,10 @@
 use std::time::Instant;
 
 use uzu::{
-    DataType,
-    array::ArrayContextExt,
+    Array, ArrayContextExt, DataType,
     backends::{
         common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             gpu_types::ActivationType,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel,
@@ -47,7 +45,7 @@ fn make_lengths(
     context: &Ctx,
     batch_size: usize,
     value: i32,
-) -> uzu::array::Array<Metal> {
+) -> Array<Metal> {
     context.create_array_from(&[batch_size], &vec![value; batch_size], "lengths")
 }
 
@@ -140,7 +138,7 @@ fn audio_kernel_perf() {
             batch_size, frames, TOTAL_CODEBOOKS, INPUT_DIM, CODEBOOK_DIM
         );
         let ms = measure(&label, || {
-            let mut cb = context.create_command_buffer().unwrap().start_encoding();
+            let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
             {
                 let tok = tokens.buffer();
                 let tok = tok.borrow();
@@ -178,10 +176,10 @@ fn audio_kernel_perf() {
                     RESIDUAL_QUANTIZERS as i32,
                     SEMANTIC_CARDINALITY as i32,
                     RESIDUAL_CARDINALITY as i32,
-                    &mut cb,
+                    &mut encoder,
                 );
             }
-            cb.end_encoding().submit().wait_until_completed().unwrap();
+            encoder.end_encoding().submit().wait_until_completed().unwrap();
         });
         results.push(("QuantizerDecode".into(), ms));
     }
@@ -214,7 +212,7 @@ fn audio_kernel_perf() {
 
             let label = format!("TransConv {tag} [{cin}->{cout}, s={stride}, k={ksize}, {seq_in}->{seq_out}]");
             let ms = measure(&label, || {
-                let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                 {
                     let i = input.buffer();
                     let i = i.borrow();
@@ -241,10 +239,10 @@ fn audio_kernel_perf() {
                         1_i32,
                         layout,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
-                cb.end_encoding().submit().wait_until_completed().unwrap();
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
             });
             results.push((format!("TransConv {tag}"), ms));
             frames = seq_out;
@@ -267,7 +265,7 @@ fn audio_kernel_perf() {
 
             let label = format!("TransConv dec{block_idx} [{cin}->{cout}, s={stride}, k={ksize}, {seq_in}->{seq_out}]");
             let ms = measure(&label, || {
-                let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                 {
                     let i = input.buffer();
                     let i = i.borrow();
@@ -294,10 +292,10 @@ fn audio_kernel_perf() {
                         1_i32,
                         0_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
-                cb.end_encoding().submit().wait_until_completed().unwrap();
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
             });
             results.push((format!("TransConv dec{block_idx}"), ms));
             frames = seq_out;
@@ -327,7 +325,7 @@ fn audio_kernel_perf() {
 
             let label = format!("CausalConv1d first_conv [{cin}->{cout}, k={ksize}, T={fc_seq}]");
             let ms = measure(&label, || {
-                let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                 {
                     let i = input.buffer();
                     let i = i.borrow();
@@ -352,10 +350,10 @@ fn audio_kernel_perf() {
                         1_i32,
                         0_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
-                cb.end_encoding().submit().wait_until_completed().unwrap();
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
             });
             results.push(("CausalConv1d first_conv".into(), ms));
         }
@@ -377,7 +375,7 @@ fn audio_kernel_perf() {
                 let lengths = make_lengths(&context, batch_size, dec_frames as i32);
 
                 let ms = measure(&label, || {
-                    let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                    let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                     {
                         let i = input.buffer();
                         let i = i.borrow();
@@ -402,10 +400,10 @@ fn audio_kernel_perf() {
                             dilation as i32,
                             0_i32,
                             batch_size as i32,
-                            &mut cb,
+                            &mut encoder,
                         );
                     }
-                    cb.end_encoding().submit().wait_until_completed().unwrap();
+                    encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
                 results.push((format!("CausalConv1d res dec{block_idx} d={dilation}"), ms));
             }
@@ -425,7 +423,7 @@ fn audio_kernel_perf() {
 
             let label = format!("CausalConv1d final_conv [{cin}->{cout}, k={ksize}, T={final_frames}]");
             let ms = measure(&label, || {
-                let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                 {
                     let i = input.buffer();
                     let i = i.borrow();
@@ -450,10 +448,10 @@ fn audio_kernel_perf() {
                         1_i32,
                         0_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
-                cb.end_encoding().submit().wait_until_completed().unwrap();
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
             });
             results.push(("CausalConv1d final_conv".into(), ms));
         }
@@ -483,7 +481,7 @@ fn audio_kernel_perf() {
             let lengths = make_lengths(&context, batch_size, dec_frames as i32);
 
             let ms = measure(&label, || {
-                let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                 {
                     let i = input.buffer();
                     let i = i.borrow();
@@ -511,10 +509,10 @@ fn audio_kernel_perf() {
                         1_i32,
                         1_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
-                cb.end_encoding().submit().wait_until_completed().unwrap();
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
             });
             results.push((format!("CausalConv1dResidual dec{block_idx}"), ms));
         }
@@ -541,7 +539,7 @@ fn audio_kernel_perf() {
             let lengths = make_lengths(&context, batch_size, frames as i32);
 
             let ms = measure(&label, || {
-                let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                 {
                     let i = input.buffer();
                     let i = i.borrow();
@@ -567,10 +565,10 @@ fn audio_kernel_perf() {
                         ch as i32,
                         0_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
-                cb.end_encoding().submit().wait_until_completed().unwrap();
+                encoder.end_encoding().submit().wait_until_completed().unwrap();
             });
             results.push((format!("CausalConv1dGrouped dw up{block_idx}"), ms));
         }
@@ -595,7 +593,7 @@ fn audio_kernel_perf() {
                 let output = context.create_array(&[batch_size * ch_in * dec_frames], dt, "sn_out");
 
                 let ms = measure(&label, || {
-                    let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                    let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                     {
                         let i = input.buffer();
                         let i = i.borrow();
@@ -613,10 +611,10 @@ fn audio_kernel_perf() {
                             0.0_f32,
                             1e-9_f32,
                             batch_size as i32,
-                            &mut cb,
+                            &mut encoder,
                         );
                     }
-                    cb.end_encoding().submit().wait_until_completed().unwrap();
+                    encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
                 results.push((format!("HalfSnake pre dec{block_idx}"), ms));
             }
@@ -631,7 +629,7 @@ fn audio_kernel_perf() {
                 let output = context.create_array(&[batch_size * ch_out * dec_frames], dt, "sn_out");
 
                 let ms = measure(&label, || {
-                    let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                    let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                     {
                         let i = input.buffer();
                         let i = i.borrow();
@@ -649,10 +647,10 @@ fn audio_kernel_perf() {
                             0.0_f32,
                             1e-9_f32,
                             batch_size as i32,
-                            &mut cb,
+                            &mut encoder,
                         );
                     }
-                    cb.end_encoding().submit().wait_until_completed().unwrap();
+                    encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
                 results.push((format!("HalfSnake res dec{block_idx}"), ms));
             }
@@ -682,7 +680,7 @@ fn audio_kernel_perf() {
                 let lengths = make_lengths(&context, batch_size, frames as i32);
 
                 let ms = measure(&label, || {
-                    let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                    let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                     {
                         let i = input.buffer();
                         let i = i.borrow();
@@ -705,10 +703,10 @@ fn audio_kernel_perf() {
                             1e-6_f32,
                             1_i32,
                             batch_size as i32,
-                            &mut cb,
+                            &mut encoder,
                         );
                     }
-                    cb.end_encoding().submit().wait_until_completed().unwrap();
+                    encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
                 results.push((format!("NormNcs up{block_idx}"), ms));
             }
@@ -723,7 +721,7 @@ fn audio_kernel_perf() {
                 let lengths = make_lengths(&context, batch_size, frames as i32);
 
                 let ms = measure(&label, || {
-                    let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                    let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                     {
                         let i = input.buffer();
                         let i = i.borrow();
@@ -751,10 +749,10 @@ fn audio_kernel_perf() {
                             0_i32,
                             0_i32,
                             batch_size as i32,
-                            &mut cb,
+                            &mut encoder,
                         );
                     }
-                    cb.end_encoding().submit().wait_until_completed().unwrap();
+                    encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
                 results.push((format!("Conv1d pw up{block_idx}"), ms));
             }
@@ -767,15 +765,15 @@ fn audio_kernel_perf() {
                 let output = context.create_array(&[n], dt, "gelu_out");
 
                 let ms = measure(&label, || {
-                    let mut cb = context.create_command_buffer().unwrap().start_encoding();
+                    let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
                     {
                         let i = input.buffer();
                         let i = i.borrow();
                         let o = output.buffer();
                         let mut o = o.borrow_mut();
-                        k_act.encode(Some(&*i), &mut *o, n as u32, ActivationType::GELU, &mut cb);
+                        k_act.encode(Some(&*i), &mut *o, n as u32, ActivationType::GELU, &mut encoder);
                     }
-                    cb.end_encoding().submit().wait_until_completed().unwrap();
+                    encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
                 results.push((format!("GELU up{block_idx}"), ms));
             }
@@ -871,16 +869,16 @@ fn audio_kernel_perf() {
 
     // Decoder block weights for all 4 blocks
     struct DecBlockWeights {
-        snake_a: uzu::array::Array<Metal>,
-        tconv_w: uzu::array::Array<Metal>,
-        tconv_b: uzu::array::Array<Metal>,
+        snake_a: Array<Metal>,
+        tconv_w: Array<Metal>,
+        tconv_b: Array<Metal>,
         // 3 residual units, each with snake1, conv1, snake2, conv2
-        ru_s1: [uzu::array::Array<Metal>; 3],
-        ru_c1_w: [uzu::array::Array<Metal>; 3],
-        ru_c1_b: [uzu::array::Array<Metal>; 3],
-        ru_s2: [uzu::array::Array<Metal>; 3],
-        ru_c2_w: [uzu::array::Array<Metal>; 3],
-        ru_c2_b: [uzu::array::Array<Metal>; 3],
+        ru_s1: [Array<Metal>; 3],
+        ru_c1_w: [Array<Metal>; 3],
+        ru_c1_b: [Array<Metal>; 3],
+        ru_s2: [Array<Metal>; 3],
+        ru_c2_w: [Array<Metal>; 3],
+        ru_c2_b: [Array<Metal>; 3],
     }
 
     let dec_blocks: Vec<DecBlockWeights> = (0..4)
@@ -924,7 +922,7 @@ fn audio_kernel_perf() {
     let dilations = [1_i32, 3, 9];
 
     let ms = measure("Full pipeline (quant -> 2 up -> first_conv -> 4 dec -> final)", || {
-        let mut cb = context.create_command_buffer().unwrap().start_encoding();
+        let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
         let sa = scratch_a.buffer();
         let sb = scratch_b.buffer();
 
@@ -965,7 +963,7 @@ fn audio_kernel_perf() {
                 RESIDUAL_QUANTIZERS as i32,
                 SEMANTIC_CARDINALITY as i32,
                 RESIDUAL_CARDINALITY as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
 
@@ -994,7 +992,7 @@ fn audio_kernel_perf() {
                 1_i32,
                 1_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         // ConvNeXt 0
@@ -1021,7 +1019,7 @@ fn audio_kernel_perf() {
                 c0_ch as i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
@@ -1044,7 +1042,7 @@ fn audio_kernel_perf() {
                 1e-6_f32,
                 1_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
@@ -1072,13 +1070,13 @@ fn audio_kernel_perf() {
                 0_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
             let i = sa.borrow();
             let mut o = sb.borrow_mut();
-            k_act.encode(Some(&*i), &mut *o, (c0_ch * f_up0) as u32, ActivationType::GELU, &mut cb);
+            k_act.encode(Some(&*i), &mut *o, (c0_ch * f_up0) as u32, ActivationType::GELU, &mut encoder);
         }
         {
             let i = sb.borrow();
@@ -1105,13 +1103,13 @@ fn audio_kernel_perf() {
                 0_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
             let a = sa.borrow();
             let mut o = sb.borrow_mut();
-            k_add.encode(&*a, &*a, &mut *o, (c0_ch * f_up0) as i32, &mut cb);
+            k_add.encode(&*a, &*a, &mut *o, (c0_ch * f_up0) as i32, &mut encoder);
         }
 
         // --- Upsample block 1: 512->256, stride=2, NCS input ---
@@ -1139,7 +1137,7 @@ fn audio_kernel_perf() {
                 1_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         // ConvNeXt 1
@@ -1166,7 +1164,7 @@ fn audio_kernel_perf() {
                 c1_ch as i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
@@ -1189,7 +1187,7 @@ fn audio_kernel_perf() {
                 1e-6_f32,
                 1_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
@@ -1217,13 +1215,13 @@ fn audio_kernel_perf() {
                 0_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
             let i = sb.borrow();
             let mut o = sa.borrow_mut();
-            k_act.encode(Some(&*i), &mut *o, (c1_ch * f_up1) as u32, ActivationType::GELU, &mut cb);
+            k_act.encode(Some(&*i), &mut *o, (c1_ch * f_up1) as u32, ActivationType::GELU, &mut encoder);
         }
         {
             let i = sa.borrow();
@@ -1250,13 +1248,13 @@ fn audio_kernel_perf() {
                 0_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         {
             let a = sb.borrow();
             let mut o = sa.borrow_mut();
-            k_add.encode(&*a, &*a, &mut *o, (c1_ch * f_up1) as i32, &mut cb);
+            k_add.encode(&*a, &*a, &mut *o, (c1_ch * f_up1) as i32, &mut encoder);
         }
 
         // --- first_conv: 256->1536, k=7 ---
@@ -1282,7 +1280,7 @@ fn audio_kernel_perf() {
                 1_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
 
@@ -1303,9 +1301,9 @@ fn audio_kernel_perf() {
             // snake (in-place swap)
             {
                 let (i_buf, o_buf) = if cur_in_sa {
-                    (&sa, &sb)
+                    (sa.clone(), sb.clone())
                 } else {
-                    (&sb, &sa)
+                    (sb.clone(), sa.clone())
                 };
                 let i = i_buf.borrow();
                 let a = blk.snake_a.buffer();
@@ -1321,7 +1319,7 @@ fn audio_kernel_perf() {
                     0.0_f32,
                     1e-9_f32,
                     batch_size as i32,
-                    &mut cb,
+                    &mut encoder,
                 );
             }
             cur_in_sa = !cur_in_sa;
@@ -1329,9 +1327,9 @@ fn audio_kernel_perf() {
             // trans_conv
             {
                 let (i_buf, o_buf) = if cur_in_sa {
-                    (&sa, &sb)
+                    (sa.clone(), sb.clone())
                 } else {
-                    (&sb, &sa)
+                    (sb.clone(), sa.clone())
                 };
                 let i = i_buf.borrow();
                 let w = blk.tconv_w.buffer();
@@ -1356,7 +1354,7 @@ fn audio_kernel_perf() {
                     1_i32,
                     0_i32,
                     batch_size as i32,
-                    &mut cb,
+                    &mut encoder,
                 );
             }
             cur_in_sa = !cur_in_sa;
@@ -1368,9 +1366,9 @@ fn audio_kernel_perf() {
                 // snake1
                 {
                     let (i_buf, o_buf) = if cur_in_sa {
-                        (&sa, &sb)
+                        (sa.clone(), sb.clone())
                     } else {
-                        (&sb, &sa)
+                        (sb.clone(), sa.clone())
                     };
                     let i = i_buf.borrow();
                     let a = blk.ru_s1[ru_idx].buffer();
@@ -1386,7 +1384,7 @@ fn audio_kernel_perf() {
                         0.0_f32,
                         1e-9_f32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
                 cur_in_sa = !cur_in_sa;
@@ -1394,9 +1392,9 @@ fn audio_kernel_perf() {
                 // conv1 (dilation varies: 1, 3, 9)
                 {
                     let (i_buf, o_buf) = if cur_in_sa {
-                        (&sa, &sb)
+                        (sa.clone(), sb.clone())
                     } else {
-                        (&sb, &sa)
+                        (sb.clone(), sa.clone())
                     };
                     let i = i_buf.borrow();
                     let w = blk.ru_c1_w[ru_idx].buffer();
@@ -1419,7 +1417,7 @@ fn audio_kernel_perf() {
                         dilations[ru_idx],
                         0_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
                 cur_in_sa = !cur_in_sa;
@@ -1427,9 +1425,9 @@ fn audio_kernel_perf() {
                 // snake2
                 {
                     let (i_buf, o_buf) = if cur_in_sa {
-                        (&sa, &sb)
+                        (sa.clone(), sb.clone())
                     } else {
-                        (&sb, &sa)
+                        (sb.clone(), sa.clone())
                     };
                     let i = i_buf.borrow();
                     let a = blk.ru_s2[ru_idx].buffer();
@@ -1445,7 +1443,7 @@ fn audio_kernel_perf() {
                         0.0_f32,
                         1e-9_f32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
                 cur_in_sa = !cur_in_sa;
@@ -1455,9 +1453,9 @@ fn audio_kernel_perf() {
                 // avoid RefCell borrow conflict with the output destination).
                 {
                     let (i_buf, o_buf) = if cur_in_sa {
-                        (&sa, &sb)
+                        (sa.clone(), sb.clone())
                     } else {
-                        (&sb, &sa)
+                        (sb.clone(), sa.clone())
                     };
                     let i = i_buf.borrow();
                     let r = sr.borrow();
@@ -1482,7 +1480,7 @@ fn audio_kernel_perf() {
                         1_i32,
                         1_i32,
                         batch_size as i32,
-                        &mut cb,
+                        &mut encoder,
                     );
                 }
                 cur_in_sa = !cur_in_sa;
@@ -1492,9 +1490,9 @@ fn audio_kernel_perf() {
         // --- final snake + conv + tanh ---
         {
             let (i_buf, o_buf) = if cur_in_sa {
-                (&sa, &sb)
+                (sa.clone(), sb.clone())
             } else {
-                (&sb, &sa)
+                (sb.clone(), sa.clone())
             };
             let i = i_buf.borrow();
             let a = final_snake_a.buffer();
@@ -1510,15 +1508,15 @@ fn audio_kernel_perf() {
                 0.0_f32,
                 1e-9_f32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         cur_in_sa = !cur_in_sa;
         {
             let (i_buf, o_buf) = if cur_in_sa {
-                (&sa, &sb)
+                (sa.clone(), sb.clone())
             } else {
-                (&sb, &sa)
+                (sb.clone(), sa.clone())
             };
             let i = i_buf.borrow();
             let w = final_conv_w.buffer();
@@ -1541,23 +1539,23 @@ fn audio_kernel_perf() {
                 1_i32,
                 0_i32,
                 batch_size as i32,
-                &mut cb,
+                &mut encoder,
             );
         }
         cur_in_sa = !cur_in_sa;
         // tanh
         {
             let (i_buf, o_buf) = if cur_in_sa {
-                (&sa, &sb)
+                (sa.clone(), sb.clone())
             } else {
-                (&sb, &sa)
+                (sb.clone(), sa.clone())
             };
             let i = i_buf.borrow();
             let mut o = o_buf.borrow_mut();
-            k_act.encode(Some(&*i), &mut *o, f_dec3 as u32, ActivationType::TANH, &mut cb);
+            k_act.encode(Some(&*i), &mut *o, f_dec3 as u32, ActivationType::TANH, &mut encoder);
         }
 
-        cb.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
     results.push(("Full pipeline".into(), ms));
 

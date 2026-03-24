@@ -1,12 +1,10 @@
 #![cfg(all(feature = "audio-runtime", metal_backend))]
 
 use uzu::{
-    DataType,
-    array::ArrayContextExt,
+    ArrayContextExt, DataType,
     backends::{
         common::{
-            Backend, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             gpu_types::ActivationType,
             kernel::{
                 ActivationKernel, AudioAddKernel, AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel,
@@ -26,8 +24,6 @@ use super::super::common::{
         conv1d_reference, half_snake_reference,
     },
 };
-
-type MetalCommandBufferEncoding = <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding;
 
 macro_rules! borrow_array_buffer {
     ($name:ident = $array:expr) => {
@@ -49,11 +45,11 @@ fn create_test_context() -> std::rc::Rc<<Metal as Backend>::Context> {
 
 fn run_command_buffer(
     context: &std::rc::Rc<<Metal as Backend>::Context>,
-    encode: impl FnOnce(&mut MetalCommandBufferEncoding),
+    encode: impl FnOnce(&mut Encoder<'_, Metal>),
 ) {
-    let mut command_buffer = context.create_command_buffer().expect("command buffer").start_encoding();
-    encode(&mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().expect("command buffer completed");
+    let mut encoder = Encoder::<Metal>::new(context.as_ref()).expect("command buffer");
+    encode(&mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().expect("command buffer completed");
 }
 
 #[test]

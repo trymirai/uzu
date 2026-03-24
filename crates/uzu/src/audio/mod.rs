@@ -1,11 +1,11 @@
 mod codec;
-#[cfg(feature = "audio-runtime")]
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 mod context;
 pub mod nanocodec;
 mod types;
 
 pub use codec::AudioCodecRuntime;
-#[cfg(feature = "audio-runtime")]
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 pub use context::AudioGenerationContext;
 #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
 pub use nanocodec::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};

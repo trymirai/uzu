@@ -134,7 +134,7 @@ impl FishAudioEmbeddingConfig {
         }
     }
 
-    #[cfg(feature = "audio-runtime")]
+    #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
     pub(crate) fn to_text_decoder_embedding_config(&self) -> EmbeddingConfig {
         match self {
             FishAudioEmbeddingConfig::Tagged(config) => config.clone(),
@@ -540,7 +540,8 @@ mod tests {
           }
         });
 
-        let error = serde_json::from_value::<ModelConfig>(model_config_json).expect_err("decoder_config should be typed");
+        let error =
+            serde_json::from_value::<ModelConfig>(model_config_json).expect_err("decoder_config should be typed");
         let error_text = error.to_string();
         assert!(
             error_text.contains("did not match any variant") || error_text.contains("conv_config"),

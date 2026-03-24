@@ -1,8 +1,7 @@
 #![cfg(metal_backend)]
 
 use crate::{
-    DataType,
-    array::ArrayContextExt,
+    ArrayContextExt, DataType,
     backends::{
         common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,

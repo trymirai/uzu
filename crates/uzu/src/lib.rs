@@ -18,6 +18,8 @@ pub mod prelude;
 pub mod session;
 
 pub use array::{Array, ArrayContextExt};
+#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use config::ConfigDataType;
 pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
