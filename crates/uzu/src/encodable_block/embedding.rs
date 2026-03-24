@@ -120,6 +120,7 @@ const SHARED_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
     readout_biases: "output_biases",
 };
 
+#[cfg(all(feature = "audio-runtime", metal_backend))]
 const SPLIT_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
     lookup_weights: "weights",
     lookup_scales: "scales",
@@ -168,6 +169,7 @@ impl<B: Backend> Embedding<B> {
         )
     }
 
+    #[cfg(all(feature = "audio-runtime", metal_backend))]
     pub(crate) fn new_with_lookup_and_readout_trees(
         context: &B::Context,
         vocab_size: u32,

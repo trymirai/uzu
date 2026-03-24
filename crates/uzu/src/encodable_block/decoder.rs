@@ -37,17 +37,29 @@ impl<B: Backend> Decoder<B> {
         decoder_config: Rc<DecoderConfig>,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
-        Self::new_with_embedding_and_readout_subtrees(
-            context,
-            decoder_config,
-            root_weight_loader,
-            "transformer",
-            "embedding",
-            "embedding",
+        let embedding_weight_loader = root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree");
+
+        let embed = Embedding::new(
+            context.as_ref(),
+            decoder_config.vocab_size as u32,
+            decoder_config.model_dim as u32,
+            &decoder_config.embedding_config,
+            &embedding_weight_loader,
         )
+        .expect("Failed to create embedding");
+
+        let (layers, norm) =
+            Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, "transformer");
+
+        Self {
+            embed,
+            layers,
+            norm,
+        }
     }
 
     /// Used by models whose token lookup weights and logits readout weights
+    #[cfg(all(feature = "audio-runtime", metal_backend))]
     pub fn new_with_embedding_and_readout_subtrees(
         context: Rc<B::Context>,
         decoder_config: Rc<DecoderConfig>,
