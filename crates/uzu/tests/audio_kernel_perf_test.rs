@@ -1,4 +1,4 @@
-#![cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+#![cfg(all(feature = "audio-runtime", metal_backend))]
 
 use std::time::Instant;
 

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "audio-runtime", metal_backend))]
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -134,7 +134,7 @@ impl FishAudioEmbeddingConfig {
         }
     }
 
-    #[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+    #[cfg(all(feature = "audio-runtime", metal_backend))]
     pub(crate) fn to_text_decoder_embedding_config(&self) -> EmbeddingConfig {
         match self {
             FishAudioEmbeddingConfig::Tagged(config) => config.clone(),
@@ -267,7 +267,7 @@ pub struct TtsModelConfig {
     pub message_processor_config: TtsMessageProcessorConfig,
 }
 
-#[cfg(all(feature = "audio-runtime", feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "audio-runtime", metal_backend))]
 impl TtsModelConfig {
     pub fn create_audio_generation_context_with_model_path<B: crate::backends::common::Backend>(
         &self,
