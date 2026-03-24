@@ -1,7 +1,5 @@
-use std::cell::RefCell;
-
 use crate::{
-    array::{ArrayCell, ArrayContextExt},
+    array::{Array, ArrayContextExt},
     backends::common::Backend,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
@@ -9,9 +7,9 @@ use crate::{
 
 pub struct RopeBuffers<B: Backend> {
     /// [rope_max_sequence_length, rope_dim]
-    pub cosines: ArrayCell<B>,
+    pub cosines: Array<B>,
     /// [rope_max_sequence_length, rope_dim]
-    pub sines: ArrayCell<B>,
+    pub sines: Array<B>,
 }
 
 impl<B: Backend> RopeBuffers<B> {
@@ -23,16 +21,16 @@ impl<B: Backend> RopeBuffers<B> {
         let rope_max_sequence_length = model_shape.context_length();
 
         Self {
-            cosines: RefCell::new(context.create_array_uninitialized(
+            cosines: context.create_array_uninitialized(
                 &[rope_max_sequence_length, rope_dim],
                 model_shape.activation_data_type(),
                 "rope_buffers_cosines",
-            )),
-            sines: RefCell::new(context.create_array_uninitialized(
+            ),
+            sines: context.create_array_uninitialized(
                 &[rope_max_sequence_length, rope_dim],
                 model_shape.activation_data_type(),
                 "rope_buffers_sines",
-            )),
+            ),
         }
     }
 
@@ -46,9 +44,9 @@ impl<B: Backend> RopeBuffers<B> {
         };
 
         let cosines_view = rope_tree.leaf_array("cosines").unwrap();
-        self.cosines.borrow_mut().copy_from_array(&cosines_view);
+        self.cosines.copy_from_array(&cosines_view);
 
         let sines_view = rope_tree.leaf_array("sines").unwrap();
-        self.sines.borrow_mut().copy_from_array(&sines_view);
+        self.sines.copy_from_array(&sines_view);
     }
 }

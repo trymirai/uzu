@@ -17,6 +17,7 @@ namespace activation_type {
 enum ActivationType : uint32_t {
   SILU,
   GELU,
+  TANH,
   IDENTITY,
 };
 

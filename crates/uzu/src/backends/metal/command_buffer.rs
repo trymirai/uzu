@@ -121,12 +121,15 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     fn encode_copy(
         &mut self,
         src: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        src_range: std::ops::Range<usize>,
         dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        size: usize,
+        dst_range: std::ops::Range<usize>,
     ) {
-        assert!(src.length() >= size && dst.length() >= size);
+        let size = src_range.end - src_range.start;
+        assert_eq!(size, dst_range.end - dst_range.start);
+        assert!(src.length() >= src_range.end && dst.length() >= dst_range.end);
 
-        self.ensure_blit().copy_buffer_to_buffer(src, 0, dst, 0, size);
+        self.ensure_blit().copy_buffer_to_buffer(src, src_range.start, dst, dst_range.start, size);
     }
 
     fn encode_fill(
@@ -231,7 +234,7 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Option<Duration> {
         match (self.command_buffer.gpu_start_time(), self.command_buffer.gpu_end_time()) {
-            (Some(start), Some(end)) => Some(Duration::from_secs_f64(end - start)),
+            (Some(start), Some(end)) if end > start => Some(Duration::from_secs_f64(end - start)),
             _ => None,
         }
     }
