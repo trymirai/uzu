@@ -36,9 +36,9 @@ struct FishAudioSemanticBridge<B: Backend> {
     embedding_rows_sum: <B::Kernels as Kernels>::EmbeddingRowsSumKernel,
     projection: <B::Kernels as MatmulKernels>::MatmulKernel,
     tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
-    codebook_embeddings: ArrayCell<B>,
-    codebook_token_indices: ArrayCell<B>,
-    projection_weights: Option<ArrayCell<B>>,
+    codebook_embeddings: Array<B>,
+    codebook_token_indices: Array<B>,
+    projection_weights: Option<Array<B>>,
 }
 
 impl<B: Backend> FishAudioSemanticBridge<B> {
@@ -115,9 +115,9 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
             embedding_rows_sum,
             projection,
             tensor_copy,
-            codebook_embeddings: RefCell::new(codebook_embeddings),
-            codebook_token_indices: RefCell::new(codebook_token_indices),
-            projection_weights: fast_model_projection.map(RefCell::new),
+            codebook_embeddings,
+            codebook_token_indices,
+            projection_weights: fast_model_projection,
         })
     }
 }
@@ -303,8 +303,8 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
         runtime_config,
     )?;
 
-    let activation_data_type = slow_runner.single_hidden_capture.borrow().data_type();
-    let fast_data_type = fast_runner.single_override_embedding.borrow().data_type();
+    let activation_data_type = slow_runner.single_hidden_capture.data_type();
+    let fast_data_type = fast_runner.single_override_embedding.data_type();
     if fast_data_type != activation_data_type {
         return Err(Error::UnableToLoadConfig);
     }
@@ -509,8 +509,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     fn encode_project_slow_hidden_to_fast_on(
         context: &B::Context,
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
-        slow_hidden_capture: &ArrayCell<B>,
-        output_embedding: &ArrayCell<B>,
+        slow_hidden_capture: &Array<B>,
+        output_embedding: &Array<B>,
         slow_model_dim: usize,
         fast_model_dim: usize,
         encoder: &mut Encoder<B>,
@@ -518,9 +518,9 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
 
         if let Some(weights) = semantic_bridge.projection_weights.as_ref() {
-            let hidden = slow_hidden_capture.borrow();
-            let weights = weights.borrow();
-            let output = output_embedding.borrow();
+            let hidden = slow_hidden_capture;
+            let weights = weights;
+            let output = output_embedding;
             if hidden.shape() != [1, slow_model_dim]
                 || output.shape() != [1, fast_model_dim]
                 || weights.shape() != [fast_model_dim, slow_model_dim]
@@ -559,8 +559,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             return Err(Error::UnableToLoadConfig);
         }
 
-        let hidden = slow_hidden_capture.borrow();
-        let output = output_embedding.borrow();
+        let hidden = slow_hidden_capture;
+        let output = output_embedding;
         if hidden.shape() != [1, slow_model_dim] || output.shape() != [1, fast_model_dim] {
             return Err(Error::GenerateFailed);
         }
@@ -585,7 +585,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     /// `gpu_tokens_buffer` at the given byte offset.
     fn encode_slow_codebook_sum_from_gpu_tokens_on(
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
-        slow_sum_embedding: &ArrayCell<B>,
+        slow_sum_embedding: &Array<B>,
         first_code: u32,
         source_runner: &TokenDecoderRunner<B>,
         source_slot: usize,
@@ -600,7 +600,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 
         // Write first_code at position 0 from CPU.
         {
-            let mut token_indices = semantic_bridge.codebook_token_indices.borrow_mut();
+            let token_indices = &mut semantic_bridge.codebook_token_indices;
             if token_indices.shape() != [num_codebooks] || token_indices.data_type() != DataType::U32 {
                 return Err(Error::GenerateFailed);
             }
@@ -612,13 +612,12 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let residual_count = num_codebooks.saturating_sub(1);
         if residual_count > 0 {
             let dst_byte_offset = std::mem::size_of::<u32>(); // skip slot 0
-            let token_indices = semantic_bridge.codebook_token_indices.borrow();
-            let token_indices_buffer = token_indices.buffer();
+            let token_indices_buffer = semantic_bridge.codebook_token_indices.buffer();
             let mut token_indices_buffer = token_indices_buffer.borrow_mut();
             source_runner.copy_async_chain_results_to_on(
                 encoder,
                 source_slot,
-                (&mut *token_indices_buffer, token_indices.offset() + dst_byte_offset),
+                (&mut *token_indices_buffer, semantic_bridge.codebook_token_indices.offset() + dst_byte_offset),
                 residual_count,
             )?;
         }
@@ -629,9 +628,9 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let slow_model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
         let codebook_size_u32 = u32::try_from(codebook_size).map_err(|_| Error::GenerateFailed)?;
 
-        let codebook_token_indices = semantic_bridge.codebook_token_indices.borrow();
-        let codebook_embeddings = semantic_bridge.codebook_embeddings.borrow();
-        let slow_sum = slow_sum_embedding.borrow();
+        let codebook_token_indices = &semantic_bridge.codebook_token_indices;
+        let codebook_embeddings = &semantic_bridge.codebook_embeddings;
+        let slow_sum = slow_sum_embedding;
         if codebook_token_indices.shape() != [num_codebooks]
             || codebook_embeddings.shape() != [total_vocab, slow_model_dim]
             || slow_sum.shape() != [1, slow_model_dim]

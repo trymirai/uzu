@@ -355,22 +355,21 @@ impl StructuredAudioCodecGraph {
 
         let main = state.arrays(&[ArrayId::Main])[0].clone();
         let main_output = {
-            let main_ref = main.borrow();
-            if main_ref.shape() != [frames, self.input_dim] {
+            if main.shape() != [frames, self.input_dim] {
                 return Err(AudioError::Runtime(format!(
                     "post_module main shape mismatch: expected [{frames}, {}], got {:?}",
                     self.input_dim,
-                    main_ref.shape()
+                    main.shape()
                 )));
             }
-            if main_ref.data_type() != latent_nsc.data_type() {
+            if main.data_type() != latent_nsc.data_type() {
                 return Err(AudioError::Runtime(format!(
                     "post_module dtype mismatch: main={:?}, latent={:?}",
-                    main_ref.data_type(),
+                    main.data_type(),
                     latent_nsc.data_type()
                 )));
             }
-            main_ref.clone()
+            main.clone()
         };
 
         let copy_bytes = latent_nsc
@@ -465,22 +464,21 @@ impl StructuredAudioCodecGraph {
 
             let main = state.arrays(&[ArrayId::Main])[0].clone();
             let main_output = {
-                let main_ref = main.borrow();
-                if main_ref.shape() != [active_len, self.input_dim] {
+                if main.shape() != [active_len, self.input_dim] {
                     return Err(AudioError::Runtime(format!(
                         "post_module main shape mismatch: expected [{active_len}, {}], got {:?}",
                         self.input_dim,
-                        main_ref.shape()
+                        main.shape()
                     )));
                 }
-                if main_ref.data_type() != latent_nsc.data_type() {
+                if main.data_type() != latent_nsc.data_type() {
                     return Err(AudioError::Runtime(format!(
                         "post_module dtype mismatch: main={:?}, latent={:?}",
-                        main_ref.data_type(),
+                        main.data_type(),
                         latent_nsc.data_type()
                     )));
                 }
-                main_ref.clone()
+                main.clone()
             };
 
             for &batch_index in &batch_indices {

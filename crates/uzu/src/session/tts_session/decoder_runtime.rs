@@ -1,5 +1,5 @@
 use super::{decoder_support::*, *};
-use crate::{backends::common::Buffer, session::types::TtsModelConfigError};
+use crate::{array::Array, backends::common::Buffer, session::types::TtsModelConfigError};
 
 struct TokenDecoderLoadedModel<B: Backend> {
     shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -44,7 +44,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             embedding_subtree,
             readout_subtree,
         );
-        let logits_data_type = scratch_buffers.logits.borrow().data_type();
+        let logits_data_type = scratch_buffers.logits.data_type();
         let sampler =
             GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
                 .map_err(unable_to_create_context)?;
@@ -194,8 +194,8 @@ impl<B: Backend> TokenDecoderContext<B> {
 
 pub(super) struct TokenDecoderRunner<B: Backend> {
     ctx: TokenDecoderContext<B>,
-    pub(super) single_hidden_capture: ArrayCell<B>,
-    pub(super) single_override_embedding: ArrayCell<B>,
+    pub(super) single_hidden_capture: Array<B>,
+    pub(super) single_override_embedding: Array<B>,
     tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
     tensor_add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
@@ -236,9 +236,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
             <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(unable_to_create_context)?;
         let single_hidden_capture =
-            RefCell::new(context.create_array(&[1, model_dim], activation_data_type, "tts_single_hidden_capture"));
+            context.create_array(&[1, model_dim], activation_data_type, "tts_single_hidden_capture");
         let single_override_embedding =
-            RefCell::new(context.create_array(&[1, model_dim], activation_data_type, "tts_single_override_embedding"));
+            context.create_array(&[1, model_dim], activation_data_type, "tts_single_override_embedding");
 
         Ok(Self {
             ctx,
@@ -443,10 +443,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
         // Copy the sampled token for chaining and into results[0].
         {
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-            let sampling_output_binding = sampling_output.borrow();
-            let sampling_output_buffer = sampling_output_binding.buffer();
-            let token_ids_binding = self.ctx.scratch_buffers.token_ids.borrow();
-            let token_ids_buffer = token_ids_binding.buffer();
+            let sampling_output_buffer = sampling_output.buffer();
+            let token_ids_buffer = self.ctx.scratch_buffers.token_ids.buffer();
 
             let sampling_output_buffer = sampling_output_buffer.borrow();
             let mut token_ids_buffer = token_ids_buffer.borrow_mut();
@@ -551,10 +549,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
 
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-            let sampling_output_binding = sampling_output.borrow();
-            let sampling_output_buffer = sampling_output_binding.buffer();
-            let token_ids_binding = self.ctx.scratch_buffers.token_ids.borrow();
-            let token_ids_buffer = token_ids_binding.buffer();
+            let sampling_output_buffer = sampling_output.buffer();
+            let token_ids_buffer = self.ctx.scratch_buffers.token_ids.buffer();
 
             {
                 let sampling_output_buffer = sampling_output_buffer.borrow();
@@ -940,7 +936,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
             model_dim,
         })?;
         let main = state.arrays(&[ArrayId::Main])[0].clone();
-        let main = main.borrow();
         let bytes_per_element = main.data_type().size_in_bytes();
         let row_offset = (token_count - 1)
             .checked_mul(model_dim)
@@ -951,7 +946,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             })?;
         let src_offset =
             main.offset().checked_add(row_offset).ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
-        let capture = self.single_hidden_capture.borrow();
+        let capture = &self.single_hidden_capture;
         if capture.shape() != [1, model_dim] || capture.data_type() != main.data_type() {
             return Err(TtsModelConfigError::HiddenCaptureTensorMismatch {
                 expected_shape: [1, model_dim].into(),
@@ -974,15 +969,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &self,
         encoder: &mut Encoder<B>,
         state: &ForwardPassState<B>,
-        override_embedding: &ArrayCell<B>,
+        override_embedding: &Array<B>,
     ) -> Result<(), Error> {
         let model_dim = self.ctx.decoder_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;
         let main = state.arrays(&[ArrayId::Main])[0].clone();
-        let main = main.borrow();
-        let override_embedding = override_embedding.borrow();
         if override_embedding.shape() != [1, model_dim] || override_embedding.data_type() != main.data_type() {
             return Err(TtsModelConfigError::OverrideEmbeddingTensorMismatch {
                 expected_shape: [1, model_dim].into(),
@@ -1030,8 +1023,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             })?;
 
         let main = state.arrays(&[ArrayId::Main])[0].clone();
-        let main = main.borrow();
-        let bias = self.single_override_embedding.borrow();
+        let bias = &self.single_override_embedding;
         if bias.shape() != [1, model_dim] || bias.data_type() != main.data_type() {
             return Err(TtsModelConfigError::AddScaleBiasTensorMismatch {
                 expected_shape: [1, model_dim].into(),
@@ -1094,8 +1086,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         // read it after the eventual submit.
         {
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-            let sampling_output_binding = sampling_output.borrow();
-            let sampling_output_buffer = sampling_output_binding.buffer();
+            let sampling_output_buffer = sampling_output.buffer();
 
             let sampling_output_buffer = sampling_output_buffer.borrow();
             let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
@@ -1171,7 +1162,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
 fn read_sampled_token_from_sampling_output<B: Backend>(state: &ForwardPassState<B>) -> Result<u64, Error> {
     let output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-    let output = output.borrow();
     let tokens = output.as_slice::<u32>();
     let token = tokens.first().copied().ok_or(Error::SamplingFailed)?;
     Ok(u64::from(token))

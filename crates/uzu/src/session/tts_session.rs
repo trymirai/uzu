@@ -25,7 +25,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     DataType,
-    array::{ArrayCell, ArrayContextExt},
+    array::ArrayContextExt,
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
