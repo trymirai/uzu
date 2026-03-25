@@ -8,6 +8,7 @@ using namespace metal;
 
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 4
+#define STAGING_SIZE (BLOCK_SIZE * GRAIN_SIZE * 2)
 
 template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
 VARIANTS(InputT, float, half, bfloat)
@@ -25,7 +26,7 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
     constant float& scale_offset,
     constant bool& full_layer,
     const bool in_place SPECIALIZE,
-    threadgroup float staging[8192],
+    threadgroup float staging[STAGING_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
@@ -35,7 +36,7 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
   }
 
   threadgroup AccumT* shared_sum =
-      reinterpret_cast<threadgroup AccumT*>(staging);
+      reinterpret_cast<threadgroup AccumT*>(&staging[STAGING_SIZE - METAL_SIMD_SIZE]);
 
   const uint input_offset = batch_idx * element_count;
   const device InputT* input_data = input + input_offset;
