@@ -8,6 +8,7 @@ mod attention;
 mod audio;
 mod embedding;
 mod kv_cache_update_test;
+mod layer_norm_test;
 mod mask_update_test;
 mod matmul;
 mod moe;
