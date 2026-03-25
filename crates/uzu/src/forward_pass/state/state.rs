@@ -542,6 +542,14 @@ impl<B: Backend> ForwardPassState<B> {
                 let cache = self.llm_state().cache_layers.borrow();
                 cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").suffix_state.clone()
             },
+            ArrayId::DeltaNetConvState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").conv_state.clone()
+            },
+            ArrayId::DeltaNetSsmState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").ssm_state.clone()
+            },
 
             // MoE arrays (LLM only)
             ArrayId::MoeTopkIds => {

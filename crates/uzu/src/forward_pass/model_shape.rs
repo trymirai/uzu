@@ -27,6 +27,9 @@ pub struct ModelShape {
     max_mamba_kernel_size: usize,
     max_rope_dim: usize,
     has_gate: bool,
+    max_delta_net_kernel_size: usize,
+    max_delta_net_conv_dim: usize,
+    max_qkv_dim: usize,
 }
 
 impl ModelShape {
@@ -75,6 +78,20 @@ impl ModelShape {
                 max_mamba_kernel_size = max_mamba_kernel_size.max(*kernel_size as usize);
             }
         }
+        let mut max_delta_net_kernel_size = 0usize;
+        let mut max_delta_net_conv_dim = 0usize;
+        for layer in layer_types.iter() {
+            if let DecoderLayerType::DeltaNet {
+                conv_dim,
+                kernel_size,
+                ..
+            } = layer
+            {
+                max_delta_net_kernel_size = max_delta_net_kernel_size.max(*kernel_size);
+                max_delta_net_conv_dim = max_delta_net_conv_dim.max(*conv_dim);
+            }
+        }
+
         let mut max_rope_dim = 0usize;
         let mut has_gate = false;
 
@@ -84,12 +101,19 @@ impl ModelShape {
             .map(|configs| configs.iter().collect::<Vec<_>>())
             .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
 
+        let mut max_qkv_dim = 0usize;
         for layer_config in &all_layer_configs {
             if let MixerConfig::Attention(attn) = &layer_config.mixer_config {
+                let nh = attn.num_heads.unwrap_or(decoder_config.num_heads);
+                let ng = attn.num_groups.unwrap_or(decoder_config.num_groups);
                 let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
                 max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
-                has_gate = has_gate || attn.has_gate;
+                has_gate = has_gate || attn.has_gate || attn.gate_projection_config.is_some();
+                max_qkv_dim = max_qkv_dim.max((nh + 2 * ng) * hd);
             }
+        }
+        if max_qkv_dim == 0 {
+            max_qkv_dim = (decoder_config.num_heads + 2 * decoder_config.num_groups) * decoder_config.head_dim;
         }
 
         if max_rope_dim == 0 {
@@ -120,6 +144,9 @@ impl ModelShape {
             max_mamba_kernel_size,
             max_rope_dim,
             has_gate,
+            max_delta_net_kernel_size,
+            max_delta_net_conv_dim,
+            max_qkv_dim,
         }
     }
 
@@ -195,7 +222,7 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 2] {
-        [suffix_length, (2 * self.num_groups + self.num_heads) * self.head_dim]
+        [suffix_length, self.max_qkv_dim]
     }
 
     pub fn logits_shape(
@@ -209,7 +236,21 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 2] {
-        [suffix_length, self.num_heads * self.head_dim]
+        let attention_dim = self.num_heads * self.head_dim;
+        let delta_net_dim = self
+            .layer_types
+            .iter()
+            .filter_map(|lt| match lt {
+                DecoderLayerType::DeltaNet {
+                    num_heads,
+                    value_head_dim,
+                    ..
+                } => Some(num_heads * value_head_dim),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        [suffix_length, attention_dim.max(delta_net_dim)]
     }
 
     pub fn gate_shape(
@@ -401,6 +442,29 @@ impl ModelShape {
         self.layer_types.iter().any(|layer_type| matches!(layer_type, DecoderLayerType::ShortConv { .. }))
     }
 
+    pub fn has_delta_net_layers(&self) -> bool {
+        self.max_delta_net_kernel_size > 0
+    }
+
+    fn max_delta_net_padded_stride(&self) -> usize {
+        self.layer_types
+            .iter()
+            .filter_map(|lt| match lt {
+                DecoderLayerType::DeltaNet {
+                    conv_dim,
+                    num_heads,
+                    value_head_dim,
+                    ..
+                } => {
+                    let value_dim = num_heads * value_head_dim;
+                    Some(conv_dim + value_dim + 2 * num_heads)
+                },
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     pub fn max_mamba_conv_dim(&self) -> Option<usize> {
         if self.max_mamba_conv_dim == 0 {
             None
@@ -436,9 +500,21 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
-        match (self.max_mamba_conv_dim(), self.max_mamba_kernel_size()) {
-            (Some(conv_dim), Some(kernel_size)) if kernel_size > 0 => Some([suffix_length + kernel_size - 1, conv_dim]),
+        let mamba = match (self.max_mamba_conv_dim(), self.max_mamba_kernel_size()) {
+            (Some(conv_dim), Some(kernel_size)) if kernel_size > 0 => Some((suffix_length + kernel_size - 1, conv_dim)),
             _ => None,
+        };
+        let delta_net = if self.has_delta_net_layers() {
+            let state_stride = self.max_delta_net_kernel_size.saturating_sub(1);
+            let max_padded_stride = self.max_delta_net_padded_stride();
+            Some((suffix_length + state_stride, max_padded_stride))
+        } else {
+            None
+        };
+        match (mamba, delta_net) {
+            (Some((rows_m, cols_m)), Some((rows_d, cols_d))) => Some([rows_m.max(rows_d), cols_m.max(cols_d)]),
+            (Some((rows, cols)), None) | (None, Some((rows, cols))) => Some([rows, cols]),
+            (None, None) => None,
         }
     }
 
@@ -522,6 +598,15 @@ impl ModelShape {
                 DecoderLayerType::ShortConv {
                     ..
                 } => Some(self.model_dim * 3),
+                DecoderLayerType::DeltaNet {
+                    conv_dim,
+                    num_heads,
+                    value_head_dim,
+                    ..
+                } => {
+                    let value_dim = num_heads * value_head_dim;
+                    Some(conv_dim + value_dim + 2 * num_heads)
+                },
                 _ => None,
             })
             .max()
