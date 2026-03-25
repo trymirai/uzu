@@ -193,6 +193,9 @@ impl<B: Backend> CacheLayers<B> {
                         suffix_state_valid_len: Cell::new(0),
                     })
                 },
+                DecoderLayerType::DeltaNet {
+                    ..
+                } => todo!("DeltaNet cache layer not yet implemented"),
             })
             .collect();
 

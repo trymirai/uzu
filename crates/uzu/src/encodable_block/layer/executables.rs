@@ -49,6 +49,7 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
             MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
+            MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
         let copy_main_to_shortcut = TensorCopy::<B>::new(
             context,
@@ -183,6 +184,7 @@ impl<B: Backend> LayerExecutables<B> {
                     mixer,
                 }
             },
+            MixerConfig::DeltaNet(_) => todo!("DeltaNet mixer not yet implemented"),
         };
 
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
