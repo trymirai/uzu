@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
         cpu::Cpu,
     },
 };
@@ -51,7 +48,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let keys_array = context.create_array_from(&[total], &input.keys, "");
     let values_array = context.create_array_from(&[total], &input.values, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
     kernel.encode(
         keys_array.buffer().borrow_mut().deref_mut(),
         values_array.buffer().borrow_mut().deref_mut(),
@@ -60,9 +57,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.num_heads,
         input.max_sequence_length,
         input.head_dim,
-        &mut command_buffer,
+        &mut encoder,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (keys_array.as_slice().to_vec(), values_array.as_slice().to_vec())
 }

@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, gpu_types::ActivationType, kernel::ActivationKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::ActivationKernel},
         cpu::Cpu,
     },
 };
@@ -42,30 +39,28 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     if input.in_place {
         let output_array = context.create_array_from(&[n], &input.data, "");
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
         kernel.encode(
             Option::<&B::Buffer>::None,
             output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
             input.act_type,
-            &mut command_buffer,
+            &mut encoder,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         output_array.as_slice().to_vec()
     } else {
         let input_array = context.create_array_from(&[n], &input.data, "");
         let output_array = context.create_array_uninitialized(&[n], T::data_type(), "");
-        let mut command_buffer =
-            context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
         kernel.encode(
             Some(input_array.buffer().borrow().deref()),
             output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
             input.act_type,
-            &mut command_buffer,
+            &mut encoder,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         output_array.as_slice().to_vec()
     }
 }

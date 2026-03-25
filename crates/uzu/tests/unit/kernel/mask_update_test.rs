@@ -8,10 +8,7 @@ use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-            Context, Kernels, kernel::MaskUpdateKernel,
-        },
+        common::{Backend, Context, Encoder, Kernels, kernel::MaskUpdateKernel},
         cpu::Cpu,
     },
 };
@@ -40,9 +37,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let len = input.mask.len();
     let mask_array = context.create_array_from(&[len], &input.mask, "");
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
-    kernel.encode(mask_array.buffer().borrow_mut().deref_mut(), input.unmask_col, input.mask_col, &mut command_buffer);
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
+    kernel.encode(mask_array.buffer().borrow_mut().deref_mut(), input.unmask_col, input.mask_col, &mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     mask_array.as_slice().to_vec()
 }
