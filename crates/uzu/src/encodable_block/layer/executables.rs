@@ -32,7 +32,7 @@ pub struct LayerExecutables<B: Backend> {
 impl<B: Backend> LayerExecutables<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        context: Rc<B::Context>,
+        context: &B::Context,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
         layer_index: usize,
@@ -45,21 +45,20 @@ impl<B: Backend> LayerExecutables<B> {
         decoder_layer_loader: &ParameterTree<B::Context>,
         rope: Option<Rc<Rope<B>>>,
     ) -> Self {
-        let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let intermediate_data_type: DataType = match &layer_config.mixer_config {
             MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
             MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
         };
         let copy_main_to_shortcut = TensorCopy::<B>::new(
-            ctx,
+            context,
             intermediate_data_type,
             vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
         )
         .unwrap();
 
         let pre_attention_norm = RMSNorm::new(
-            ctx,
+            context,
             intermediate_data_type,
             layer_config.pre_attention_norm_config.clone(),
             ArrayId::Main,
@@ -77,7 +76,7 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_qkv_biases,
                     model_dim,
                     [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
-                    ctx,
+                    context,
                     &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
                     ArrayId::Main,
                     ArrayId::QKV,
@@ -91,7 +90,7 @@ impl<B: Backend> LayerExecutables<B> {
                             false,
                             model_dim,
                             [num_heads * head_dim],
-                            ctx,
+                            context,
                             &decoder_layer_loader.subtree("mixer.gate_projection").unwrap(),
                             ArrayId::Main,
                             ArrayId::Gate,
@@ -105,7 +104,7 @@ impl<B: Backend> LayerExecutables<B> {
                 let qk_norm =
                     if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
                         match QKNorm::new(
-                            ctx,
+                            context,
                             intermediate_data_type,
                             attention_config.query_norm_config.clone(),
                             attention_config.key_norm_config.clone(),
@@ -127,7 +126,7 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_out_biases,
                     num_heads * head_dim,
                     [model_dim],
-                    ctx,
+                    context,
                     &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
                     ArrayId::AttentionOutput,
                     ArrayId::Main,
@@ -135,7 +134,7 @@ impl<B: Backend> LayerExecutables<B> {
                 .expect("Failed to create out projection");
 
                 let attention = Attention::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     layer_index,
                     attention_scale,
@@ -157,7 +156,7 @@ impl<B: Backend> LayerExecutables<B> {
             },
             MixerConfig::Mamba(mamba_config) => {
                 let mixer = MambaMixer::new(
-                    ctx,
+                    context,
                     layer_type.clone(),
                     mamba_config.clone(),
                     layer_index,
@@ -173,7 +172,7 @@ impl<B: Backend> LayerExecutables<B> {
             },
             MixerConfig::ShortConv(short_conv_config) => {
                 let mixer = ShortConvMixer::new(
-                    ctx,
+                    context,
                     layer_type.clone(),
                     short_conv_config.clone(),
                     layer_index,
@@ -189,7 +188,7 @@ impl<B: Backend> LayerExecutables<B> {
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
             Some(
                 RMSNorm::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     norm_config.clone(),
                     ArrayId::Main,
@@ -203,14 +202,14 @@ impl<B: Backend> LayerExecutables<B> {
         };
 
         let main_shortcut_add_swap = TensorAddSwap::<B>::new(
-            ctx,
+            context,
             intermediate_data_type,
             vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
         )
         .unwrap();
 
         let pre_mlp_norm = RMSNorm::new(
-            ctx,
+            context,
             intermediate_data_type,
             layer_config.pre_mlp_norm_config.clone(),
             ArrayId::Main,
@@ -223,7 +222,7 @@ impl<B: Backend> LayerExecutables<B> {
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,
-            context.as_ref(),
+            context,
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
         .expect("Failed to create mlp block");
@@ -231,7 +230,7 @@ impl<B: Backend> LayerExecutables<B> {
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(
                 RMSNorm::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     norm_config.clone(),
                     ArrayId::Main,

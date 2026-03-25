@@ -89,7 +89,7 @@ impl<B: Backend> DecodeWorkspace<B> {
         } else {
             "structured_audio_lengths_b"
         };
-        let array = context.create_array(&[min_elements], DataType::I32, label);
+        let array = context.create_array_zeros(&[min_elements], DataType::I32, label);
         *slot = Some(array.clone());
         array
     }
@@ -200,7 +200,7 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
                 return existing.clone();
             }
         }
-        let array = self.context.create_array(&[min_elements], DataType::U32, "quantizer_token_staging");
+        let array = self.context.create_array_zeros(&[min_elements], DataType::U32, "quantizer_token_staging");
         *slot = Some(array.clone());
         array
     }
@@ -215,7 +215,7 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
                 return existing.clone();
             }
         }
-        let array = self.context.create_array(&[min_elements], DataType::I32, "quantizer_length_staging");
+        let array = self.context.create_array_zeros(&[min_elements], DataType::I32, "quantizer_length_staging");
         *slot = Some(array.clone());
         array
     }

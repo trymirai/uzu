@@ -148,7 +148,7 @@ impl StructuredAudioCodecGraph {
         let mut lengths_array = resources.length_staging(batch_size);
         lengths_array.as_slice_mut::<i32>()[..lengths_i32.len()].copy_from_slice(&lengths_i32);
 
-        let output = context.create_array(
+        let output = context.create_array_zeros(
             &[batch_size, frames, self.input_dim],
             quantizer_resources.data_type,
             "structured_audio_quantizer_output_nsc",

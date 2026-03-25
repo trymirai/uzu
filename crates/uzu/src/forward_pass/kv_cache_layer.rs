@@ -325,8 +325,10 @@ impl<B: Backend> KVCacheLayer<B> {
                 let dtype = self.keys.data_type();
 
                 let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys = context.create_array(&slice_shape, dtype, "kv_cache_layer_slice_keys");
-                let mut slice_values = context.create_array(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let mut slice_keys =
+                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
+                let mut slice_values =
+                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
