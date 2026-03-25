@@ -5,9 +5,9 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use crate::{
-    DataType, DecoderConfig,
-    backends::common::{Backend, CommandBuffer},
-    config::{DecoderLayerType, MixerConfig},
+    DataType,
+    backends::common::{Backend, Encoder},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig},
     encodable_block::{Embedding, EncodingParameters, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
     forward_pass::{
         model_shape::ModelShape,
@@ -29,26 +29,77 @@ pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
-    pub global_rope: Option<Rc<Rope<B>>>,
-    pub local_rope: Option<Rc<Rope<B>>>,
 }
 
 impl<B: Backend> Decoder<B> {
     pub fn new(
-        context: Rc<B::Context>,
-        decoder_config: Rc<DecoderConfig>,
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
-        let decoder_weight_loader = root_weight_loader.subtree("transformer").expect("transformer subtree not found");
+        let embedding_weight_loader = root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree");
 
         let embed = Embedding::new(
-            context.as_ref(),
+            context,
             decoder_config.vocab_size as u32,
             decoder_config.model_dim as u32,
             &decoder_config.embedding_config,
-            &root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree"),
+            &embedding_weight_loader,
         )
         .expect("Failed to create embedding");
+
+        let (layers, norm) =
+            Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, "transformer");
+
+        Self {
+            embed,
+            layers,
+            norm,
+        }
+    }
+
+    /// Used by models whose token lookup weights and logits readout weights
+    #[cfg(all(feature = "audio-runtime", metal_backend))]
+    pub fn new_with_embedding_and_readout_subtrees(
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
+        root_weight_loader: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+        embedding_subtree: &str,
+        readout_subtree: &str,
+    ) -> Self {
+        let embedding_weight_loader =
+            root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
+        let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
+
+        let embed = Embedding::new_with_lookup_and_readout_trees(
+            context,
+            decoder_config.vocab_size as u32,
+            decoder_config.model_dim as u32,
+            &decoder_config.embedding_config,
+            &embedding_weight_loader,
+            &readout_weight_loader,
+        )
+        .expect("Failed to create embedding");
+
+        let (layers, norm) =
+            Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, transformer_subtree);
+
+        Self {
+            embed,
+            layers,
+            norm,
+        }
+    }
+
+    pub(crate) fn build_transformer_layers_and_norm(
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
+        root_weight_loader: &ParameterTree<B::Context>,
+        transformer_subtree: &str,
+    ) -> (Box<[LayerExecutables<B>]>, RMSNorm<B>) {
+        let decoder_weight_loader =
+            root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
         let attention_data_type = Self::attention_data_type(&decoder_config);
         let norm_reference_layer =
@@ -90,13 +141,13 @@ impl<B: Backend> Decoder<B> {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
-                        let mut rope_block = global_rope.clone().expect("Global rope missing for transformer layer");
-                        if let (Some(_), Some(local_rope_block)) =
-                            (sliding_window_sizes[layer_index], local_rope.clone())
+                        if let Some(_) = sliding_window_sizes[layer_index]
+                            && let Some(local_rope_block) = local_rope.clone()
                         {
-                            rope_block = local_rope_block;
+                            Some(local_rope_block)
+                        } else {
+                            Some(global_rope.clone().expect("Global rope missing for transformer layer"))
                         }
-                        Some(rope_block)
                     },
                     DecoderLayerType::StateSpace {
                         ..
@@ -109,7 +160,7 @@ impl<B: Backend> Decoder<B> {
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
                 LayerExecutables::new(
-                    context.clone(),
+                    context,
                     layer_config,
                     layer_type,
                     layer_index,
@@ -126,7 +177,7 @@ impl<B: Backend> Decoder<B> {
             .collect::<Vec<_>>();
 
         let norm_block = RMSNorm::new(
-            context.as_ref(),
+            context,
             norm_data_type,
             decoder_config.output_norm_config.clone(),
             ArrayId::Main,
@@ -136,13 +187,7 @@ impl<B: Backend> Decoder<B> {
         .map(RMSNorm::with_sampling_range)
         .expect("Failed to create output RMS norm kernel");
 
-        Self {
-            embed,
-            layers: layers.into_boxed_slice(),
-            norm: norm_block,
-            global_rope,
-            local_rope,
-        }
+        (layers.into_boxed_slice(), norm_block)
     }
 
     fn create_rope_block(
@@ -170,30 +215,30 @@ impl<B: Backend> Decoder<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), DecoderError<B>> {
-        self.embed.encode_lookup(state, command_buffer)?;
+        self.embed.encode_lookup(state, encoder)?;
 
         for layer in self.layers.iter() {
-            layer.encode(state, parameters, command_buffer).map_err(DecoderError::BackendError)?;
+            layer.encode(state, parameters, encoder).map_err(DecoderError::BackendError)?;
         }
 
         if state.is_prefilling() {
             return Ok(());
         }
 
-        self.norm.encode(state, command_buffer).map_err(DecoderError::BackendError)?;
+        self.norm.encode(state, encoder).map_err(DecoderError::BackendError)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, traces.borrow().output_norm.clone());
         }
 
-        self.embed.encode_readout(state, command_buffer)?;
+        self.embed.encode_readout(state, encoder)?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
+            state.encode_copy_array(encoder, ArrayId::Logits, traces.borrow().logits.clone());
         }
         Ok(())
     }

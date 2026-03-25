@@ -10,17 +10,17 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, Encoder},
     config::LinearConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::{ParameterLoaderError, ParameterTree},
+    parameters::ParameterTree,
 };
 
 pub trait Linear<B: Backend> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error>;
 }
 
@@ -32,8 +32,6 @@ pub enum LinearBlockError<B: Backend> {
     FullPrecisionLinearError(#[source] FullPrecisionLinearError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[source] RHTLinearWrapperError<B>),
-    #[error("Parameter loader error: {0}")]
-    ParameterLoaderError(#[source] ParameterLoaderError<B>),
     #[error("QLoRA linear layer not supported")]
     QLoRaNotSupported,
 }

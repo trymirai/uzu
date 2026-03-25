@@ -6,6 +6,4 @@
 
 mod trace_validator;
 
-pub use trace_validator::{
-    ArrayTransform, TraceValidator, TracerValidationMetrics, TracerValidationResult, TracerValidationResults,
-};
+pub use trace_validator::TraceValidator;

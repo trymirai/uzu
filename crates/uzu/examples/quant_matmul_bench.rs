@@ -6,8 +6,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
-            CommandBufferPending, Context, Kernels,
+            Backend, Context, Encoder, Kernels,
             gpu_types::QuantizationMode,
             kernel::{
                 HadamardTransformMulKernel,
@@ -138,11 +137,11 @@ fn run_plain_quantized_matmul(
     shape: &BenchmarkShape,
     buffers: &mut QuantizedMatmulBuffers,
 ) -> f64 {
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     kernel
         .encode(
-            &mut command_buffer,
+            &mut encoder,
             QuantizedMatmulArguments {
                 a_buffer: &buffers.input_buffer,
                 a_offset: 0,
@@ -158,8 +157,7 @@ fn run_plain_quantized_matmul(
         )
         .expect("Failed to encode quantized matmul");
 
-    let completed =
-        command_buffer.end_encoding().submit().wait_until_completed().expect("Command buffer execution failed");
+    let completed = encoder.end_encoding().submit().wait_until_completed().expect("Command buffer execution failed");
 
     completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1e6).expect("GPU timestamps not available")
 }
@@ -177,19 +175,19 @@ fn run_rht_quantized_matmul(
     let input_total_blocks = (shape.batch_size * shape.input_dimension / 32) as u32;
     let output_total_blocks = (shape.batch_size * shape.output_dimension / 32) as u32;
 
-    let mut command_buffer = context.create_command_buffer().expect("Failed to create command buffer").start_encoding();
+    let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     input_hadamard_kernel.encode(
         &mut buffers.input_buffer,
         &*input_factors_buffer,
         input_total_blocks,
         shape.input_dimension as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
 
     quantized_matmul_kernel
         .encode(
-            &mut command_buffer,
+            &mut encoder,
             QuantizedMatmulArguments {
                 a_buffer: &buffers.input_buffer,
                 a_offset: 0,
@@ -210,11 +208,10 @@ fn run_rht_quantized_matmul(
         &*output_factors_buffer,
         output_total_blocks,
         shape.output_dimension as u32,
-        &mut command_buffer,
+        &mut encoder,
     );
 
-    let completed =
-        command_buffer.end_encoding().submit().wait_until_completed().expect("Command buffer execution failed");
+    let completed = encoder.end_encoding().submit().wait_until_completed().expect("Command buffer execution failed");
 
     completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1e6).expect("GPU timestamps not available")
 }

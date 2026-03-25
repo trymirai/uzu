@@ -8,15 +8,15 @@ use std::{
 
 use super::MixerExecutables;
 use crate::{
-    DataType, DecoderLayerConfig,
+    DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{
             Kernels, RMSNormCopyHadamardMulKernel, RMSNormCopyKernel, ResidualAddRMSNormHadamardMulKernel,
             ResidualAddRMSNormKernel,
         },
     },
-    config::{DecoderLayerType, MixerConfig, NormalizationConfig, UpcastMode},
+    config::{DecoderLayerConfig, DecoderLayerType, MixerConfig, NormalizationConfig, UpcastMode},
     encodable_block::{
         Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, RMSNormHadamard, Rope, ShortConvMixer,
         TensorAddSwap, TensorCopy,
@@ -34,11 +34,11 @@ impl<B: Backend> NormBlock<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         match self {
-            Self::Plain(norm) => norm.encode(state, command_buffer),
-            Self::FusedHadamard(norm) => norm.encode(state, command_buffer),
+            Self::Plain(norm) => norm.encode(state, encoder),
+            Self::FusedHadamard(norm) => norm.encode(state, encoder),
         }
     }
 }
@@ -61,11 +61,11 @@ impl<B: Backend> FusedCopyNorm<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Shortcut]);
-        let main_array = arrays[0].borrow_mut();
-        let shortcut_array = arrays[1].borrow_mut();
+        let main_array = &arrays[0];
+        let shortcut_array = &arrays[1];
         let batch_len = main_array.shape()[0].min(state.active_suffix_length()) as u32;
         let element_count = main_array.shape()[1] as u32;
         let main_buf_rc = main_array.buffer();
@@ -88,7 +88,7 @@ impl<B: Backend> FusedCopyNorm<B> {
                     config.epsilon,
                     config.scale_offset.unwrap_or(0.0),
                     config.upcast_mode == UpcastMode::FullLayer,
-                    command_buffer,
+                    encoder,
                 );
             },
             Self::Hadamard {
@@ -107,7 +107,7 @@ impl<B: Backend> FusedCopyNorm<B> {
                     config.epsilon,
                     config.scale_offset.unwrap_or(0.0),
                     config.upcast_mode == UpcastMode::FullLayer,
-                    command_buffer,
+                    encoder,
                 );
             },
         }
@@ -133,11 +133,11 @@ impl<B: Backend> FusedResidualAddNorm<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::Shortcut]);
-        let main_array = arrays[0].borrow_mut();
-        let shortcut_array = arrays[1].borrow_mut();
+        let main_array = &arrays[0];
+        let shortcut_array = &arrays[1];
         let batch_len = main_array.shape()[0].min(state.active_suffix_length()) as u32;
         let element_count = main_array.shape()[1] as u32;
         let main_buf_rc = main_array.buffer();
@@ -160,7 +160,7 @@ impl<B: Backend> FusedResidualAddNorm<B> {
                     config.epsilon,
                     config.scale_offset.unwrap_or(0.0),
                     config.upcast_mode == UpcastMode::FullLayer,
-                    command_buffer,
+                    encoder,
                 );
             },
             Self::Hadamard {
@@ -179,7 +179,7 @@ impl<B: Backend> FusedResidualAddNorm<B> {
                     config.epsilon,
                     config.scale_offset.unwrap_or(0.0),
                     config.upcast_mode == UpcastMode::FullLayer,
-                    command_buffer,
+                    encoder,
                 );
             },
         }
@@ -287,7 +287,7 @@ pub struct LayerExecutables<B: Backend> {
 impl<B: Backend> LayerExecutables<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        context: Rc<B::Context>,
+        context: &B::Context,
         layer_config: &DecoderLayerConfig,
         layer_type: &DecoderLayerType,
         layer_index: usize,
@@ -300,14 +300,13 @@ impl<B: Backend> LayerExecutables<B> {
         decoder_layer_loader: &ParameterTree<B::Context>,
         rope: Option<Rc<Rope<B>>>,
     ) -> Self {
-        let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let intermediate_data_type: DataType = match &layer_config.mixer_config {
             MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
             MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
         };
         let copy_main_to_shortcut = TensorCopy::<B>::new(
-            ctx,
+            context,
             intermediate_data_type,
             vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
         )
@@ -324,7 +323,7 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_qkv_biases,
                     model_dim,
                     [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
-                    ctx,
+                    context,
                     &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
                     ArrayId::Main,
                     ArrayId::QKV,
@@ -332,7 +331,7 @@ impl<B: Backend> LayerExecutables<B> {
                 .expect("Failed to create qkv projection");
 
                 let fused_pre_attn = try_create_fused_copy_norm(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     &layer_config.pre_attention_norm_config,
                     &norm_tree,
@@ -342,7 +341,7 @@ impl<B: Backend> LayerExecutables<B> {
                 let pre_attention_norm = if let Some(factors) = input_hadamard_factors {
                     NormBlock::FusedHadamard(
                         RMSNormHadamard::new(
-                            ctx,
+                            context,
                             intermediate_data_type,
                             layer_config.pre_attention_norm_config.clone(),
                             ArrayId::Main,
@@ -355,7 +354,7 @@ impl<B: Backend> LayerExecutables<B> {
                 } else {
                     NormBlock::Plain(
                         RMSNorm::new(
-                            ctx,
+                            context,
                             intermediate_data_type,
                             layer_config.pre_attention_norm_config.clone(),
                             ArrayId::Main,
@@ -366,10 +365,28 @@ impl<B: Backend> LayerExecutables<B> {
                     )
                 };
 
+                let gate_projection = if attention_config.has_gate {
+                    Some(
+                        <dyn Linear<B>>::new(
+                            &attention_config.qkv_projection_config,
+                            false,
+                            model_dim,
+                            [num_heads * head_dim],
+                            context,
+                            &decoder_layer_loader.subtree("mixer.gate_projection").unwrap(),
+                            ArrayId::Main,
+                            ArrayId::Gate,
+                        )
+                        .expect("Failed to create gate projection"),
+                    )
+                } else {
+                    None
+                };
+
                 let qk_norm =
                     if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
                         match QKNorm::new(
-                            ctx,
+                            context,
                             intermediate_data_type,
                             attention_config.query_norm_config.clone(),
                             attention_config.key_norm_config.clone(),
@@ -391,7 +408,7 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_out_biases,
                     num_heads * head_dim,
                     [model_dim],
-                    ctx,
+                    context,
                     &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
                     ArrayId::AttentionOutput,
                     ArrayId::Main,
@@ -399,13 +416,14 @@ impl<B: Backend> LayerExecutables<B> {
                 .expect("Failed to create out projection");
 
                 let attention = Attention::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     layer_index,
                     attention_scale,
                     attention_config.has_sinks,
                     attention_config.is_causal.unwrap_or(true),
                     attention_config.sliding_window_size,
+                    attention_config.has_gate,
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
@@ -413,6 +431,7 @@ impl<B: Backend> LayerExecutables<B> {
                     pre_attention_norm,
                     MixerExecutables::Attention {
                         qkv_projection,
+                        gate_projection,
                         qk_norm,
                         rope: rope_block,
                         attention,
@@ -423,7 +442,7 @@ impl<B: Backend> LayerExecutables<B> {
             },
             MixerConfig::Mamba(mamba_config) => {
                 let mixer = MambaMixer::new(
-                    ctx,
+                    context,
                     layer_type.clone(),
                     mamba_config.clone(),
                     layer_index,
@@ -435,7 +454,7 @@ impl<B: Backend> LayerExecutables<B> {
                 );
                 let norm = NormBlock::Plain(
                     RMSNorm::new(
-                        ctx,
+                        context,
                         intermediate_data_type,
                         layer_config.pre_attention_norm_config.clone(),
                         ArrayId::Main,
@@ -445,7 +464,7 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("Failed to create RMS norm kernel"),
                 );
                 let fused_pre_attn = try_create_fused_copy_norm(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     &layer_config.pre_attention_norm_config,
                     &norm_tree,
@@ -461,7 +480,7 @@ impl<B: Backend> LayerExecutables<B> {
             },
             MixerConfig::ShortConv(short_conv_config) => {
                 let (mixer, input_hadamard_factors) = ShortConvMixer::new(
-                    ctx,
+                    context,
                     layer_type.clone(),
                     short_conv_config.clone(),
                     layer_index,
@@ -469,7 +488,7 @@ impl<B: Backend> LayerExecutables<B> {
                     decoder_layer_loader,
                 );
                 let fused_pre_attn = try_create_fused_copy_norm(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     &layer_config.pre_attention_norm_config,
                     &norm_tree,
@@ -478,7 +497,7 @@ impl<B: Backend> LayerExecutables<B> {
                 let norm = if let Some(factors) = input_hadamard_factors {
                     NormBlock::FusedHadamard(
                         RMSNormHadamard::new(
-                            ctx,
+                            context,
                             intermediate_data_type,
                             layer_config.pre_attention_norm_config.clone(),
                             ArrayId::Main,
@@ -491,7 +510,7 @@ impl<B: Backend> LayerExecutables<B> {
                 } else {
                     NormBlock::Plain(
                         RMSNorm::new(
-                            ctx,
+                            context,
                             intermediate_data_type,
                             layer_config.pre_attention_norm_config.clone(),
                             ArrayId::Main,
@@ -514,7 +533,7 @@ impl<B: Backend> LayerExecutables<B> {
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
             Some(
                 RMSNorm::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     norm_config.clone(),
                     ArrayId::Main,
@@ -528,7 +547,7 @@ impl<B: Backend> LayerExecutables<B> {
         };
 
         let main_shortcut_add_swap = TensorAddSwap::<B>::new(
-            ctx,
+            context,
             intermediate_data_type,
             vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
         )
@@ -540,13 +559,13 @@ impl<B: Backend> LayerExecutables<B> {
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,
-            context.as_ref(),
+            context,
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
         .expect("Failed to create mlp block");
 
         let fused_pre_mlp = try_create_fused_residual_add_norm(
-            ctx,
+            context,
             intermediate_data_type,
             &layer_config.pre_mlp_norm_config,
             &mlp_norm_tree,
@@ -556,7 +575,7 @@ impl<B: Backend> LayerExecutables<B> {
         let pre_mlp_norm = if let Some(factors) = mlp_input_hadamard_factors {
             NormBlock::FusedHadamard(
                 RMSNormHadamard::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
                     ArrayId::Main,
@@ -569,7 +588,7 @@ impl<B: Backend> LayerExecutables<B> {
         } else {
             NormBlock::Plain(
                 RMSNorm::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     layer_config.pre_mlp_norm_config.clone(),
                     ArrayId::Main,
@@ -583,7 +602,7 @@ impl<B: Backend> LayerExecutables<B> {
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(
                 RMSNorm::new(
-                    ctx,
+                    context,
                     intermediate_data_type,
                     norm_config.clone(),
                     ArrayId::Main,
@@ -615,122 +634,124 @@ impl<B: Backend> LayerExecutables<B> {
         &self,
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         #[cfg(feature = "tracing")]
         let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().inputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
 
         if self.layer_index == 0 {
             if let Some(ref fused) = self.fused_pre_attn {
-                fused.encode(state, command_buffer)?;
+                fused.encode(state, encoder)?;
             } else {
-                self.copy_main_to_shortcut.encode(state, command_buffer)?;
-                self.pre_attention_norm.encode(state, command_buffer)?;
+                self.copy_main_to_shortcut.encode(state, encoder)?;
+                self.pre_attention_norm.encode(state, encoder)?;
             }
         } else {
             // For layers > 0 the previous layer's TensorAddSwap already wrote the
             // identical value to both Main and Shortcut, so the copy is a no-op.
-            self.pre_attention_norm.encode(state, command_buffer)?;
+            self.pre_attention_norm.encode(state, encoder)?;
         }
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
         }
 
         match &self.mixer {
             MixerExecutables::Attention {
                 qkv_projection,
+                gate_projection,
                 qk_norm,
                 rope,
                 attention,
                 out_projection,
             } => {
-                qkv_projection.encode(state, command_buffer)?;
-                if let Some(norm) = qk_norm {
-                    norm.encode(state, command_buffer)?;
+                qkv_projection.encode(state, encoder)?;
+                if let Some(gate_proj) = gate_projection {
+                    gate_proj.encode(state, encoder)?;
                 }
-                rope.encode(state, command_buffer)?;
-                attention.encode(state, parameters, command_buffer)?;
-                out_projection.encode(state, command_buffer)?;
+                if let Some(norm) = qk_norm {
+                    norm.encode(state, encoder)?;
+                }
+                rope.encode(state, encoder)?;
+                attention.encode(state, parameters, encoder)?;
+                out_projection.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
             },
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer)?;
+                mixer.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
             },
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                mixer.encode(state, command_buffer)?;
+                mixer.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().attention.clone());
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
                 }
             },
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
-            post_attention_norm.encode(state, command_buffer)?;
+            post_attention_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(
-                    command_buffer,
-                    ArrayId::Main,
-                    layer_traces.borrow().post_attention_norm.clone(),
-                );
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_attention_norm.clone());
             }
         }
         //main = attention_result
 
         if let Some(ref fused) = self.fused_pre_mlp {
-            fused.encode(state, command_buffer)?;
+            fused.encode(state, encoder)?;
         } else {
-            self.main_shortcut_add_swap.encode(state, command_buffer)?;
-            self.pre_mlp_norm.encode(state, command_buffer)?;
+            self.main_shortcut_add_swap.encode(state, encoder)?;
+            // shortcut = input + attention_result
+            // main = input + attention_result
+            self.pre_mlp_norm.encode(state, encoder)?;
         }
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
         }
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer)?;
+        self.mlp.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp.clone());
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            post_mlp_norm.encode(state, command_buffer)?;
+            post_mlp_norm.encode(state, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
         }
         // main = mlp_result
 
-        self.main_shortcut_add_swap.encode(state, command_buffer)?;
+        self.main_shortcut_add_swap.encode(state, encoder)?;
         // shortcut = input + attention_result + mlp_result
         // main = input + attention_result + mlp_result
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().outputs.clone());
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().outputs.clone());
         }
 
         Ok(())

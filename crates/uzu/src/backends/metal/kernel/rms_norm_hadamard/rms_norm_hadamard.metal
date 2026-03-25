@@ -34,7 +34,8 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
     input = reinterpret_cast<const device InputT*>(output);
   }
 
-  threadgroup AccumT* shared_sum = reinterpret_cast<threadgroup AccumT*>(staging);
+  threadgroup AccumT* shared_sum =
+      reinterpret_cast<threadgroup AccumT*>(staging);
 
   const uint input_offset = batch_idx * element_count;
   const device InputT* input_data = input + input_offset;
@@ -51,7 +52,8 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
       vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
-      if (i < element_count) staging[i] = float(vals[j]);
+      if (i < element_count)
+        staging[i] = float(vals[j]);
     }
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       partial_sum += vals[j] * vals[j];
@@ -59,7 +61,11 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
   }
 
   AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_sum, shared_sum, thread_in_row, thread_context);
+      partial_sum,
+      shared_sum,
+      thread_in_row,
+      thread_context
+  );
 
   AccumT mean_square =
       static_cast<AccumT>(total_sum) / static_cast<AccumT>(element_count);
@@ -78,7 +84,8 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
 
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      if (i >= element_count) continue;
+      if (i >= element_count)
+        continue;
 
       AccumT normalized_high = vals[j] * rms_norm;
       float result;
@@ -91,7 +98,8 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
         OutputT normalized_low = static_cast<OutputT>(normalized_high);
         OutputT scale_value_low = static_cast<OutputT>(
             static_cast<AccumT>(scales_data[i]) +
-            static_cast<AccumT>(scale_offset));
+            static_cast<AccumT>(scale_offset)
+        );
         result = float(normalized_low * scale_value_low);
       }
 

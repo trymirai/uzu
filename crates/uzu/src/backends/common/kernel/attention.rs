@@ -6,7 +6,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Kernels,
+        Backend, Encoder, Kernels,
         gpu_types::{AttnMaskParams, AttnParams},
         kernel::AttentionGemmKernel,
     },
@@ -49,7 +49,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
     pub fn encode(
         &self,
         context: &B::Context,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
@@ -138,7 +138,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             args.sinks_buffer,
             args.num_heads as u32,
             args.suffix_length as u32,
-            command_buffer,
+            encoder,
         );
 
         Ok(())

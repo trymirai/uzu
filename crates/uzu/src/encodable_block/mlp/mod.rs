@@ -11,7 +11,7 @@ use super::linear::{Linear, LinearBlockError};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::mlp_gate_act_mul::{MlpGateActMulEncodable, MlpGateActMulHadamardEncodable},
     },
     config::MLPConfig,
@@ -23,7 +23,7 @@ pub trait Mlp<B: Backend> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error>;
 }
 

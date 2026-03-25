@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, RopeKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState, RopeType},
@@ -31,24 +31,24 @@ impl<B: Backend> Rope<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let (suffix_length, num_heads, head_dim, num_groups, rope_dim, rope_max_seq_len) = {
             let qkv_binding = state.arrays(&[ArrayId::QKV]);
-            let qkv_array = qkv_binding[0].borrow();
+            let qkv_array = &qkv_binding[0];
             let suffix_length = qkv_array.shape()[0];
 
             let queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
-            let queries_array = queries_binding[0].borrow();
+            let queries_array = &queries_binding[0];
             let num_heads = queries_array.shape()[0];
             let head_dim = queries_array.shape()[2];
 
             let keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
-            let keys_array = keys_binding[0].borrow();
+            let keys_array = &keys_binding[0];
             let num_groups = keys_array.shape()[0];
 
             let cos_binding = state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
-            let cos_array = cos_binding[0].borrow();
+            let cos_array = &cos_binding[0];
             let cos_shape = cos_array.shape();
             let rope_max_seq_len = cos_shape[0];
             let rope_dim = cos_shape[1];
@@ -57,22 +57,22 @@ impl<B: Backend> Rope<B> {
         };
 
         let qkv_buffer_binding = state.arrays(&[ArrayId::QKV]);
-        let qkv = qkv_buffer_binding[0].borrow_mut();
+        let qkv = &qkv_buffer_binding[0];
 
         let token_positions_binding = state.arrays(&[ArrayId::TokenPositions]);
-        let token_positions = token_positions_binding[0].borrow_mut();
+        let token_positions = &token_positions_binding[0];
 
         let query_buffer_binding = state.arrays(&[ArrayId::RotatedQueries]);
-        let rotated_queries = query_buffer_binding[0].borrow_mut();
+        let rotated_queries = &query_buffer_binding[0];
 
         let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
-        let rotated_keys = rotated_keys_binding[0].borrow_mut();
+        let rotated_keys = &rotated_keys_binding[0];
 
         let cos_buffer_binding = state.arrays(&[ArrayId::RopeCosines(self.rope_type)]);
-        let rope_cosines = cos_buffer_binding[0].borrow_mut();
+        let rope_cosines = &cos_buffer_binding[0];
 
         let sin_buffer_binding = state.arrays(&[ArrayId::RopeSines(self.rope_type)]);
-        let rope_sines = sin_buffer_binding[0].borrow_mut();
+        let rope_sines = &sin_buffer_binding[0];
 
         let token_positions_offset = token_positions.offset();
 
@@ -89,7 +89,7 @@ impl<B: Backend> Rope<B> {
             num_groups as u32,
             suffix_length as u32,
             rope_max_seq_len as u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

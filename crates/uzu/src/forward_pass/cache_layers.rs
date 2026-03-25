@@ -1,11 +1,8 @@
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-};
+use std::{cell::Cell, collections::HashMap};
 
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, CommandBuffer, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KVSlice},
@@ -126,16 +123,16 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: RefCell::new(context.create_array(
+                        keys: context.create_array_zeros(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
-                        )),
-                        values: RefCell::new(context.create_array(
+                        ),
+                        values: context.create_array_zeros(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
-                        )),
+                        ),
                         prefix_token_positions: match &state {
                             KVCacheLayerState::Full {
                                 ..
@@ -161,16 +158,16 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: RefCell::new(context.create_array(
+                        conv_state: context.create_array_zeros(
                             &conv_shape,
                             dtype,
                             &format!("{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"),
-                        )),
-                        ssm_state: RefCell::new(context.create_array(
+                        ),
+                        ssm_state: context.create_array_zeros(
                             &ssm_shape,
                             dtype,
                             &format!("{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"),
-                        )),
+                        ),
                     })
                 },
                 DecoderLayerType::ShortConv {
@@ -182,16 +179,16 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::ShortConv(ShortConvLayer {
-                        conv_state: RefCell::new(context.create_array(
+                        conv_state: context.create_array_zeros(
                             &conv_shape,
                             dtype,
                             &format!("{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"),
-                        )),
-                        suffix_state: RefCell::new(context.create_array(
+                        ),
+                        suffix_state: context.create_array_zeros(
                             &suffix_state_shape,
                             dtype,
                             &format!("{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"),
-                        )),
+                        ),
                         suffix_state_valid_start: Cell::new(0),
                         suffix_state_valid_len: Cell::new(0),
                     })
@@ -258,15 +255,15 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn fill_attention_bias_scratch(
         &self,
-        dst: &HashMap<Option<usize>, RefCell<Array<B>>>,
+        dst: &mut HashMap<Option<usize>, Array<B>>,
         suffix_token_positions: &[usize],
         suffix_length: usize,
         _context: &B::Context,
     ) {
         for layer in self.data.iter() {
             if let CacheLayer::Transformer(layer) = layer {
-                if let Some(cell) = dst.get(&layer.window_length()) {
-                    layer.fill_attention_bias(&mut cell.borrow_mut(), suffix_token_positions, suffix_length, None);
+                if let Some(array) = dst.get_mut(&layer.window_length()) {
+                    layer.fill_attention_bias(array, suffix_token_positions, suffix_length, None);
                 }
             }
         }
@@ -276,14 +273,14 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, command_buffer, kv_cache_update);
-            } else if let Some(layer) = layer.as_short_conv() {
+                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
+            } else if let Some(layer) = layer.as_short_conv_mut() {
                 layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
             }
         }
@@ -365,10 +362,10 @@ impl<B: Backend> CacheLayers<B> {
             .enumerate()
             .map(|(layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
-                    let shape = layer.keys.borrow().shape().to_vec();
+                    let shape = layer.keys.shape().to_vec();
                     let num_groups = shape[0];
                     let head_dim = shape[2];
-                    let dtype = layer.keys.borrow().data_type();
+                    let dtype = layer.keys.data_type();
                     let copy_rows = layer.prefix_segment_length();
 
                     let new_total_len = copy_rows + self.max_suffix_length;
@@ -377,93 +374,75 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.create_array(
+                    let mut new_keys = context.create_array_zeros(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                     );
-                    let mut new_values = context.create_array(
+                    let mut new_values = context.create_array_zeros(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
                     );
 
                     if copy_rows > 0 {
-                        {
-                            let keys = layer.keys.borrow();
-                            new_keys.copy_slice(&keys, 1, 0..copy_rows, 0);
-                        }
-                        {
-                            let values = layer.values.borrow();
-                            new_values.copy_slice(&values, 1, 0..copy_rows, 0);
-                        }
+                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0);
+                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0);
                     }
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: layer.state.clone(),
-                        keys: RefCell::new(new_keys),
-                        values: RefCell::new(new_values),
+                        keys: new_keys,
+                        values: new_values,
                         prefix_token_positions: layer.prefix_token_positions.clone(),
                         max_suffix_length: layer.max_suffix_length,
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
-                    let conv_shape = layer.conv_state.borrow().shape().to_vec();
-                    let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.create_array(
+                    let conv_shape = layer.conv_state.shape().to_vec();
+                    let conv_dtype = layer.conv_state.data_type();
+                    let mut new_conv = context.create_array_uninitialized(
                         &conv_shape,
                         conv_dtype,
                         &format!("{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"),
                     );
-                    {
-                        let conv_src = layer.conv_state.borrow();
-                        new_conv.copy_from_array(&conv_src);
-                    }
+                    new_conv.copy_from_array(&layer.conv_state);
 
-                    let ssm_shape = layer.ssm_state.borrow().shape().to_vec();
-                    let ssm_dtype = layer.ssm_state.borrow().data_type();
-                    let mut new_ssm = context.create_array(
+                    let ssm_shape = layer.ssm_state.shape().to_vec();
+                    let ssm_dtype = layer.ssm_state.data_type();
+                    let mut new_ssm = context.create_array_uninitialized(
                         &ssm_shape,
                         ssm_dtype,
                         &format!("{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"),
                     );
-                    {
-                        let ssm_src = layer.ssm_state.borrow();
-                        new_ssm.copy_from_array(&ssm_src);
-                    }
+                    new_ssm.copy_from_array(&layer.ssm_state);
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: RefCell::new(new_conv),
-                        ssm_state: RefCell::new(new_ssm),
+                        conv_state: new_conv,
+                        ssm_state: new_ssm,
                     })
                 },
                 CacheLayer::ShortConv(layer) => {
-                    let conv_shape = layer.conv_state.borrow().shape().to_vec();
-                    let conv_dtype = layer.conv_state.borrow().data_type();
-                    let mut new_conv = context.create_array(
+                    let conv_shape = layer.conv_state.shape().to_vec();
+                    let conv_dtype = layer.conv_state.data_type();
+                    let mut new_conv = context.create_array_uninitialized(
                         &conv_shape,
                         conv_dtype,
                         &format!("{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"),
                     );
-                    {
-                        let conv_src = layer.conv_state.borrow();
-                        new_conv.copy_from_array(&conv_src);
-                    }
+                    new_conv.copy_from_array(&layer.conv_state);
 
-                    let suffix_shape = layer.suffix_state.borrow().shape().to_vec();
-                    let suffix_dtype = layer.suffix_state.borrow().data_type();
-                    let mut new_suffix = context.create_array(
+                    let suffix_shape = layer.suffix_state.shape().to_vec();
+                    let suffix_dtype = layer.suffix_state.data_type();
+                    let new_suffix = context.create_array_zeros(
                         &suffix_shape,
                         suffix_dtype,
                         &format!("{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"),
                     );
-                    {
-                        new_suffix.as_bytes_mut().fill(0);
-                    }
 
                     CacheLayer::ShortConv(ShortConvLayer {
-                        conv_state: RefCell::new(new_conv),
-                        suffix_state: RefCell::new(new_suffix),
+                        conv_state: new_conv,
+                        suffix_state: new_suffix,
                         suffix_state_valid_start: Cell::new(0),
                         suffix_state_valid_len: Cell::new(0),
                     })

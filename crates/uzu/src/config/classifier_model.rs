@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ClassifierConfig, MessageProcessorConfig};
+use crate::config::{ClassifierConfig, MessageProcessorConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ClassifierModelConfig {

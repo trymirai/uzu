@@ -1,21 +1,29 @@
-pub mod array;
-pub mod audio;
+mod array;
+mod audio;
+mod classifier;
+mod config;
+mod data_type;
+mod encodable_block;
+mod forward_pass;
+mod language_model;
+mod parameters;
+mod speculators;
+#[cfg(feature = "tracing")]
+mod tracer;
+mod trie;
+mod utils;
+
 pub mod backends;
-pub mod classifier;
-pub mod config;
-pub mod data_type;
-pub mod encodable_block;
-pub mod forward_pass;
-pub mod language_model;
-pub mod parameters;
 pub mod prelude;
 pub mod session;
-pub mod speculators;
-#[cfg(feature = "tracing")]
-pub mod tracer;
-pub mod trie;
-pub mod utils;
 
-pub use config::*;
-pub use data_type::*;
-pub use utils::*;
+pub use array::{Array, ArrayContextExt};
+#[cfg(all(feature = "audio-runtime", metal_backend))]
+pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
+pub use config::ConfigDataType;
+pub use data_type::{ArrayElement, DataType};
+pub use language_model::gumbel::{gumbel_float, revidx};
+pub use parameters::{ParameterLoader, read_safetensors_metadata};
+#[cfg(feature = "tracing")]
+pub use tracer::TraceValidator;
+pub use utils::VERSION;

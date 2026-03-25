@@ -28,7 +28,8 @@ PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
 ) {
-  threadgroup AccumT* shared_sum = reinterpret_cast<threadgroup AccumT*>(staging);
+  threadgroup AccumT* shared_sum =
+      reinterpret_cast<threadgroup AccumT*>(staging);
 
   const uint offset = batch_idx * element_count;
   device DataT* main_data = main_buffer + offset;
@@ -37,7 +38,8 @@ PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
 
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
-  // Pass 1: compute residual sum, write to shortcut + staging, accumulate sum-of-squares
+  // Pass 1: compute residual sum, write to shortcut + staging, accumulate
+  // sum-of-squares
   for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
        base_i += BLOCK_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
@@ -61,7 +63,11 @@ PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
   }
 
   AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_sum, shared_sum, thread_in_row, thread_context);
+      partial_sum,
+      shared_sum,
+      thread_in_row,
+      thread_context
+  );
 
   AccumT mean_square =
       static_cast<AccumT>(total_sum) / static_cast<AccumT>(element_count);
@@ -79,7 +85,8 @@ PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
 
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      if (i >= element_count) continue;
+      if (i >= element_count)
+        continue;
 
       AccumT normalized_high = vals[j] * rms_norm_val;
       float result;
@@ -92,7 +99,8 @@ PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
         DataT normalized_low = static_cast<DataT>(normalized_high);
         DataT scale_value_low = static_cast<DataT>(
             static_cast<AccumT>(scales_data[i]) +
-            static_cast<AccumT>(scale_offset));
+            static_cast<AccumT>(scale_offset)
+        );
         result = float(normalized_low * scale_value_low);
       }
 

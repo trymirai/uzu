@@ -10,7 +10,7 @@ use super::Linear;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -129,12 +129,12 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
-        let input_array = arrays[0].borrow_mut();
-        let output_array = arrays[1].borrow_mut();
+        let input_array = &arrays[0];
+        let output_array = &arrays[1];
 
         let bias_borrow = self.bias_buffer.as_ref().map(|b| b.borrow());
         self.kernel.borrow_mut().encode(
@@ -153,7 +153,7 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
                 leading_dimension_d: self.output_dim as i32,
                 transpose_b: true,
             },
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

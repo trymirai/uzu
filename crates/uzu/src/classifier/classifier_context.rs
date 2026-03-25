@@ -1,8 +1,8 @@
-use std::{cell::RefCell, fs::File, io::BufReader, path::Path, rc::Rc};
+use std::{cell::RefCell, fs::File, path::Path, rc::Rc};
 
 use crate::{
     DataType,
-    backends::common::{Backend, Context, Kernels, kernel::SigmoidKernel},
+    backends::common::{Backend, Context},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
     encodable_block::{
@@ -30,26 +30,17 @@ pub struct ClassifierContext<B: Backend> {
     pub embedding_norm: Normalization<B>,
     pub layers: Box<[ClassifierLayer<B>]>,
     pub output_norm: Normalization<B>,
-    pub global_rope: Rc<Rope<B>>,
-    pub local_rope: Option<Rc<Rope<B>>>,
 
     pub pooling: Pooling<B>,
     pub prediction_head: ClassifierPredictionHead<B>,
-
-    pub sigmoid_kernel: <B::Kernels as Kernels>::SigmoidKernel,
 }
 
 impl<B: Backend> ClassifierContext<B> {
-    pub fn new(model_path: &Path) -> Result<Self, Error> {
+    pub fn new(
+        model_path: &Path,
+        model_metadata: &ModelMetadata,
+    ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
-
-        let config_path = model_path.join("config.json");
-        if !config_path.exists() {
-            return Err(Error::UnableToLoadConfig);
-        }
-        let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         let classifier_model_config = model_metadata.model_config.as_classifier().ok_or(Error::UnableToLoadConfig)?;
 
@@ -252,11 +243,6 @@ impl<B: Backend> ClassifierContext<B> {
             Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head readout: {:?}", e)))
         })?;
 
-        let sigmoid_kernel = <B::Kernels as Kernels>::SigmoidKernel::new(&context, data_type.into()).map_err(|e| {
-            eprintln!("Failed to create sigmoid kernel: {:?}", e);
-            Error::UnableToCreateContext(e.into())
-        })?;
-
         let pooling = Pooling::<B>::new(
             context.as_ref(),
             data_type,
@@ -288,11 +274,8 @@ impl<B: Backend> ClassifierContext<B> {
             embedding_norm,
             layers,
             output_norm,
-            global_rope,
-            local_rope,
             pooling,
             prediction_head,
-            sigmoid_kernel,
         })
     }
 

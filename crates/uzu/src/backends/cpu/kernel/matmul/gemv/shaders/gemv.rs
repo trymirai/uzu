@@ -2,7 +2,7 @@ use num_traits::Float;
 
 use crate::{
     ArrayElement,
-    pointers::{SendPtr, SendPtrMut},
+    utils::pointers::{SendPtr, SendPtrMut},
 };
 
 #[inline(always)]

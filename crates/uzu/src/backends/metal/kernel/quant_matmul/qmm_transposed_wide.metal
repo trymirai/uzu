@@ -4,7 +4,8 @@
 
 // Wide QMM tile: BM=64, BK=32, BN=64.
 // Processes 4x more output elements per threadgroup than the 32x32 variant.
-// BK=32 satisfies the group_size >= BK constraint for all group sizes (32, 64, 128).
+// BK=32 satisfies the group_size >= BK constraint for all group sizes (32, 64,
+// 128).
 template <typename T, int GROUP_SIZE, int BITS>
 VARIANTS(T, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
@@ -37,11 +38,39 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposedWide)(
 
   if (use_mlx_quant) {
     qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 64, 32, 64, true>(
-        w, scales, zero_points, biases, x, y, Xs, Ws,
-        k, n, m, tid, lid, simd_gid, simd_lid);
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        k,
+        n,
+        m,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
   } else {
     qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 64, 32, 64, false>(
-        w, scales, zero_points, biases, x, y, Xs, Ws,
-        k, n, m, tid, lid, simd_gid, simd_lid);
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        k,
+        n,
+        m,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
   }
 }

@@ -45,12 +45,40 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposedOutputHadamard)(
   // ── Phase 1: Quantized MatMul (writes tile to device y) ──────────────
   if (use_mlx_quant) {
     qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 32, 32, 32, true>(
-        w, scales, zero_points, biases, x, y, Xs, Ws,
-        k, n, m, tid, lid, simd_gid, simd_lid);
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        k,
+        n,
+        m,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
   } else {
     qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 32, 32, 32, false>(
-        w, scales, zero_points, biases, x, y, Xs, Ws,
-        k, n, m, tid, lid, simd_gid, simd_lid);
+        w,
+        scales,
+        zero_points,
+        biases,
+        x,
+        y,
+        Xs,
+        Ws,
+        k,
+        n,
+        m,
+        tid,
+        lid,
+        simd_gid,
+        simd_lid
+    );
   }
 
   // ── Phase 2: Ensure QMM device writes are visible to all threads ─────

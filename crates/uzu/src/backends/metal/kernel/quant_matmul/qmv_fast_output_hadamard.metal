@@ -85,7 +85,8 @@ PUBLIC KERNEL(QuantizedMatmulQmvFastOutputHadamard)(
   }
 
   const device T* x_local = x + tgid_x * k + simd_lid * values_per_thread;
-  device T* y_base = y + tgid_x * n + tgid_y * (num_simdgroups * results_per_simdgroup);
+  device T* y_base =
+      y + tgid_x * n + tgid_y * (num_simdgroups * results_per_simdgroup);
 
   for (int ki = 0; ki < k; ki += block_size) {
     U sum = load_vector<T, U, values_per_thread, BITS>(x_local, x_thread);
@@ -106,27 +107,45 @@ PUBLIC KERNEL(QuantizedMatmulQmvFastOutputHadamard)(
         U b1 = static_cast<U>(biases[in_vec_size_g]);
         U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
         U b3 = static_cast<U>(biases[3 * in_vec_size_g]);
-        result[0] += qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, b0, sum);
-        result[1] += qdot<U, values_per_thread, BITS>(wl1, x_thread, s1, b1, sum);
-        result[2] += qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum);
-        result[3] += qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
+        result[0] +=
+            qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, b0, sum);
+        result[1] +=
+            qdot<U, values_per_thread, BITS>(wl1, x_thread, s1, b1, sum);
+        result[2] +=
+            qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum);
+        result[3] +=
+            qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
       } else {
         uint8_t zp_byte0 = zps[0];
         uint8_t zp_byte1 = zps[zp_stride];
         uint8_t zp_byte2 = zps[2 * zp_stride];
         uint8_t zp_byte3 = zps[3 * zp_stride];
-        U zp0 = static_cast<U>((BITS == 4 && high_nibble) ? (zp_byte0 >> 4) : (zp_byte0 & 0x0F));
-        U zp1 = static_cast<U>((BITS == 4 && high_nibble) ? (zp_byte1 >> 4) : (zp_byte1 & 0x0F));
-        U zp2 = static_cast<U>((BITS == 4 && high_nibble) ? (zp_byte2 >> 4) : (zp_byte2 & 0x0F));
-        U zp3 = static_cast<U>((BITS == 4 && high_nibble) ? (zp_byte3 >> 4) : (zp_byte3 & 0x0F));
+        U zp0 = static_cast<U>(
+            (BITS == 4 && high_nibble) ? (zp_byte0 >> 4) : (zp_byte0 & 0x0F)
+        );
+        U zp1 = static_cast<U>(
+            (BITS == 4 && high_nibble) ? (zp_byte1 >> 4) : (zp_byte1 & 0x0F)
+        );
+        U zp2 = static_cast<U>(
+            (BITS == 4 && high_nibble) ? (zp_byte2 >> 4) : (zp_byte2 & 0x0F)
+        );
+        U zp3 = static_cast<U>(
+            (BITS == 4 && high_nibble) ? (zp_byte3 >> 4) : (zp_byte3 & 0x0F)
+        );
         if (BITS == 8) {
-          zp0 = static_cast<U>(zp_byte0); zp1 = static_cast<U>(zp_byte1);
-          zp2 = static_cast<U>(zp_byte2); zp3 = static_cast<U>(zp_byte3);
+          zp0 = static_cast<U>(zp_byte0);
+          zp1 = static_cast<U>(zp_byte1);
+          zp2 = static_cast<U>(zp_byte2);
+          zp3 = static_cast<U>(zp_byte3);
         }
-        result[0] += qdot_zero_point<U, values_per_thread, BITS>(wl0, x_thread, s0, zp0);
-        result[1] += qdot_zero_point<U, values_per_thread, BITS>(wl1, x_thread, s1, zp1);
-        result[2] += qdot_zero_point<U, values_per_thread, BITS>(wl2, x_thread, s2, zp2);
-        result[3] += qdot_zero_point<U, values_per_thread, BITS>(wl3, x_thread, s3, zp3);
+        result[0] +=
+            qdot_zero_point<U, values_per_thread, BITS>(wl0, x_thread, s0, zp0);
+        result[1] +=
+            qdot_zero_point<U, values_per_thread, BITS>(wl1, x_thread, s1, zp1);
+        result[2] +=
+            qdot_zero_point<U, values_per_thread, BITS>(wl2, x_thread, s2, zp2);
+        result[3] +=
+            qdot_zero_point<U, values_per_thread, BITS>(wl3, x_thread, s3, zp3);
       }
     }
 
@@ -135,8 +154,11 @@ PUBLIC KERNEL(QuantizedMatmulQmvFastOutputHadamard)(
     if (use_mlx_quant) {
       biases += block_size / GROUP_SIZE;
     } else {
-      if (BITS == 4) { zps += (block_size / GROUP_SIZE) / 2; }
-      else { zps += block_size / GROUP_SIZE; }
+      if (BITS == 4) {
+        zps += (block_size / GROUP_SIZE) / 2;
+      } else {
+        zps += block_size / GROUP_SIZE;
+      }
     }
     x_local += block_size;
   }
@@ -157,7 +179,8 @@ PUBLIC KERNEL(QuantizedMatmulQmvFastOutputHadamard)(
 
   // ── Hadamard transform on the 32 staged results (simdgroup 0) ────
   if (simd_gid == 0) {
-    int global_out_idx = tgid_y * (num_simdgroups * results_per_simdgroup) + simd_lid;
+    int global_out_idx =
+        tgid_y * (num_simdgroups * results_per_simdgroup) + simd_lid;
 
     float value = shared_results[simd_lid];
 

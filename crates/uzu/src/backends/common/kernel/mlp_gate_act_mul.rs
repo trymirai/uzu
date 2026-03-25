@@ -3,7 +3,7 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 use crate::{
     DataType,
     backends::common::{
-        ActivationConfig, Backend, CommandBuffer, Kernels,
+        ActivationConfig, Backend, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{MlpGateActMulHadamardKernel, MlpGateActMulKernel},
     },
@@ -32,7 +32,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         fused_up: &B::Buffer,
         hidden: &mut B::Buffer,
         m: i32,
@@ -40,7 +40,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
-        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, self.activation.act_type(), command_buffer);
+        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, self.activation.act_type(), encoder);
         Ok(())
     }
 }
@@ -71,7 +71,7 @@ impl<B: Backend> MlpGateActMulHadamardEncodable<B> {
 
     pub fn encode(
         &self,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
         fused_up: &B::Buffer,
         hidden: &mut B::Buffer,
         m: i32,
@@ -86,7 +86,7 @@ impl<B: Backend> MlpGateActMulHadamardEncodable<B> {
             self.hidden_dim as i32,
             m,
             self.activation.act_type(),
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

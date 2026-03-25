@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{Kernels, TensorCopyKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
@@ -32,21 +32,21 @@ impl<B: Backend> TensorCopy<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorCopy expects exactly 2 arrays");
 
-        let length = arrays[0].borrow().num_elements();
+        let length = arrays[0].num_elements();
 
-        let source_array = arrays[0].borrow_mut();
-        let destination_array = arrays[1].borrow_mut();
+        let source_array = &arrays[0];
+        let destination_array = &arrays[1];
 
         self.kernel.encode(
             source_array.buffer().borrow().deref(),
             destination_array.buffer().borrow_mut().deref_mut(),
             length as u32,
-            command_buffer,
+            encoder,
         );
         Ok(())
     }

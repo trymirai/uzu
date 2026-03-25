@@ -12,7 +12,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt},
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, Encoder,
         kernel::{
             HadamardTransformMulKernel, Kernels, QuantizedMatmulQmmTransposedOutputHadamardKernel,
             QuantizedMatmulQmvFastOutputHadamardKernel, quant_matmul::QuantizedMatmulType,
@@ -321,7 +321,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let batch_size = state.active_suffix_length();
 
@@ -329,13 +329,13 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         if let Some((ref kernel, ref factors_buffer)) = self.input_hadamard {
             let input_total_blocks = (batch_size * self.input_dimension / 32) as u32;
             let arrays = state.arrays(&[self.input_array_id]);
-            let input_array = arrays[0].borrow_mut();
+            let input_array = &arrays[0];
             kernel.encode(
                 input_array.buffer().borrow_mut().deref_mut(),
                 factors_buffer.borrow().deref(),
                 input_total_blocks,
                 self.input_dimension as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -343,8 +343,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         if batch_size < 32 {
             if let Some(ref out_fused) = self.output_fused {
                 let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-                let input_array = arrays[0].borrow();
-                let output_array = arrays[1].borrow_mut();
+                let input_array = &arrays[0];
+                let output_array = &arrays[1];
 
                 let w_borrow = out_fused.weights_buffer.borrow();
                 let s_borrow = out_fused.scales_buffer.borrow();
@@ -377,7 +377,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                     self.input_dimension as i32,
                     self.output_dimension as i32,
                     batch_size as i32,
-                    command_buffer,
+                    encoder,
                 );
 
                 return Ok(());
@@ -387,8 +387,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         // Prefill fused path: QMM + Output Hadamard in one kernel
         if let Some(ref pf_fused) = self.prefill_fused {
             let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-            let input_array = arrays[0].borrow();
-            let output_array = arrays[1].borrow_mut();
+            let input_array = &arrays[0];
+            let output_array = &arrays[1];
 
             let w_borrow = pf_fused.weights_buffer.borrow();
             let s_borrow = pf_fused.scales_buffer.borrow();
@@ -421,25 +421,25 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
                 self.input_dimension as i32,
                 self.output_dimension as i32,
                 batch_size as i32,
-                command_buffer,
+                encoder,
             );
 
             return Ok(());
         }
 
         // Fallback: separate inner_linear + output Hadamard
-        self.inner_linear.encode(state, command_buffer)?;
+        self.inner_linear.encode(state, encoder)?;
 
         {
             let output_total_blocks = (batch_size * self.output_dimension / 32) as u32;
             let arrays = state.arrays(&[self.output_array_id]);
-            let output_array = arrays[0].borrow_mut();
+            let output_array = &arrays[0];
             self.output_hadamard_kernel.encode(
                 output_array.buffer().borrow_mut().deref_mut(),
                 self.output_factors_buffer.borrow().deref(),
                 output_total_blocks,
                 self.output_dimension as u32,
-                command_buffer,
+                encoder,
             );
         }
 

@@ -216,26 +216,6 @@ pub fn size_for_shape(
     num_rows * padded_bytes_per_row
 }
 
-// Array extends RefCell to have .view on RefCell<Array> (aka ArrayCell)
-
-pub type ArrayCell<B> = RefCell<Array<B>>;
-
-pub trait ArrayCellExt<B: Backend> {
-    fn view(
-        &self,
-        shape: &[usize],
-    ) -> ArrayCell<B>;
-}
-
-impl<B: Backend> ArrayCellExt<B> for ArrayCell<B> {
-    fn view(
-        &self,
-        shape: &[usize],
-    ) -> ArrayCell<B> {
-        RefCell::new(self.borrow().view(shape))
-    }
-}
-
 // Array extends Context with helper functions to create arrays from context
 
 pub trait ArrayContextExt {
@@ -248,7 +228,7 @@ pub trait ArrayContextExt {
         label: &str,
     ) -> Array<Self::Backend>;
 
-    fn create_array(
+    fn create_array_zeros(
         &self,
         shape: &[usize],
         data_type: DataType,

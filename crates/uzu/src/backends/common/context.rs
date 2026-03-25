@@ -1,7 +1,6 @@
 use std::{env, path::Path, rc::Rc};
 
-use super::Backend;
-use crate::backends::common::CommandBuffer;
+use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
 
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
@@ -25,6 +24,17 @@ pub trait Context: Sized {
         &self,
         size: usize,
     ) -> Result<<Self::Backend as Backend>::Buffer, <Self::Backend as Backend>::Error>;
+
+    fn create_allocation(
+        &self,
+        size: usize,
+        allocation_type: AllocationType<Self::Backend>,
+    ) -> Result<Allocation<Self::Backend>, <Self::Backend as Backend>::Error>;
+
+    fn create_allocation_pool(
+        &self,
+        reusable: bool,
+    ) -> AllocationPool<Self::Backend>;
 
     fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
 

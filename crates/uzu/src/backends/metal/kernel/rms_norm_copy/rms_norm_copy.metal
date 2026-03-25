@@ -59,7 +59,11 @@ PUBLIC KERNEL(RMSNormCopy)(
   }
 
   AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_sum, shared_sum, thread_in_row, thread_context);
+      partial_sum,
+      shared_sum,
+      thread_in_row,
+      thread_context
+  );
 
   AccumT mean_square =
       static_cast<AccumT>(total_sum) / static_cast<AccumT>(element_count);
@@ -78,7 +82,8 @@ PUBLIC KERNEL(RMSNormCopy)(
 
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      if (i >= element_count) continue;
+      if (i >= element_count)
+        continue;
 
       AccumT normalized_high = vals[j] * rms_norm;
 
@@ -90,7 +95,8 @@ PUBLIC KERNEL(RMSNormCopy)(
         DataT normalized_low = static_cast<DataT>(normalized_high);
         DataT scale_value_low = static_cast<DataT>(
             static_cast<AccumT>(scales_data[i]) +
-            static_cast<AccumT>(scale_offset));
+            static_cast<AccumT>(scale_offset)
+        );
         DataT product_low = normalized_low * scale_value_low;
         scaled_vals[j] = static_cast<AccumT>(product_low);
       }

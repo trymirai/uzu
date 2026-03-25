@@ -1,41 +1,39 @@
 use crate::{
-    DecoderConfig,
-    array::{ArrayCell, ArrayCellExt},
+    array::Array,
     backends::common::Backend,
-    config::MLPConfig,
+    config::{DecoderConfig, MLPConfig},
     forward_pass::{model_shape::ModelShape, scratch_buffers::ScratchBuffers},
 };
 
 pub struct LanguageModelGeneratorAuxBuffers<B: Backend> {
-    pub ssm_inproj: Option<ArrayCell<B>>,
-    pub ssm_packed: Option<ArrayCell<B>>,
-    pub ssm_conv_padded: Option<ArrayCell<B>>,
-    pub short_conv_padded: Option<ArrayCell<B>>,
-    pub ssm_x: Option<ArrayCell<B>>,
-    pub ssm_b: Option<ArrayCell<B>>,
-    pub ssm_c: Option<ArrayCell<B>>,
-    pub ssm_dt: Option<ArrayCell<B>>,
-    pub ssm_z: Option<ArrayCell<B>>,
+    pub ssm_inproj: Option<Array<B>>,
+    pub ssm_packed: Option<Array<B>>,
+    pub ssm_conv_padded: Option<Array<B>>,
+    pub ssm_x: Option<Array<B>>,
+    pub ssm_b: Option<Array<B>>,
+    pub ssm_c: Option<Array<B>>,
+    pub ssm_dt: Option<Array<B>>,
+    pub ssm_z: Option<Array<B>>,
     // MoE buffers
-    pub moe_topk_ids: Option<ArrayCell<B>>,
-    pub moe_topk_probs: Option<ArrayCell<B>>,
-    pub moe_offsets: Option<ArrayCell<B>>,
-    pub moe_sumk: Option<ArrayCell<B>>,
-    pub moe_bucketed_token_ids: Option<ArrayCell<B>>,
-    pub moe_bucketed_probs: Option<ArrayCell<B>>,
-    pub moe_x_perm: Option<ArrayCell<B>>,
-    pub moe_tok2row: Option<ArrayCell<B>>,
-    pub moe_y_partial: Option<ArrayCell<B>>,
-    pub moe_hidden: Option<ArrayCell<B>>,
-    pub moe_two_pass_row_expert_map: Option<ArrayCell<B>>,
-    pub moe_tile_counts: Option<ArrayCell<B>>,
-    pub moe_tile_offsets: Option<ArrayCell<B>>,
-    pub moe_tile_map: Option<ArrayCell<B>>,
-    pub moe_total_tiles: Option<ArrayCell<B>>,
-    pub moe_dispatch_args: Option<ArrayCell<B>>,
-    pub moe_scatter_partials: Option<ArrayCell<B>>,
-    pub moe_scatter_block_bases: Option<ArrayCell<B>>,
-    pub moe_block_alloc: Option<ArrayCell<B>>,
+    pub moe_topk_ids: Option<Array<B>>,
+    pub moe_topk_probs: Option<Array<B>>,
+    pub moe_offsets: Option<Array<B>>,
+    pub moe_sumk: Option<Array<B>>,
+    pub moe_bucketed_token_ids: Option<Array<B>>,
+    pub moe_bucketed_probs: Option<Array<B>>,
+    pub moe_x_perm: Option<Array<B>>,
+    pub moe_tok2row: Option<Array<B>>,
+    pub moe_y_partial: Option<Array<B>>,
+    pub moe_hidden: Option<Array<B>>,
+    pub moe_two_pass_row_expert_map: Option<Array<B>>,
+    pub moe_tile_counts: Option<Array<B>>,
+    pub moe_tile_offsets: Option<Array<B>>,
+    pub moe_tile_map: Option<Array<B>>,
+    pub moe_total_tiles: Option<Array<B>>,
+    pub moe_dispatch_args: Option<Array<B>>,
+    pub moe_scatter_partials: Option<Array<B>>,
+    pub moe_scatter_block_bases: Option<Array<B>>,
+    pub moe_block_alloc: Option<Array<B>>,
 }
 
 impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
@@ -69,11 +67,6 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
                 .ssm_conv_padded
                 .as_ref()
                 .zip(model_shape.ssm_conv_padded_shape(suffix_length))
-                .map(|(buf, shape)| buf.view(&shape)),
-            short_conv_padded: scratch
-                .short_conv_padded
-                .as_ref()
-                .zip(model_shape.short_conv_padded_shape(suffix_length))
                 .map(|(buf, shape)| buf.view(&shape)),
             ssm_x: scratch
                 .ssm_x

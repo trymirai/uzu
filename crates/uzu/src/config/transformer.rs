@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{NormalizationConfig, RoPEConfig, TransformerLayerConfig};
+use super::{NormalizationConfig, RoPEConfig, TransformerLayerConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerConfig {

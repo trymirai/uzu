@@ -9,14 +9,14 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer, Context, Kernels,
+        Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{
             ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel, MinPKernel,
             TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
-    session::parameter::SamplingMethod,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -152,7 +152,7 @@ impl<B: Backend> SamplingKernel<B> {
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), SamplingError<B>> {
         if batch_size > self.max_batch_size {
             return Err(SamplingError::BatchSizeExceeded(batch_size, self.max_batch_size));
@@ -168,7 +168,7 @@ impl<B: Backend> SamplingKernel<B> {
                 logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -177,16 +177,19 @@ impl<B: Backend> SamplingKernel<B> {
             top_k,
             top_p,
             min_p,
+            processing_order,
         } = sampling_method
         {
-            if let Some(temperature) = temperature {
+            if let Some(temperature) = temperature
+                && processing_order == SamplingProcessingOrder::TemperatureThenFilters
+            {
                 self.temperature.encode(
                     None::<&B::Buffer>,
                     logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
-                    command_buffer,
+                    encoder,
                 );
             }
 
@@ -197,10 +200,9 @@ impl<B: Backend> SamplingKernel<B> {
                     batch_size as u32,
                     vocab_size as u32,
                     top_k,
-                    command_buffer,
+                    encoder,
                 );
             }
-
             if let Some(top_p) = top_p {
                 self.topp.encode(
                     None::<&B::Buffer>,
@@ -208,10 +210,9 @@ impl<B: Backend> SamplingKernel<B> {
                     batch_size as u32,
                     vocab_size as u32,
                     top_p,
-                    command_buffer,
+                    encoder,
                 );
             }
-
             if let Some(min_p) = min_p {
                 self.minp.encode(
                     None::<&B::Buffer>,
@@ -219,7 +220,20 @@ impl<B: Backend> SamplingKernel<B> {
                     batch_size as u32,
                     vocab_size as u32,
                     min_p,
-                    command_buffer,
+                    encoder,
+                );
+            }
+
+            if let Some(temperature) = temperature
+                && processing_order == SamplingProcessingOrder::FiltersThenTemperature
+            {
+                self.temperature.encode(
+                    None::<&B::Buffer>,
+                    logits_buffer.deref_mut(),
+                    batch_size as u32,
+                    vocab_size as u32,
+                    temperature,
+                    encoder,
                 );
             }
 
@@ -229,7 +243,7 @@ impl<B: Backend> SamplingKernel<B> {
                 logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,
-                command_buffer,
+                encoder,
             );
         }
 
@@ -242,7 +256,7 @@ impl<B: Backend> SamplingKernel<B> {
                     sampled_tokens_buffer,
                     batch_size as u32,
                     vocab_size as u32,
-                    command_buffer,
+                    encoder,
                 );
             },
             ArgmaxImplementation::TwoPass {
@@ -255,14 +269,14 @@ impl<B: Backend> SamplingKernel<B> {
                     partial_results_buffer.borrow_mut().deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
-                    command_buffer,
+                    encoder,
                 );
                 final_kernel.encode(
                     partial_results_buffer.borrow().deref(),
                     sampled_tokens_buffer,
                     batch_size as u32,
                     vocab_size as u32,
-                    command_buffer,
+                    encoder,
                 );
             },
         }

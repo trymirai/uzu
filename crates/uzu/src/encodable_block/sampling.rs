@@ -5,8 +5,8 @@ use std::ops::{Deref, DerefMut};
 use crate::{
     DataType,
     backends::common::{
-        Backend, CommandBuffer,
-        kernel::sampling::{ArgmaxStrategy, SamplingError, SamplingKernel},
+        Backend, Encoder,
+        kernel::sampling::{SamplingError, SamplingKernel},
     },
     forward_pass::state::{ArrayId, ForwardPassState},
 };
@@ -28,29 +28,15 @@ impl<B: Backend> Sampling<B> {
         })
     }
 
-    pub fn new_with_strategy(
-        context: &B::Context,
-        data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
-        argmax_strategy: ArgmaxStrategy,
-    ) -> Result<Self, SamplingError<B>> {
-        let kernel =
-            SamplingKernel::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, argmax_strategy)?;
-        Ok(Self {
-            kernel,
-        })
-    }
-
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
 
         let logits_binding = state.arrays(&[ArrayId::Logits]);
-        let logits = logits_binding[0].borrow();
+        let logits = &logits_binding[0];
 
         let logits_shape = logits.shape();
         let batch_size = state.sampling_length();
@@ -61,15 +47,14 @@ impl<B: Backend> Sampling<B> {
         let vocab_size = logits_shape[1];
 
         let seeds_binding = state.arrays(&[ArrayId::TokenSeeds]);
-        let seeds = seeds_binding[0].borrow();
+        let seeds = &seeds_binding[0];
 
-        let output_buffer_ref = state.sampling_output().unwrap().borrow();
+        let output_buffer_ref = state.sampling_output().unwrap();
 
         let sampling_method = state.sampling_method().unwrap();
         let seeds_offset = seeds.offset() + sampling_start * std::mem::size_of::<u64>();
 
-        let (bitmask_buffer, bitmask_offset) = state.token_bitmask().map_or((None, 0usize), |cell| {
-            let bitmask = cell.borrow();
+        let (bitmask_buffer, bitmask_offset) = state.token_bitmask().map_or((None, 0usize), |bitmask| {
             let bitmask_row_len = bitmask.shape()[1];
             let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
             (Some(bitmask.buffer()), bitmask_offset)
@@ -91,10 +76,14 @@ impl<B: Backend> Sampling<B> {
             sampling_method,
             batch_size,
             vocab_size,
-            command_buffer,
+            encoder,
         ) {
             panic!("Sampling encoding failed: {:?}", e);
         }
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/encodable_block/sampling_test.rs"]
+mod tests;
