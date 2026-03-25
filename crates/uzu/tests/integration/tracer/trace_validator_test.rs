@@ -2,7 +2,7 @@
 
 use uzu::{TraceValidator, backends::metal::Metal};
 
-use crate::util::path::{get_test_model_path, get_traces_path};
+use crate::common::path::{get_test_model_path, get_traces_path};
 
 #[test]
 fn test_tracer() {

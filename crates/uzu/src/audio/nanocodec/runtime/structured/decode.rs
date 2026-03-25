@@ -88,7 +88,7 @@ impl StructuredAudioCodecGraph {
                 .collect::<AudioResult<Vec<_>>>()?;
             let context = resources.context().clone();
             return Ok(SubmittedDecodedPaddedAudio {
-                output: context.create_array(&[0], DataType::F32, "structured_audio_empty_decode_output"),
+                output: context.create_array_zeros(&[0], DataType::F32, "structured_audio_empty_decode_output"),
                 channels: 1,
                 frames: out_lengths.iter().copied().max().unwrap_or(0),
                 lengths: out_lengths,
@@ -343,7 +343,7 @@ impl StructuredAudioCodecGraph {
         x = tanh_enqueue(
             &mut encoder,
             &x,
-            context.create_array(x.shape(), data_type, "structured_audio_tanh_output"),
+            context.create_array_zeros(x.shape(), data_type, "structured_audio_tanh_output"),
             &kernels,
         )?;
 

@@ -8,6 +8,7 @@ use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
     backends::common::{Backend, Encoder},
+    config::ModelMetadata,
     encodable_block::EncodingParameters,
     forward_pass::state::{ArrayId, ForwardPassState},
     session::types::Error,
@@ -70,8 +71,11 @@ impl<B: Backend> ClassifierTrait for Classifier<B> {
 }
 
 impl<B: Backend> Classifier<B> {
-    pub fn new(model_path: &Path) -> Result<Self, Error> {
-        let context = ClassifierContext::new(model_path)?;
+    pub fn new(
+        model_path: &Path,
+        model_metadata: &ModelMetadata,
+    ) -> Result<Self, Error> {
+        let context = ClassifierContext::new(model_path, model_metadata)?;
         Ok(Self {
             context,
         })

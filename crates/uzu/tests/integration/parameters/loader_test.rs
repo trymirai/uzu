@@ -12,7 +12,7 @@ use uzu::{
     },
 };
 
-use crate::util::path::get_test_weights_path;
+use crate::common::path::get_test_weights_path;
 
 #[tag(heavy)]
 #[test]

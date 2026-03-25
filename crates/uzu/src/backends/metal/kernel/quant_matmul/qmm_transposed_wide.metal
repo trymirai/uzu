@@ -2,11 +2,15 @@
 #include "../common/dsl.h"
 #include "quant_matmul.metal"
 
+// Wide QMM tile: BM=64, BK=32, BN=64.
+// Processes 4x more output elements per threadgroup than the 32x32 variant.
+// BK=32 satisfies the group_size >= BK constraint for all group sizes (32, 64,
+// 128).
 template <typename T, int GROUP_SIZE, int BITS>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
-PUBLIC KERNEL(QuantizedMatmulQmvFast)(
+PUBLIC KERNEL(QuantizedMatmulQmmTransposedWide)(
     const device uint32_t* w,
     const device T* scales,
     const device uint8_t* zero_points OPTIONAL(use_zero_points),
@@ -16,43 +20,55 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const constant int& k,
     const constant int& n,
     const constant int& m,
+    threadgroup T Xs[64 * (32 + 16 / sizeof(T))],
+    threadgroup T Ws[64 * (32 + 16 / sizeof(T))],
     const bool use_zero_points SPECIALIZE,
     const bool use_mlx_quant SPECIALIZE,
-    const uint tgid_x GROUPS(m),
-    const uint tgid_y GROUPS((n + 32 - 1) / 32),
+    const uint tgid_x GROUPS((n + 64 - 1) / 64),
+    const uint tgid_y GROUPS((m + 64 - 1) / 64),
     const uint tgid_z GROUPS(1),
     const uint tid_x THREADS(32),
-    const uint tid_y THREADS(8)
+    const uint tid_y THREADS(2),
+    const uint tid_z THREADS(2)
 ) {
   const uint3 tid = uint3(tgid_x, tgid_y, tgid_z);
-  const uint simd_gid = tid_y;
+  const uint lid = tid_z * 64 + tid_y * 32 + tid_x;
+  const uint simd_gid = tid_z * 2 + tid_y;
   const uint simd_lid = tid_x;
 
   if (use_mlx_quant) {
-    qmv_fast_impl<T, GROUP_SIZE, BITS, true>(
+    qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 64, 32, 64, true>(
         w,
         scales,
         zero_points,
         biases,
         x,
         y,
+        Xs,
+        Ws,
         k,
         n,
+        m,
         tid,
+        lid,
         simd_gid,
         simd_lid
     );
   } else {
-    qmv_fast_impl<T, GROUP_SIZE, BITS, false>(
+    qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 64, 32, 64, false>(
         w,
         scales,
         zero_points,
         biases,
         x,
         y,
+        Xs,
+        Ws,
         k,
         n,
+        m,
         tid,
+        lid,
         simd_gid,
         simd_lid
     );

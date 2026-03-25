@@ -7,7 +7,7 @@ PUBLIC KERNEL(TensorAddSwap)(
     device T* skip_buffer,
     device T* main_buffer,
     constant uint& length,
-    const uint position AXIS(length, 32)
+    const uint position AXIS(length, 256)
 ) {
   T skip_value = skip_buffer[position];
   T main_value = main_buffer[position];

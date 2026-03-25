@@ -1,7 +1,5 @@
 #![cfg(metal_backend)]
 
-use std::time::Instant;
-
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
@@ -20,75 +18,7 @@ use uzu::{
 };
 
 use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
-
-struct PerfResult {
-    name: String,
-    mean_ms: f64,
-    median_ms: f64,
-    min_ms: f64,
-    max_ms: f64,
-    std_dev_ms: f64,
-}
-
-impl PerfResult {
-    fn new(
-        name: String,
-        times_ms: &[f64],
-    ) -> Self {
-        let mut sorted = times_ms.to_vec();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let mean = sorted.iter().sum::<f64>() / sorted.len() as f64;
-        let median = sorted[sorted.len() / 2];
-        let min = sorted[0];
-        let max = sorted[sorted.len() - 1];
-
-        let variance = sorted.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / sorted.len() as f64;
-        let std_dev = variance.sqrt();
-
-        Self {
-            name,
-            mean_ms: mean,
-            median_ms: median,
-            min_ms: min,
-            max_ms: max,
-            std_dev_ms: std_dev,
-        }
-    }
-
-    fn print(&self) {
-        eprintln!(
-            "  {:<30} mean={:8.3}ms  median={:8.3}ms  min={:8.3}ms  max={:8.3}ms  std={:6.3}ms",
-            self.name, self.mean_ms, self.median_ms, self.min_ms, self.max_ms, self.std_dev_ms
-        );
-    }
-}
-
-fn time_kernel<F>(
-    name: &str,
-    warmup: usize,
-    iterations: usize,
-    mut f: F,
-) -> PerfResult
-where
-    F: FnMut(),
-{
-    // Warmup
-    for _ in 0..warmup {
-        f();
-    }
-
-    // Measure
-    let mut times_ms = Vec::new();
-    for _ in 0..iterations {
-        let start = Instant::now();
-        f();
-        let elapsed = start.elapsed();
-        times_ms.push(elapsed.as_secs_f64() * 1000.0);
-    }
-
-    PerfResult::new(name.to_string(), &times_ms)
-}
+use crate::common::perf::run_perf_with_warmup;
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)
 #[test]
@@ -121,7 +51,7 @@ fn test_moe_e2e_decode_perf() {
             .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
-        let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
+        let fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 5, 20, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             router_topk.encode(
                 &x_buf,
@@ -179,7 +109,7 @@ fn test_moe_e2e_prefill_perf() {
             .expect("router+topk fused kernel");
 
         // Time fused Router+TopK
-        let fused_perf = time_kernel("Router+TopK (FUSED)", 5, 20, || {
+        let fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 5, 20, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             router_topk.encode(
                 &x_buf,
@@ -305,7 +235,7 @@ fn test_moe_pipeline_breakdown_decode() {
             .expect("router+topk fused");
 
     // Testing: Router + TopK + Counts+Offsets (FUSED)
-    let router_topk_fused_perf = time_kernel("Router+TopK (FUSED)", 2, 5, || {
+    let router_topk_fused_perf = run_perf_with_warmup("Router+TopK (FUSED)", 2, 5, || {
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         router_topk_fused_kernel.encode(
             &x_buf,
@@ -323,7 +253,7 @@ fn test_moe_pipeline_breakdown_decode() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
 
-    let counts_offsets_perf = time_kernel("Counts+Offsets (FUSED)", 2, 5, || {
+    let counts_offsets_perf = run_perf_with_warmup("Counts+Offsets (FUSED)", 2, 5, || {
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         counts_offsets_kernel.encode(
             &topk_ids_buf,
@@ -338,7 +268,7 @@ fn test_moe_pipeline_breakdown_decode() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
 
-    let scatter_perf = time_kernel("Scatter", 2, 5, || {
+    let scatter_perf = run_perf_with_warmup("Scatter", 2, 5, || {
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         scatter_bases_kernel.encode(
             &partials_buf,
@@ -369,7 +299,7 @@ fn test_moe_pipeline_breakdown_decode() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
 
-    let gather_perf = time_kernel("Gather", 2, 5, || {
+    let gather_perf = run_perf_with_warmup("Gather", 2, 5, || {
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         gather_kernel.encode(
             &mut encoder,
@@ -387,7 +317,7 @@ fn test_moe_pipeline_breakdown_decode() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
 
-    let experts_perf = time_kernel("Experts (MAIN COMPUTE)", 2, 5, || {
+    let experts_perf = run_perf_with_warmup("Experts (MAIN COMPUTE)", 2, 5, || {
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         experts_kernel.encode(
             &mut encoder,
@@ -423,7 +353,7 @@ fn test_moe_pipeline_breakdown_decode() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
 
-    let finalize_perf = time_kernel("Finalize", 2, 5, || {
+    let finalize_perf = run_perf_with_warmup("Finalize", 2, 5, || {
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         finalize_kernel.encode(
             &tok2row_buf,
