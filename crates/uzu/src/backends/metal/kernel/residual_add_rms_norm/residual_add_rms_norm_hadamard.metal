@@ -8,6 +8,7 @@ using namespace metal;
 
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 4
+#define STAGING_SIZE (BLOCK_SIZE * GRAIN_SIZE * 2)
 
 template <typename ScaleT, typename DataT, typename AccumT>
 VARIANTS(ScaleT, float, half, bfloat)
@@ -23,7 +24,7 @@ PUBLIC KERNEL(ResidualAddRMSNormHadamardMul)(
     constant float& epsilon,
     constant float& scale_offset,
     constant bool& full_layer,
-    threadgroup float staging[8192],
+    threadgroup float staging[STAGING_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
     const uint thread_in_row THREADS(1024)
