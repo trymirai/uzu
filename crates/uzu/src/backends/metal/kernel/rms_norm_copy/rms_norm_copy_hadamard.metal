@@ -30,7 +30,7 @@ PUBLIC KERNEL(RMSNormCopyHadamardMul)(
     const uint thread_in_row THREADS(1024)
 ) {
   threadgroup AccumT* shared_sum =
-      reinterpret_cast<threadgroup AccumT*>(&staging[8192 - METAL_SIMD_SIZE]);
+      reinterpret_cast<threadgroup AccumT*>(&staging[STAGING_SIZE - METAL_SIMD_SIZE]);
 
   const uint offset = batch_idx * element_count;
   device DataT* main_data = main_buffer + offset;
