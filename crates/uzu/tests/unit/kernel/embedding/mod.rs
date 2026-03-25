@@ -1,0 +1,2 @@
+mod embedding_rows_sum_test;
+mod full_precision_embedding_test;
