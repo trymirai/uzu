@@ -16,7 +16,7 @@ use crate::{
             TemperatureKernel, TopKKernel, TopPKernel,
         },
     },
-    session::parameter::SamplingMethod,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -177,9 +177,12 @@ impl<B: Backend> SamplingKernel<B> {
             top_k,
             top_p,
             min_p,
+            processing_order,
         } = sampling_method
         {
-            if let Some(temperature) = temperature {
+            if let Some(temperature) = temperature
+                && processing_order == SamplingProcessingOrder::TemperatureThenFilters
+            {
                 self.temperature.encode(
                     None::<&B::Buffer>,
                     logits_buffer.deref_mut(),
@@ -200,7 +203,6 @@ impl<B: Backend> SamplingKernel<B> {
                     encoder,
                 );
             }
-
             if let Some(top_p) = top_p {
                 self.topp.encode(
                     None::<&B::Buffer>,
@@ -211,7 +213,6 @@ impl<B: Backend> SamplingKernel<B> {
                     encoder,
                 );
             }
-
             if let Some(min_p) = min_p {
                 self.minp.encode(
                     None::<&B::Buffer>,
@@ -219,6 +220,19 @@ impl<B: Backend> SamplingKernel<B> {
                     batch_size as u32,
                     vocab_size as u32,
                     min_p,
+                    encoder,
+                );
+            }
+
+            if let Some(temperature) = temperature
+                && processing_order == SamplingProcessingOrder::FiltersThenTemperature
+            {
+                self.temperature.encode(
+                    None::<&B::Buffer>,
+                    logits_buffer.deref_mut(),
+                    batch_size as u32,
+                    vocab_size as u32,
+                    temperature,
                     encoder,
                 );
             }

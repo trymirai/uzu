@@ -183,6 +183,9 @@ impl<B: Backend> MoeBlock<B> {
             ActivationType::SILU {
                 ..
             } => 2,
+            ActivationType::TANH => {
+                panic!("Tanh activation is not supported for MoE kernels")
+            },
             ActivationType::IDENTITY => {
                 panic!("Identity activation is not supported for MoE kernels")
             },
@@ -220,7 +223,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             ArrayId::MoeTwoPassRowExpertMap,
         ]);
 
-        let clone_buffer = |array: &RefCell<Array<B>>| -> Rc<RefCell<B::Buffer>> { array.borrow().buffer() };
+        let clone_buffer = |array: &Array<B>| -> Rc<RefCell<B::Buffer>> { array.buffer() };
 
         let mut array_iter = arrays.iter();
         let main_buf = clone_buffer(array_iter.next().unwrap());

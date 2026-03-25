@@ -37,10 +37,10 @@ impl<B: Backend> TensorCopy<B> {
         let arrays = state.arrays(&self.argument_arrays);
         assert_eq!(arrays.len(), 2, "TensorCopy expects exactly 2 arrays");
 
-        let length = arrays[0].borrow().num_elements();
+        let length = arrays[0].num_elements();
 
-        let source_array = arrays[0].borrow_mut();
-        let destination_array = arrays[1].borrow_mut();
+        let source_array = &arrays[0];
+        let destination_array = &arrays[1];
 
         self.kernel.encode(
             source_array.buffer().borrow().deref(),

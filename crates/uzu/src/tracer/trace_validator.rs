@@ -5,7 +5,7 @@
 //! config and runs the appropriate validation.
 
 use std::{
-    cell::{Ref, RefCell},
+    cell::RefCell,
     fs::File,
     path::{Path, PathBuf},
     rc::Rc,
@@ -295,18 +295,16 @@ impl<B: Backend> TraceValidator<B> {
             let arrays = state.arrays(&[ArrayId::Keys(index), ArrayId::Values(index)]);
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
-                let keys = arrays[0].borrow();
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
-                    metrics: Self::validate_array(data_type, &expected, &keys, Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_array(data_type, &expected, &arrays[0], Some(ArrayTransform::KVCacheSlice)),
                 });
             }
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
-                let values = arrays[1].borrow();
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
-                    metrics: Self::validate_array(data_type, &expected, &values, Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_array(data_type, &expected, &arrays[1], Some(ArrayTransform::KVCacheSlice)),
                 });
             }
         }
@@ -319,8 +317,6 @@ impl<B: Backend> TraceValidator<B> {
 
         for index in ssm_layers {
             let arrays = state.arrays(&[ArrayId::SsmConvState(index), ArrayId::SsmState(index)]);
-            let conv_state = arrays[0].borrow();
-            let ssm_state = arrays[1].borrow();
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -332,7 +328,7 @@ impl<B: Backend> TraceValidator<B> {
                         metrics: Self::validate_array(
                             data_type,
                             &expected,
-                            &conv_state,
+                            &arrays[0],
                             Some(ArrayTransform::SsmConvState),
                         ),
                     });
@@ -346,7 +342,7 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                        metrics: Self::validate_array(data_type, &expected, &arrays[1], None),
                     });
                 }
             }
@@ -355,7 +351,7 @@ impl<B: Backend> TraceValidator<B> {
         // LLM-specific: Token comparison
         let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
-            let produced_tokens = Self::get_tokens_from_logits(&*traces.borrow().logits.borrow());
+            let produced_tokens = Self::get_tokens_from_logits(&traces.borrow().logits);
             expected_tokens
                 .iter()
                 .zip(produced_tokens.iter())
@@ -475,7 +471,7 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        let validate = |path: &str, array: &Ref<Array<B>>| -> Option<TracerValidationResult> {
+        let validate = |path: &str, array: &Array<B>| -> Option<TracerValidationResult> {
             if traces_view.leaf_array(path).is_ok() {
                 Some(TracerValidationResult {
                     name: path.to_string(),
@@ -491,46 +487,46 @@ impl<B: Backend> TraceValidator<B> {
                 format!("activation_trace.layer_results.{}.activation_trace.{}", index, suffix)
             };
 
-            if let Some(r) = validate(&path("inputs"), &layer_traces.borrow().inputs.borrow()) {
+            if let Some(r) = validate(&path("inputs"), &layer_traces.borrow().inputs) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("pre_mixer_norm"), &layer_traces.borrow().pre_attention_norm.borrow()) {
+            if let Some(r) = validate(&path("pre_mixer_norm"), &layer_traces.borrow().pre_attention_norm) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("mixer"), &layer_traces.borrow().attention.borrow()) {
+            if let Some(r) = validate(&path("mixer"), &layer_traces.borrow().attention) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("post_mixer_norm"), &layer_traces.borrow().post_attention_norm.borrow()) {
+            if let Some(r) = validate(&path("post_mixer_norm"), &layer_traces.borrow().post_attention_norm) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("mlp_inputs"), &layer_traces.borrow().mlp_inputs.borrow()) {
+            if let Some(r) = validate(&path("mlp_inputs"), &layer_traces.borrow().mlp_inputs) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("pre_mlp_norm"), &layer_traces.borrow().pre_mlp_norm.borrow()) {
+            if let Some(r) = validate(&path("pre_mlp_norm"), &layer_traces.borrow().pre_mlp_norm) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("mlp"), &layer_traces.borrow().mlp.borrow()) {
+            if let Some(r) = validate(&path("mlp"), &layer_traces.borrow().mlp) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("post_mlp_norm"), &layer_traces.borrow().post_mlp_norm.borrow()) {
+            if let Some(r) = validate(&path("post_mlp_norm"), &layer_traces.borrow().post_mlp_norm) {
                 results.push(r);
             }
 
             let outputs_path = format!("activation_trace.layer_results.{}.outputs", index);
-            if let Some(r) = validate(&outputs_path, &layer_traces.borrow().outputs.borrow()) {
+            if let Some(r) = validate(&outputs_path, &layer_traces.borrow().outputs) {
                 results.push(r);
             }
         }
 
         // Output norm (common to all models)
-        if let Some(r) = validate("activation_trace.output_norm", &traces.borrow().output_norm.borrow()) {
+        if let Some(r) = validate("activation_trace.output_norm", &traces.borrow().output_norm) {
             results.push(r);
         }
 
         // Logits (common to all models, but path may vary)
-        if let Some(r) = validate("activation_trace.logits", &traces.borrow().logits.borrow()) {
+        if let Some(r) = validate("activation_trace.logits", &traces.borrow().logits) {
             results.push(r);
-        } else if let Some(r) = validate("logits", &traces.borrow().logits.borrow()) {
+        } else if let Some(r) = validate("logits", &traces.borrow().logits) {
             results.push(r);
         }
 
@@ -553,7 +549,7 @@ impl<B: Backend> TraceValidator<B> {
                         data_type,
                         traces_view,
                         "activation_trace.embedding_norm",
-                        &embedding_norm.borrow(),
+                        embedding_norm,
                     ),
                 });
             }
@@ -568,7 +564,7 @@ impl<B: Backend> TraceValidator<B> {
                         data_type,
                         traces_view,
                         "activation_trace.output_pooling",
-                        &output_pooling.borrow(),
+                        output_pooling,
                     ),
                 });
             }
@@ -584,7 +580,7 @@ impl<B: Backend> TraceValidator<B> {
     fn validate_array(
         data_type: DataType,
         expected_array: &Array<B>,
-        produced_array: &Ref<Array<B>>,
+        produced_array: &Array<B>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         match data_type {
@@ -599,7 +595,7 @@ impl<B: Backend> TraceValidator<B> {
         data_type: DataType,
         traces_view: &ParameterTree<B::Context>,
         expected_array_path: &str,
-        produced_array: &Ref<Array<B>>,
+        produced_array: &Array<B>,
     ) -> TracerValidationMetrics {
         let expected_array = traces_view.leaf_array(expected_array_path).unwrap();
         Self::validate_array(data_type, &expected_array, produced_array, None)
@@ -607,7 +603,7 @@ impl<B: Backend> TraceValidator<B> {
 
     fn validate_array_of_type<Precision: ArrayElement>(
         expected_array: &Array<B>,
-        produced_array: &Ref<Array<B>>,
+        produced_array: &Array<B>,
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();

@@ -59,20 +59,23 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
     pub fn encode_copy(
         &mut self,
         src: &B::Buffer,
+        src_range: Range<usize>,
         dst: &mut B::Buffer,
-        size: usize,
+        dst_range: Range<usize>,
     ) {
+        let size = src_range.end - src_range.start;
+        debug_assert_eq!(size, dst_range.end - dst_range.start);
         self.access(&[
             Access {
-                range: src.gpu_address_subrange(0..size),
+                range: src.gpu_address_subrange(src_range.clone()),
                 flags: AccessFlags::copy_read(),
             },
             Access {
-                range: dst.gpu_address_subrange(0..size),
+                range: dst.gpu_address_subrange(dst_range.clone()),
                 flags: AccessFlags::copy_write(),
             },
         ]);
-        self.command_buffer.encode_copy(src, dst, size);
+        self.command_buffer.encode_copy(src, src_range, dst, dst_range);
     }
 
     pub fn encode_fill(

@@ -67,8 +67,8 @@ impl<B: Backend> Pooling<B> {
         let seq_len = state.aux_buffers_suffix_length();
 
         let arrays = state.arrays(&[ArrayId::Main, ArrayId::ClassifierPooling]);
-        let main_array = arrays[0].borrow_mut();
-        let pooling_array = arrays[1].borrow_mut();
+        let main_array = &arrays[0];
+        let pooling_array = &arrays[1];
 
         self.pooling_kernel.encode(
             main_array.buffer().borrow().deref(),

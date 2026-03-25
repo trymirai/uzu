@@ -253,8 +253,8 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     ) -> Result<(), B::Error> {
         let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
         let batch_size = state.active_suffix_length();
-        let input_array = arrays[0].borrow_mut();
-        let output_array = arrays[1].borrow_mut();
+        let input_array = &arrays[0];
+        let output_array = &arrays[1];
         let output_buf_rc = output_array.buffer();
         let mut output_buf_borrow = output_buf_rc.borrow_mut();
 

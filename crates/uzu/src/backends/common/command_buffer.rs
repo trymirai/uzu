@@ -73,8 +73,9 @@ pub trait CommandBufferEncoding {
     fn encode_copy(
         &mut self,
         src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        src_range: Range<usize>,
         dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
-        size: usize,
+        dst_range: Range<usize>,
     );
 
     fn encode_fill(
@@ -135,6 +136,5 @@ pub trait CommandBufferPending {
 pub trait CommandBufferCompleted {
     type CommandBuffer: CommandBuffer<Completed = Self>;
 
-    /// Returns GPU execution time.
     fn gpu_execution_time(&self) -> Option<Duration>;
 }

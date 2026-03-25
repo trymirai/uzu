@@ -1,6 +1,6 @@
 use super::{AudioPcmBatch, AudioResult, AudioTokenGrid};
 
-pub trait AudioCodecRuntime: Send + Sync {
+pub trait AudioCodecRuntime {
     fn encode(
         &self,
         pcm: &AudioPcmBatch,

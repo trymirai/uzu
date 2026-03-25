@@ -1,5 +1,11 @@
 use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SamplingProcessingOrder {
+    TemperatureThenFilters,
+    FiltersThenTemperature,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum SamplingMethod {
     Greedy,
@@ -8,6 +14,7 @@ pub enum SamplingMethod {
         top_k: Option<u32>,
         top_p: Option<f32>,
         min_p: Option<f32>,
+        processing_order: SamplingProcessingOrder,
     },
 }
 
@@ -43,6 +50,7 @@ impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPoli
                 top_k: generation_config.top_k,
                 top_p: generation_config.top_p,
                 min_p: generation_config.min_p,
+                processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
             SamplingPolicy::Custom {
                 value,

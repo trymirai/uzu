@@ -5,7 +5,7 @@ mod output;
 mod role;
 mod stats;
 mod text;
-pub use error::Error;
+pub use error::{Error, TtsModelConfigError, TtsPromptConfigError};
 pub use input::Input;
 pub use message::Message;
 pub use output::{FinishReason, Output};

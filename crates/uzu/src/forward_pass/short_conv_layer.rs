@@ -2,15 +2,15 @@ use std::cell::Cell;
 
 use bytemuck::fill_zeroes;
 
-use crate::{array::ArrayCell, backends::common::Backend};
+use crate::{array::Array, backends::common::Backend};
 
 #[derive(Debug)]
 pub struct ShortConvLayer<B: Backend> {
-    pub conv_state: ArrayCell<B>,
+    pub conv_state: Array<B>,
     /// Per-token post-state written during speculative runs.
     ///
     /// Shape: [max_suffix_length, model_dim, state_stride]
-    pub suffix_state: ArrayCell<B>,
+    pub suffix_state: Array<B>,
     /// Start index (in the suffix batch) for which `suffix_state` contains
     /// valid post-states for this layer.
     pub suffix_state_valid_start: Cell<usize>,
@@ -20,15 +20,9 @@ pub struct ShortConvLayer<B: Backend> {
 }
 
 impl<B: Backend> ShortConvLayer<B> {
-    pub fn zero(&self) {
-        {
-            let mut conv = self.conv_state.borrow_mut();
-            fill_zeroes(conv.as_bytes_mut());
-        }
-        {
-            let mut suffix = self.suffix_state.borrow_mut();
-            fill_zeroes(suffix.as_bytes_mut());
-        }
+    pub fn zero(&mut self) {
+        fill_zeroes(self.conv_state.as_bytes_mut());
+        fill_zeroes(self.suffix_state.as_bytes_mut());
         self.clear_suffix_state_valid_range();
     }
 
@@ -47,7 +41,7 @@ impl<B: Backend> ShortConvLayer<B> {
     }
 
     pub fn commit_from_suffix_state_if_valid(
-        &self,
+        &mut self,
         commit_index: usize,
     ) {
         let start = self.suffix_state_valid_start.get();
@@ -59,18 +53,19 @@ impl<B: Backend> ShortConvLayer<B> {
             return;
         }
 
-        let mut conv = self.conv_state.borrow_mut();
-        let suffix = self.suffix_state.borrow();
-
-        assert_eq!(conv.data_type(), suffix.data_type(), "ShortConv conv_state / suffix_state dtype mismatch");
+        assert_eq!(
+            self.conv_state.data_type(),
+            self.suffix_state.data_type(),
+            "ShortConv conv_state / suffix_state dtype mismatch"
+        );
 
         let [model_dim, state_stride] = {
-            let shape = conv.shape();
+            let shape = self.conv_state.shape();
             assert_eq!(shape.len(), 2, "ShortConv conv_state expected 2-D [model_dim, state_stride], got {:?}", shape);
             [shape[0], shape[1]]
         };
 
-        let suffix_shape = suffix.shape();
+        let suffix_shape = self.suffix_state.shape();
         assert!(
             suffix_shape.len() == 3 && suffix_shape[1] == model_dim && suffix_shape[2] == state_stride,
             "ShortConv suffix_state expected 3-D [suffix_len, model_dim, state_stride], got {:?}",
@@ -83,13 +78,13 @@ impl<B: Backend> ShortConvLayer<B> {
             suffix_shape[0]
         );
 
-        let elem_bytes = conv.data_type().size_in_bytes();
+        let elem_bytes = self.conv_state.data_type().size_in_bytes();
         let bytes_per_token = model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
         let src_start = commit_index.saturating_mul(bytes_per_token);
         let src_end = src_start.saturating_add(bytes_per_token);
 
-        let src = &suffix.as_bytes()[src_start..src_end];
-        let dst = conv.as_bytes_mut();
+        let src = &self.suffix_state.as_bytes()[src_start..src_end];
+        let dst = self.conv_state.as_bytes_mut();
         dst.copy_from_slice(src);
     }
 }

@@ -7,7 +7,7 @@ PUBLIC KERNEL(TensorCopy)(
     const device T* src_buffer,
     device T* dst_buffer,
     constant uint& length,
-    const uint position AXIS(length, 32)
+    const uint position AXIS(length, 256)
 ) {
   dst_buffer[position] = src_buffer[position];
 }

@@ -76,8 +76,8 @@ jobs:
             ${{ matrix.audio && '--features audio-runtime' || '' }}
 
       - name: Run tests
+        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.audio }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
-            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
-            ${{ matrix.tracing && '--features tracing' || '' }} \
-            ${{ matrix.audio && '--features audio-runtime' || '' }}
+            ${{ format('--features {0}', matrix.backend) || '' }} \
+            --features tracing --features audio-runtime

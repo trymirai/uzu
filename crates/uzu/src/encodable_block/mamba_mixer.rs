@@ -156,10 +156,10 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmDt(self.layer_index),
         ]);
 
-        let in_proj = arrays[0].borrow();
-        let conv_inputs = arrays[1].borrow();
-        let gate = arrays[2].borrow();
-        let dt = arrays[3].borrow();
+        let in_proj = &arrays[0];
+        let conv_inputs = &arrays[1];
+        let gate = &arrays[2];
+        let dt = &arrays[3];
 
         let bias_buf_rc = self.gate_bias.buffer();
         let bias_buf_borrow = bias_buf_rc.borrow();
@@ -196,11 +196,11 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmB(self.layer_index),
             ArrayId::SsmC(self.layer_index),
         ]);
-        let conv_inputs = arrays[0].borrow();
-        let conv_state = arrays[1].borrow();
-        let x_arr = arrays[2].borrow();
-        let b_arr = arrays[3].borrow();
-        let c_arr = arrays[4].borrow();
+        let conv_inputs = &arrays[0];
+        let conv_state = &arrays[1];
+        let x_arr = &arrays[2];
+        let b_arr = &arrays[3];
+        let c_arr = &arrays[4];
 
         let weight_buf_rc = self.conv_weight.buffer();
         let weight_buf_borrow = weight_buf_rc.borrow();
@@ -237,7 +237,7 @@ impl<B: Backend> MambaMixer<B> {
         } else {
             let padded_buf = if state_stride > 0 {
                 let array = state.conv_padded_buffer().expect("Missing conv padded buffer");
-                let buffer = array.borrow().buffer();
+                let buffer = array.buffer();
 
                 self.conv_pack.encode(
                     conv_state.buffer().borrow().deref(),
@@ -298,13 +298,13 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::AttentionOutput,
         ]);
 
-        let x = base_arrays[0].borrow();
-        let b = base_arrays[1].borrow();
-        let c = base_arrays[2].borrow();
-        let dt = base_arrays[3].borrow();
-        let z = base_arrays[4].borrow();
-        let state_arr = base_arrays[5].borrow();
-        let out = base_arrays[6].borrow();
+        let x = &base_arrays[0];
+        let b = &base_arrays[1];
+        let c = &base_arrays[2];
+        let dt = &base_arrays[3];
+        let z = &base_arrays[4];
+        let state_arr = &base_arrays[5];
+        let out = &base_arrays[6];
 
         let skip_rc = self.skip_connection_weight.buffer();
         let skip_borrow = skip_rc.borrow();
@@ -348,13 +348,13 @@ impl<B: Backend> MambaMixer<B> {
             ArrayId::SsmState(self.layer_index),
             ArrayId::AttentionOutput,
         ]);
-        let x = arrays[0].borrow();
-        let b = arrays[1].borrow();
-        let c = arrays[2].borrow();
-        let dt = arrays[3].borrow();
-        let z = arrays[4].borrow();
-        let state_arr = arrays[5].borrow();
-        let y = arrays[6].borrow();
+        let x = &arrays[0];
+        let b = &arrays[1];
+        let c = &arrays[2];
+        let dt = &arrays[3];
+        let z = &arrays[4];
+        let state_arr = &arrays[5];
+        let y = &arrays[6];
 
         let skip_rc = self.skip_connection_weight.buffer();
         let skip_borrow = skip_rc.borrow();

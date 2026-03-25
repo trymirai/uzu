@@ -1,24 +1,24 @@
 use crate::{
-    array::{ArrayCell, ArrayCellExt},
+    array::Array,
     backends::common::Backend,
     forward_pass::{model_shape::ModelShape, scratch_buffers::ScratchBuffers},
 };
 
 pub struct CommonAuxBuffers<B: Backend> {
     pub suffix_length: usize,
-    pub main: ArrayCell<B>,
-    pub shortcut: ArrayCell<B>,
-    pub qkv: ArrayCell<B>,
-    pub gate: Option<ArrayCell<B>>,
-    pub attention_output: ArrayCell<B>,
-    pub mlp_fused_up: ArrayCell<B>,
-    pub mlp_hidden: ArrayCell<B>,
-    pub rotated_queries: ArrayCell<B>,
-    pub rotated_keys: ArrayCell<B>,
-    pub extracted_values: ArrayCell<B>,
-    pub attention_partials: ArrayCell<B>,
-    pub attention_sums: ArrayCell<B>,
-    pub attention_maxs: ArrayCell<B>,
+    pub main: Array<B>,
+    pub shortcut: Array<B>,
+    pub qkv: Array<B>,
+    pub gate: Option<Array<B>>,
+    pub attention_output: Array<B>,
+    pub mlp_fused_up: Array<B>,
+    pub mlp_hidden: Array<B>,
+    pub rotated_queries: Array<B>,
+    pub rotated_keys: Array<B>,
+    pub extracted_values: Array<B>,
+    pub attention_partials: Array<B>,
+    pub attention_sums: Array<B>,
+    pub attention_maxs: Array<B>,
 }
 
 impl<B: Backend> CommonAuxBuffers<B> {

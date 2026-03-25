@@ -8,7 +8,7 @@ use crate::backends::common::Encoder;
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
-    array::{Array, ArrayCell, ArrayCellExt},
+    array::Array,
     backends::common::{Backend, Context},
     config::DecoderConfig,
     forward_pass::{
@@ -28,9 +28,9 @@ pub enum ForwardPassMode<B: Backend> {
 
 pub struct LanguageModelGeneratorModeState<B: Backend> {
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub token_seeds: ArrayCell<B>,
-    pub logits: ArrayCell<B>,
-    pub sampling_output: Option<ArrayCell<B>>,
+    pub token_seeds: Array<B>,
+    pub logits: Array<B>,
+    pub sampling_output: Option<Array<B>>,
     pub sampling_method: Option<SamplingMethod>,
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace<B>>>,
@@ -41,21 +41,21 @@ pub struct LanguageModelGeneratorModeState<B: Backend> {
 }
 
 pub struct ClassifierModeState<B: Backend> {
-    pub pooling: ArrayCell<B>,
-    pub dense: ArrayCell<B>,
-    pub norm: ArrayCell<B>,
-    pub classifier_logits: ArrayCell<B>,
+    pub pooling: Array<B>,
+    pub dense: Array<B>,
+    pub norm: Array<B>,
+    pub classifier_logits: Array<B>,
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace<B>>>,
 }
 
 pub struct ForwardPassState<B: Backend> {
     context: Rc<B::Context>,
-    token_ids: ArrayCell<B>,
-    token_positions: ArrayCell<B>,
-    token_parents: ArrayCell<B>,
-    token_bitmask: Option<ArrayCell<B>>,
-    attention_bias: HashMap<Option<usize>, ArrayCell<B>>,
+    token_ids: Array<B>,
+    token_positions: Array<B>,
+    token_parents: Array<B>,
+    token_bitmask: Option<Array<B>>,
+    attention_bias: HashMap<Option<usize>, Array<B>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
     common_aux: CommonAuxBuffers<B>,
     llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
@@ -70,21 +70,21 @@ impl<B: Backend> ForwardPassState<B> {
     fn init_token_ids(
         scratch: &ScratchBuffers<B>,
         token_ids: &[u64],
-    ) -> ArrayCell<B> {
+    ) -> Array<B> {
         let suffix_length = token_ids.len();
-        let token_ids_array = scratch.token_ids.view(&[suffix_length]);
-        token_ids_array.borrow_mut().copy_from_view(token_ids.into());
+        let mut token_ids_array = scratch.token_ids.view(&[suffix_length]);
+        token_ids_array.copy_from_view(token_ids.into());
         token_ids_array
     }
 
     fn init_token_positions(
         scratch: &ScratchBuffers<B>,
         token_positions: &[usize],
-    ) -> ArrayCell<B> {
+    ) -> Array<B> {
         let suffix_length = token_positions.len();
-        let token_positions_array = scratch.token_positions.view(&[suffix_length]);
+        let mut token_positions_array = scratch.token_positions.view(&[suffix_length]);
         let token_positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
-        token_positions_array.borrow_mut().copy_from_view(token_positions_i32.as_ref().into());
+        token_positions_array.copy_from_view(token_positions_i32.as_ref().into());
         token_positions_array
     }
 
@@ -93,12 +93,11 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
         sampling_start: usize,
         sampling_length: usize,
-    ) -> ArrayCell<B> {
+    ) -> Array<B> {
         let suffix_length = token_positions.len();
-        let token_parents_array = scratch.token_parents.view(&[suffix_length]);
+        let mut token_parents_array = scratch.token_parents.view(&[suffix_length]);
         {
-            let mut token_parents = token_parents_array.borrow_mut();
-            let parents = token_parents.as_slice_mut::<i32>();
+            let parents = token_parents_array.as_slice_mut::<i32>();
             parents.fill(-1);
 
             if sampling_length > 0 {
@@ -173,10 +172,9 @@ impl<B: Backend> ForwardPassState<B> {
 
         // Token positions - use async buffer if provided
         let token_positions_cell = if let Some((async_buf, offset)) = async_positions {
-            let array = unsafe {
+            unsafe {
                 Array::from_parts(async_buf, offset * std::mem::size_of::<i32>(), &[suffix_length], DataType::I32)
-            };
-            RefCell::new(array)
+            }
         } else {
             Self::init_token_positions(scratch, token_positions)
         };
@@ -188,21 +186,20 @@ impl<B: Backend> ForwardPassState<B> {
         // Token bitmask
         let token_bitmask_cell = token_bitmask.map(|bitmask| {
             let bitmask_shape = model_shape.bitmask_shape(suffix_length);
-            let bitmask_array = scratch.token_bitmask.view(&bitmask_shape);
-            bitmask_array.borrow_mut().as_slice_mut::<u32>().fill(0);
-            bitmask_array.borrow_mut().copy_from_view(bitmask.into());
+            let mut bitmask_array = scratch.token_bitmask.view(&bitmask_shape);
+            bitmask_array.as_slice_mut::<u32>().fill(0);
+            bitmask_array.copy_from_view(bitmask.into());
             bitmask_array
         });
 
         // Token seeds - use async buffer if provided
         let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
-            let array = unsafe {
+            unsafe {
                 Array::from_parts(async_buf, offset * std::mem::size_of::<u64>(), &[suffix_length], DataType::U64)
-            };
-            RefCell::new(array)
+            }
         } else {
-            let token_seeds_array = scratch.token_seeds.view(&[suffix_length]);
-            token_seeds_array.borrow_mut().copy_from_view(token_seeds.into());
+            let mut token_seeds_array = scratch.token_seeds.view(&[suffix_length]);
+            token_seeds_array.copy_from_view(token_seeds.into());
             token_seeds_array
         };
 
@@ -266,7 +263,7 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
         external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         should_fill_attention_bias: bool,
-    ) -> HashMap<Option<usize>, ArrayCell<B>> {
+    ) -> HashMap<Option<usize>, Array<B>> {
         let cache_ref = cache_layers.borrow();
         let mut attention_bias_map: HashMap<Option<usize>, Array<B>> = scratch
             .attention_window_size_to_bias
@@ -274,7 +271,7 @@ impl<B: Backend> ForwardPassState<B> {
             .map(|(window_size, buffer)| {
                 let prefix_length = window_size.unwrap_or(cache_ref.max_prefix_length());
                 let attention_bias_shape = [suffix_length, suffix_length + prefix_length];
-                let array = buffer.borrow().view(&attention_bias_shape);
+                let array = buffer.view(&attention_bias_shape);
                 (*window_size, array)
             })
             .collect();
@@ -292,7 +289,7 @@ impl<B: Backend> ForwardPassState<B> {
             );
         }
 
-        attention_bias_map.into_iter().map(|(k, v)| (k, RefCell::new(v))).collect()
+        attention_bias_map
     }
 
     // ========================================================================
@@ -348,13 +345,13 @@ impl<B: Backend> ForwardPassState<B> {
         scratch: &ScratchBuffers<B>,
         suffix_length: usize,
         bidirectional_attention: bool,
-    ) -> HashMap<Option<usize>, ArrayCell<B>> {
+    ) -> HashMap<Option<usize>, Array<B>> {
         let mut attention_bias_map: HashMap<Option<usize>, Array<B>> = scratch
             .attention_window_size_to_bias
             .iter()
             .map(|(window_size, buffer)| {
                 let attention_bias_shape = [suffix_length, suffix_length];
-                let array = buffer.borrow().view(&attention_bias_shape);
+                let array = buffer.view(&attention_bias_shape);
                 (*window_size, array)
             })
             .collect();
@@ -375,7 +372,7 @@ impl<B: Backend> ForwardPassState<B> {
             }
         }
 
-        attention_bias_map.into_iter().map(|(k, v)| (k, RefCell::new(v))).collect()
+        attention_bias_map
     }
 
     #[cfg(feature = "tracing")]
@@ -389,12 +386,10 @@ impl<B: Backend> ForwardPassState<B> {
         let data_type = model_shape.activation_data_type();
         let batch_size = 1;
 
-        let create_buffer = |size: usize| -> ArrayCell<B> {
+        let create_buffer = |size: usize| -> Array<B> {
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe {
-                Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, size / batch_size], data_type)
-            })
+            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, size / batch_size], data_type) }
         };
 
         ClassifierModeState {
@@ -404,9 +399,7 @@ impl<B: Backend> ForwardPassState<B> {
             classifier_logits: {
                 let buffer_size = batch_size * num_labels * data_type.size_in_bytes();
                 let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-                RefCell::new(unsafe {
-                    Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, num_labels], data_type)
-                })
+                unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, num_labels], data_type) }
             },
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,
@@ -428,11 +421,11 @@ impl<B: Backend> ForwardPassState<B> {
         let data_type = model_shape.activation_data_type();
         let batch_size = 1;
 
-        let create_buffer = |dims: &[usize]| -> ArrayCell<B> {
+        let create_buffer = |dims: &[usize]| -> Array<B> {
             let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            RefCell::new(unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) })
+            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) }
         };
 
         ClassifierModeState {
@@ -455,7 +448,7 @@ impl<B: Backend> ForwardPassState<B> {
         self.common_aux.suffix_length
     }
 
-    pub fn token_bitmask(&self) -> Option<&ArrayCell<B>> {
+    pub fn token_bitmask(&self) -> Option<&Array<B>> {
         self.token_bitmask.as_ref()
     }
 
@@ -473,10 +466,10 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn array_cell(
+    pub fn array(
         &self,
         id: ArrayId,
-    ) -> ArrayCell<B> {
+    ) -> Array<B> {
         match id {
             // Common arrays
             ArrayId::TokenIds => self.token_ids.clone(),
@@ -642,7 +635,7 @@ impl<B: Backend> ForwardPassState<B> {
     fn shared_buffer_array(
         &self,
         id: ArrayId,
-    ) -> Option<ArrayCell<B>> {
+    ) -> Option<Array<B>> {
         let shared = self.shared_buffers.borrow();
         match id {
             ArrayId::RopeCosines(rope_type) => Some(match rope_type {
@@ -657,7 +650,7 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn conv_padded_buffer(&self) -> Option<ArrayCell<B>> {
+    pub fn conv_padded_buffer(&self) -> Option<Array<B>> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
     }
 
@@ -668,14 +661,14 @@ impl<B: Backend> ForwardPassState<B> {
     pub fn arrays(
         &self,
         ids: &[ArrayId],
-    ) -> Box<[ArrayCell<B>]> {
-        ids.iter().map(|id| self.array_cell(*id)).collect()
+    ) -> Box<[Array<B>]> {
+        ids.iter().map(|id| self.array(*id)).collect()
     }
 
     pub fn hashmaps(
         &self,
         ids: &[HashMapId],
-    ) -> Box<[HashMap<Option<usize>, ArrayCell<B>>]> {
+    ) -> Box<[HashMap<Option<usize>, Array<B>>]> {
         ids.iter()
             .map(|id| match id {
                 HashMapId::AttentionBias => self.attention_bias.clone(),
@@ -720,7 +713,7 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn sampling_output(&self) -> Option<&ArrayCell<B>> {
+    pub fn sampling_output(&self) -> Option<&Array<B>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.as_ref(),
             ForwardPassMode::Classifier(_) => None,
@@ -754,18 +747,21 @@ impl<B: Backend> ForwardPassState<B> {
         &self,
         encoder: &mut Encoder<B>,
         source_array_id: ArrayId,
-        destination_array: RefCell<Array<B>>,
+        destination_array: Array<B>,
     ) {
         let source_ref = self.arrays(&[source_array_id])[0].clone();
-        let src_borrow = source_ref.borrow();
-        let dst_borrow = destination_array.borrow();
 
-        let src_buf_rc = src_borrow.buffer();
-        let dst_buf_rc = dst_borrow.buffer();
+        let src_buf_rc = source_ref.buffer();
+        let dst_buf_rc = destination_array.buffer();
 
-        let copy_size_bytes = dst_borrow.size();
-        debug_assert_eq!(dst_borrow.size(), src_borrow.size());
+        let copy_size_bytes = destination_array.size();
+        debug_assert_eq!(destination_array.size(), source_ref.size());
 
-        encoder.encode_copy(src_buf_rc.borrow().deref(), dst_buf_rc.borrow_mut().deref_mut(), copy_size_bytes);
+        encoder.encode_copy(
+            src_buf_rc.borrow().deref(),
+            0..copy_size_bytes,
+            dst_buf_rc.borrow_mut().deref_mut(),
+            0..copy_size_bytes,
+        );
     }
 }
