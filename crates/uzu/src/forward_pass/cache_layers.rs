@@ -123,12 +123,12 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: context.create_array_uninitialized(
+                        keys: context.create_array_zeros(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                         ),
-                        values: context.create_array_uninitialized(
+                        values: context.create_array_zeros(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
@@ -374,12 +374,12 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.create_array_uninitialized(
+                    let mut new_keys = context.create_array_zeros(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                     );
-                    let mut new_values = context.create_array_uninitialized(
+                    let mut new_values = context.create_array_zeros(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
