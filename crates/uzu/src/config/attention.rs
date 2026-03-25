@@ -25,6 +25,8 @@ pub struct AttentionConfig {
     #[serde(default)]
     pub has_gate: bool,
     #[serde(default)]
+    pub gate_projection_config: Option<LinearConfig>,
+    #[serde(default)]
     pub partial_rope_dim: Option<usize>,
 }
 

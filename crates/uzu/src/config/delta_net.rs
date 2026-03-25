@@ -27,4 +27,8 @@ impl DeltaNetAttentionConfig {
     pub fn conv_dim(&self) -> usize {
         self.key_dim() * 2 + self.value_dim()
     }
+
+    pub fn total_proj_dim(&self) -> usize {
+        self.conv_dim() + self.value_dim() + self.num_heads + self.num_heads
+    }
 }
