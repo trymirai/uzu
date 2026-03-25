@@ -90,6 +90,7 @@ fn test_decoder_layer_config() {
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,
             subtract_mean: false,
+            use_bias: false,
         },
         pre_mlp_norm_config: NormalizationConfig {
             scale_precision: ConfigDataType::BFloat16,
@@ -98,6 +99,7 @@ fn test_decoder_layer_config() {
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,
             subtract_mean: false,
+            use_bias: false,
         },
         mixer_config: MixerConfig::Attention(AttentionConfig {
             qkv_projection_config: LinearConfig::QLoRA {
