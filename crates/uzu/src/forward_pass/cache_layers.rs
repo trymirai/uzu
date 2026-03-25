@@ -158,12 +158,12 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: context.create_array_uninitialized(
+                        conv_state: context.create_array_zeros(
                             &conv_shape,
                             dtype,
                             &format!("{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"),
                         ),
-                        ssm_state: context.create_array_uninitialized(
+                        ssm_state: context.create_array_zeros(
                             &ssm_shape,
                             dtype,
                             &format!("{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"),
@@ -179,12 +179,12 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::ShortConv(ShortConvLayer {
-                        conv_state: context.create_array_uninitialized(
+                        conv_state: context.create_array_zeros(
                             &conv_shape,
                             dtype,
                             &format!("{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"),
                         ),
-                        suffix_state: context.create_array_uninitialized(
+                        suffix_state: context.create_array_zeros(
                             &suffix_state_shape,
                             dtype,
                             &format!("{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"),

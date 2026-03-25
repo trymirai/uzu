@@ -40,7 +40,7 @@ impl<B: Backend> Decoder<B> {
         let embedding_weight_loader = root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree");
 
         let embed = Embedding::new(
-            context.as_ref(),
+            context,
             decoder_config.vocab_size as u32,
             decoder_config.model_dim as u32,
             &decoder_config.embedding_config,
