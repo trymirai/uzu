@@ -7,6 +7,7 @@ mod moe_experts_perf_test;
 mod moe_experts_single_pass_a_test;
 mod moe_experts_single_pass_b_test;
 mod moe_experts_test;
+mod moe_experts_two_pass_decode_down_fused_2d_test;
 mod moe_finalize_test;
 mod moe_gather_test;
 mod moe_perf_test;

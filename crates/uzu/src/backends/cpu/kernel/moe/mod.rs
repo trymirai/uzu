@@ -1,7 +1,8 @@
 pub mod counts_offsets_fused;
 pub mod experts_single_pass_a;
 pub mod experts_single_pass_b;
-pub mod experts_two_pass_decode;
+pub mod experts_two_pass_decode_down_fused_2d;
+pub mod experts_two_pass_decode_pass_a;
 pub mod experts_two_pass_prefill;
 pub mod finalize;
 pub mod gather;
