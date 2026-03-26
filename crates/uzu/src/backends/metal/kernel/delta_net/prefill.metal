@@ -63,7 +63,8 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     const uint k_base = ki_half * bk_half;
     for (uint j = 0; j < bk_half; ++j) {
       s_col[j] = float(
-          state[state_head_offset + (k_base + j) * head_v_dim + vi_global]);
+          state[state_head_offset + (k_base + j) * head_v_dim + vi_global]
+      );
     }
   }
 
@@ -81,17 +82,23 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // L2 normalize q
-    float q_partial =
-        (tid < head_k_dim) ? shared_q[tid] * shared_q[tid] : 0.0f;
+    float q_partial = (tid < head_k_dim) ? shared_q[tid] * shared_q[tid] : 0.0f;
     float q_norm_sq = threadgroup_cooperative_reduce_sum<DN_TILED_BLOCK_SIZE>(
-        q_partial, shared_scratch, tid, thread_context);
+        q_partial,
+        shared_scratch,
+        tid,
+        thread_context
+    );
     float q_inv_norm = rsqrt(q_norm_sq + 1e-6f);
 
     // L2 normalize k
-    float k_partial =
-        (tid < head_k_dim) ? shared_k[tid] * shared_k[tid] : 0.0f;
+    float k_partial = (tid < head_k_dim) ? shared_k[tid] * shared_k[tid] : 0.0f;
     float k_norm_sq = threadgroup_cooperative_reduce_sum<DN_TILED_BLOCK_SIZE>(
-        k_partial, shared_scratch, tid, thread_context);
+        k_partial,
+        shared_scratch,
+        tid,
+        thread_context
+    );
     float k_inv_norm = rsqrt(k_norm_sq + 1e-6f);
 
     // Apply normalization + scale q
@@ -106,7 +113,11 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     float kq_partial =
         (tid < head_k_dim) ? shared_k[tid] * shared_q[tid] : 0.0f;
     float kq_dot = threadgroup_cooperative_reduce_sum<DN_TILED_BLOCK_SIZE>(
-        kq_partial, shared_scratch, tid, thread_context);
+        kq_partial,
+        shared_scratch,
+        tid,
+        thread_context
+    );
 
     // Gating scalars
     float beta_raw = float(in_proj[tok + conv_dim + value_dim + hv_idx]);
@@ -121,7 +132,8 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     float v_i =
         active
             ? float(
-                  in_proj[tok + 2 * key_dim + hv_idx * head_v_dim + vi_global])
+                  in_proj[tok + 2 * key_dim + hv_idx * head_v_dim + vi_global]
+              )
             : 0.0f;
 
     // State retrieval: partial dot products over ki_half's k-dims
