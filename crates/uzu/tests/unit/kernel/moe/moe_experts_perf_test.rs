@@ -18,7 +18,7 @@ use uzu::{
     },
 };
 
-use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use crate::moe::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn build_offsets(
     e: usize,
