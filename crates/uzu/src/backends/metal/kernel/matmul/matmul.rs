@@ -5,8 +5,8 @@ use std::{
 
 use super::{
     super::dsl::{
-        MatmulGemmMetalKernel, MatmulGemmMppDirectMetalKernel,
-        MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
+        MatmulGemmMetalKernel, MatmulGemmMppDirectMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel,
+        TensorAddBiasMetalKernel,
     },
     gemm, gemm_mpp, gemm_mpp_direct, gemv,
 };

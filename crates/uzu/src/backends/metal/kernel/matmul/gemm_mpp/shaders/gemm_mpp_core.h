@@ -58,17 +58,26 @@ METAL_FUNC void gemm_mpp_core(
 
   const short simdgroup_limit_m =
       align_m ? SIMDGROUP_BLOCK_M
-                : short(min(int(SIMDGROUP_BLOCK_M),
-                            params->M - (block_row_start + tile_row_offset)));
+              : short(
+                    min(int(SIMDGROUP_BLOCK_M),
+                        params->M - (block_row_start + tile_row_offset))
+                );
   const short simdgroup_limit_n =
       align_n ? SIMDGROUP_BLOCK_N
-                : short(min(int(SIMDGROUP_BLOCK_N),
-                            params->N - (block_col_start + tile_col_offset)));
+              : short(
+                    min(int(SIMDGROUP_BLOCK_N),
+                        params->N - (block_col_start + tile_col_offset))
+                );
 
   constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
-      SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP,
-      false, true, false,
-      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate);
+      SUBTILE_ROWS,
+      SUBTILE_COLS,
+      MATMUL_K_STEP,
+      false,
+      true,
+      false,
+      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
+  );
 
   mpp::tensor_ops::matmul2d<matmul_descriptor, metal::execution_simdgroup>
       matmul_operation;
@@ -81,7 +90,9 @@ METAL_FUNC void gemm_mpp_core(
           .template get_right_input_cooperative_tensor<T, T, AccumulatorType>();
   auto accumulator_tensor =
       matmul_operation.template get_destination_cooperative_tensor<
-          decltype(left_tensor), decltype(right_tensor), AccumulatorType>();
+          decltype(left_tensor),
+          decltype(right_tensor),
+          AccumulatorType>();
 
   const short accumulator_capacity = accumulator_tensor.get_capacity();
 
@@ -133,15 +144,15 @@ METAL_FUNC void gemm_mpp_core(
           METAL_PRAGMA_UNROLL
           for (short i = 0; i < left_tensor.get_capacity(); i++) {
             auto coord = left_tensor.get_multidimensional_index(i);
-            left_tensor[i] =
-                left_shared[(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+            left_tensor[i] = left_shared
+                [(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           METAL_PRAGMA_UNROLL
           for (short i = 0; i < right_tensor.get_capacity(); i++) {
             auto coord = right_tensor.get_multidimensional_index(i);
-            right_tensor[i] =
-                right_shared[(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+            right_tensor[i] = right_shared
+                [(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
@@ -186,15 +197,15 @@ METAL_FUNC void gemm_mpp_core(
           METAL_PRAGMA_UNROLL
           for (short i = 0; i < left_tensor.get_capacity(); i++) {
             auto coord = left_tensor.get_multidimensional_index(i);
-            left_tensor[i] =
-                left_shared[(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+            left_tensor[i] = left_shared
+                [(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           METAL_PRAGMA_UNROLL
           for (short i = 0; i < right_tensor.get_capacity(); i++) {
             auto coord = right_tensor.get_multidimensional_index(i);
-            right_tensor[i] =
-                right_shared[(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+            right_tensor[i] = right_shared
+                [(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
@@ -216,11 +227,14 @@ METAL_FUNC void gemm_mpp_core(
     for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
       const short row_offset = tile_m * SUBTILE_ROWS;
       const short col_offset = tile_n * SUBTILE_COLS;
-      const short m_limit = align_m ? SUBTILE_ROWS
-          : short(max(0, int(simdgroup_limit_m) - row_offset));
-      const short n_limit = align_n ? SUBTILE_COLS
-          : short(max(0, int(simdgroup_limit_n) - col_offset));
-      if (m_limit <= 0 || n_limit <= 0) continue;
+      const short m_limit =
+          align_m ? SUBTILE_ROWS
+                  : short(max(0, int(simdgroup_limit_m) - row_offset));
+      const short n_limit =
+          align_n ? SUBTILE_COLS
+                  : short(max(0, int(simdgroup_limit_n) - col_offset));
+      if (m_limit <= 0 || n_limit <= 0)
+        continue;
 
       device T* out_ptr = output_ptr + row_offset * ld_d + col_offset;
 
