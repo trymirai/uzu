@@ -57,7 +57,7 @@ pub struct ForwardPassState<B: Backend> {
     token_bitmask: Option<Array<B>>,
     attention_bias: HashMap<Option<usize>, Array<B>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
-    common_aux: CommonAuxBuffers<B>,
+    pub common_aux: CommonAuxBuffers<B>,
     llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
     mode: ForwardPassMode<B>,
 }

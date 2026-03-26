@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    config::{DecoderConfig, DecoderLayerType, MixerConfig},
+    config::{DecoderConfig, DecoderLayerType, LinearConfig, MLPConfig, MixerConfig},
 };
 
 #[derive(Debug)]
@@ -26,6 +26,7 @@ pub struct ModelShape {
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
     max_rope_dim: usize,
+    max_lora_intermediate: Option<usize>,
     has_gate: bool,
 }
 
@@ -76,6 +77,7 @@ impl ModelShape {
             }
         }
         let mut max_rope_dim = 0usize;
+        let mut max_lora_intermediate = None;
         let mut has_gate = false;
 
         let all_layer_configs = decoder_config
@@ -85,10 +87,45 @@ impl ModelShape {
             .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
 
         for layer_config in &all_layer_configs {
-            if let MixerConfig::Attention(attn) = &layer_config.mixer_config {
-                let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
-                max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
-                has_gate = has_gate || attn.has_gate;
+            let mut linear_configs = Vec::new();
+
+            match &layer_config.mixer_config {
+                MixerConfig::Attention(attn) => {
+                    let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
+                    max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
+                    has_gate = has_gate || attn.has_gate;
+                    linear_configs.extend([&attn.qkv_projection_config, &attn.out_projection_config]);
+                },
+                MixerConfig::Mamba(mamba) => {
+                    linear_configs.extend([&mamba.in_projection_config, &mamba.out_projection_config]);
+                },
+                MixerConfig::ShortConv(short_conv) => {
+                    linear_configs.extend([&short_conv.in_projection_config, &short_conv.out_projection_config]);
+                },
+                MixerConfig::DeltaNet(delta_net) => {
+                    linear_configs.extend([&delta_net.in_proj_config, &delta_net.out_proj_config]);
+                },
+            };
+
+            match &layer_config.mlp_config {
+                MLPConfig::Dense(dense) => {
+                    linear_configs.push(&dense.linear_config);
+                },
+                MLPConfig::MixtureOfExperts(moe) => {
+                    linear_configs.extend([&moe.router_config, &moe.expert_config.linear_config]);
+                },
+            };
+
+            while let Some(linear_config) = linear_configs.pop() {
+                match linear_config {
+                    LinearConfig::QLoRA {
+                        lora_rank,
+                        ..
+                    } => {
+                        max_lora_intermediate = Some(max_lora_intermediate.unwrap_or(0).max(*lora_rank));
+                    },
+                    _ => (),
+                };
             }
         }
 
@@ -119,6 +156,7 @@ impl ModelShape {
             max_mamba_state_dim,
             max_mamba_kernel_size,
             max_rope_dim,
+            max_lora_intermediate,
             has_gate,
         }
     }
@@ -504,6 +542,13 @@ impl ModelShape {
         } else {
             None
         }
+    }
+
+    pub fn lora_intermediate(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.max_lora_intermediate.map(|max_lora_intermediate| [suffix_length, max_lora_intermediate])
     }
 
     fn max_mamba_inproj_dim_internal(&self) -> Option<usize> {
