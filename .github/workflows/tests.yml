@@ -34,7 +34,7 @@ jobs:
 
       - name: Check Rust formatting
         if: ${{ always() && steps.setup.outcome == 'success' }}
-        run: cargo fmt --check
+        run: cargo +nightly fmt --check
 
       - name: Check Metal formatting
         if: ${{ always() && steps.setup.outcome == 'success' }}
