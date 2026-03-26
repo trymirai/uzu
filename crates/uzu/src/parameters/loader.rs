@@ -113,16 +113,17 @@ where
         let (offset, size) = (metadata_entry.offset, metadata_entry.size);
         let array_key = key.replace(".", "_");
         let array_label = format!("parameter_loader_{array_key}");
-        let mut array = self.context.create_array(&metadata_entry.shape, metadata_entry.data_type, &array_label);
-        let expected_size = array.size();
-        if expected_size != size {
+        let mut array =
+            self.context.create_array_uninitialized(&metadata_entry.shape, metadata_entry.data_type, &array_label);
+        if array.size() != size {
             return Err(ParameterLoaderError::SizeMismatch {
                 data_type: metadata_entry.data_type,
                 shape: metadata_entry.shape.to_owned(),
-                expected_size,
+                expected_size: array.size(),
                 actual_size: size,
             });
         }
+
         self.file.read_exact_at(array.as_bytes_mut(), offset as u64)?;
         Ok(array)
     }

@@ -20,6 +20,7 @@ use crate::{
         Backend, Buffer, CommandBuffer, Context, Encoder, Executable,
         kernel::{MaskUpdateKernel, TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
+    config::ModelMetadata,
     encodable_block::EncodingParameters,
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
@@ -689,10 +690,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
+        model_metadata: &ModelMetadata,
     ) -> Result<Self, Error> {
         let gpu_capture = GpuCaptureManager::new();
 
-        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
+        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config, model_metadata)?;
 
         Ok(Self {
             decoding_config,

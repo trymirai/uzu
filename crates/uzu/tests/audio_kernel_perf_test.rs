@@ -121,17 +121,21 @@ fn audio_kernel_perf() {
 
         let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioQuantizerDecodeKernel::new(&context, dt).unwrap();
 
-        let tokens = context.create_array(&[batch_size * TOTAL_CODEBOOKS * frames], DataType::U32, "perf_quant_tokens");
+        let tokens =
+            context.create_array_zeros(&[batch_size * TOTAL_CODEBOOKS * frames], DataType::U32, "perf_quant_tokens");
         let lengths = make_lengths(&context, batch_size, frames as i32);
-        let semantic_codebook = context.create_array(&[SEMANTIC_CARDINALITY * CODEBOOK_DIM], dt, "perf_sem_cb");
-        let semantic_out_proj = context.create_array(&[INPUT_DIM * CODEBOOK_DIM], dt, "perf_sem_proj");
-        let semantic_out_bias = context.create_array(&[INPUT_DIM], dt, "perf_sem_bias");
-        let residual_codebooks =
-            context.create_array(&[RESIDUAL_QUANTIZERS * RESIDUAL_CARDINALITY * CODEBOOK_DIM], dt, "perf_res_cbs");
+        let semantic_codebook = context.create_array_zeros(&[SEMANTIC_CARDINALITY * CODEBOOK_DIM], dt, "perf_sem_cb");
+        let semantic_out_proj = context.create_array_zeros(&[INPUT_DIM * CODEBOOK_DIM], dt, "perf_sem_proj");
+        let semantic_out_bias = context.create_array_zeros(&[INPUT_DIM], dt, "perf_sem_bias");
+        let residual_codebooks = context.create_array_zeros(
+            &[RESIDUAL_QUANTIZERS * RESIDUAL_CARDINALITY * CODEBOOK_DIM],
+            dt,
+            "perf_res_cbs",
+        );
         let residual_out_proj =
-            context.create_array(&[RESIDUAL_QUANTIZERS * INPUT_DIM * CODEBOOK_DIM], dt, "perf_res_proj");
-        let residual_out_bias = context.create_array(&[RESIDUAL_QUANTIZERS * INPUT_DIM], dt, "perf_res_bias");
-        let output = context.create_array(&[batch_size * frames * INPUT_DIM], dt, "perf_quant_out");
+            context.create_array_zeros(&[RESIDUAL_QUANTIZERS * INPUT_DIM * CODEBOOK_DIM], dt, "perf_res_proj");
+        let residual_out_bias = context.create_array_zeros(&[RESIDUAL_QUANTIZERS * INPUT_DIM], dt, "perf_res_bias");
+        let output = context.create_array_zeros(&[batch_size * frames * INPUT_DIM], dt, "perf_quant_out");
 
         let label = format!(
             "QuantizerDecode [B={}, T={}, K={}, dim={}, cdim={}]",
@@ -204,10 +208,10 @@ fn audio_kernel_perf() {
             let seq_in = frames;
             let seq_out = seq_in * stride;
             let ksize = stride * 2;
-            let input = context.create_array(&[batch_size * cin * seq_in], dt, "tconv_in");
-            let weight = context.create_array(&[cin * cout * ksize], dt, "tconv_w");
-            let bias = context.create_array(&[cout], dt, "tconv_b");
-            let output = context.create_array(&[batch_size * cout * seq_out], dt, "tconv_out");
+            let input = context.create_array_zeros(&[batch_size * cin * seq_in], dt, "tconv_in");
+            let weight = context.create_array_zeros(&[cin * cout * ksize], dt, "tconv_w");
+            let bias = context.create_array_zeros(&[cout], dt, "tconv_b");
+            let output = context.create_array_zeros(&[batch_size * cout * seq_out], dt, "tconv_out");
             let lengths = make_lengths(&context, batch_size, seq_out as i32);
 
             let label = format!("TransConv {tag} [{cin}->{cout}, s={stride}, k={ksize}, {seq_in}->{seq_out}]");
@@ -257,10 +261,10 @@ fn audio_kernel_perf() {
             let seq_in = frames;
             let seq_out = seq_in * stride;
             let ksize = stride * 2;
-            let input = context.create_array(&[batch_size * cin * seq_in], dt, "tconv_in");
-            let weight = context.create_array(&[cin * cout * ksize], dt, "tconv_w");
-            let bias = context.create_array(&[cout], dt, "tconv_b");
-            let output = context.create_array(&[batch_size * cout * seq_out], dt, "tconv_out");
+            let input = context.create_array_zeros(&[batch_size * cin * seq_in], dt, "tconv_in");
+            let weight = context.create_array_zeros(&[cin * cout * ksize], dt, "tconv_w");
+            let bias = context.create_array_zeros(&[cout], dt, "tconv_b");
+            let output = context.create_array_zeros(&[batch_size * cout * seq_out], dt, "tconv_out");
             let lengths = make_lengths(&context, batch_size, seq_out as i32);
 
             let label = format!("TransConv dec{block_idx} [{cin}->{cout}, s={stride}, k={ksize}, {seq_in}->{seq_out}]");
@@ -317,10 +321,10 @@ fn audio_kernel_perf() {
             let cin = UP_CHANNELS[2]; // 256
             let cout = DECODER_DIM; // 1536
             let ksize = 7;
-            let input = context.create_array(&[batch_size * cin * fc_seq], dt, "fc_in");
-            let weight = context.create_array(&[cout * cin * ksize], dt, "fc_w");
-            let bias = context.create_array(&[cout], dt, "fc_b");
-            let output = context.create_array(&[batch_size * cout * fc_seq], dt, "fc_out");
+            let input = context.create_array_zeros(&[batch_size * cin * fc_seq], dt, "fc_in");
+            let weight = context.create_array_zeros(&[cout * cin * ksize], dt, "fc_w");
+            let bias = context.create_array_zeros(&[cout], dt, "fc_b");
+            let output = context.create_array_zeros(&[batch_size * cout * fc_seq], dt, "fc_out");
             let lengths = make_lengths(&context, batch_size, fc_seq as i32);
 
             let label = format!("CausalConv1d first_conv [{cin}->{cout}, k={ksize}, T={fc_seq}]");
@@ -368,10 +372,10 @@ fn audio_kernel_perf() {
             for &dilation in &[1, 3, 9] {
                 let label =
                     format!("CausalConv1d res dec{block_idx} [{ch}->{ch}, k={ksize}, d={dilation}, T={dec_frames}]");
-                let input = context.create_array(&[batch_size * ch * dec_frames], dt, "res_in");
-                let weight = context.create_array(&[ch * ch * ksize], dt, "res_w");
-                let bias = context.create_array(&[ch], dt, "res_b");
-                let output = context.create_array(&[batch_size * ch * dec_frames], dt, "res_out");
+                let input = context.create_array_zeros(&[batch_size * ch * dec_frames], dt, "res_in");
+                let weight = context.create_array_zeros(&[ch * ch * ksize], dt, "res_w");
+                let bias = context.create_array_zeros(&[ch], dt, "res_b");
+                let output = context.create_array_zeros(&[batch_size * ch * dec_frames], dt, "res_out");
                 let lengths = make_lengths(&context, batch_size, dec_frames as i32);
 
                 let ms = measure(&label, || {
@@ -415,10 +419,10 @@ fn audio_kernel_perf() {
             let cout = 1;
             let ksize = 7;
             let final_frames = SEMANTIC_FRAMES_10S * 2 * 2 * 8 * 8 * 4 * 2; // full resolution
-            let input = context.create_array(&[batch_size * cin * final_frames], dt, "fc_in");
-            let weight = context.create_array(&[cout * cin * ksize], dt, "fc_w");
-            let bias = context.create_array(&[cout], dt, "fc_b");
-            let output = context.create_array(&[batch_size * cout * final_frames], dt, "fc_out");
+            let input = context.create_array_zeros(&[batch_size * cin * final_frames], dt, "fc_in");
+            let weight = context.create_array_zeros(&[cout * cin * ksize], dt, "fc_w");
+            let bias = context.create_array_zeros(&[cout], dt, "fc_b");
+            let output = context.create_array_zeros(&[batch_size * cout * final_frames], dt, "fc_out");
             let lengths = make_lengths(&context, batch_size, final_frames as i32);
 
             let label = format!("CausalConv1d final_conv [{cin}->{cout}, k={ksize}, T={final_frames}]");
@@ -473,11 +477,11 @@ fn audio_kernel_perf() {
             let ksize = 7;
 
             let label = format!("CausalConv1dResidual dec{block_idx} [{ch}->{ch}, k={ksize}, T={dec_frames}]");
-            let input = context.create_array(&[batch_size * ch * dec_frames], dt, "res_in");
-            let residual = context.create_array(&[batch_size * ch * dec_frames], dt, "res_res");
-            let weight = context.create_array(&[ch * ch * ksize], dt, "res_w");
-            let bias = context.create_array(&[ch], dt, "res_b");
-            let output = context.create_array(&[batch_size * ch * dec_frames], dt, "res_out");
+            let input = context.create_array_zeros(&[batch_size * ch * dec_frames], dt, "res_in");
+            let residual = context.create_array_zeros(&[batch_size * ch * dec_frames], dt, "res_res");
+            let weight = context.create_array_zeros(&[ch * ch * ksize], dt, "res_w");
+            let bias = context.create_array_zeros(&[ch], dt, "res_b");
+            let output = context.create_array_zeros(&[batch_size * ch * dec_frames], dt, "res_out");
             let lengths = make_lengths(&context, batch_size, dec_frames as i32);
 
             let ms = measure(&label, || {
@@ -532,10 +536,10 @@ fn audio_kernel_perf() {
             let ksize = 7;
 
             let label = format!("CausalConv1dGrouped dw up{block_idx} [{ch}, g={ch}, k={ksize}, T={frames}]");
-            let input = context.create_array(&[batch_size * ch * frames], dt, "dw_in");
-            let weight = context.create_array(&[ch * 1 * ksize], dt, "dw_w");
-            let bias = context.create_array(&[ch], dt, "dw_b");
-            let output = context.create_array(&[batch_size * ch * frames], dt, "dw_out");
+            let input = context.create_array_zeros(&[batch_size * ch * frames], dt, "dw_in");
+            let weight = context.create_array_zeros(&[ch * 1 * ksize], dt, "dw_w");
+            let bias = context.create_array_zeros(&[ch], dt, "dw_b");
+            let output = context.create_array_zeros(&[batch_size * ch * frames], dt, "dw_out");
             let lengths = make_lengths(&context, batch_size, frames as i32);
 
             let ms = measure(&label, || {
@@ -588,9 +592,9 @@ fn audio_kernel_perf() {
             let ch_in = DEC_CHANNELS[block_idx];
             {
                 let label = format!("HalfSnake pre-tconv dec{block_idx} [{ch_in}ch, T={dec_frames}]");
-                let input = context.create_array(&[batch_size * ch_in * dec_frames], dt, "sn_in");
-                let alpha = context.create_array(&[ch_in], dt, "sn_a");
-                let output = context.create_array(&[batch_size * ch_in * dec_frames], dt, "sn_out");
+                let input = context.create_array_zeros(&[batch_size * ch_in * dec_frames], dt, "sn_in");
+                let alpha = context.create_array_zeros(&[ch_in], dt, "sn_a");
+                let output = context.create_array_zeros(&[batch_size * ch_in * dec_frames], dt, "sn_out");
 
                 let ms = measure(&label, || {
                     let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
@@ -624,9 +628,9 @@ fn audio_kernel_perf() {
             let ch_out = DEC_CHANNELS[block_idx + 1];
             {
                 let label = format!("HalfSnake res dec{block_idx} [{ch_out}ch, T={dec_frames}]");
-                let input = context.create_array(&[batch_size * ch_out * dec_frames], dt, "sn_in");
-                let alpha = context.create_array(&[ch_out], dt, "sn_a");
-                let output = context.create_array(&[batch_size * ch_out * dec_frames], dt, "sn_out");
+                let input = context.create_array_zeros(&[batch_size * ch_out * dec_frames], dt, "sn_in");
+                let alpha = context.create_array_zeros(&[ch_out], dt, "sn_a");
+                let output = context.create_array_zeros(&[batch_size * ch_out * dec_frames], dt, "sn_out");
 
                 let ms = measure(&label, || {
                     let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
@@ -673,10 +677,10 @@ fn audio_kernel_perf() {
             // Norm
             {
                 let label = format!("NormNcs up{block_idx} [{ch}ch, T={frames}]");
-                let input = context.create_array(&[batch_size * ch * frames], dt, "norm_in");
-                let scales = context.create_array(&[ch], dt, "norm_s");
-                let bias = context.create_array(&[ch], dt, "norm_b");
-                let output = context.create_array(&[batch_size * ch * frames], dt, "norm_out");
+                let input = context.create_array_zeros(&[batch_size * ch * frames], dt, "norm_in");
+                let scales = context.create_array_zeros(&[ch], dt, "norm_s");
+                let bias = context.create_array_zeros(&[ch], dt, "norm_b");
+                let output = context.create_array_zeros(&[batch_size * ch * frames], dt, "norm_out");
                 let lengths = make_lengths(&context, batch_size, frames as i32);
 
                 let ms = measure(&label, || {
@@ -714,10 +718,10 @@ fn audio_kernel_perf() {
             // Pointwise conv1 (ch -> ch)
             {
                 let label = format!("Conv1d pw up{block_idx} [{ch}->{ch}, k=1, T={frames}]");
-                let input = context.create_array(&[batch_size * ch * frames], dt, "pw_in");
-                let weight = context.create_array(&[ch * ch], dt, "pw_w");
-                let bias = context.create_array(&[ch], dt, "pw_b");
-                let output = context.create_array(&[batch_size * ch * frames], dt, "pw_out");
+                let input = context.create_array_zeros(&[batch_size * ch * frames], dt, "pw_in");
+                let weight = context.create_array_zeros(&[ch * ch], dt, "pw_w");
+                let bias = context.create_array_zeros(&[ch], dt, "pw_b");
+                let output = context.create_array_zeros(&[batch_size * ch * frames], dt, "pw_out");
                 let lengths = make_lengths(&context, batch_size, frames as i32);
 
                 let ms = measure(&label, || {
@@ -761,8 +765,8 @@ fn audio_kernel_perf() {
             {
                 let n = ch * frames;
                 let label = format!("GELU up{block_idx} [n={n}]");
-                let input = context.create_array(&[n], dt, "gelu_in");
-                let output = context.create_array(&[n], dt, "gelu_out");
+                let input = context.create_array_zeros(&[n], dt, "gelu_in");
+                let output = context.create_array_zeros(&[n], dt, "gelu_out");
 
                 let ms = measure(&label, || {
                     let mut encoder = Encoder::<Metal>::new(context.as_ref()).unwrap();
@@ -809,15 +813,15 @@ fn audio_kernel_perf() {
     let frames = SEMANTIC_FRAMES_10S;
 
     // Quantizer arrays
-    let p_q_tok = context.create_array(&[batch_size * TOTAL_CODEBOOKS * frames], DataType::U32, "pipe_q_tok");
+    let p_q_tok = context.create_array_zeros(&[batch_size * TOTAL_CODEBOOKS * frames], DataType::U32, "pipe_q_tok");
     let p_q_len = make_lengths(&context, batch_size, frames as i32);
-    let p_q_sem_cb = context.create_array(&[SEMANTIC_CARDINALITY * CODEBOOK_DIM], dt, "p_sem_cb");
-    let p_q_sem_proj = context.create_array(&[INPUT_DIM * CODEBOOK_DIM], dt, "p_sem_proj");
-    let p_q_sem_bias = context.create_array(&[INPUT_DIM], dt, "p_sem_bias");
+    let p_q_sem_cb = context.create_array_zeros(&[SEMANTIC_CARDINALITY * CODEBOOK_DIM], dt, "p_sem_cb");
+    let p_q_sem_proj = context.create_array_zeros(&[INPUT_DIM * CODEBOOK_DIM], dt, "p_sem_proj");
+    let p_q_sem_bias = context.create_array_zeros(&[INPUT_DIM], dt, "p_sem_bias");
     let p_q_res_cbs =
-        context.create_array(&[RESIDUAL_QUANTIZERS * RESIDUAL_CARDINALITY * CODEBOOK_DIM], dt, "p_res_cbs");
-    let p_q_res_proj = context.create_array(&[RESIDUAL_QUANTIZERS * INPUT_DIM * CODEBOOK_DIM], dt, "p_res_proj");
-    let p_q_res_bias = context.create_array(&[RESIDUAL_QUANTIZERS * INPUT_DIM], dt, "p_res_bias");
+        context.create_array_zeros(&[RESIDUAL_QUANTIZERS * RESIDUAL_CARDINALITY * CODEBOOK_DIM], dt, "p_res_cbs");
+    let p_q_res_proj = context.create_array_zeros(&[RESIDUAL_QUANTIZERS * INPUT_DIM * CODEBOOK_DIM], dt, "p_res_proj");
+    let p_q_res_bias = context.create_array_zeros(&[RESIDUAL_QUANTIZERS * INPUT_DIM], dt, "p_res_bias");
 
     // Compute frame counts at each stage
     let f_up0 = frames * UP_STRIDES[0]; // 430
@@ -830,42 +834,42 @@ fn audio_kernel_perf() {
     // Pipeline scratch: large enough for the biggest intermediate
     // Biggest is decoder_dim * f_up1 or ch * f_dec stages
     let max_elems: usize = batch_size * DECODER_DIM * f_dec3.max(f_up1);
-    let scratch_a = context.create_array(&[max_elems], dt, "pipe_sa");
-    let scratch_b = context.create_array(&[max_elems], dt, "pipe_sb");
+    let scratch_a = context.create_array_zeros(&[max_elems], dt, "pipe_sa");
+    let scratch_b = context.create_array_zeros(&[max_elems], dt, "pipe_sb");
     // Third scratch buffer for residual connections (avoids RefCell borrow conflict)
-    let scratch_r = context.create_array(&[max_elems], dt, "pipe_sr");
+    let scratch_r = context.create_array_zeros(&[max_elems], dt, "pipe_sr");
 
     // Upsample block 0: 1024->512, stride=2
-    let u0_w = context.create_array(&[UP_CHANNELS[0] * UP_CHANNELS[1] * (UP_STRIDES[0] * 2)], dt, "u0_w");
-    let u0_b = context.create_array(&[UP_CHANNELS[1]], dt, "u0_b");
+    let u0_w = context.create_array_zeros(&[UP_CHANNELS[0] * UP_CHANNELS[1] * (UP_STRIDES[0] * 2)], dt, "u0_w");
+    let u0_b = context.create_array_zeros(&[UP_CHANNELS[1]], dt, "u0_b");
     // ConvNeXt 0 (ch=512)
     let c0_ch = UP_CHANNELS[1];
-    let c0_dw_w = context.create_array(&[c0_ch * 1 * 7], dt, "c0_dw_w");
-    let c0_dw_b = context.create_array(&[c0_ch], dt, "c0_dw_b");
-    let c0_ns = context.create_array(&[c0_ch], dt, "c0_ns");
-    let c0_nb = context.create_array(&[c0_ch], dt, "c0_nb");
-    let c0_p1_w = context.create_array(&[c0_ch * c0_ch], dt, "c0_p1_w");
-    let c0_p1_b = context.create_array(&[c0_ch], dt, "c0_p1_b");
-    let c0_p2_w = context.create_array(&[c0_ch * c0_ch], dt, "c0_p2_w");
-    let c0_p2_b = context.create_array(&[c0_ch], dt, "c0_p2_b");
+    let c0_dw_w = context.create_array_zeros(&[c0_ch * 1 * 7], dt, "c0_dw_w");
+    let c0_dw_b = context.create_array_zeros(&[c0_ch], dt, "c0_dw_b");
+    let c0_ns = context.create_array_zeros(&[c0_ch], dt, "c0_ns");
+    let c0_nb = context.create_array_zeros(&[c0_ch], dt, "c0_nb");
+    let c0_p1_w = context.create_array_zeros(&[c0_ch * c0_ch], dt, "c0_p1_w");
+    let c0_p1_b = context.create_array_zeros(&[c0_ch], dt, "c0_p1_b");
+    let c0_p2_w = context.create_array_zeros(&[c0_ch * c0_ch], dt, "c0_p2_w");
+    let c0_p2_b = context.create_array_zeros(&[c0_ch], dt, "c0_p2_b");
 
     // Upsample block 1: 512->256, stride=2
-    let u1_w = context.create_array(&[UP_CHANNELS[1] * UP_CHANNELS[2] * (UP_STRIDES[1] * 2)], dt, "u1_w");
-    let u1_b = context.create_array(&[UP_CHANNELS[2]], dt, "u1_b");
+    let u1_w = context.create_array_zeros(&[UP_CHANNELS[1] * UP_CHANNELS[2] * (UP_STRIDES[1] * 2)], dt, "u1_w");
+    let u1_b = context.create_array_zeros(&[UP_CHANNELS[2]], dt, "u1_b");
     // ConvNeXt 1 (ch=256)
     let c1_ch = UP_CHANNELS[2];
-    let c1_dw_w = context.create_array(&[c1_ch * 1 * 7], dt, "c1_dw_w");
-    let c1_dw_b = context.create_array(&[c1_ch], dt, "c1_dw_b");
-    let c1_ns = context.create_array(&[c1_ch], dt, "c1_ns");
-    let c1_nb = context.create_array(&[c1_ch], dt, "c1_nb");
-    let c1_p1_w = context.create_array(&[c1_ch * c1_ch], dt, "c1_p1_w");
-    let c1_p1_b = context.create_array(&[c1_ch], dt, "c1_p1_b");
-    let c1_p2_w = context.create_array(&[c1_ch * c1_ch], dt, "c1_p2_w");
-    let c1_p2_b = context.create_array(&[c1_ch], dt, "c1_p2_b");
+    let c1_dw_w = context.create_array_zeros(&[c1_ch * 1 * 7], dt, "c1_dw_w");
+    let c1_dw_b = context.create_array_zeros(&[c1_ch], dt, "c1_dw_b");
+    let c1_ns = context.create_array_zeros(&[c1_ch], dt, "c1_ns");
+    let c1_nb = context.create_array_zeros(&[c1_ch], dt, "c1_nb");
+    let c1_p1_w = context.create_array_zeros(&[c1_ch * c1_ch], dt, "c1_p1_w");
+    let c1_p1_b = context.create_array_zeros(&[c1_ch], dt, "c1_p1_b");
+    let c1_p2_w = context.create_array_zeros(&[c1_ch * c1_ch], dt, "c1_p2_w");
+    let c1_p2_b = context.create_array_zeros(&[c1_ch], dt, "c1_p2_b");
 
     // first_conv: 256->1536, k=7
-    let fc_w = context.create_array(&[DECODER_DIM * UP_CHANNELS[2] * 7], dt, "fc_w");
-    let fc_b = context.create_array(&[DECODER_DIM], dt, "fc_b");
+    let fc_w = context.create_array_zeros(&[DECODER_DIM * UP_CHANNELS[2] * 7], dt, "fc_w");
+    let fc_b = context.create_array_zeros(&[DECODER_DIM], dt, "fc_b");
 
     // Decoder block weights for all 4 blocks
     struct DecBlockWeights {
@@ -888,27 +892,27 @@ fn audio_kernel_perf() {
             let stride = DEC_STRIDES[i];
             let ksize = stride * 2;
             DecBlockWeights {
-                snake_a: context.create_array(&[cin], dt, &format!("d{i}_sa")),
-                tconv_w: context.create_array(&[cin * cout * ksize], dt, &format!("d{i}_tw")),
-                tconv_b: context.create_array(&[cout], dt, &format!("d{i}_tb")),
-                ru_s1: std::array::from_fn(|j| context.create_array(&[cout], dt, &format!("d{i}_r{j}_s1"))),
+                snake_a: context.create_array_zeros(&[cin], dt, &format!("d{i}_sa")),
+                tconv_w: context.create_array_zeros(&[cin * cout * ksize], dt, &format!("d{i}_tw")),
+                tconv_b: context.create_array_zeros(&[cout], dt, &format!("d{i}_tb")),
+                ru_s1: std::array::from_fn(|j| context.create_array_zeros(&[cout], dt, &format!("d{i}_r{j}_s1"))),
                 ru_c1_w: std::array::from_fn(|j| {
-                    context.create_array(&[cout * cout * 7], dt, &format!("d{i}_r{j}_c1w"))
+                    context.create_array_zeros(&[cout * cout * 7], dt, &format!("d{i}_r{j}_c1w"))
                 }),
-                ru_c1_b: std::array::from_fn(|j| context.create_array(&[cout], dt, &format!("d{i}_r{j}_c1b"))),
-                ru_s2: std::array::from_fn(|j| context.create_array(&[cout], dt, &format!("d{i}_r{j}_s2"))),
+                ru_c1_b: std::array::from_fn(|j| context.create_array_zeros(&[cout], dt, &format!("d{i}_r{j}_c1b"))),
+                ru_s2: std::array::from_fn(|j| context.create_array_zeros(&[cout], dt, &format!("d{i}_r{j}_s2"))),
                 ru_c2_w: std::array::from_fn(|j| {
-                    context.create_array(&[cout * cout * 7], dt, &format!("d{i}_r{j}_c2w"))
+                    context.create_array_zeros(&[cout * cout * 7], dt, &format!("d{i}_r{j}_c2w"))
                 }),
-                ru_c2_b: std::array::from_fn(|j| context.create_array(&[cout], dt, &format!("d{i}_r{j}_c2b"))),
+                ru_c2_b: std::array::from_fn(|j| context.create_array_zeros(&[cout], dt, &format!("d{i}_r{j}_c2b"))),
             }
         })
         .collect();
 
     // final snake + conv + tanh
-    let final_snake_a = context.create_array(&[DEC_CHANNELS[4]], dt, "final_sa");
-    let final_conv_w = context.create_array(&[1 * DEC_CHANNELS[4] * 7], dt, "final_cw");
-    let final_conv_b = context.create_array(&[1], dt, "final_cb");
+    let final_snake_a = context.create_array_zeros(&[DEC_CHANNELS[4]], dt, "final_sa");
+    let final_conv_w = context.create_array_zeros(&[1 * DEC_CHANNELS[4] * 7], dt, "final_cw");
+    let final_conv_b = context.create_array_zeros(&[1], dt, "final_cb");
 
     // Length arrays
     let len_up0 = make_lengths(&context, batch_size, f_up0 as i32);

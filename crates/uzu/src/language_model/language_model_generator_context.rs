@@ -1,7 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
     fs::File,
-    io::BufReader,
     path::Path,
     rc::Rc,
 };
@@ -119,7 +118,7 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub scratch_buffers: ScratchBuffers<B>,
 
     pub model_config: LanguageModelConfig,
-    pub decoder_config: Rc<DecoderConfig>,
+    pub decoder_config: DecoderConfig,
     pub model_shape: ModelShape,
     pub executables: Decoder<B>,
     pub kv_cache_update: Box<KVCacheUpdate<B>>,
@@ -139,21 +138,14 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,
+        model_metadata: &ModelMetadata,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
-
-        let config_path = model_path.join("config.json");
-        if !config_path.exists() {
-            return Err(Error::UnableToLoadConfig);
-        }
-        let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         // Extract language model config
         let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
 
-        let decoder_config = Rc::new(language_model_config.decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+        let decoder_config = language_model_config.decoder_config().map_err(|_| Error::UnableToLoadConfig)?;
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let prefill_step_size = decoding_config.prefill_step_size.resolve(language_model_config);
@@ -175,7 +167,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let scratch_buffers =
             ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_prefix_length, max_suffix_length);
 
-        let executables = Decoder::new(context.clone(), decoder_config.clone(), &root_loader_view);
+        let executables = Decoder::new(context.as_ref(), &decoder_config, &root_loader_view);
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),

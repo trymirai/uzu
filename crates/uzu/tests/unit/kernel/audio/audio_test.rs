@@ -80,19 +80,19 @@ fn audio_conv1d_replicate_matches_reference_f32() {
     let weight_values: Vec<f32> = (0..weight_len).map(|i| ((i as f32) * 0.07 - 1.3).cos() * 0.2).collect();
     let bias_values: Vec<f32> = (0..bias_len).map(|i| i as f32 * 0.01 - 0.02).collect();
 
-    let mut input = context.create_array(&[batch_size, cin, seq_len_in], DataType::F32, "audio_conv1d_input");
+    let mut input = context.create_array_zeros(&[batch_size, cin, seq_len_in], DataType::F32, "audio_conv1d_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let mut weight = context.create_array(&[cout, cin, kernel_size], DataType::F32, "audio_conv1d_weight");
+    let mut weight = context.create_array_zeros(&[cout, cin, kernel_size], DataType::F32, "audio_conv1d_weight");
     weight.as_slice_mut::<f32>().copy_from_slice(&weight_values);
 
-    let mut bias = context.create_array(&[cout], DataType::F32, "audio_conv1d_bias");
+    let mut bias = context.create_array_zeros(&[cout], DataType::F32, "audio_conv1d_bias");
     bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
 
-    let mut lengths = context.create_array(&[batch_size], DataType::I32, "audio_conv1d_lengths");
+    let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_conv1d_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
 
-    let output = context.create_array(&[batch_size, cout, seq_len_out], DataType::F32, "audio_conv1d_output");
+    let output = context.create_array_zeros(&[batch_size, cout, seq_len_out], DataType::F32, "audio_conv1d_output");
     let expected = conv1d_reference(Conv1dSpec {
         input: &input_values,
         weight: &weight_values,
@@ -173,19 +173,19 @@ fn audio_causal_conv1d_matches_reference_f32() {
     let weight_values: Vec<f32> = (0..weight_len).map(|i| ((i as f32) * 0.02 - 0.5).cos() * 0.1).collect();
     let bias_values: Vec<f32> = (0..bias_len).map(|i| i as f32 * 0.001 - 0.002).collect();
 
-    let mut input = context.create_array(&[batch_size, cin, seq_len], DataType::F32, "audio_causal_conv1d_input");
+    let mut input = context.create_array_zeros(&[batch_size, cin, seq_len], DataType::F32, "audio_causal_conv1d_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let mut weight = context.create_array(&[cout, cin, kernel_size], DataType::F32, "audio_causal_conv1d_weight");
+    let mut weight = context.create_array_zeros(&[cout, cin, kernel_size], DataType::F32, "audio_causal_conv1d_weight");
     weight.as_slice_mut::<f32>().copy_from_slice(&weight_values);
 
-    let mut bias = context.create_array(&[cout], DataType::F32, "audio_causal_conv1d_bias");
+    let mut bias = context.create_array_zeros(&[cout], DataType::F32, "audio_causal_conv1d_bias");
     bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
 
-    let mut lengths_array = context.create_array(&[batch_size], DataType::I32, "audio_causal_conv1d_lengths");
+    let mut lengths_array = context.create_array_zeros(&[batch_size], DataType::I32, "audio_causal_conv1d_lengths");
     lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths);
 
-    let output = context.create_array(&[batch_size, cout, seq_len], DataType::F32, "audio_causal_conv1d_output");
+    let output = context.create_array_zeros(&[batch_size, cout, seq_len], DataType::F32, "audio_causal_conv1d_output");
     let expected = causal_conv1d_reference(CausalConv1dSpec {
         input: &input_values,
         weight: &weight_values,
@@ -263,21 +263,27 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
     let bias_values: Vec<f32> = vec![0.01, -0.02];
 
     let mut input =
-        context.create_array(&[batch_size, cin, seq_len_in], DataType::F32, "audio_causal_conv_transpose_input");
+        context.create_array_zeros(&[batch_size, cin, seq_len_in], DataType::F32, "audio_causal_conv_transpose_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let mut weight =
-        context.create_array(&[cout, cin / groups, kernel_size], DataType::F32, "audio_causal_conv_transpose_weight");
+    let mut weight = context.create_array_zeros(
+        &[cout, cin / groups, kernel_size],
+        DataType::F32,
+        "audio_causal_conv_transpose_weight",
+    );
     weight.as_slice_mut::<f32>().copy_from_slice(&weight_values);
 
-    let mut bias = context.create_array(&[cout], DataType::F32, "audio_causal_conv_transpose_bias");
+    let mut bias = context.create_array_zeros(&[cout], DataType::F32, "audio_causal_conv_transpose_bias");
     bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
 
-    let mut lengths = context.create_array(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lengths");
+    let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
 
-    let output =
-        context.create_array(&[batch_size, cout, seq_len_out], DataType::F32, "audio_causal_conv_transpose_output");
+    let output = context.create_array_zeros(
+        &[batch_size, cout, seq_len_out],
+        DataType::F32,
+        "audio_causal_conv_transpose_output",
+    );
     let expected = causal_conv_transpose1d_reference(CausalConvTranspose1dSpec {
         input: &input_values,
         weight: &weight_values,
@@ -385,24 +391,25 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
         ("NCS", 0_i32, [batch_size, cin, seq_len_in], input_values_ncs.as_slice()),
         ("NSC", 1_i32, [batch_size, seq_len_in, cin], input_values_nsc.as_slice()),
     ] {
-        let mut input = context.create_array(&input_shape, DataType::F32, "audio_causal_conv_transpose_lalamo_input");
+        let mut input =
+            context.create_array_zeros(&input_shape, DataType::F32, "audio_causal_conv_transpose_lalamo_input");
         input.as_slice_mut::<f32>().copy_from_slice(input_values);
 
-        let mut weight = context.create_array(
+        let mut weight = context.create_array_zeros(
             &[cout, cin / groups, kernel_size],
             DataType::F32,
             "audio_causal_conv_transpose_lalamo_weight",
         );
         weight.as_slice_mut::<f32>().copy_from_slice(&weight_values);
 
-        let mut bias = context.create_array(&[cout], DataType::F32, "audio_causal_conv_transpose_lalamo_bias");
+        let mut bias = context.create_array_zeros(&[cout], DataType::F32, "audio_causal_conv_transpose_lalamo_bias");
         bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
 
         let mut lengths =
-            context.create_array(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lalamo_lengths");
+            context.create_array_zeros(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lalamo_lengths");
         lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
 
-        let output = context.create_array(
+        let output = context.create_array_zeros(
             &[batch_size, cout, seq_len_out],
             DataType::F32,
             "audio_causal_conv_transpose_lalamo_output",
@@ -457,11 +464,11 @@ fn audio_leaky_relu_matches_reference_f32() {
     let eps = 1e-6f32;
     let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
 
-    let mut input = context.create_array(&[1, 1, n], DataType::F32, "audio_leaky_relu_input");
+    let mut input = context.create_array_zeros(&[1, 1, n], DataType::F32, "audio_leaky_relu_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let alpha = context.create_array(&[1], DataType::F32, "audio_leaky_relu_alpha");
-    let output = context.create_array(&[1, 1, n], DataType::F32, "audio_leaky_relu_output");
+    let alpha = context.create_array_zeros(&[1], DataType::F32, "audio_leaky_relu_alpha");
+    let output = context.create_array_zeros(&[1, 1, n], DataType::F32, "audio_leaky_relu_output");
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
@@ -502,10 +509,10 @@ fn audio_tanh_matches_reference_f32() {
     let n = 1024usize;
     let input_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.01 - 5.12).collect();
 
-    let mut input = context.create_array(&[n], DataType::F32, "audio_tanh_input");
+    let mut input = context.create_array_zeros(&[n], DataType::F32, "audio_tanh_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let output = context.create_array(&[n], DataType::F32, "audio_tanh_output");
+    let output = context.create_array_zeros(&[n], DataType::F32, "audio_tanh_output");
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
@@ -531,13 +538,13 @@ fn audio_add_matches_reference_f32() {
     let a_values: Vec<f32> = (0..n).map(|i| i as f32 * 0.001 - 1.0).collect();
     let b_values: Vec<f32> = (0..n).map(|i| (i as f32 * 0.002).sin()).collect();
 
-    let mut a = context.create_array(&[n], DataType::F32, "audio_add_a");
+    let mut a = context.create_array_zeros(&[n], DataType::F32, "audio_add_a");
     a.as_slice_mut::<f32>().copy_from_slice(&a_values);
 
-    let mut b = context.create_array(&[n], DataType::F32, "audio_add_b");
+    let mut b = context.create_array_zeros(&[n], DataType::F32, "audio_add_b");
     b.as_slice_mut::<f32>().copy_from_slice(&b_values);
 
-    let sum = context.create_array(&[n], DataType::F32, "audio_add_sum");
+    let sum = context.create_array_zeros(&[n], DataType::F32, "audio_add_sum");
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(a_buffer = a);
@@ -578,13 +585,14 @@ fn audio_half_snake_matches_reference_f32() {
     let input_values: Vec<f32> = (0..n).map(|i| (i as f32 * 0.01 - 3.2).sin()).collect();
     let alpha_values: Vec<f32> = (0..snake_channels).map(|i| 0.5 + i as f32 * 0.1).collect();
 
-    let mut input = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_input");
+    let mut input =
+        context.create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let mut alpha = context.create_array(&[snake_channels], DataType::F32, "audio_half_snake_alpha");
+    let mut alpha = context.create_array_zeros(&[snake_channels], DataType::F32, "audio_half_snake_alpha");
     alpha.as_slice_mut::<f32>().copy_from_slice(&alpha_values);
 
-    let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_output");
+    let output = context.create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_output");
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
@@ -683,19 +691,19 @@ fn audio_norm_ncs_matches_reference_f32() {
     };
 
     for subtract_mean in [false, true] {
-        let mut input = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_input");
+        let mut input = context.create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_input");
         input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-        let mut scales = context.create_array(&[channels], DataType::F32, "audio_norm_scales");
+        let mut scales = context.create_array_zeros(&[channels], DataType::F32, "audio_norm_scales");
         scales.as_slice_mut::<f32>().copy_from_slice(&scales_values);
 
-        let mut bias = context.create_array(&[channels], DataType::F32, "audio_norm_bias");
+        let mut bias = context.create_array_zeros(&[channels], DataType::F32, "audio_norm_bias");
         bias.as_slice_mut::<f32>().copy_from_slice(&bias_values);
 
-        let mut lengths = context.create_array(&[batch_size], DataType::I32, "audio_norm_lengths");
+        let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_norm_lengths");
         lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_values);
 
-        let output = context.create_array(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_output");
+        let output = context.create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_output");
 
         run_command_buffer(&context, |command_buffer| {
             borrow_array_buffer!(input_buffer = input);
@@ -749,17 +757,20 @@ fn audio_fsq_decode_matches_reference() {
     let num_levels: Vec<i32> = vec![8, 5];
     let dim_base_index: Vec<i32> = vec![1, 8];
 
-    let mut tokens = context.create_array(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_tokens");
+    let mut tokens = context.create_array_zeros(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_tokens");
     tokens.as_slice_mut::<i32>().copy_from_slice(&[
         0, 7, 11, // g0 tokens at t0..t2
         3, 5, 9, // g1 tokens at t0..t2
     ]);
 
-    let mut lengths = context.create_array(&[batch_size], DataType::I32, "audio_fsq_lengths");
+    let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_fsq_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&[2]);
 
-    let output =
-        context.create_array(&[batch_size, num_groups * codebook_dim, seq_len], DataType::F32, "audio_fsq_output");
+    let output = context.create_array_zeros(
+        &[batch_size, num_groups * codebook_dim, seq_len],
+        DataType::F32,
+        "audio_fsq_output",
+    );
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(tokens_buffer = tokens);
@@ -812,17 +823,18 @@ fn audio_fsq_encode_matches_reference() {
     ];
     let lengths_values = vec![3_i32];
 
-    let mut input = context.create_array(
+    let mut input = context.create_array_zeros(
         &[batch_size, num_groups * codebook_dim, seq_len],
         DataType::F32,
         "audio_fsq_encode_input",
     );
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let mut lengths = context.create_array(&[batch_size], DataType::I32, "audio_fsq_encode_lengths");
+    let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_fsq_encode_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_values);
 
-    let tokens = context.create_array(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_encode_tokens");
+    let tokens =
+        context.create_array_zeros(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_encode_tokens");
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);

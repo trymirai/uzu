@@ -124,8 +124,8 @@ impl StructuredAudioCodecGraph {
             max_sequence_length,
         );
         let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
-            context.clone(),
-            decoder_config,
+            context.as_ref(),
+            &decoder_config,
             &root_loader_view,
             transformer_subtree_name,
         );
@@ -200,17 +200,17 @@ impl StructuredAudioCodecGraph {
         let residual_quantizers = self.config.n_codebooks;
         let residual_count_for_shape = residual_quantizers.max(1);
         let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-        let residual_codebooks = context.create_array(
+        let residual_codebooks = context.create_array_zeros(
             &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
             data_type,
             "structured_audio_quantizer_residual_codebooks",
         );
-        let residual_out_proj = context.create_array(
+        let residual_out_proj = context.create_array_zeros(
             &[residual_count_for_shape, self.input_dim, codebook_dim],
             data_type,
             "structured_audio_quantizer_residual_out_proj",
         );
-        let residual_out_bias = context.create_array(
+        let residual_out_bias = context.create_array_zeros(
             &[residual_count_for_shape, self.input_dim],
             data_type,
             "structured_audio_quantizer_residual_out_bias",
@@ -420,7 +420,7 @@ impl StructuredAudioCodecGraph {
             return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
         }
 
-        let output = context.create_array(
+        let output = context.create_array_zeros(
             &[batch_size, frames, self.input_dim],
             latent_nsc.data_type(),
             "structured_audio_post_module_output_nsc",

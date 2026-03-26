@@ -2,7 +2,7 @@ use std::fs::File;
 
 use uzu::read_safetensors_metadata;
 
-use crate::util::path::get_test_weights_path;
+use crate::common::path::get_test_weights_path;
 
 #[test]
 fn test_metadata_loading() {

@@ -168,7 +168,7 @@ pub(super) fn read_norm_layer<B: Backend>(
     let bias = if use_bias {
         read_float_vector_exact::<B>(tree, "biases", channels, data_type)?
     } else {
-        context.create_array(&[channels], data_type, &format!("{label_prefix}_bias"))
+        context.create_array_zeros(&[channels], data_type, &format!("{label_prefix}_bias"))
     };
     Ok(StructuredAudioNorm {
         scales,

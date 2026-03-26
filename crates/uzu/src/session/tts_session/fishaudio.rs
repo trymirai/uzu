@@ -109,7 +109,7 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
         let tensor_copy =
             <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
         let codebook_token_indices =
-            context.create_array(&[num_codebooks], DataType::U32, "tts_codebook_token_indices");
+            context.create_array_zeros(&[num_codebooks], DataType::U32, "tts_codebook_token_indices");
 
         Ok(Self {
             embedding_rows_sum,

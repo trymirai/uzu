@@ -25,19 +25,16 @@ if [[ "${1:-}" == "--check" ]]; then
   MODE="check"
 fi
 
-# Files to consider (zsh/bash compatible)
+# Files to consider:
+#   - tracked files from git
+#   - untracked files that are not ignored
 FILES=()
 while IFS= read -r -d '' file; do
   FILES+=("$file")
-done < <(find . \
-  -path './target' -prune -o \
-  -path './external' -prune -o \
-  -path './.git' -prune -o \
-  -type f \( \
-    -name '*.h' -o -name '*.hpp' -o -name '*.hh' -o \
-    -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o \
-    -name '*.metal' \
-  \) -print0)
+done < <(git ls-files -z --cached --others --exclude-standard -- \
+  '*.h' '*.hpp' '*.hh' \
+  '*.c' '*.cc' '*.cpp' \
+  '*.metal')
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
   echo "No files to format."

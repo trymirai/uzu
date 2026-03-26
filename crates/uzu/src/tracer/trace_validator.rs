@@ -185,7 +185,7 @@ impl<B: Backend> TraceValidator<B> {
             serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         let context = if metadata.model_config.is_classifier() {
-            let classifier = Classifier::new(model_path)?;
+            let classifier = Classifier::new(model_path, &metadata)?;
             ModelContext::Classifier(classifier)
         } else {
             let prefill_step_size = Self::determine_prefill_step_size(model_path);
@@ -198,7 +198,7 @@ impl<B: Backend> TraceValidator<B> {
                 AsyncBatchSize::default(),
                 false,
             );
-            let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config)?;
+            let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config, &metadata)?;
             let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
             Self::ensure_llm_context_capacity(&decoding_config, desired_suffix_length, &mut llm_context);
             ModelContext::LanguageModelGenerator(llm_context)

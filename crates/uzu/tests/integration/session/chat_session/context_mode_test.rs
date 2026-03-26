@@ -12,7 +12,7 @@ use uzu::session::{
     types::{Input, Message, Output},
 };
 
-use crate::util::path::get_test_model_path;
+use crate::common::path::get_test_model_path;
 
 fn build_model_path() -> PathBuf {
     get_test_model_path()
