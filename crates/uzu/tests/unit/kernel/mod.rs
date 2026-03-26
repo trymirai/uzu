@@ -12,6 +12,7 @@ mod layer_norm_test;
 mod mask_update_test;
 mod matmul;
 mod moe;
+mod pooling;
 mod qk_norm_test;
 mod rms_norm_test;
 mod rope_test;
