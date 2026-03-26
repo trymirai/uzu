@@ -74,7 +74,7 @@ fn run_delta_net_update<B: Backend>(
     let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias, "dt_bias");
     let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight, "norm_weight");
     let state_array = context.create_array_from(&[state.len()], state, "state");
-    let out_array = context.create_array(&[value_dim as usize], DataType::F32, "out");
+    let out_array = context.create_array_zeros(&[value_dim as usize], DataType::F32, "out");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, DataType::F32)
         .expect("Failed to create kernel");
@@ -181,8 +181,8 @@ fn test_delta_net_conv_scan() {
     let b_array = context.create_array_from(&[b.len()], &b, "b");
 
     let padded_len = (tap_count + suffix_len) * total_proj_dim;
-    let padded_array = context.create_array(&[padded_len], DataType::F32, "padded");
-    let state_out_array = context.create_array(&[conv_dim * tap_count], DataType::F32, "state_out");
+    let padded_array = context.create_array_zeros(&[padded_len], DataType::F32, "padded");
+    let state_out_array = context.create_array_zeros(&[conv_dim * tap_count], DataType::F32, "state_out");
 
     let pack_kernel =
         <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32).expect("pack");
@@ -316,7 +316,7 @@ fn run_prefill_with_norm_gate(
     let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias, "dt_bias");
     let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight, "norm_weight");
     let state_array = context.create_array_from(&[state.len()], state, "state");
-    let out_array = context.create_array(&[suffix_len * value_dim], DataType::F32, "out");
+    let out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32, "out");
 
     let num_v_tiles = (head_v_dim as u32 + 63) / 64;
     let prefill_k =
