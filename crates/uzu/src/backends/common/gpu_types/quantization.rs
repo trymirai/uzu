@@ -27,6 +27,10 @@ impl QuantizationMode {
             QuantizationMode::UINT8 => DataType::U8,
         }
     }
+
+    pub fn to_u32(&self) -> u32 {
+        (*self).into()
+    }
 }
 
 impl From<QuantizationMode> for DataType {
@@ -35,6 +39,17 @@ impl From<QuantizationMode> for DataType {
             QuantizationMode::UINT4 => DataType::U4,
             QuantizationMode::INT8 => DataType::I8,
             QuantizationMode::UINT8 => DataType::U8,
+        }
+    }
+}
+
+impl From<u32> for QuantizationMode {
+    fn from(val: u32) -> Self {
+        match val {
+            0 => QuantizationMode::UINT4,
+            1 => QuantizationMode::INT8,
+            2 => QuantizationMode::UINT8,
+            _ => panic!("Invalid QuantizationMode value: {val}"),
         }
     }
 }
