@@ -37,6 +37,8 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[specialize] do_causal: bool,
 ) {
     let value_dim = HEAD_DIM;
+    let mut q = vec![0.0f32; HEAD_DIM as usize];
+    let mut o = vec![0.0f32; HEAD_DIM as usize];
 
     for head_idx in 0..num_heads {
         for q_seq_idx in 0..suffix_length {
@@ -59,12 +61,11 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                 };
 
                 // Read the query and scale
-                let mut q = vec![0.0f32; HEAD_DIM as usize];
                 for j in 0..HEAD_DIM as usize {
                     q[j] = scale * unsafe { *queries_base.add(j) }.to_f32().unwrap();
                 }
+                o.fill(0f32);
 
-                let mut o = vec![0.0f32; HEAD_DIM as usize];
                 let mut max_score = -1e9f32;
                 let mut sum_exp_score = 0.0f32;
 
@@ -84,7 +85,6 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                         }
 
                         let use_key = !do_causal || i <= (sequence_length - suffix_length + q_seq_idx);
-
                         if use_key {
                             let keys_ptr = unsafe { keys_base.add((i * k_seq_stride) as usize) };
 
