@@ -11,7 +11,7 @@ use uzu::{
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 /// CPU reference for router logits (bf16 precision, f32 accumulation).
 pub fn cpu_router_logits_bf16(

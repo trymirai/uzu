@@ -10,7 +10,7 @@ use uzu::backends::{
     metal::Metal,
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, cpu_tile_counts, cpu_tile_scan, create_ctx};
+use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, cpu_tile_counts, cpu_tile_scan, create_ctx};
 
 #[test]
 fn test_tile_counts_correctness() {

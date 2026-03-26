@@ -17,7 +17,7 @@ use uzu::{
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 
 fn cpu_expert_buckets(
     topk_ids: &[i32],

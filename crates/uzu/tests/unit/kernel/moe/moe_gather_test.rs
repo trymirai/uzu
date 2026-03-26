@@ -14,7 +14,7 @@ use uzu::{
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
+use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
 
 /// CPU reference for gather operation: x_perm[i] = x[bucketed_ids[i]]
 ///

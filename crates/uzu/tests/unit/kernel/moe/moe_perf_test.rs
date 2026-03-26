@@ -17,7 +17,7 @@ use uzu::{
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
 use crate::common::perf::run_perf_with_warmup;
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)

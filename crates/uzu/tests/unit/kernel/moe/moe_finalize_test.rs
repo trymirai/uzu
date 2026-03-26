@@ -11,7 +11,7 @@ use uzu::{
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
+use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
 
 fn cpu_finalize(
     tok2row: &[i32],
