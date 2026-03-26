@@ -5,8 +5,8 @@ use std::{
 
 use super::{
     super::dsl::{
-        MatmulGemmMetalKernel, MatmulGemmMppDirectMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel,
-        TensorAddBiasMetalKernel,
+        MatmulGemmMetalKernel, MatmulGemmMppDirectMetalKernel,
+        MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
     },
     gemm, gemm_mpp, gemm_mpp_direct, gemv,
 };
@@ -356,12 +356,26 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<'_, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let specialization = gemm_mpp::GemmMppSpecialization::select(arguments.batch, arguments.output_dim);
-        let (params, group_count_x, group_count_y) = Self::make_mpp_params(
+        let (params, _, _) = Self::make_mpp_params(
             &arguments,
             specialization.block_rows,
             specialization.block_cols,
             specialization.swizzle_log2,
         );
+
+        let tg_rows = params.threadgroups_per_column;
+        let tg_cols = params.threadgroups_per_row;
+        let max_dim = std::cmp::max(tg_rows, tg_cols);
+        let min_dim = std::cmp::min(tg_rows, tg_cols);
+        let morton_dim = (max_dim as u32).next_power_of_two() as i32;
+        let morton_total = morton_dim * morton_dim;
+        let actual_total = tg_rows * tg_cols;
+        let use_morton = min_dim > 1 && morton_total <= 4 * actual_total;
+        let (group_count_x, group_count_y) = if use_morton {
+            (morton_total as u32, 1u32)
+        } else {
+            (tg_cols as u32, tg_rows as u32)
+        };
 
         let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
 
@@ -510,7 +524,7 @@ impl MatmulKernel for MatmulMetalKernel {
         if Self::is_gemv_eligible(&arguments) {
             self.encode_gemv(context, arguments, encoder).expect("Failed to encode GEMV kernel");
         } else if context.device_capabilities().supports_mxu {
-            self.encode_gemm_mpp(context, arguments, encoder).expect("Failed to encode GEMM MPP Direct kernel");
+            self.encode_gemm_mpp(context, arguments, encoder).expect("Failed to encode GEMM MPP kernel");
         } else {
             self.encode_gemm(context, arguments, encoder).expect("Failed to encode GEMM kernel");
         }

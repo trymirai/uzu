@@ -28,4 +28,12 @@
 /external
 
 tools/gpu_trace/*.json
+tools/autoresearch_verify.sh
+tools/matmul_profile/
+tools/ios_bench/
+tools/matmul_profile/probe_*.metal
+tools/matmul_profile/probe_*.swift
+autoresearch-results.tsv
+ios_bench_results.tsv
 results
+research

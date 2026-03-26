@@ -20,8 +20,7 @@ template <
     short SIMDGROUPS_N,
     short SUBTILE_ROWS,
     short SUBTILE_COLS,
-    short MATMUL_K_STEP,
-    bool USE_NATIVE_LAYOUT = false>
+    short MATMUL_K_STEP>
 METAL_FUNC void gemm_mpp_core(
     thread LoaderA& loader_a,
     thread LoaderB& loader_b,
@@ -57,32 +56,19 @@ METAL_FUNC void gemm_mpp_core(
       block_col_start_long + tile_row_offset * params->leading_dimension_d +
       tile_col_offset;
 
-  const int simdgroup_limit_m_int =
-      align_m ? int(SIMDGROUP_BLOCK_M)
-              : min(int(SIMDGROUP_BLOCK_M),
-                    params->M - (block_row_start + tile_row_offset));
-  const short simdgroup_limit_m = short(simdgroup_limit_m_int);
-
-  const int simdgroup_limit_n_int =
-      align_n ? int(SIMDGROUP_BLOCK_N)
-              : min(int(SIMDGROUP_BLOCK_N),
-                    params->N - (block_col_start + tile_col_offset));
-  const short simdgroup_limit_n = short(simdgroup_limit_n_int);
-
-  const bool is_unaligned_m =
-      align_m ? false : (simdgroup_limit_m != SIMDGROUP_BLOCK_M);
-  const bool is_unaligned_n =
-      align_n ? false : (simdgroup_limit_n != SIMDGROUP_BLOCK_N);
+  const short simdgroup_limit_m =
+      align_m ? SIMDGROUP_BLOCK_M
+                : short(min(int(SIMDGROUP_BLOCK_M),
+                            params->M - (block_row_start + tile_row_offset)));
+  const short simdgroup_limit_n =
+      align_n ? SIMDGROUP_BLOCK_N
+                : short(min(int(SIMDGROUP_BLOCK_N),
+                            params->N - (block_col_start + tile_col_offset)));
 
   constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
-      SUBTILE_ROWS,
-      SUBTILE_COLS,
-      MATMUL_K_STEP,
-      false,
-      true,
-      USE_NATIVE_LAYOUT,
-      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
-  );
+      SUBTILE_ROWS, SUBTILE_COLS, MATMUL_K_STEP,
+      false, true, false,
+      mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate);
 
   mpp::tensor_ops::matmul2d<matmul_descriptor, metal::execution_simdgroup>
       matmul_operation;
@@ -95,69 +81,16 @@ METAL_FUNC void gemm_mpp_core(
           .template get_right_input_cooperative_tensor<T, T, AccumulatorType>();
   auto accumulator_tensor =
       matmul_operation.template get_destination_cooperative_tensor<
-          decltype(left_tensor),
-          decltype(right_tensor),
-          AccumulatorType>();
+          decltype(left_tensor), decltype(right_tensor), AccumulatorType>();
 
-  const short left_capacity = left_tensor.get_capacity();
-  const short right_capacity = right_tensor.get_capacity();
   const short accumulator_capacity = accumulator_tensor.get_capacity();
 
-  short left_col[16], left_row[16];
-  short right_col[16], right_row[16];
-  short output_col[16], output_row[16];
-  bool output_valid[16];
-
-  METAL_PRAGMA_UNROLL
-  for (short i = 0; i < left_capacity; i++) {
-    auto coord = left_tensor.get_multidimensional_index(i);
-    left_col[i] = coord[0];
-    left_row[i] = coord[1];
-  }
-
-  METAL_PRAGMA_UNROLL
-  for (short i = 0; i < right_capacity; i++) {
-    auto coord = right_tensor.get_multidimensional_index(i);
-    right_col[i] = coord[0];
-    right_row[i] = coord[1];
-  }
-
-  METAL_PRAGMA_UNROLL
-  for (short i = 0; i < accumulator_capacity; i++) {
-    auto coord = accumulator_tensor.get_multidimensional_index(i);
-    output_col[i] = coord[0];
-    output_row[i] = coord[1];
-    output_valid[i] = accumulator_tensor.is_valid_element(i);
-  }
-
   AccumulatorType accum_storage[TILES_M * TILES_N][16];
-  int all_left_tg_base[TILES_M * TILES_N][16];
-  int all_right_tg_base[TILES_M * TILES_N][16];
-
   METAL_PRAGMA_UNROLL
-  for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+  for (short t = 0; t < TILES_M * TILES_N; t++) {
     METAL_PRAGMA_UNROLL
-    for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
-      const short subtile_index = tile_m * TILES_N + tile_n;
-      const short a_m_base = tile_row_offset + tile_m * SUBTILE_ROWS;
-      const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
-
-      METAL_PRAGMA_UNROLL
-      for (short i = 0; i < left_capacity; i++) {
-        all_left_tg_base[subtile_index][i] =
-            (a_m_base + left_row[i]) * THREADGROUP_LD + left_col[i];
-      }
-
-      METAL_PRAGMA_UNROLL
-      for (short i = 0; i < right_capacity; i++) {
-        all_right_tg_base[subtile_index][i] =
-            (b_n_base + right_row[i]) * THREADGROUP_LD + right_col[i];
-      }
-
-      METAL_PRAGMA_UNROLL
-      for (short i = 0; i < 16; i++) {
-        accum_storage[subtile_index][i] = AccumulatorType(0);
-      }
+    for (short i = 0; i < 16; i++) {
+      accum_storage[t][i] = AccumulatorType(0);
     }
   }
 
@@ -185,18 +118,8 @@ METAL_FUNC void gemm_mpp_core(
       METAL_PRAGMA_UNROLL
       for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
         const short subtile_index = tile_m * TILES_N + tile_n;
-
-        const short m_limit =
-            is_unaligned_m
-                ? short(max(0, int(simdgroup_limit_m) - tile_m * SUBTILE_ROWS))
-                : SUBTILE_ROWS;
-        const short n_limit =
-            is_unaligned_n
-                ? short(max(0, int(simdgroup_limit_n) - tile_n * SUBTILE_COLS))
-                : SUBTILE_COLS;
-        if (m_limit <= 0 || n_limit <= 0) {
-          continue;
-        }
+        const short a_m_base = tile_row_offset + tile_m * SUBTILE_ROWS;
+        const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
 
         METAL_PRAGMA_UNROLL
         for (short i = 0; i < accumulator_capacity; i++) {
@@ -208,15 +131,17 @@ METAL_FUNC void gemm_mpp_core(
           const short k_offset = k_step * MATMUL_K_STEP;
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < left_capacity; i++) {
+          for (short i = 0; i < left_tensor.get_capacity(); i++) {
+            auto coord = left_tensor.get_multidimensional_index(i);
             left_tensor[i] =
-                left_shared[all_left_tg_base[subtile_index][i] + k_offset];
+                left_shared[(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < right_capacity; i++) {
+          for (short i = 0; i < right_tensor.get_capacity(); i++) {
+            auto coord = right_tensor.get_multidimensional_index(i);
             right_tensor[i] =
-                right_shared[all_right_tg_base[subtile_index][i] + k_offset];
+                right_shared[(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
@@ -247,18 +172,8 @@ METAL_FUNC void gemm_mpp_core(
       METAL_PRAGMA_UNROLL
       for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
         const short subtile_index = tile_m * TILES_N + tile_n;
-
-        const short m_limit =
-            is_unaligned_m
-                ? short(max(0, int(simdgroup_limit_m) - tile_m * SUBTILE_ROWS))
-                : SUBTILE_ROWS;
-        const short n_limit =
-            is_unaligned_n
-                ? short(max(0, int(simdgroup_limit_n) - tile_n * SUBTILE_COLS))
-                : SUBTILE_COLS;
-        if (m_limit <= 0 || n_limit <= 0) {
-          continue;
-        }
+        const short a_m_base = tile_row_offset + tile_m * SUBTILE_ROWS;
+        const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
 
         METAL_PRAGMA_UNROLL
         for (short i = 0; i < accumulator_capacity; i++) {
@@ -269,15 +184,17 @@ METAL_FUNC void gemm_mpp_core(
           const short k_offset = k_step * MATMUL_K_STEP;
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < left_capacity; i++) {
+          for (short i = 0; i < left_tensor.get_capacity(); i++) {
+            auto coord = left_tensor.get_multidimensional_index(i);
             left_tensor[i] =
-                left_shared[all_left_tg_base[subtile_index][i] + k_offset];
+                left_shared[(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < right_capacity; i++) {
+          for (short i = 0; i < right_tensor.get_capacity(); i++) {
+            auto coord = right_tensor.get_multidimensional_index(i);
             right_tensor[i] =
-                right_shared[all_right_tg_base[subtile_index][i] + k_offset];
+                right_shared[(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
           }
 
           matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
@@ -291,50 +208,34 @@ METAL_FUNC void gemm_mpp_core(
     }
   }
 
+  const int ld_d = params->leading_dimension_d;
+
   METAL_PRAGMA_UNROLL
   for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
     METAL_PRAGMA_UNROLL
     for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
       const short row_offset = tile_m * SUBTILE_ROWS;
       const short col_offset = tile_n * SUBTILE_COLS;
+      const short m_limit = align_m ? SUBTILE_ROWS
+          : short(max(0, int(simdgroup_limit_m) - row_offset));
+      const short n_limit = align_n ? SUBTILE_COLS
+          : short(max(0, int(simdgroup_limit_n) - col_offset));
+      if (m_limit <= 0 || n_limit <= 0) continue;
 
-      const short m_limit =
-          is_unaligned_m ? short(max(0, int(simdgroup_limit_m) - row_offset))
-                         : SUBTILE_ROWS;
-      const short n_limit =
-          is_unaligned_n ? short(max(0, int(simdgroup_limit_n) - col_offset))
-                         : SUBTILE_COLS;
-      if (m_limit <= 0 || n_limit <= 0) {
-        continue;
-      }
-
-      device T* output_subtile_ptr =
-          output_ptr + row_offset * params->leading_dimension_d + col_offset;
+      device T* out_ptr = output_ptr + row_offset * ld_d + col_offset;
 
       METAL_PRAGMA_UNROLL
       for (short i = 0; i < accumulator_capacity; i++) {
-        accumulator_tensor[i] = accum_storage[tile_m * TILES_N + tile_n][i];
-      }
-
-      const bool subtile_aligned_m =
-          !is_unaligned_m || (m_limit == SUBTILE_ROWS);
-      const bool subtile_aligned_n =
-          !is_unaligned_n || (n_limit == SUBTILE_COLS);
-
-      METAL_PRAGMA_UNROLL
-      for (short i = 0; i < accumulator_capacity; i++) {
-        if (subtile_aligned_m && subtile_aligned_n) {
-          if (output_valid[i]) {
-            output_subtile_ptr
-                [output_row[i] * params->leading_dimension_d + output_col[i]] =
-                    T(accumulator_tensor[i]);
+        auto coord = accumulator_tensor.get_multidimensional_index(i);
+        const bool valid = accumulator_tensor.is_valid_element(i);
+        AccumulatorType val = accum_storage[tile_m * TILES_N + tile_n][i];
+        if (align_m && align_n) {
+          if (valid) {
+            out_ptr[coord[1] * ld_d + coord[0]] = T(val);
           }
         } else {
-          if (output_valid[i] && output_row[i] < m_limit &&
-              output_col[i] < n_limit) {
-            output_subtile_ptr
-                [output_row[i] * params->leading_dimension_d + output_col[i]] =
-                    T(accumulator_tensor[i]);
+          if (valid && coord[1] < m_limit && coord[0] < n_limit) {
+            out_ptr[coord[1] * ld_d + coord[0]] = T(val);
           }
         }
       }
