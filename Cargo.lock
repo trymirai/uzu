@@ -4384,7 +4384,6 @@ dependencies = [
  "bytesize",
  "cbindgen",
  "clang-ast",
- "clap",
  "comfy-table",
  "depfile",
  "dsl",
