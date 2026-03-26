@@ -28,7 +28,6 @@ pub struct ModelShape {
     max_rope_dim: usize,
     has_gate: bool,
     max_delta_net_kernel_size: usize,
-    max_delta_net_conv_dim: usize,
     max_qkv_dim: usize,
 }
 
@@ -79,16 +78,13 @@ impl ModelShape {
             }
         }
         let mut max_delta_net_kernel_size = 0usize;
-        let mut max_delta_net_conv_dim = 0usize;
         for layer in layer_types.iter() {
             if let DecoderLayerType::DeltaNet {
-                conv_dim,
                 kernel_size,
                 ..
             } = layer
             {
                 max_delta_net_kernel_size = max_delta_net_kernel_size.max(*kernel_size);
-                max_delta_net_conv_dim = max_delta_net_conv_dim.max(*conv_dim);
             }
         }
 
@@ -145,7 +141,6 @@ impl ModelShape {
             max_rope_dim,
             has_gate,
             max_delta_net_kernel_size,
-            max_delta_net_conv_dim,
             max_qkv_dim,
         }
     }

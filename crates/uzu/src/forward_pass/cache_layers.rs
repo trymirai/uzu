@@ -225,12 +225,12 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
-                        conv_state: context.create_array(
+                        conv_state: context.create_array_zeros(
                             &conv_shape,
                             dtype,
                             &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
                         ),
-                        ssm_state: context.create_array(
+                        ssm_state: context.create_array_zeros(
                             &ssm_shape,
                             dtype,
                             &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),
@@ -496,7 +496,7 @@ impl<B: Backend> CacheLayers<B> {
                 CacheLayer::DeltaNet(layer) => {
                     let conv_shape = layer.conv_state.shape().to_vec();
                     let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array(
+                    let mut new_conv = context.create_array_uninitialized(
                         &conv_shape,
                         conv_dtype,
                         &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
@@ -505,7 +505,7 @@ impl<B: Backend> CacheLayers<B> {
 
                     let ssm_shape = layer.ssm_state.shape().to_vec();
                     let ssm_dtype = layer.ssm_state.data_type();
-                    let mut new_ssm = context.create_array(
+                    let mut new_ssm = context.create_array_uninitialized(
                         &ssm_shape,
                         ssm_dtype,
                         &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),
