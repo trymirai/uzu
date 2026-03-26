@@ -36,12 +36,8 @@ impl DispatchPath {
     }
 }
 
-const ALL_DISPATCH_PATHS: [DispatchPath; 4] = [
-    DispatchPath::Gemv,
-    DispatchPath::Gemm,
-    DispatchPath::GemmMpp,
-    DispatchPath::GemmMppDirect,
-];
+const ALL_DISPATCH_PATHS: [DispatchPath; 4] =
+    [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMpp, DispatchPath::GemmMppDirect];
 
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
@@ -73,9 +69,7 @@ fn run_metal_matmul(
         n
     };
 
-    let mut kernel =
-        <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(ctx, DataType::BF16).expect("kernel");
-
+    let mut command_buffer = Encoder::<Metal>::new(ctx).unwrap();
     let arguments = MatmulArguments {
         a: &a_buf,
         a_offset: 0,
@@ -92,14 +86,14 @@ fn run_metal_matmul(
     };
 
     let encode_result = match dispatch_path {
-        DispatchPath::Gemv => kernel.encode_gemv(ctx, arguments, &mut encoder),
-        DispatchPath::Gemm => kernel.encode_gemm(ctx, arguments, &mut encoder),
-        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, arguments, &mut encoder),
-        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(ctx, arguments, &mut encoder),
+        DispatchPath::Gemv => kernel.encode_gemv(ctx, arguments, &mut command_buffer),
+        DispatchPath::Gemm => kernel.encode_gemm(ctx, arguments, &mut command_buffer),
+        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, arguments, &mut command_buffer),
+        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(ctx, arguments, &mut command_buffer),
     };
 
     encode_result.map_err(|e| e.to_string())?;
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    command_buffer.end_encoding().submit().wait_until_completed().map_err(|e| e.to_string())?;
 
     Ok(unsafe {
         let ptr = d_buf.contents().as_ptr() as *const bf16;

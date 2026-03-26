@@ -1,12 +1,11 @@
-#![cfg(metal_backend)]
-
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
+            CommandBufferPending, Context,
             kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
         },
         metal::Metal,
@@ -68,7 +67,7 @@ fn encode_and_run(
     b_buffer: &Buf,
     d_buffer: &mut Buf,
 ) -> Result<f64, BenchError> {
-    let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
+    let mut command_buffer = context.create_command_buffer().map_err(|_| BenchError::CommandBuffer)?.start_encoding();
 
     let arguments = MatmulArguments {
         a: a_buffer,
@@ -86,15 +85,16 @@ fn encode_and_run(
     };
 
     let encode_result = match dispatch_path {
-        DispatchPath::Gemv => kernel.encode_gemv(context, arguments, &mut encoder),
-        DispatchPath::Gemm => kernel.encode_gemm(context, arguments, &mut encoder),
-        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut encoder),
-        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, arguments, &mut encoder),
+        DispatchPath::Gemv => kernel.encode_gemv(context, arguments, &mut command_buffer),
+        DispatchPath::Gemm => kernel.encode_gemm(context, arguments, &mut command_buffer),
+        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut command_buffer),
+        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, arguments, &mut command_buffer),
     };
 
     encode_result.map_err(|e| BenchError::Kernel(e.to_string()))?;
 
-    let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
+    let completed =
+        command_buffer.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
     completed.gpu_execution_time().map(|duration| duration.as_secs_f64() * 1000.0).ok_or(BenchError::GpuTimestamps)
 }

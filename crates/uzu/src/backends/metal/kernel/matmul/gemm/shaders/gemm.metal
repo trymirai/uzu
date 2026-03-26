@@ -3,7 +3,7 @@
 #include "../../../common/dsl.h"
 #include "../../../common/thread_context.h"
 
-#include "../../common/gemm.h"
+#include "gemm.h"
 
 using namespace uzu::matmul;
 
