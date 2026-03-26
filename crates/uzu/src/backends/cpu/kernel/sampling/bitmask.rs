@@ -29,10 +29,9 @@ pub fn bitmask<T: ArrayElement + Float>(
             let bitmask_idx = batch_idx * bitmask_size + token_idx / 32;
             unsafe {
                 let mask = (*bitmask.add(bitmask_idx) >> (token_idx % 32)) & 1;
-                *processed_logits.add(global_idx) = if mask != 0 {
-                    *logits.add(global_idx)
-                } else {
-                    T::neg_infinity()
+                *processed_logits.add(global_idx) = match mask != 0 {
+                    true => *logits.add(global_idx),
+                    false => T::neg_infinity(),
                 };
             }
         }
