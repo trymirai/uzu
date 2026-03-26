@@ -71,7 +71,7 @@ def _generate_combo_chart(
     )
 
     fig.suptitle(
-        f"{combo} Latency vs Batch Size",
+        f"{combo} Relative Slowdown vs Gemv(bs=1)",
         fontsize=16,
         fontweight="bold",
         y=1.0,
@@ -109,9 +109,19 @@ def _draw_panel(
 ) -> None:
     ax.set_title(f"N={n}, K={k}", fontsize=10, fontweight="bold")
     ax.set_xlabel("Batch size (M)", fontsize=8)
-    ax.set_ylabel("Latency (ms)", fontsize=8)
+    ax.set_ylabel("Relative slowdown vs Gemv(bs=1)", fontsize=8)
     ax.tick_params(labelsize=7)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, which="both")
+
+    gemv_data = path_data.get("Gemv", {})
+    baseline_ms = gemv_data.get(1)
+    if baseline_ms is None or baseline_ms == 0:
+        for dp in sorted(path_data.keys()):
+            if 1 in path_data[dp] and path_data[dp][1] > 0:
+                baseline_ms = path_data[dp][1]
+                break
+    if baseline_ms is None or baseline_ms == 0:
+        baseline_ms = 1.0
 
     for dispatch_path in sorted(path_data.keys()):
         m_to_ms = path_data[dispatch_path]
@@ -119,11 +129,11 @@ def _draw_panel(
             continue
 
         m_values = sorted(m_to_ms.keys())
-        ms_values = [m_to_ms[m] for m in m_values]
+        rel_values = [m_to_ms[m] / baseline_ms for m in m_values]
 
         style = _style_for(dispatch_path)
         ax.plot(
-            m_values, ms_values,
+            m_values, rel_values,
             label=dispatch_path,
             markersize=4,
             linewidth=1.5,
@@ -131,7 +141,10 @@ def _draw_panel(
         )
 
     ax.set_xscale("log", base=2)
+    ax.set_yscale("log", base=2)
     ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
     ax.xaxis.set_major_locator(ticker.FixedLocator([1, 2, 4, 8, 16, 32, 64, 128, 256, 512]))
-    ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:.3g}x"))
+    ax.yaxis.set_minor_formatter(ticker.NullFormatter())
+    ax.axhline(y=1.0, color="gray", linewidth=0.8, linestyle=":", alpha=0.6)
     ax.legend(fontsize=7, loc="upper left")

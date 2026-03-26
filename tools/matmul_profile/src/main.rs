@@ -15,8 +15,10 @@ type Ctx = <Metal as Backend>::Context;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum KernelChoice {
+    Gemv,
     Gemm,
     GemmMpp,
+    GemmMppDirect,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -95,8 +97,10 @@ fn run_iteration(
     };
 
     match kernel_choice {
+        KernelChoice::Gemv => kernel.encode_gemv(context, arguments, &mut encoder).unwrap(),
         KernelChoice::Gemm => kernel.encode_gemm(context, arguments, &mut encoder).unwrap(),
         KernelChoice::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut encoder).unwrap(),
+        KernelChoice::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, arguments, &mut encoder).unwrap(),
     }
 
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
