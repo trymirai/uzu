@@ -44,6 +44,7 @@ serde_json5.workspace = true
 schemars.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true
+clap.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
