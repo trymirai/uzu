@@ -7,4 +7,3 @@ mod moe_gather_test;
 mod moe_perf_test;
 mod moe_router_topk_test;
 mod moe_scatter_test;
-mod moe_tiles_test;

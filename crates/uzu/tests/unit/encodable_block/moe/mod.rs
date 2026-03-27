@@ -4,6 +4,7 @@ mod common;
 
 mod moe_block_e2e_test;
 mod moe_experts_test;
+mod moe_tiles_test;
 
 /// CPU reference for tile counts: count number of BM-sized tiles per expert
 ///

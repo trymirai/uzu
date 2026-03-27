@@ -336,7 +336,7 @@ fn run_conv_scan_once(
         channels as u32,
         channels as u32,
         0u32,
-        ActivationType::SILU,
+        ActivationType::silu_default(),
         &mut encoder,
     );
 
