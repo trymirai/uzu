@@ -4,8 +4,8 @@ mod matmul;
 
 pub use matmul::MatmulCpuKernel;
 
-use crate::backends::{common::kernel::matmul::MatmulKernels, cpu::kernel::CpuKernels};
+use crate::backends::{common::kernel::ManualKernels, cpu::kernel::CpuKernels};
 
-impl MatmulKernels for CpuKernels {
+impl ManualKernels for CpuKernels {
     type MatmulKernel = MatmulCpuKernel;
 }

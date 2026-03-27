@@ -15,16 +15,16 @@ namespace matmul {
 #endif
 
 typedef struct {
-  int32_t M;
-  int32_t N;
-  int32_t K;
-  int32_t leading_dimension_a;
-  int32_t leading_dimension_b;
-  int32_t leading_dimension_d;
-  int32_t threadgroups_per_column;
-  int32_t threadgroups_per_row;
-  int32_t swizzle_log;
-  int32_t aligned_inner_iterations;
+  uint32_t M;
+  uint32_t N;
+  uint32_t K;
+  uint32_t leading_dimension_a;
+  uint32_t leading_dimension_b;
+  uint32_t leading_dimension_d;
+  uint32_t threadgroups_per_column;
+  uint32_t threadgroups_per_row;
+  uint32_t swizzle_log;
+  uint32_t aligned_inner_iterations;
 } GemmParams;
 
 #ifdef __METAL_VERSION__
