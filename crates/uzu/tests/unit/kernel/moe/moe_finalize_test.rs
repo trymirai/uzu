@@ -1,5 +1,3 @@
-#![cfg(metal_backend)]
-
 use std::ops::{Deref, DerefMut};
 
 use half::bf16;
