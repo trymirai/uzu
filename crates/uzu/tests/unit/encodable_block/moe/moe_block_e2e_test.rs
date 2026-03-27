@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::helpers::{alloc_buffer, alloc_buffer_with_data, create_context};
+use crate::encodable_block::mlp::moe::tests::common::helpers::{alloc_buffer, alloc_buffer_with_data, create_context};
 
 fn moe_cpu_reference(
     x: &[bf16],
