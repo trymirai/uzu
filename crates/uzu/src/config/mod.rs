@@ -29,6 +29,7 @@ pub use classifier_model::*;
 pub use common::*;
 pub use decoder::*;
 pub use decoder_layer::*;
+#[allow(unused_imports)]
 pub use delta_net::*;
 pub use embedding::*;
 pub use error::*;
