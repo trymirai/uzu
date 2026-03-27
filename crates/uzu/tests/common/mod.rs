@@ -3,6 +3,7 @@
 pub mod assert;
 pub mod audio_nanocodec_fsq_reference;
 pub mod audio_nanocodec_ops_reference;
+pub mod helpers;
 pub mod path;
 pub mod perf;
 pub mod proptest;

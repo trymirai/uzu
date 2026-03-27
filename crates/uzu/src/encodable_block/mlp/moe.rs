@@ -475,3 +475,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/encodable_block/moe/mod.rs"]
+mod tests;

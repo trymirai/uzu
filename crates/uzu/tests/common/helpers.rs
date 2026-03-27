@@ -1,0 +1,25 @@
+use std::rc::Rc;
+
+use uzu::backends::common::{Backend, Buffer, Context};
+
+pub fn alloc_buffer<B: Backend, T>(
+    context: &B::Context,
+    elements_count: usize,
+) -> B::Buffer {
+    context.create_buffer(elements_count * size_of::<T>()).expect("Failed to create buffer")
+}
+
+pub fn alloc_buffer_with_data<B: Backend, T: bytemuck::NoUninit>(
+    context: &B::Context,
+    data: &[T],
+) -> B::Buffer {
+    let slice: &[u8] = bytemuck::cast_slice(data);
+    let buffer = context.create_buffer(slice.len()).expect("Failed to create buffer");
+    let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, buffer.length()) };
+    bytes.copy_from_slice(slice);
+    buffer
+}
+
+pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
+    B::Context::new().expect(format!("Failed to create context for {}", std::any::type_name::<B>()).as_str())
+}
