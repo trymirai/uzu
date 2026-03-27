@@ -8,7 +8,6 @@
 use std::rc::Rc;
 
 use bytemuck;
-use half::bf16;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use uzu::backends::{
@@ -42,45 +41,4 @@ pub fn alloc_buffer<T>(
     count: usize,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     ctx.create_buffer(count * size_of::<T>()).expect("Failed to create buffer")
-}
-
-/// Compare two bf16 slices with tolerance
-///
-/// # Arguments
-/// * `a` - First slice
-/// * `b` - Second slice
-/// * `tolerance` - Maximum absolute difference allowed
-/// * `name` - Name for error messages
-///
-/// # Panics
-/// Panics if any element differs by more than tolerance
-pub fn assert_bf16_close(
-    a: &[bf16],
-    b: &[bf16],
-    tolerance: f32,
-    name: &str,
-) {
-    assert_eq!(a.len(), b.len(), "{}: length mismatch", name);
-
-    let mut max_diff = 0.0f32;
-    let mut max_idx = 0;
-
-    for (i, (&a_val, &b_val)) in a.iter().zip(b.iter()).enumerate() {
-        let diff = (f32::from(a_val) - f32::from(b_val)).abs();
-        if diff > max_diff {
-            max_diff = diff;
-            max_idx = i;
-        }
-    }
-
-    assert!(
-        max_diff <= tolerance,
-        "{}: max difference {:.6} at index {} exceeds tolerance {:.6} (a={:.6}, b={:.6})",
-        name,
-        max_diff,
-        max_idx,
-        tolerance,
-        f32::from(a[max_idx]),
-        f32::from(b[max_idx])
-    );
 }
