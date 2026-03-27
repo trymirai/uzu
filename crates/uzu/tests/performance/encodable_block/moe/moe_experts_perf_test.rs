@@ -6,19 +6,16 @@ use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     DataType,
-    backends::{
-        common::{
-            Backend, Encoder,
-            kernel::moe::{
-                MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
-                MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
-            },
+    backends::common::{
+        Backend, Encoder,
+        kernel::moe::{
+            MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
+            MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
         },
-        metal::Metal,
     },
 };
 
-use crate::moe::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
+use crate::common::helpers::{alloc_buffer, alloc_buffer_with_data, create_context};
 
 fn build_offsets(
     e: usize,
@@ -38,8 +35,8 @@ fn build_offsets(
     offsets
 }
 
-fn run_decode_case(
-    ctx: &<Metal as Backend>::Context,
+fn run_decode_case<B: Backend>(
+    ctx: &B::Context,
     name: &str,
     t: usize,
     d_model: usize,
@@ -80,31 +77,28 @@ fn run_decode_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(ctx).expect("experts decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(ctx).expect("experts decode kernel");
 
-    let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
-    let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
-
-    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
-
-    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
-
-    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
+    let x_perm_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &x_perm);
+    let offsets_buf = alloc_buffer_with_data::<B, u32>(&ctx, &offsets);
+    let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
+    let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
+    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
 
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
-    let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let mut output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
+    let mut output_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
 
     // Buffers for indirect dispatch
-    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut tile_counts_buf = alloc_buffer::<B, u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
     let max_tiles = e * sum_k * 16384; // Conservative upper bound
-    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
-    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
-    let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
+    let mut tile_map_buf = alloc_buffer::<B, u32>(&ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<B, u32>(&ctx, 1);
+    let mut dispatch_args_buf = alloc_buffer::<B, u32>(&ctx, 3);
+    let mut row_expert_map_buf = alloc_buffer::<B, u32>(&ctx, sum_k);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
@@ -193,21 +187,8 @@ fn run_decode_case(
     eprintln!("    → Latency: {:.1} µs/token", (mean / t as f64) * 1000.0);
 }
 
-#[test]
-#[ignore]
-fn test_two_pass_decode_speed() {
-    let ctx = create_ctx();
-
-    let cases =
-        vec![("T1_E16_D1024_F4096", 1, 1024, 4096, 16, 4, 3, 20), ("T1_E8_D2048_F8192", 1, 2048, 8192, 8, 4, 3, 20)];
-
-    for (name, t, d_model, d_ff, e, k, warmup, iters) in &cases {
-        run_decode_case(&ctx, name, *t, *d_model, *d_ff, *e, *k, *warmup, *iters);
-    }
-}
-
-fn run_two_pass_prefill_case(
-    ctx: &<Metal as Backend>::Context,
+fn run_two_pass_prefill_case<B: Backend>(
+    ctx: &B::Context,
     name: &str,
     t: usize,
     d_model: usize,
@@ -246,27 +227,27 @@ fn run_two_pass_prefill_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassPrefillBlock::<Metal>::new(ctx).expect("experts prefill kernel");
+    let experts_kernel = MoeExpertsTwoPassPrefillBlock::<B>::new(ctx).expect("experts prefill kernel");
 
-    let x_perm_buf = alloc_buffer_with_data(&ctx, &x_perm);
-    let offsets_buf = alloc_buffer_with_data(&ctx, &offsets);
-    let w13_buf = alloc_buffer_with_data(&ctx, &w13);
-    let w2_buf = alloc_buffer_with_data(&ctx, &w2);
-    let up_biases_buf = alloc_buffer_with_data(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data(&ctx, &down_biases);
+    let x_perm_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &x_perm);
+    let offsets_buf = alloc_buffer_with_data::<B, u32>(&ctx, &offsets);
+    let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
+    let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
+    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
 
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
 
-    let mut hidden_buf = alloc_buffer::<f32>(&ctx, sum_k * d_ff);
-    let mut output_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
+    let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
+    let mut output_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
 
-    let mut tile_counts_buf = alloc_buffer::<u32>(&ctx, e);
-    let mut tile_offsets_buf = alloc_buffer::<u32>(&ctx, e + 1);
+    let mut tile_counts_buf = alloc_buffer::<B, u32>(&ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
     let max_tiles = e * sum_k * 16384;
-    let mut tile_map_buf = alloc_buffer::<u32>(&ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_buffer::<u32>(&ctx, 1);
-    let mut dispatch_args_buf = alloc_buffer::<u32>(&ctx, 3);
-    let mut row_expert_map_buf = alloc_buffer::<u32>(&ctx, sum_k);
+    let mut tile_map_buf = alloc_buffer::<B, u32>(&ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<B, u32>(&ctx, 1);
+    let mut dispatch_args_buf = alloc_buffer::<B, u32>(&ctx, 3);
+    let mut row_expert_map_buf = alloc_buffer::<B, u32>(&ctx, sum_k);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
@@ -351,24 +332,8 @@ fn run_two_pass_prefill_case(
     eprintln!("    → Throughput: {:.1} µs/token (mean / sum_k)", (mean / sum_k as f64) * 1000.0);
 }
 
-#[test]
-#[ignore]
-fn test_two_pass_prefill_speed() {
-    let ctx = create_ctx();
-
-    let cases = vec![
-        ("T32_E16_D1024_F4096", 32, 1024, 4096, 16, 4, 2, 10),
-        ("T64_E16_D2048_F6144", 64, 2048, 6144, 16, 4, 2, 10),
-        ("T256_E16_D2048_F6144", 256, 2048, 6144, 16, 4, 2, 10),
-    ];
-
-    for (name, t, d_model, d_ff, e, k, warmup, iters) in cases {
-        run_two_pass_prefill_case(&ctx, name, t, d_model, d_ff, e, k, warmup, iters);
-    }
-}
-
-fn run_fused_single_token_case(
-    ctx: &<Metal as Backend>::Context,
+fn run_fused_single_token_case<B: Backend>(
+    ctx: &B::Context,
     name: &str,
     d_model: usize,
     d_ff: usize,
@@ -397,17 +362,17 @@ fn run_fused_single_token_case(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(ctx).expect("fused kernel");
 
-    let x_buf = alloc_buffer_with_data(ctx, &x);
-    let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
-    let topk_probs_buf = alloc_buffer_with_data(ctx, &topk_probs);
-    let w13_buf = alloc_buffer_with_data(ctx, &w13_all);
-    let w2_buf = alloc_buffer_with_data(ctx, &w2_all);
-    let up_biases_buf = alloc_buffer_with_data(ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data(ctx, &down_biases);
-    let mut hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
-    let mut y_buf = alloc_buffer::<bf16>(ctx, d_model);
+    let x_buf = alloc_buffer_with_data::<B, bf16>(ctx, &x);
+    let topk_ids_buf = alloc_buffer_with_data::<B, i32>(ctx, &topk_ids);
+    let topk_probs_buf = alloc_buffer_with_data::<B, bf16>(ctx, &topk_probs);
+    let w13_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w13_all);
+    let w2_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w2_all);
+    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
+    let mut hidden_buf = alloc_buffer::<B, f32>(ctx, k * d_ff);
+    let mut y_buf = alloc_buffer::<B, bf16>(ctx, d_model);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
@@ -482,55 +447,8 @@ fn run_fused_single_token_case(
     eprintln!("    → Latency: {:.1} µs/token", mean * 1000.0);
 }
 
-#[test]
-#[ignore]
-fn test_fused_single_token_speed() {
-    let ctx = create_ctx();
-
-    let cases = vec![
-        ("E16_D1024_F4096_K4", 1024, 4096, 16, 4, 3, 20),
-        ("E8_D2048_F8192_K4", 2048, 8192, 8, 4, 3, 20),
-        ("E8_D512_F2048_K2", 512, 2048, 8, 2, 3, 20),
-    ];
-
-    for (name, d_model, d_ff, e, k, warmup, iters) in cases {
-        run_fused_single_token_case(&ctx, name, d_model, d_ff, e, k, warmup, iters);
-    }
-}
-
-/// Compare indirect decode vs fused decode for single-token (T=1)
-#[test]
-#[ignore]
-fn test_single_token_indirect_vs_fused() {
-    let ctx = create_ctx();
-
-    let cases = vec![
-        ("E8_D512_F2048_K2", 512, 2048, 8, 2),
-        ("E16_D1024_F4096_K4", 1024, 4096, 16, 4),
-        ("E8_D2048_F8192_K4", 2048, 8192, 8, 4),
-    ];
-
-    eprintln!("\n=== Single-Token Decode: Indirect vs Fused ===\n");
-
-    for (name, d_model, d_ff, e, k) in cases {
-        let warmup = 3;
-        let iters = 20;
-
-        eprintln!("[{}] D={}, FF={}, E={}, K={}", name, d_model, d_ff, e, k);
-
-        // Run indirect decode (T=1)
-        let indirect_mean = run_indirect_decode_timed(&ctx, 1, d_model, d_ff, e, k, warmup, iters);
-
-        // Run fused decode
-        let fused_mean = run_fused_decode_timed(&ctx, d_model, d_ff, e, k, warmup, iters);
-
-        let speedup = indirect_mean / fused_mean;
-        eprintln!("    Indirect: {:.3}ms, Fused: {:.3}ms, Speedup: {:.2}x\n", indirect_mean, fused_mean, speedup);
-    }
-}
-
-fn run_indirect_decode_timed(
-    ctx: &<Metal as Backend>::Context,
+fn run_indirect_decode_timed<B: Backend>(
+    ctx: &B::Context,
     t: usize,
     d_model: usize,
     d_ff: usize,
@@ -566,26 +484,26 @@ fn run_indirect_decode_timed(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<Metal>::new(ctx).expect("decode kernel");
+    let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(ctx).expect("decode kernel");
 
-    let x_perm_buf = alloc_buffer_with_data(ctx, &x_perm);
-    let offsets_buf = alloc_buffer_with_data(ctx, &offsets);
-    let w13_buf = alloc_buffer_with_data(ctx, &w13);
-    let w2_buf = alloc_buffer_with_data(ctx, &w2);
-    let up_biases_buf = alloc_buffer_with_data(ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data(ctx, &down_biases);
+    let x_perm_buf = alloc_buffer_with_data::<B, bf16>(ctx, &x_perm);
+    let offsets_buf = alloc_buffer_with_data::<B, u32>(ctx, &offsets);
+    let w13_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w13);
+    let w2_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w2);
+    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
 
     let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as usize;
-    let mut hidden_buf = alloc_buffer::<f32>(ctx, sum_k * d_ff);
-    let mut output_buf = alloc_buffer::<bf16>(ctx, sum_k * d_model);
+    let mut hidden_buf = alloc_buffer::<B, f32>(ctx, sum_k * d_ff);
+    let mut output_buf = alloc_buffer::<B, bf16>(ctx, sum_k * d_model);
 
-    let mut tile_counts_buf = alloc_buffer::<u32>(ctx, e);
-    let mut tile_offsets_buf = alloc_buffer::<u32>(ctx, e + 1);
+    let mut tile_counts_buf = alloc_buffer::<B, u32>(ctx, e);
+    let mut tile_offsets_buf = alloc_buffer::<B, u32>(ctx, e + 1);
     let max_tiles = e * sum_k * 16384;
-    let mut tile_map_buf = alloc_buffer::<u32>(ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_buffer::<u32>(ctx, 1);
-    let mut dispatch_args_buf = alloc_buffer::<u32>(ctx, 3);
-    let mut row_expert_map_buf = alloc_buffer::<u32>(ctx, sum_k);
+    let mut tile_map_buf = alloc_buffer::<B, u32>(ctx, max_tiles * 3);
+    let mut total_tiles_buf = alloc_buffer::<B, u32>(ctx, 1);
+    let mut dispatch_args_buf = alloc_buffer::<B, u32>(ctx, 3);
+    let mut row_expert_map_buf = alloc_buffer::<B, u32>(ctx, sum_k);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
@@ -665,8 +583,8 @@ fn run_indirect_decode_timed(
     times.iter().sum::<f64>() / times.len() as f64
 }
 
-fn run_fused_decode_timed(
-    ctx: &<Metal as Backend>::Context,
+fn run_fused_decode_timed<B: Backend>(
+    ctx: &B::Context,
     d_model: usize,
     d_ff: usize,
     e: usize,
@@ -692,17 +610,17 @@ fn run_fused_decode_timed(
     let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.01..0.01))).collect();
 
-    let fused_kernel = MoeExpertsSingleDecodeKernels::<Metal>::new(ctx).expect("fused kernel");
+    let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(ctx).expect("fused kernel");
 
-    let x_buf = alloc_buffer_with_data(ctx, &x);
-    let topk_ids_buf = alloc_buffer_with_data(ctx, &topk_ids);
-    let topk_probs_buf = alloc_buffer_with_data(ctx, &topk_probs);
-    let w13_buf = alloc_buffer_with_data(ctx, &w13_all);
-    let w2_buf = alloc_buffer_with_data(ctx, &w2_all);
-    let up_biases_buf = alloc_buffer_with_data(ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data(ctx, &down_biases);
-    let mut hidden_buf = alloc_buffer::<f32>(ctx, k * d_ff);
-    let mut y_buf = alloc_buffer::<bf16>(ctx, d_model);
+    let x_buf = alloc_buffer_with_data::<B, bf16>(ctx, &x);
+    let topk_ids_buf = alloc_buffer_with_data::<B, i32>(ctx, &topk_ids);
+    let topk_probs_buf = alloc_buffer_with_data::<B, bf16>(ctx, &topk_probs);
+    let w13_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w13_all);
+    let w2_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w2_all);
+    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
+    let mut hidden_buf = alloc_buffer::<B, f32>(ctx, k * d_ff);
+    let mut y_buf = alloc_buffer::<B, bf16>(ctx, d_model);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
@@ -766,4 +684,90 @@ fn run_fused_decode_timed(
     }
 
     times.iter().sum::<f64>() / times.len() as f64
+}
+
+#[test]
+#[ignore]
+fn test_two_pass_decode_speed() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+
+        let cases = vec![
+            ("T1_E16_D1024_F4096", 1, 1024, 4096, 16, 4, 3, 20),
+            ("T1_E8_D2048_F8192", 1, 2048, 8192, 8, 4, 3, 20),
+        ];
+
+        for (name, t, d_model, d_ff, e, k, warmup, iters) in &cases {
+            run_decode_case::<B>(&ctx, name, *t, *d_model, *d_ff, *e, *k, *warmup, *iters);
+        }
+    });
+}
+
+#[test]
+#[ignore]
+fn test_two_pass_prefill_speed() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+
+        let cases = vec![
+            ("T32_E16_D1024_F4096", 32, 1024, 4096, 16, 4, 2, 10),
+            ("T64_E16_D2048_F6144", 64, 2048, 6144, 16, 4, 2, 10),
+            ("T256_E16_D2048_F6144", 256, 2048, 6144, 16, 4, 2, 10),
+        ];
+
+        for (name, t, d_model, d_ff, e, k, warmup, iters) in cases {
+            run_two_pass_prefill_case::<B>(&ctx, name, t, d_model, d_ff, e, k, warmup, iters);
+        }
+    })
+}
+
+#[test]
+#[ignore]
+fn test_fused_single_token_speed() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+
+        let cases = vec![
+            ("E16_D1024_F4096_K4", 1024, 4096, 16, 4, 3, 20),
+            ("E8_D2048_F8192_K4", 2048, 8192, 8, 4, 3, 20),
+            ("E8_D512_F2048_K2", 512, 2048, 8, 2, 3, 20),
+        ];
+
+        for (name, d_model, d_ff, e, k, warmup, iters) in cases {
+            run_fused_single_token_case::<B>(&ctx, name, d_model, d_ff, e, k, warmup, iters);
+        }
+    });
+}
+
+/// Compare indirect decode vs fused decode for single-token (T=1)
+#[test]
+#[ignore]
+fn test_single_token_indirect_vs_fused() {
+    for_each_non_cpu_backend!(|B| {
+        let ctx = create_context::<B>();
+
+        let cases = vec![
+            ("E8_D512_F2048_K2", 512, 2048, 8, 2),
+            ("E16_D1024_F4096_K4", 1024, 4096, 16, 4),
+            ("E8_D2048_F8192_K4", 2048, 8192, 8, 4),
+        ];
+
+        eprintln!("\n=== Single-Token Decode: Indirect vs Fused ===\n");
+
+        for (name, d_model, d_ff, e, k) in cases {
+            let warmup = 3;
+            let iters = 20;
+
+            eprintln!("[{}] D={}, FF={}, E={}, K={}", name, d_model, d_ff, e, k);
+
+            // Run indirect decode (T=1)
+            let indirect_mean = run_indirect_decode_timed::<B>(&ctx, 1, d_model, d_ff, e, k, warmup, iters);
+
+            // Run fused decode
+            let fused_mean = run_fused_decode_timed::<B>(&ctx, d_model, d_ff, e, k, warmup, iters);
+
+            let speedup = indirect_mean / fused_mean;
+            eprintln!("    Indirect: {:.3}ms, Fused: {:.3}ms, Speedup: {:.2}x\n", indirect_mean, fused_mean, speedup);
+        }
+    });
 }
