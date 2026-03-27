@@ -26,8 +26,10 @@ impl ActivationConfig {
     pub fn act_type(&self) -> ActivationType {
         match self {
             ActivationConfig::SILU {
-                ..
-            } => ActivationType::SILU,
+                alpha,
+            } => ActivationType::SILU {
+                alpha: *alpha,
+            },
             ActivationConfig::GELU => ActivationType::GELU,
             ActivationConfig::IDENTITY => ActivationType::IDENTITY,
         }

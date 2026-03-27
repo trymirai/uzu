@@ -86,17 +86,17 @@ fn test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
 
 #[test]
 fn test_silu_f32() {
-    test::<f32>(ActivationType::SILU);
+    test::<f32>(ActivationType::silu_default());
 }
 
 #[test]
 fn test_silu_f16() {
-    test::<f16>(ActivationType::SILU);
+    test::<f16>(ActivationType::silu_default());
 }
 
 #[test]
 fn test_silu_bf16() {
-    test::<bf16>(ActivationType::SILU);
+    test::<bf16>(ActivationType::silu_default());
 }
 
 #[test]

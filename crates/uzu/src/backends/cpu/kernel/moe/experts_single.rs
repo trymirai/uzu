@@ -64,7 +64,7 @@ pub fn moe_experts_decode_single_pass_a<T: ArrayElement + Float>(
                 if gating_sel == 0 {
                     ActivationType::GELU.activate(up_val)
                 } else {
-                    ActivationType::SILU.activate(silu_alpha * up_val)
+                    ActivationType::silu(silu_alpha).activate(up_val)
                 }
             } else {
                 let up_val = (acc_up + unsafe { *biases.add(bias_base + h_idx) }.to_f32().unwrap())
@@ -72,7 +72,7 @@ pub fn moe_experts_decode_single_pass_a<T: ArrayElement + Float>(
                 let gate_val = (acc_gate + unsafe { *biases.add(bias_base + df + h_idx) }.to_f32().unwrap())
                     .clamp(gate_clip_min, gate_clip_max);
                 let gate_act = if gating_sel == 2 {
-                    ActivationType::SILU.activate(gate_val * silu_alpha)
+                    ActivationType::silu(silu_alpha).activate(gate_val)
                 } else {
                     ActivationType::GELU.activate(gate_val)
                 };

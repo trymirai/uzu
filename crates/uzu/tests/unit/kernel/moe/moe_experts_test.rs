@@ -28,7 +28,7 @@ use uzu::{
 #[path = "moe_test_utils.rs"]
 mod test_utils;
 use test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, cpu_tile_counts, cpu_tile_scan, create_ctx};
-use uzu::backends::common::kernel::moe::MoeExpertsSingleDecodeArguments;
+use uzu::backends::common::{gpu_types::ActivationType, kernel::moe::MoeExpertsSingleDecodeArguments};
 
 /// Test data for MoE experts
 struct MoeTestData {
@@ -197,24 +197,6 @@ fn cpu_moe_reference(
 ) -> Vec<bf16> {
     let mut y = vec![bf16::from_f32(0.0); t * d_model];
 
-    // Helper functions matching Metal kernels
-    let gelu_approx = |x: f32| -> f32 {
-        const K0: f32 = 0.7978845608;
-        const K1: f32 = 0.044715;
-        if x > 10.0 {
-            return x;
-        }
-        if x < -10.0 {
-            return 0.0;
-        }
-        let x3 = x * x * x;
-        let inner = x + K1 * x3;
-        let tanh_arg = (K0 * inner).clamp(-10.0, 10.0);
-        0.5 * x * (1.0 + tanh_arg.tanh())
-    };
-
-    let silu = |x: f32, alpha: f32| -> f32 { x / (1.0 + (-alpha * x).exp()) };
-
     // Process each token
     for tok in 0..t {
         let x_offset = tok * d_model;
@@ -247,9 +229,9 @@ fn cpu_moe_reference(
                     // GELU or SiLU on up (with clipping)
                     let up_val = acc_up.clamp(up_clip_min, up_clip_max);
                     if gating_code == 0 {
-                        gelu_approx(up_val)
+                        ActivationType::GELU.activate(up_val)
                     } else {
-                        silu(up_val, silu_alpha)
+                        ActivationType::silu(silu_alpha).activate(up_val)
                     }
                 } else {
                     // SwiGLU or GEGLU - need gate projection too
@@ -265,9 +247,9 @@ fn cpu_moe_reference(
                     let gate_val = acc_gate.clamp(gate_clip_min, gate_clip_max);
 
                     let gate_act = if gating_code == 2 {
-                        silu(gate_val, silu_alpha)
+                        ActivationType::silu(silu_alpha).activate(gate_val)
                     } else {
-                        gelu_approx(gate_val)
+                        ActivationType::GELU.activate(gate_val)
                     };
                     gate_act * up_val
                 };

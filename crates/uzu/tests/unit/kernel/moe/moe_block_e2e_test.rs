@@ -8,6 +8,7 @@ use uzu::{
     backends::{
         common::{
             Backend, Encoder, Kernels,
+            gpu_types::ActivationType,
             kernel::{
                 MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
                 MoeScatterBucketsMapKernel,
@@ -21,28 +22,6 @@ use uzu::{
 };
 
 use super::moe_test_utils::{alloc_buffer, alloc_buffer_with_data, create_ctx};
-
-fn silu(
-    x: f32,
-    alpha: f32,
-) -> f32 {
-    x / (1.0 + (-alpha * x).exp())
-}
-
-fn gelu(x: f32) -> f32 {
-    const K0: f32 = 0.7978845608f32;
-    const K1: f32 = 0.044715f32;
-    if x > 10.0 {
-        return x;
-    }
-    if x < -10.0 {
-        return 0.0;
-    }
-    let x3 = x * x * x;
-    let inner = x + K1 * x3;
-    let tanh_arg = (K0 * inner).clamp(-10.0, 10.0);
-    0.5 * x * (1.0 + tanh_arg.tanh())
-}
 
 fn moe_cpu_reference(
     x: &[bf16],
@@ -133,11 +112,11 @@ fn moe_cpu_reference(
             let mut hidden = vec![0.0f32; d_ff];
             for i in 0..d_ff {
                 hidden[i] = match gating_code {
-                    0 => gelu(up_out[i]),
-                    1 => silu(up_out[i], silu_alpha),
-                    2 => silu(gate_out[i], silu_alpha) * up_out[i],
-                    3 => gelu(gate_out[i]) * up_out[i],
-                    _ => silu(gate_out[i], silu_alpha) * up_out[i], // fallback to SwiGLU
+                    0 => ActivationType::GELU.activate(up_out[i]),
+                    1 => ActivationType::silu(silu_alpha).activate(up_out[i]),
+                    2 => ActivationType::silu(silu_alpha).activate(gate_out[i]) * up_out[i],
+                    3 => ActivationType::GELU.activate(gate_out[i]) * up_out[i],
+                    _ => ActivationType::silu(silu_alpha).activate(gate_out[i]) * up_out[i], // fallback to SwiGLU
                 };
             }
 
