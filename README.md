@@ -14,7 +14,7 @@
 A high-performance inference engine for AI models on Apple Silicon. Key features:
 
 - Simple, high-level API
-- [Hybrid architecture](https://docs.trymirai.com/overview/uzu#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML)
+- [Modular backend architecture](https://docs.trymirai.com/overview/uzu#before-we-start) with highly optimized custom Metal GPU kernels
 - Unified model configurations, making it easy to add support for new models
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
@@ -30,7 +30,7 @@ For a detailed explanation of the architecture, please refer to the [documentati
 ```bash
 git clone https://github.com/trymirai/lalamo.git
 cd lalamo
-git checkout v0.6.0
+git checkout v0.6.10
 ```
 
 After that, you can retrieve the list of supported models:
