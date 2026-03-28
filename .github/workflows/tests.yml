@@ -46,6 +46,10 @@ jobs:
           cargo metadata --locked --format-version=1 > /dev/null
           git diff --exit-code -- Cargo.lock
 
+      - name: Check with cargo-deny
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: cargo deny check
+
   tests:
     name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }} ${{ matrix.audio && ' (audio-runtime)' || '' }}
     runs-on: [ self-hosted, macos, x64, mac, m3max, runner1 ]
