@@ -33,25 +33,15 @@ impl<B: Backend> Sampling<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        assert!(state.sampling_output().is_some(), "Sampling output buffer must be pre-allocated");
-
-        let logits_binding = state.arrays(&[ArrayId::Logits]);
-        let logits = &logits_binding[0];
-
-        let logits_shape = logits.shape();
         let batch_size = state.sampling_length();
-        if batch_size == 0 {
-            return Ok(());
-        }
         let sampling_start = state.sampling_start();
-        let vocab_size = logits_shape[1];
-
-        let seeds_binding = state.arrays(&[ArrayId::TokenSeeds]);
-        let seeds = &seeds_binding[0];
-
-        let output_buffer_ref = state.sampling_output().unwrap();
-
         let sampling_method = state.sampling_method().unwrap();
+
+        let logits = state.array(ArrayId::Logits);
+        let seeds = state.array(ArrayId::TokenSeeds);
+        let output = state.sampling_output().unwrap();
+
+        let vocab_size = logits.shape()[1];
         let seeds_offset = seeds.offset() + sampling_start * std::mem::size_of::<u64>();
 
         let (bitmask_buffer, bitmask_offset) = state.token_bitmask().map_or((None, 0usize), |bitmask| {
@@ -60,26 +50,22 @@ impl<B: Backend> Sampling<B> {
             (Some(bitmask.buffer()), bitmask_offset)
         });
         let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
-        let logits_buf_rc = logits.buffer();
-        let mut logits_buf_borrow = logits_buf_rc.borrow_mut();
-        let seeds_buf_rc = seeds.buffer();
-        let seeds_buf_borrow = seeds_buf_rc.borrow();
-        let output_buf_rc = output_buffer_ref.buffer();
-        let mut output_buf_borrow = output_buf_rc.borrow_mut();
-        if let Err(e) = self.kernel.encode(
-            logits_buf_borrow.deref_mut(),
-            Some(seeds_buf_borrow.deref()),
-            seeds_offset,
-            bitmask_borrow.as_deref(),
-            bitmask_offset,
-            output_buf_borrow.deref_mut(),
-            sampling_method,
-            batch_size,
-            vocab_size,
-            encoder,
-        ) {
-            panic!("Sampling encoding failed: {:?}", e);
-        }
+
+        self.kernel
+            .encode(
+                logits.buffer().borrow_mut().deref_mut(),
+                seeds.buffer().borrow().deref(),
+                seeds_offset,
+                bitmask_borrow.as_deref(),
+                bitmask_offset,
+                output.buffer().borrow_mut().deref_mut(),
+                sampling_method,
+                batch_size,
+                vocab_size,
+                encoder,
+            )
+            .expect("Sampling encoding failed");
+
         Ok(())
     }
 }

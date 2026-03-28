@@ -353,7 +353,7 @@ impl StructuredAudioCodecGraph {
             1,
         );
 
-        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = state.array(ArrayId::Main);
         let main_output = {
             if main.shape() != [frames, self.input_dim] {
                 return Err(AudioError::Runtime(format!(
@@ -462,7 +462,7 @@ impl StructuredAudioCodecGraph {
                 1,
             );
 
-            let main = state.arrays(&[ArrayId::Main])[0].clone();
+            let main = state.array(ArrayId::Main);
             let main_output = {
                 if main.shape() != [active_len, self.input_dim] {
                     return Err(AudioError::Runtime(format!(

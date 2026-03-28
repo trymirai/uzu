@@ -149,30 +149,23 @@ impl<B: Backend> Attention<B> {
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let (suffix_length, num_heads, head_dim, num_groups, max_sequence_length) = {
-            let qkv_binding = state.arrays(&[ArrayId::QKV]);
-            let qkv_array = &qkv_binding[0];
-            let suffix_length = qkv_array.shape()[0];
+        let qkv_array = state.array(ArrayId::QKV);
+        let queries_array = state.array(ArrayId::RotatedQueries);
+        let rotated_keys_array = state.array(ArrayId::RotatedKeys);
+        let attention_output_array = state.array(ArrayId::AttentionOutput);
+        let partials_array = state.array(ArrayId::AttentionPartials);
+        let sums_array = state.array(ArrayId::AttentionSums);
+        let maxs_array = state.array(ArrayId::AttentionMaxs);
 
-            let queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
-            let queries_array = &queries_binding[0];
-            let num_heads = queries_array.shape()[0];
-            let head_dim = queries_array.shape()[2];
-
-            let keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
-            let keys_array = &keys_binding[0];
-            let num_groups = keys_array.shape()[0];
-
-            let max_sequence_length = if let Some(_kv) = state.cache_layers() {
-                let key_cache_binding = state.arrays(&[ArrayId::Keys(self.layer_index)]);
-                let key_cache_array = &key_cache_binding[0];
-                key_cache_array.shape()[1]
-            } else {
-                // For classifiers without KV cache, max_sequence_length is just suffix_length
-                suffix_length
-            };
-
-            (suffix_length, num_heads, head_dim, num_groups, max_sequence_length)
+        let suffix_length = qkv_array.shape()[0];
+        let num_heads = queries_array.shape()[0];
+        let head_dim = queries_array.shape()[2];
+        let num_groups = rotated_keys_array.shape()[0];
+        let max_sequence_length = if state.cache_layers().is_some() {
+            state.array(ArrayId::Keys(self.layer_index)).shape()[1]
+        } else {
+            // For classifiers without KV cache, max_sequence_length is just suffix_length
+            suffix_length
         };
 
         let (segment_prefix_length, window_length) = if let Some(cache_layers) = state.cache_layers() {
@@ -202,45 +195,32 @@ impl<B: Backend> Attention<B> {
         }
         let variant = self.select_variant(gemm_enabled, suffix_length, head_dim, sequence_length, use_mask);
 
-        let rotated_queries_binding = state.arrays(&[ArrayId::RotatedQueries]);
-        let rotated_keys_binding = state.arrays(&[ArrayId::RotatedKeys]);
-        let qkv_binding = state.arrays(&[ArrayId::QKV]);
         let attention_bias_binding = state.hashmaps(&[HashMapId::AttentionBias]);
-        let attention_output_binding = state.arrays(&[ArrayId::AttentionOutput]);
-        let gate_binding = self.gate_kernel.as_ref().map(|_| state.arrays(&[ArrayId::Gate]));
+        let gate_array = self.gate_kernel.as_ref().map(|_| state.array(ArrayId::Gate));
 
         let mask_kv_seq_stride = 1;
         let mask_q_seq_stride = sequence_length as i32;
         let mask_head_stride = 0;
-        let sinks_binding = if self.has_sinks {
-            Some(state.arrays(&[ArrayId::AttentionSinks(self.layer_index)]))
-        } else {
-            None
-        };
+        let sinks_array = self.has_sinks.then(|| state.array(ArrayId::AttentionSinks(self.layer_index)));
 
-        let rotated_keys_array = &rotated_keys_binding[0];
         let rotated_keys_buf_rc = rotated_keys_array.buffer();
         let mut rotated_keys_buf_borrow = rotated_keys_buf_rc.borrow_mut();
 
-        let qkv_array = &qkv_binding[0];
         let qkv_buf_rc = qkv_array.buffer();
         let qkv_buf_borrow = qkv_buf_rc.borrow();
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
 
-        let key_cache_binding = has_kv_cache.then(|| state.arrays(&[ArrayId::Keys(self.layer_index)]));
-        let key_cache_array = key_cache_binding.as_ref().map(|b| &b[0]);
+        let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(self.layer_index)));
         let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
         let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
-        let value_cache_binding = has_kv_cache.then(|| state.arrays(&[ArrayId::Values(self.layer_index)]));
-        let value_cache_array = value_cache_binding.as_ref().map(|b| &b[0]);
+        let value_cache_array = has_kv_cache.then(|| state.array(ArrayId::Values(self.layer_index)));
         let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
         let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
-        let extracted_values_binding = (!has_kv_cache).then(|| state.arrays(&[ArrayId::ExtractedValues]));
-        let extracted_values_array = extracted_values_binding.as_ref().map(|b| &b[0]);
+        let extracted_values_array = (!has_kv_cache).then(|| state.array(ArrayId::ExtractedValues));
         let extracted_values_buf_rc = extracted_values_array.as_ref().map(|a| a.buffer());
         let mut extracted_values_buf_borrow = extracted_values_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
@@ -262,11 +242,9 @@ impl<B: Backend> Attention<B> {
             );
         }
 
-        let queries_array = &rotated_queries_binding[0];
         let queries_buf_rc = queries_array.buffer();
         let queries_buf_borrow = queries_buf_rc.borrow();
 
-        let attention_output_array = &attention_output_binding[0];
         let attention_output_buf_rc = attention_output_array.buffer();
         let mut attention_output_buf_borrow = attention_output_buf_rc.borrow_mut();
 
@@ -283,24 +261,16 @@ impl<B: Backend> Attention<B> {
         let attention_bias_buf_borrow = attention_bias_buf_rc.as_ref().map(|rc| rc.borrow());
         let attention_bias_buffer: Option<&B::Buffer> = attention_bias_buf_borrow.as_ref().map(|b| b.deref());
 
-        let partials_binding = state.arrays(&[ArrayId::AttentionPartials]);
-        let sums_binding = state.arrays(&[ArrayId::AttentionSums]);
-        let maxs_binding = state.arrays(&[ArrayId::AttentionMaxs]);
-
-        let partials_array = &partials_binding[0];
         let partials_buf_rc = partials_array.buffer();
         let mut partials_buf_borrow = partials_buf_rc.borrow_mut();
 
-        let sums_array = &sums_binding[0];
         let sums_buf_rc = sums_array.buffer();
         let mut sums_buf_borrow = sums_buf_rc.borrow_mut();
 
-        let maxs_array = &maxs_binding[0];
         let maxs_buf_rc = maxs_array.buffer();
         let mut maxs_buf_borrow = maxs_buf_rc.borrow_mut();
 
-        let sinks_borrow = sinks_binding.as_ref().map(|binding| &binding[0]);
-        let sinks_buf_rc = sinks_borrow.as_ref().map(|b| b.buffer());
+        let sinks_buf_rc = sinks_array.as_ref().map(|b| b.buffer());
         let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
         let sinks_buffer: Option<&B::Buffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
 
@@ -444,7 +414,7 @@ impl<B: Backend> Attention<B> {
         }
 
         if let Some(gate_kernel) = &self.gate_kernel {
-            let gate_array = &gate_binding.as_ref().unwrap()[0];
+            let gate_array = gate_array.as_ref().unwrap();
             let gate_buf_rc = gate_array.buffer();
             let gate_buf_borrow = gate_buf_rc.borrow();
             let total_elements = (suffix_length * num_heads * head_dim) as u32;

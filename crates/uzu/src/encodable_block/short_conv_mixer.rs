@@ -176,14 +176,10 @@ impl<B: Backend> ShortConvMixer<B> {
             return;
         }
 
-        let arrays =
-            state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
-        let in_proj = &arrays[0];
-        let conv_state = &arrays[1];
-        let out = &arrays[2];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let conv_state = state.array(ArrayId::ShortConvState(self.layer_index));
+        let out = state.array(ArrayId::AttentionOutput);
 
-        let weight_buf_rc = self.conv_weight.buffer();
-        let weight_buf_borrow = weight_buf_rc.borrow();
         let bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
         let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
 
@@ -210,7 +206,7 @@ impl<B: Backend> ShortConvMixer<B> {
         self.short_conv_prefill.encode(
             &padded_buf,
             in_proj.buffer().borrow().deref(),
-            weight_buf_borrow.deref(),
+            self.conv_weight.buffer().borrow().deref(),
             bias_buf_borrow.as_deref(),
             out.buffer().borrow_mut().deref_mut(),
             conv_state.buffer().borrow_mut().deref_mut(),
@@ -234,19 +230,11 @@ impl<B: Backend> ShortConvMixer<B> {
             return;
         }
 
-        let arrays = state.arrays(&[
-            ArrayId::SsmInProj,
-            ArrayId::TokenParents,
-            ArrayId::ShortConvState(self.layer_index),
-            ArrayId::ShortConvSuffixState(self.layer_index),
-            ArrayId::AttentionOutput,
-        ]);
-
-        let in_proj = &arrays[0];
-        let parents = &arrays[1];
-        let conv_state = &arrays[2];
-        let suffix_state = &arrays[3];
-        let out = &arrays[4];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let parents = state.array(ArrayId::TokenParents);
+        let conv_state = state.array(ArrayId::ShortConvState(self.layer_index));
+        let suffix_state = state.array(ArrayId::ShortConvSuffixState(self.layer_index));
+        let out = state.array(ArrayId::AttentionOutput);
 
         let data_type: DataType = self.config.in_projection_config.activation_precision().into();
         let elem_bytes = data_type.size_in_bytes();
@@ -260,14 +248,12 @@ impl<B: Backend> ShortConvMixer<B> {
         let suffix_state_offset = suffix_state.offset() + sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = conv_state.offset();
         let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
-        let trie_weight_buf_rc = self.conv_weight.buffer();
-        let trie_weight_buf_borrow = trie_weight_buf_rc.borrow();
         let trie_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
         let trie_bias_buf_borrow = trie_bias_buf_rc.as_ref().map(|rc| rc.borrow());
 
         self.short_conv_trie.encode(
             (in_proj.buffer().borrow().deref(), in_proj_offset),
-            trie_weight_buf_borrow.deref(),
+            self.conv_weight.buffer().borrow().deref(),
             trie_bias_buf_borrow.as_deref(),
             (conv_state.buffer().borrow().deref(), base_state_offset),
             (parents.buffer().borrow().deref(), parents_offset),
@@ -292,22 +278,19 @@ impl<B: Backend> ShortConvMixer<B> {
             return;
         }
 
-        let arrays =
-            state.arrays(&[ArrayId::SsmInProj, ArrayId::ShortConvState(self.layer_index), ArrayId::AttentionOutput]);
-        let in_proj = &arrays[0];
-        let conv_state = &arrays[1];
-        let out = &arrays[2];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let conv_state = state.array(ArrayId::ShortConvState(self.layer_index));
+        let out = state.array(ArrayId::AttentionOutput);
 
-        let decode_weight_buf_rc = self.conv_weight.buffer();
-        let decode_weight_buf_borrow = decode_weight_buf_rc.borrow();
         let decode_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
         let decode_bias_buf_borrow = decode_bias_buf_rc.as_ref().map(|rc| rc.borrow());
+
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
         self.short_conv_decode.encode(
             in_proj.buffer().borrow().deref(),
-            decode_weight_buf_borrow.deref(),
+            self.conv_weight.buffer().borrow().deref(),
             decode_bias_buf_borrow.as_deref(),
             None::<&B::Buffer>,
             out.buffer().borrow_mut().deref_mut(),
