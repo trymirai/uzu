@@ -87,14 +87,12 @@ impl<B: Backend> RMSNorm<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let input_binding = state.arrays(&[self.input_array_id]);
-        let output_binding = state.arrays(&[self.output_array_id]);
+        let input_array = state.array(self.input_array_id);
+        let output_array = state.array(self.output_array_id);
 
-        let input_array = &input_binding[0];
-        let input_shape = input_array.shape().to_vec();
-        let output_array = &output_binding[0];
+        let suffix_length = input_array.shape()[0];
+        let element_count = input_array.shape()[1];
 
-        let suffix_length = input_shape[0];
         let input_elem_size = input_array.data_type().size_in_bytes();
         let output_elem_size = output_array.data_type().size_in_bytes();
 
@@ -103,15 +101,16 @@ impl<B: Backend> RMSNorm<B> {
         } else {
             (0, state.active_suffix_length())
         };
+
         let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
         if batch_len == 0 {
             return Ok(());
         }
 
-        let row_size_in_bytes = input_shape[1] * input_elem_size;
+        let row_size_in_bytes = element_count * input_elem_size;
         let input_offset = batch_start * row_size_in_bytes;
 
-        let output_row_size_in_bytes = input_shape[1] * output_elem_size;
+        let output_row_size_in_bytes = element_count * output_elem_size;
         let output_offset = batch_start * output_row_size_in_bytes;
 
         let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
@@ -122,7 +121,7 @@ impl<B: Backend> RMSNorm<B> {
             self.scales_buffer.borrow().deref(),
             (output_array.buffer().borrow_mut().deref_mut(), output_offset),
             batch_len as u32,
-            input_shape[1] as u32,
+            element_count as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             self.config.upcast_mode == UpcastMode::FullLayer,

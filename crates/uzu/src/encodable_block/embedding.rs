@@ -493,14 +493,12 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<(), EmbeddingError<B>> {
         let batch_size = state.active_suffix_length() as u32;
 
-        let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
-
-        let token_ids_array = &arrays[0];
+        let token_ids_array = state.array(ArrayId::TokenIds);
         let token_ids_buffer_rc = token_ids_array.buffer();
         let token_ids_buffer_borrow = token_ids_buffer_rc.borrow();
         let token_ids = token_ids_buffer_borrow.deref();
 
-        let output_array = &arrays[1];
+        let output_array = state.array(ArrayId::Main);
         let output_buffer_rc = output_array.buffer();
         let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
         let output = output_buffer_borrow.deref_mut();
@@ -580,14 +578,12 @@ impl<B: Backend> Embedding<B> {
             return Ok(());
         }
 
-        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
-
-        let input_array = &arrays[0];
+        let input_array = state.array(ArrayId::Main);
         let input_buffer_rc = input_array.buffer();
         let input_buffer_borrow = input_buffer_rc.borrow();
         let input = input_buffer_borrow.deref();
 
-        let output_array = &arrays[1];
+        let output_array = state.array(ArrayId::Logits);
         let output_buffer_rc = output_array.buffer();
         let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
         let output = output_buffer_borrow.deref_mut();

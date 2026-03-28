@@ -13,19 +13,23 @@ use crate::{
 
 pub struct TensorCopy<B: Backend> {
     kernel: <B::Kernels as Kernels>::TensorCopyKernel,
-    argument_arrays: Box<[ArrayId]>,
+    source_array: ArrayId,
+    destination_array: ArrayId,
 }
 
 impl<B: Backend> TensorCopy<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        argument_arrays: Box<[ArrayId]>,
+        source_array: ArrayId,
+        destination_array: ArrayId,
     ) -> Result<Self, B::Error> {
         let kernel = <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type)?;
+
         Ok(Self {
             kernel,
-            argument_arrays,
+            source_array,
+            destination_array,
         })
     }
 
@@ -34,13 +38,10 @@ impl<B: Backend> TensorCopy<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let arrays = state.arrays(&self.argument_arrays);
-        assert_eq!(arrays.len(), 2, "TensorCopy expects exactly 2 arrays");
+        let source_array = state.array(self.source_array);
+        let destination_array = state.array(self.destination_array);
 
-        let length = arrays[0].num_elements();
-
-        let source_array = &arrays[0];
-        let destination_array = &arrays[1];
+        let length = source_array.num_elements();
 
         self.kernel.encode(
             source_array.buffer().borrow().deref(),

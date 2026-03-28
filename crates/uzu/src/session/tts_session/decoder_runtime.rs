@@ -935,7 +935,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;
-        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = state.array(ArrayId::Main);
         let bytes_per_element = main.data_type().size_in_bytes();
         let row_offset = (token_count - 1)
             .checked_mul(model_dim)
@@ -975,7 +975,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;
-        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = state.array(ArrayId::Main);
         if override_embedding.shape() != [1, model_dim] || override_embedding.data_type() != main.data_type() {
             return Err(TtsModelConfigError::OverrideEmbeddingTensorMismatch {
                 expected_shape: [1, model_dim].into(),
@@ -1022,7 +1022,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 total_len,
             })?;
 
-        let main = state.arrays(&[ArrayId::Main])[0].clone();
+        let main = state.array(ArrayId::Main);
         let bias = &self.single_override_embedding;
         if bias.shape() != [1, model_dim] || bias.data_type() != main.data_type() {
             return Err(TtsModelConfigError::AddScaleBiasTensorMismatch {

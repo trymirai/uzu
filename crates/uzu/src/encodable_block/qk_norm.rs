@@ -126,10 +126,8 @@ impl<B: Backend> QKNorm<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let qkv_binding = state.arrays(&[self.qkv_array_id]);
-        let qkv_array = &qkv_binding[0];
-        let qkv_shape = qkv_array.shape().to_vec();
-        let batch_size = qkv_shape[0] as u32;
+        let qkv_array = state.array(self.qkv_array_id);
+        let batch_size = qkv_array.shape()[0] as u32;
 
         // Process query normalization if configured
         if let (Some(query_kernel), Some(query_scales_buffer), Some(query_config)) =

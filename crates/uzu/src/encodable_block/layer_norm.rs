@@ -73,19 +73,11 @@ impl<B: Backend> LayerNorm<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let input_binding = state.arrays(&[self.input_array_id]);
-        let output_binding = state.arrays(&[self.output_array_id]);
+        let input_array = state.array(self.input_array_id);
+        let output_array = state.array(self.output_array_id);
 
-        let input_shape = {
-            let input_array = &input_binding[0];
-            input_array.shape().to_vec()
-        };
-
-        let input_array = &input_binding[0];
-        let output_array = &output_binding[0];
-
-        let batch_size = input_shape[0] as u32;
-        let model_dim = input_shape[1] as u32;
+        let batch_size = input_array.shape()[0] as u32;
+        let model_dim = input_array.shape()[1] as u32;
         let full_layer = if self.config.upcast_mode == UpcastMode::FullLayer {
             1u32
         } else {
@@ -94,6 +86,7 @@ impl<B: Backend> LayerNorm<B> {
 
         let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
         let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
+
         self.kernel.encode(
             input_buffer_borrow.as_deref(),
             self.scales_buffer.borrow().deref(),

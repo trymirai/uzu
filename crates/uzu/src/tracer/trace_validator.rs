@@ -292,19 +292,20 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in transformer_layers {
-            let arrays = state.arrays(&[ArrayId::Keys(index), ArrayId::Values(index)]);
+            let keys = state.array(ArrayId::Keys(index));
+            let values = state.array(ArrayId::Values(index));
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
-                    metrics: Self::validate_array(data_type, &expected, &arrays[0], Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_array(data_type, &expected, &keys, Some(ArrayTransform::KVCacheSlice)),
                 });
             }
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
-                    metrics: Self::validate_array(data_type, &expected, &arrays[1], Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_array(data_type, &expected, &values, Some(ArrayTransform::KVCacheSlice)),
                 });
             }
         }
@@ -316,7 +317,8 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in ssm_layers {
-            let arrays = state.arrays(&[ArrayId::SsmConvState(index), ArrayId::SsmState(index)]);
+            let conv_state = state.array(ArrayId::SsmConvState(index));
+            let ssm_state = state.array(ArrayId::SsmState(index));
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -328,7 +330,7 @@ impl<B: Backend> TraceValidator<B> {
                         metrics: Self::validate_array(
                             data_type,
                             &expected,
-                            &arrays[0],
+                            &conv_state,
                             Some(ArrayTransform::SsmConvState),
                         ),
                     });
@@ -342,7 +344,7 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(data_type, &expected, &arrays[1], None),
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
                     });
                 }
             }
