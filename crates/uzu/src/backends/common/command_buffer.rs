@@ -110,7 +110,8 @@ pub trait CommandBufferEncoding {
                 &<Self::CommandBuffer as CommandBuffer>::Completed,
                 <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error,
             >,
-        ) + 'static,
+        ) + Send
+        + 'static,
     );
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
