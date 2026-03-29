@@ -68,7 +68,8 @@ struct TransformScaleAccumulate {
 
   METAL_FUNC OutT apply(InT x, OutT c) const {
     return static_cast<OutT>(
-        x * static_cast<InT>(alpha) + (static_cast<OutT>(beta) * c)
+        x * static_cast<InT>(alpha) +
+        (beta != 0.0f ? (static_cast<OutT>(beta) * c) : static_cast<OutT>(0.0))
     );
   }
 };

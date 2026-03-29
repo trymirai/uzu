@@ -1,12 +1,11 @@
 pub mod matmul;
 
-use crate::backends::common::kernel::matmul::MatmulKernels;
+use crate::backends::common::kernel::ManualKernels;
 
-pub mod dsl {
-    include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
-}
+include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
+
 pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
-impl MatmulKernels for dsl::MetalKernels {
+impl ManualKernels for MetalKernels {
     type MatmulKernel = matmul::MatmulMetalKernel;
 }

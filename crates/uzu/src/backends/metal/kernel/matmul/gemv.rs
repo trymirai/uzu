@@ -1,15 +1,16 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Specialization {
+pub struct GemvSpecialization {
     pub threadgroup_rows: u32,
     pub threadgroup_cols: u32,
     pub threads_per_simdgroup_row: u32,
     pub threads_per_simdgroup_col: u32,
     pub elements_per_thread_row: u32,
     pub elements_per_thread_col: u32,
-    pub apply_output_scale_and_accumulate: bool,
+    pub is_accumulate: bool,
+    pub is_bias: bool,
 }
 
-impl Specialization {
+impl GemvSpecialization {
     pub fn precompile_configs(data_type: crate::DataType) -> &'static [Self] {
         use crate::DataType;
         match data_type {
@@ -21,7 +22,8 @@ impl Specialization {
                     threads_per_simdgroup_col: 32,
                     elements_per_thread_row: 4,
                     elements_per_thread_col: 4,
-                    apply_output_scale_and_accumulate: false,
+                    is_accumulate: false,
+                    is_bias: false,
                 },
                 Self {
                     threadgroup_rows: 4,
@@ -30,7 +32,8 @@ impl Specialization {
                     threads_per_simdgroup_col: 32,
                     elements_per_thread_row: 4,
                     elements_per_thread_col: 4,
-                    apply_output_scale_and_accumulate: true,
+                    is_accumulate: false,
+                    is_bias: true,
                 },
                 Self {
                     threadgroup_rows: 8,
@@ -39,7 +42,8 @@ impl Specialization {
                     threads_per_simdgroup_col: 32,
                     elements_per_thread_row: 4,
                     elements_per_thread_col: 4,
-                    apply_output_scale_and_accumulate: false,
+                    is_accumulate: false,
+                    is_bias: false,
                 },
                 Self {
                     threadgroup_rows: 8,
@@ -48,7 +52,8 @@ impl Specialization {
                     threads_per_simdgroup_col: 32,
                     elements_per_thread_row: 4,
                     elements_per_thread_col: 4,
-                    apply_output_scale_and_accumulate: true,
+                    is_accumulate: false,
+                    is_bias: true,
                 },
             ],
             DataType::F16 => &[Self {
@@ -58,7 +63,8 @@ impl Specialization {
                 threads_per_simdgroup_col: 32,
                 elements_per_thread_row: 4,
                 elements_per_thread_col: 4,
-                apply_output_scale_and_accumulate: false,
+                is_accumulate: false,
+                is_bias: false,
             }],
             DataType::F32 => &[Self {
                 threadgroup_rows: 8,
@@ -67,7 +73,8 @@ impl Specialization {
                 threads_per_simdgroup_col: 32,
                 elements_per_thread_row: 4,
                 elements_per_thread_col: 4,
-                apply_output_scale_and_accumulate: false,
+                is_accumulate: false,
+                is_bias: false,
             }],
             _ => &[],
         }
@@ -78,75 +85,45 @@ impl Specialization {
     }
 
     pub fn select(
-        transpose_matrix: bool,
-        input_dimension: i32,
-        output_dimension: i32,
-        apply_output_scale_and_accumulate: bool,
+        input_dimension: u32,
+        output_dimension: u32,
+        is_accumulate: bool,
+        is_bias: bool,
     ) -> Self {
         let (threadgroup_rows, threadgroup_cols);
         let (threads_per_simdgroup_row, threads_per_simdgroup_col);
         let (elements_per_thread_row, elements_per_thread_col);
 
-        if transpose_matrix {
-            let mut simdgroup_thread_rows = 8;
-            let mut simdgroup_thread_cols = 4;
-            if input_dimension >= 8192 && output_dimension >= 2048 {
-                simdgroup_thread_rows = 4;
-                simdgroup_thread_cols = 8;
-            }
+        let threadgroup_simd_rows;
+        let mut simdgroup_thread_rows = 1;
+        let mut simdgroup_thread_cols = 32;
+        let mut threadgroup_simd_cols = 1;
 
-            let threadgroup_simd_cols = if output_dimension >= 2048 {
-                16
-            } else if output_dimension >= 512 {
-                4
-            } else {
-                2
-            };
-
-            let thread_output_cols = if output_dimension < 4 {
-                1
-            } else {
-                4
-            };
-
-            threadgroup_rows = 1;
-            threadgroup_cols = threadgroup_simd_cols;
-            threads_per_simdgroup_row = simdgroup_thread_rows;
-            threads_per_simdgroup_col = simdgroup_thread_cols;
-            elements_per_thread_row = 4;
-            elements_per_thread_col = thread_output_cols;
+        if input_dimension <= 64 {
+            threadgroup_simd_rows = 1;
+            simdgroup_thread_rows = 8;
+            simdgroup_thread_cols = 4;
+        } else if input_dimension >= 16 * output_dimension {
+            threadgroup_simd_rows = 1;
+            threadgroup_simd_cols = 8;
+        } else if output_dimension >= 4096 {
+            threadgroup_simd_rows = 8;
         } else {
-            let threadgroup_simd_rows;
-            let mut simdgroup_thread_rows = 1;
-            let mut simdgroup_thread_cols = 32;
-            let mut threadgroup_simd_cols = 1;
-
-            if input_dimension <= 64 {
-                threadgroup_simd_rows = 1;
-                simdgroup_thread_rows = 8;
-                simdgroup_thread_cols = 4;
-            } else if input_dimension >= 16 * output_dimension {
-                threadgroup_simd_rows = 1;
-                threadgroup_simd_cols = 8;
-            } else if output_dimension >= 4096 {
-                threadgroup_simd_rows = 8;
-            } else {
-                threadgroup_simd_rows = 4;
-            }
-
-            let thread_output_rows = if output_dimension < 4 {
-                1
-            } else {
-                4
-            };
-
-            threadgroup_rows = threadgroup_simd_rows;
-            threadgroup_cols = threadgroup_simd_cols;
-            threads_per_simdgroup_row = simdgroup_thread_rows;
-            threads_per_simdgroup_col = simdgroup_thread_cols;
-            elements_per_thread_row = thread_output_rows;
-            elements_per_thread_col = 4;
+            threadgroup_simd_rows = 4;
         }
+
+        let thread_output_rows = if output_dimension < 4 {
+            1
+        } else {
+            4
+        };
+
+        threadgroup_rows = threadgroup_simd_rows;
+        threadgroup_cols = threadgroup_simd_cols;
+        threads_per_simdgroup_row = simdgroup_thread_rows;
+        threads_per_simdgroup_col = simdgroup_thread_cols;
+        elements_per_thread_row = thread_output_rows;
+        elements_per_thread_col = 4;
 
         Self {
             threadgroup_rows,
@@ -155,7 +132,8 @@ impl Specialization {
             threads_per_simdgroup_col,
             elements_per_thread_row,
             elements_per_thread_col,
-            apply_output_scale_and_accumulate,
+            is_accumulate,
+            is_bias,
         }
     }
 }

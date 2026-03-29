@@ -16,6 +16,7 @@ pub use crate::session::TtsSession;
 pub use crate::{
     VERSION,
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
+    classifier::{ClassificationOutput, ClassificationStats},
     parameters::{HeaderLoadingError, ParameterLeaf, ParameterLoaderError, ParameterTree},
     session::{
         ChatSession, ClassificationSession,

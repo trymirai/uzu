@@ -327,6 +327,7 @@ pub struct MetalKernelInfo {
     pub name: Box<str>,
     pub arguments: Box<[MetalArgument]>,
     pub variants: Option<Box<[MetalTemplateParameter]>>,
+    pub constraints: Box<[Box<str>]>,
 }
 
 impl MetalKernelInfo {
@@ -543,6 +544,18 @@ impl MetalKernelInfo {
             None
         };
 
+        let constraints: Box<[_]> = annotations
+            .iter()
+            .filter(|(k, _)| k.as_ref() == "dsl.constraint")
+            .map(|(_, v)| {
+                let [constraint_expr] = v.as_ref() else {
+                    bail!("malformed dsl.constraint annotation");
+                };
+
+                Ok(constraint_expr.clone())
+            })
+            .collect::<anyhow::Result<_>>()?;
+
         let arguments = arg_nodes
             .into_iter()
             .map(|an| MetalArgument::from_ast_node_and_source(an, source))
@@ -553,6 +566,7 @@ impl MetalKernelInfo {
             name,
             arguments,
             variants,
+            constraints,
         }))
     }
 }

@@ -11,7 +11,10 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Encoder,
-        kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
+        kernel::{
+            ManualKernels,
+            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+        },
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -49,7 +52,7 @@ pub enum FullPrecisionLinearError<B: Backend> {
 }
 
 pub struct FullPrecisionLinear<B: Backend> {
-    kernel: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
+    kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
     weights_buffer: Rc<RefCell<B::Buffer>>,
     input_dim: usize,
@@ -111,7 +114,7 @@ impl<B: Backend> FullPrecisionLinear<B> {
             Err(_) => None,
         };
 
-        let kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(context, precision)?;
+        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, precision)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -142,15 +145,15 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
                 a: input_array.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.weights_buffer.borrow().deref(),
+                ab_scale: 1.0,
+                c: match bias_borrow.as_deref() {
+                    Some(b) => MatmulArgumentC::Bias(b),
+                    None => MatmulArgumentC::None,
+                },
                 d: output_array.buffer().borrow_mut().deref_mut(),
-                bias: bias_borrow.as_deref(),
-                batch: batch_size as i32,
-                input_dim: self.input_dim as i32,
-                output_dim: self.output_dim as i32,
-                leading_dimension_a: self.input_dim as i32,
-                leading_dimension_b: self.input_dim as i32,
-                leading_dimension_d: self.output_dim as i32,
-                transpose_b: true,
+                batch_dim: batch_size as u32,
+                input_dim: self.input_dim as u32,
+                output_dim: self.output_dim as u32,
             },
             encoder,
         );
