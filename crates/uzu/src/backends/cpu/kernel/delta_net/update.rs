@@ -97,19 +97,18 @@ pub fn delta_net_update<T: ArrayElement + Float>(
         // dot(k, q)
         let kq_dot: f32 = k.iter().zip(q.iter()).map(|(ki, qi)| ki * qi).sum();
 
-        // State layout: [num_v_heads, head_k_dim, head_v_dim]
-        let state_head_offset = hv * dk * dv;
-
+        // State layout: [num_v_heads, head_v_dim, head_k_dim]
         let mut o = vec![0.0f32; dv];
 
         for i in 0..dv {
             let v_i = unsafe { (*in_proj.add(2 * kd + hv * dv + i)).to_f32().unwrap() };
+            let state_row = hv * dv * dk + i * dk;
 
-            // Pass 1: read state column S[:,i], compute dot(S[:,i], q) and dot(S[:,i], k)
+            // Pass 1: read state row S[i,:], compute dot(S[i,:], q) and dot(S[i,:], k)
             let mut sq_acc = 0.0f32;
             let mut sk_acc = 0.0f32;
             for j in 0..dk {
-                let s = unsafe { (*state_ptr.add(state_head_offset + j * dv + i)).to_f32().unwrap() };
+                let s = unsafe { (*state_ptr.add(state_row + j)).to_f32().unwrap() };
                 sq_acc += s * q[j];
                 sk_acc += s * k[j];
             }
@@ -118,11 +117,11 @@ pub fn delta_net_update<T: ArrayElement + Float>(
             let delta_i = beta * (v_i - retrieved_i);
             o[i] = decay * sq_acc + delta_i * kq_dot;
 
-            // Pass 2: update state column S[:,i]
+            // Pass 2: update state row S[i,:]
             for j in 0..dk {
-                let s = unsafe { (*state_ptr.add(state_head_offset + j * dv + i)).to_f32().unwrap() };
+                let s = unsafe { (*state_ptr.add(state_row + j)).to_f32().unwrap() };
                 unsafe {
-                    *state.add(state_head_offset + j * dv + i) = T::from(decay * s + k[j] * delta_i).unwrap();
+                    *state.add(state_row + j) = T::from(decay * s + k[j] * delta_i).unwrap();
                 }
             }
         }

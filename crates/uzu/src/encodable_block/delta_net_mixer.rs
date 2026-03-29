@@ -7,7 +7,7 @@ use crate::{
         Backend, Encoder, Kernels,
         kernel::{
             Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
-            DeltaNetPrefillKernel, DeltaNetUpdateKernel,
+            DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
         },
     },
     config::{DecoderLayerType, DeltaNetAttentionConfig},
@@ -27,6 +27,7 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
     // Prefill kernels
     conv_pack: <B::Kernels as Kernels>::Conv1dPackKernel,
     conv_scan: <B::Kernels as Kernels>::DeltaNetConvScanKernel,
+    prefill_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
     // Parameters
@@ -109,8 +110,10 @@ impl<B: Backend> DeltaNetMixer<B> {
             .expect("Failed to create Conv1dPack kernel");
         let conv_scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, data_type, has_bias)
             .expect("Failed to create DeltaNet conv scan kernel");
+        let prefill_prep = <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, DataType::F32)
+            .expect("Failed to create DeltaNet prefill prep kernel");
         let delta_net_prefill = <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, data_type)
-            .expect("Failed to create DeltaNet prefill kernel");
+            .expect("Failed to create DeltaNet prefill V3T kernel");
         let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, data_type)
             .expect("Failed to create DeltaNet norm gate kernel");
 
@@ -123,6 +126,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             delta_net_update,
             conv_pack,
             conv_scan,
+            prefill_prep,
             delta_net_prefill,
             norm_gate,
             conv_weight,
@@ -138,9 +142,8 @@ impl<B: Backend> DeltaNetMixer<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) {
-        let arrays = state.arrays(&[ArrayId::SsmInProj, ArrayId::DeltaNetConvState(self.layer_index)]);
-        let in_proj = &arrays[0];
-        let conv_state = &arrays[1];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let conv_state = state.array(ArrayId::DeltaNetConvState(self.layer_index));
 
         let weight_buf_rc = self.conv_weight.buffer();
         let weight_buf_borrow = weight_buf_rc.borrow();
@@ -172,9 +175,8 @@ impl<B: Backend> DeltaNetMixer<B> {
         let conv_dim = self.config.conv_dim();
         let total_proj_dim = self.config.total_proj_dim();
 
-        let arrays = state.arrays(&[ArrayId::SsmInProj, ArrayId::DeltaNetConvState(self.layer_index)]);
-        let in_proj = &arrays[0];
-        let conv_state = &arrays[1];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let conv_state = state.array(ArrayId::DeltaNetConvState(self.layer_index));
 
         let weight_buf_rc = self.conv_weight.buffer();
         let weight_buf_borrow = weight_buf_rc.borrow();
@@ -215,11 +217,9 @@ impl<B: Backend> DeltaNetMixer<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) {
-        let arrays =
-            state.arrays(&[ArrayId::SsmInProj, ArrayId::DeltaNetSsmState(self.layer_index), ArrayId::AttentionOutput]);
-        let in_proj = &arrays[0];
-        let ssm_state = &arrays[1];
-        let out = &arrays[2];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let ssm_state = state.array(ArrayId::DeltaNetSsmState(self.layer_index));
+        let out = state.array(ArrayId::AttentionOutput);
 
         let a_log_rc = self.a_log.buffer();
         let a_log_borrow = a_log_rc.borrow();
@@ -252,13 +252,11 @@ impl<B: Backend> DeltaNetMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let num_v_tiles = ((self.config.value_head_dim + 63) / 64) as u32;
+        let num_dv_groups = ((self.config.value_head_dim + 7) / 8) as u32;
 
-        let arrays =
-            state.arrays(&[ArrayId::SsmInProj, ArrayId::DeltaNetSsmState(self.layer_index), ArrayId::AttentionOutput]);
-        let in_proj = &arrays[0];
-        let ssm_state = &arrays[1];
-        let out = &arrays[2];
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let ssm_state = state.array(ArrayId::DeltaNetSsmState(self.layer_index));
+        let out = state.array(ArrayId::AttentionOutput);
 
         let a_log_rc = self.a_log.buffer();
         let a_log_borrow = a_log_rc.borrow();
@@ -267,10 +265,34 @@ impl<B: Backend> DeltaNetMixer<B> {
         let norm_weight_rc = self.norm_weight.buffer();
         let norm_weight_borrow = norm_weight_rc.borrow();
 
-        self.delta_net_prefill.encode(
+        // Prep buffers: pre-allocated in ScratchBuffers, reused across layers
+        let (prep_q_norm, prep_k_norm, prep_beta, prep_decay) =
+            state.delta_net_prep_buffers().expect("DeltaNet prep buffers not initialized");
+
+        self.prefill_prep.encode(
             in_proj.buffer().borrow().deref(),
             a_log_borrow.deref(),
             dt_bias_borrow.deref(),
+            prep_q_norm.buffer().borrow_mut().deref_mut(),
+            prep_k_norm.buffer().borrow_mut().deref_mut(),
+            prep_beta.buffer().borrow_mut().deref_mut(),
+            prep_decay.buffer().borrow_mut().deref_mut(),
+            self.config.num_heads as u32,
+            self.config.num_groups as u32,
+            self.config.head_dim as u32,
+            self.config.key_dim() as u32,
+            self.config.value_dim() as u32,
+            suffix_length as u32,
+            encoder,
+        );
+
+        // V3T prefill: MLX-style, [Hv, Dv, Dk] state layout
+        self.delta_net_prefill.encode(
+            prep_q_norm.buffer().borrow().deref(),
+            prep_k_norm.buffer().borrow().deref(),
+            prep_beta.buffer().borrow().deref(),
+            prep_decay.buffer().borrow().deref(),
+            in_proj.buffer().borrow().deref(),
             ssm_state.buffer().borrow_mut().deref_mut(),
             out.buffer().borrow_mut().deref_mut(),
             self.config.num_heads as u32,
@@ -280,10 +302,11 @@ impl<B: Backend> DeltaNetMixer<B> {
             self.config.key_dim() as u32,
             self.config.value_dim() as u32,
             suffix_length as u32,
-            num_v_tiles,
+            num_dv_groups,
             encoder,
         );
 
+        // Norm gate
         self.norm_gate.encode(
             out.buffer().borrow_mut().deref_mut(),
             in_proj.buffer().borrow().deref(),

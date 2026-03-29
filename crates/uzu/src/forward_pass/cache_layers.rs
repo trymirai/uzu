@@ -221,7 +221,7 @@ impl<B: Backend> CacheLayers<B> {
                     ..
                 } => {
                     let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
-                    let ssm_shape = [*num_heads, *head_dim, *value_head_dim];
+                    let ssm_shape = [*num_heads, *value_head_dim, *head_dim];
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::DeltaNet(DeltaNetLayer {

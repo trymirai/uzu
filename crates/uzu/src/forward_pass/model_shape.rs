@@ -28,6 +28,8 @@ pub struct ModelShape {
     max_rope_dim: usize,
     has_gate: bool,
     max_delta_net_kernel_size: usize,
+    max_delta_net_key_dim: usize,
+    max_delta_net_num_heads: usize,
     max_qkv_dim: usize,
 }
 
@@ -78,13 +80,20 @@ impl ModelShape {
             }
         }
         let mut max_delta_net_kernel_size = 0usize;
+        let mut max_delta_net_key_dim = 0usize;
+        let mut max_delta_net_num_heads = 0usize;
         for layer in layer_types.iter() {
             if let DecoderLayerType::DeltaNet {
                 kernel_size,
+                num_heads,
+                num_groups,
+                head_dim,
                 ..
             } = layer
             {
                 max_delta_net_kernel_size = max_delta_net_kernel_size.max(*kernel_size);
+                max_delta_net_key_dim = max_delta_net_key_dim.max(num_groups * head_dim);
+                max_delta_net_num_heads = max_delta_net_num_heads.max(*num_heads);
             }
         }
 
@@ -141,6 +150,8 @@ impl ModelShape {
             max_rope_dim,
             has_gate,
             max_delta_net_kernel_size,
+            max_delta_net_key_dim,
+            max_delta_net_num_heads,
             max_qkv_dim,
         }
     }
@@ -439,6 +450,28 @@ impl ModelShape {
 
     pub fn has_delta_net_layers(&self) -> bool {
         self.max_delta_net_kernel_size > 0
+    }
+
+    pub fn delta_net_prep_qk_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 1]> {
+        if self.has_delta_net_layers() {
+            Some([suffix_length * self.max_delta_net_key_dim])
+        } else {
+            None
+        }
+    }
+
+    pub fn delta_net_prep_beta_decay_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 1]> {
+        if self.has_delta_net_layers() {
+            Some([suffix_length * self.max_delta_net_num_heads])
+        } else {
+            None
+        }
     }
 
     fn max_delta_net_padded_stride(&self) -> usize {
