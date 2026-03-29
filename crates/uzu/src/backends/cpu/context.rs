@@ -1,11 +1,9 @@
-use std::{
-    cell::{RefCell, UnsafeCell},
-    path::Path,
-    rc::Rc,
-};
+use std::{cell::UnsafeCell, path::Path, pin::Pin, rc::Rc, sync::atomic::AtomicU64};
 
-use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Allocator, Context};
+use crate::backends::{
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
+};
 
 pub struct CpuContext {
     allocator: Rc<Allocator<Cpu>>,
@@ -38,8 +36,8 @@ impl Context for CpuContext {
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<UnsafeCell<Box<[u8]>>, CpuError> {
-        Ok(UnsafeCell::new(vec![0; size].into_boxed_slice()))
+    ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
+        Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
     }
 
     fn create_allocation(
@@ -57,12 +55,12 @@ impl Context for CpuContext {
         self.allocator.create_pool(reusable)
     }
 
-    fn create_command_buffer(&self) -> Result<CpuCommandBuffer, CpuError> {
-        Ok(CpuCommandBuffer::new())
+    fn create_command_buffer(&self) -> Result<CpuCommandBufferInitial, CpuError> {
+        Ok(CpuCommandBufferInitial::new())
     }
 
-    fn create_event(&self) -> Result<RefCell<u64>, CpuError> {
-        Ok(RefCell::new(0))
+    fn create_event(&self) -> Result<Pin<Box<AtomicU64>>, CpuError> {
+        Ok(Box::pin(AtomicU64::new(0)))
     }
 
     fn enable_capture() {}

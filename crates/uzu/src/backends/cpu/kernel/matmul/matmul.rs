@@ -9,6 +9,7 @@ use crate::{
         },
         cpu::{Cpu, context::CpuContext},
     },
+    utils::pointers::{SendPtr, SendPtrMut},
 };
 
 pub struct MatmulCpuKernel {
@@ -46,17 +47,17 @@ impl MatmulKernel for MatmulCpuKernel {
         let a_offset = arguments.a_offset as usize;
         let data_type = self.data_type;
 
-        let a_ptr = unsafe { &*arguments.a.get() }.as_ptr().wrapping_byte_add(a_offset);
-        let b_ptr = unsafe { &*arguments.b.get() }.as_ptr();
-        let d_ptr = arguments.d.get_mut().as_mut_ptr();
-        let bias_ptr = arguments.bias.map(|b| unsafe { &*b.get() }.as_ptr());
+        let a_ptr = SendPtr(unsafe { &*arguments.a.get() }.as_ptr().wrapping_byte_add(a_offset));
+        let b_ptr = SendPtr(unsafe { &*arguments.b.get() }.as_ptr());
+        let d_ptr = SendPtrMut(arguments.d.get_mut().as_mut_ptr());
+        let bias_ptr = arguments.bias.map(|b| SendPtr(unsafe { &*b.get() }.as_ptr()));
 
         command_buffer.push_command(move || match data_type {
             DataType::F32 => {
                 super::gemm::shaders::steel_gemm::matmul_gemm_impl::<f32>(
-                    a_ptr as *const f32,
-                    b_ptr as *const f32,
-                    d_ptr as *mut f32,
+                    a_ptr.as_ptr() as *const f32,
+                    b_ptr.as_ptr() as *const f32,
+                    d_ptr.as_ptr() as *mut f32,
                     m,
                     n,
                     k,
@@ -65,14 +66,14 @@ impl MatmulKernel for MatmulCpuKernel {
                     ldd,
                 );
                 if let Some(bias) = bias_ptr {
-                    apply_bias::<f32>(d_ptr as *mut f32, bias as *const f32, m, n);
+                    apply_bias::<f32>(d_ptr.as_ptr() as *mut f32, bias.as_ptr() as *const f32, m, n);
                 }
             },
             DataType::F16 => {
                 super::gemm::shaders::steel_gemm::matmul_gemm_impl::<f16>(
-                    a_ptr as *const f16,
-                    b_ptr as *const f16,
-                    d_ptr as *mut f16,
+                    a_ptr.as_ptr() as *const f16,
+                    b_ptr.as_ptr() as *const f16,
+                    d_ptr.as_ptr() as *mut f16,
                     m,
                     n,
                     k,
@@ -81,14 +82,14 @@ impl MatmulKernel for MatmulCpuKernel {
                     ldd,
                 );
                 if let Some(bias) = bias_ptr {
-                    apply_bias::<f16>(d_ptr as *mut f16, bias as *const f16, m, n);
+                    apply_bias::<f16>(d_ptr.as_ptr() as *mut f16, bias.as_ptr() as *const f16, m, n);
                 }
             },
             DataType::BF16 => {
                 super::gemm::shaders::steel_gemm::matmul_gemm_impl::<bf16>(
-                    a_ptr as *const bf16,
-                    b_ptr as *const bf16,
-                    d_ptr as *mut bf16,
+                    a_ptr.as_ptr() as *const bf16,
+                    b_ptr.as_ptr() as *const bf16,
+                    d_ptr.as_ptr() as *mut bf16,
                     m,
                     n,
                     k,
@@ -97,7 +98,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     ldd,
                 );
                 if let Some(bias) = bias_ptr {
-                    apply_bias::<bf16>(d_ptr as *mut bf16, bias as *const bf16, m, n);
+                    apply_bias::<bf16>(d_ptr.as_ptr() as *mut bf16, bias.as_ptr() as *const bf16, m, n);
                 }
             },
             _ => unreachable!(),
