@@ -1,22 +1,23 @@
 #include <metal_stdlib>
+#include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../ssm/ssm_common.h"
 
 using namespace metal;
 
-// Each thread holds N_PER_T state floats; simd_sum reduces across Dk.
-// Grid: num_v_heads × num_dv_groups threadgroups
-// Threads: SIMD_SIZE * DV_PER_TG per threadgroup
+// DeltaNet prefill. One SIMD group per (v-head, dv_idx), Dk split across lanes.
+// Grid: num_v_heads × num_dv_groups, PREFILL_THREADS threads each.
 
-#define DN_V3T_SIMD_SIZE 32
-#define DN_V3T_DV_PER_TG 8
-#define DN_V3T_BLOCK_SIZE (DN_V3T_SIMD_SIZE * DN_V3T_DV_PER_TG)
+#define PREFILL_THREADS 256
 
-// Compile-time n_per_t: Dk / SIMD_SIZE. Qwen3.5: 128/32 = 4.
-#define DN_V3T_N_PER_T 4
+static_assert(
+    PREFILL_THREADS % METAL_SIMD_SIZE == 0,
+    "PREFILL_THREADS must be a multiple of METAL_SIMD_SIZE"
+);
 
-template <typename T>
+template <typename T, uint HEAD_K_DIM>
 VARIANTS(T, float, half, bfloat)
+VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetPrefill)(
     device const float* q_norm,
     device const float* k_norm,
@@ -27,7 +28,6 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     device T* out,
     constant const uint& num_v_heads,
     constant const uint& num_k_heads,
-    constant const uint& head_k_dim,
     constant const uint& head_v_dim,
     constant const uint& key_dim,
     constant const uint& value_dim,
@@ -35,29 +35,35 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     constant const uint& num_dv_groups,
     const uint hv_idx GROUPS(num_v_heads),
     const uint dv_group GROUPS(num_dv_groups),
-    const uint tid THREADS(DN_V3T_BLOCK_SIZE)
+    const uint tid THREADS(PREFILL_THREADS)
 ) {
-  const uint dk_lane = tid % DN_V3T_SIMD_SIZE;
-  const uint dv_local = tid / DN_V3T_SIMD_SIZE;
-  const uint dv_idx = dv_group * DN_V3T_DV_PER_TG + dv_local;
+  static_assert(
+      HEAD_K_DIM % METAL_SIMD_SIZE == 0,
+      "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
+  );
+  constexpr uint n_per_t = HEAD_K_DIM / METAL_SIMD_SIZE;
+
+  const uint dk_lane = tid % METAL_SIMD_SIZE;
+  const uint dv_local = tid / METAL_SIMD_SIZE;
+  const uint dv_idx = dv_group * (PREFILL_THREADS / METAL_SIMD_SIZE) + dv_local;
   const bool active = (dv_idx < head_v_dim);
 
   const uint groups_per_head = num_v_heads / num_k_heads;
   const uint hk = hv_idx / groups_per_head;
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-  const uint dk_base = dk_lane * DN_V3T_N_PER_T;
+  const uint dk_base = dk_lane * n_per_t;
 
   // Pointer bases — increment per token instead of re-computing index
-  device const float* q_ptr = q_norm + hk * head_k_dim + dk_base;
-  device const float* k_ptr = k_norm + hk * head_k_dim + dk_base;
+  device const float* q_ptr = q_norm + hk * HEAD_K_DIM + dk_base;
+  device const float* k_ptr = k_norm + hk * HEAD_K_DIM + dk_base;
   device const float* beta_ptr = beta_buf + hv_idx;
   device const float* decay_ptr = decay_buf + hv_idx;
   device const T* v_ptr = in_proj + 2 * key_dim + hv_idx * head_v_dim + dv_idx;
 
   // State layout: [Hv, Dv, Dk] — contiguous along Dk
   device T* state_ptr =
-      state + (hv_idx * head_v_dim + dv_idx) * head_k_dim + dk_base;
+      state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
   device T* out_ptr = out + hv_idx * head_v_dim + dv_idx;
 
   // Load state into registers
@@ -118,3 +124,5 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     state_ptr[3] = static_cast<T>(s3);
   }
 }
+
+#undef PREFILL_THREADS

@@ -7,7 +7,8 @@ use crate::ArrayElement;
 // Pre-compute L2-normalized q/k, beta, and decay for all tokens.
 #[kernel(DeltaNetPrefillPrep)]
 #[variants(T, f32, f16, bf16)]
-pub fn delta_net_prefill_prep<T: ArrayElement + Float>(
+#[variants(HEAD_K_DIM, 128)]
+pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,
     a_log: *const T,
     dt_bias: *const T,
@@ -17,14 +18,13 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float>(
     decay_out: *mut f32,
     num_v_heads: u32,
     num_k_heads: u32,
-    head_k_dim: u32,
     key_dim: u32,
     value_dim: u32,
     suffix_len: u32,
 ) {
     let nv = num_v_heads as usize;
     let nk = num_k_heads as usize;
-    let dk = head_k_dim as usize;
+    let dk = HEAD_K_DIM as usize;
     let kd = key_dim as usize;
     let vd = value_dim as usize;
     let conv_dim = 2 * kd + vd;

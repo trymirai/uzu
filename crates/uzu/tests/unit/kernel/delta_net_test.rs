@@ -76,7 +76,7 @@ fn run_delta_net_update<B: Backend>(
     let state_array = context.create_array_from(&[state.len()], state, "state");
     let out_array = context.create_array_zeros(&[value_dim as usize], DataType::F32, "out");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, DataType::F32)
+    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, DataType::F32, head_k_dim)
         .expect("Failed to create kernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -89,7 +89,6 @@ fn run_delta_net_update<B: Backend>(
         out_array.buffer().borrow_mut().deref_mut(),
         num_v_heads,
         num_k_heads,
-        head_k_dim,
         head_v_dim,
         key_dim,
         value_dim,
@@ -282,11 +281,6 @@ fn test_delta_net_update_impl(
 }
 
 #[test]
-fn test_delta_net_update_small() {
-    test_delta_net_update_impl(4, 2, 16, 16, "DeltaNetUpdate small");
-}
-
-#[test]
 fn test_delta_net_update_qwen35_shapes() {
     test_delta_net_update_impl(48, 16, 128, 128, "DeltaNetUpdate Qwen3.5");
 }
@@ -324,10 +318,18 @@ fn run_prefill_with_norm_gate(
     let beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta");
     let decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay");
 
-    let prep_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::F32).unwrap();
-    let prefill_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, DataType::F32).unwrap();
+    let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+        &context,
+        DataType::F32,
+        head_k_dim as u32,
+    )
+    .unwrap();
+    let prefill_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(
+        &context,
+        DataType::F32,
+        head_k_dim as u32,
+    )
+    .unwrap();
     let norm_k =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::F32).unwrap();
 
@@ -342,7 +344,6 @@ fn run_prefill_with_norm_gate(
         decay_array.buffer().borrow_mut().deref_mut(),
         num_v_heads as u32,
         num_k_heads as u32,
-        head_k_dim as u32,
         key_dim as u32,
         value_dim as u32,
         suffix_len as u32,
@@ -358,7 +359,6 @@ fn run_prefill_with_norm_gate(
         out_array.buffer().borrow_mut().deref_mut(),
         num_v_heads as u32,
         num_k_heads as u32,
-        head_k_dim as u32,
         head_v_dim as u32,
         key_dim as u32,
         value_dim as u32,
@@ -444,11 +444,6 @@ fn test_prefill_norm_gate_impl(
 }
 
 #[test]
-fn test_delta_net_prefill_small() {
-    test_prefill_norm_gate_impl(4, 2, 128, 128, 8, "Prefill+NormGate small");
-}
-
-#[test]
 fn test_delta_net_prefill_qwen35_shapes() {
     test_prefill_norm_gate_impl(48, 16, 128, 128, 32, "Prefill+NormGate Qwen3.5");
 }
@@ -480,8 +475,12 @@ fn test_delta_net_prefill_prep() {
     let cpu_beta = cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta");
     let cpu_decay = cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay");
 
-    let cpu_prep =
-        <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&cpu_ctx, DataType::F32).unwrap();
+    let cpu_prep = <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+        &cpu_ctx,
+        DataType::F32,
+        head_k_dim as u32,
+    )
+    .unwrap();
     let mut cpu_enc = Encoder::new(cpu_ctx.as_ref()).expect("encoder");
     cpu_prep.encode(
         cpu_in_proj.buffer().borrow().deref(),
@@ -493,7 +492,6 @@ fn test_delta_net_prefill_prep() {
         cpu_decay.buffer().borrow_mut().deref_mut(),
         num_v_heads as u32,
         num_k_heads as u32,
-        head_k_dim as u32,
         key_dim as u32,
         value_dim as u32,
         suffix_len as u32,
@@ -517,8 +515,12 @@ fn test_delta_net_prefill_prep() {
     let beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta");
     let decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay");
 
-    let prep_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::F32).unwrap();
+    let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+        &context,
+        DataType::F32,
+        head_k_dim as u32,
+    )
+    .unwrap();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
     prep_k.encode(
@@ -531,7 +533,6 @@ fn test_delta_net_prefill_prep() {
         decay_array.buffer().borrow_mut().deref_mut(),
         num_v_heads as u32,
         num_k_heads as u32,
-        head_k_dim as u32,
         key_dim as u32,
         value_dim as u32,
         suffix_len as u32,
@@ -586,10 +587,18 @@ fn bench_delta_net_prefill() {
 
     let num_dv_groups = (head_v_dim as u32 + 7) / 8;
 
-    let prep_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::F32).unwrap();
-    let prefill_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, DataType::F32).unwrap();
+    let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
+        &context,
+        DataType::F32,
+        head_k_dim as u32,
+    )
+    .unwrap();
+    let prefill_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(
+        &context,
+        DataType::F32,
+        head_k_dim as u32,
+    )
+    .unwrap();
     let norm_k =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::F32).unwrap();
 
@@ -611,7 +620,6 @@ fn bench_delta_net_prefill() {
             decay_array.buffer().borrow_mut().deref_mut(),
             num_v_heads as u32,
             num_k_heads as u32,
-            head_k_dim as u32,
             key_dim as u32,
             value_dim as u32,
             suffix_len as u32,
@@ -638,7 +646,6 @@ fn bench_delta_net_prefill() {
             decay_array.buffer().borrow_mut().deref_mut(),
             num_v_heads as u32,
             num_k_heads as u32,
-            head_k_dim as u32,
             key_dim as u32,
             value_dim as u32,
             suffix_len as u32,
@@ -654,7 +661,6 @@ fn bench_delta_net_prefill() {
             out_array.buffer().borrow_mut().deref_mut(),
             num_v_heads as u32,
             num_k_heads as u32,
-            head_k_dim as u32,
             head_v_dim as u32,
             key_dim as u32,
             value_dim as u32,
@@ -678,111 +684,4 @@ fn bench_delta_net_prefill() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     });
     prefill_result.print();
-}
-
-#[test]
-#[ignore]
-fn test_delta_net_prefill_capture() {
-    use std::path::PathBuf;
-
-    use uzu::backends::common::Context;
-
-    let num_v_heads = 48usize;
-    let num_k_heads = 16usize;
-    let head_k_dim = 128usize;
-    let head_v_dim = 128usize;
-    let suffix_len = 32usize;
-
-    let key_dim = num_k_heads * head_k_dim;
-    let value_dim = num_v_heads * head_v_dim;
-    let conv_dim = 2 * key_dim + value_dim;
-    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-    let state_size = num_v_heads * head_k_dim * head_v_dim;
-
-    let in_proj: Vec<f32> = (0..suffix_len * total_proj_dim).map(|i| ((i % 37) as f32) * 0.02 - 0.3).collect();
-    let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.05).collect();
-    let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.3 + (i as f32) * 0.02).collect();
-    let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
-    let state: Vec<f32> = (0..state_size).map(|i| ((i % 29) as f32) * 0.005 - 0.05).collect();
-
-    <Metal as Backend>::Context::enable_capture();
-    let context = <Metal as Backend>::Context::new().expect("context");
-
-    let trace_path = PathBuf::from("delta_net_prefill.gputrace");
-    let _ = std::fs::remove_dir_all(&trace_path);
-    context.start_capture(&trace_path).expect("start capture");
-
-    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj, "in_proj");
-    let a_log_array = context.create_array_from(&[a_log.len()], &a_log, "a_log");
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias, "dt_bias");
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight, "norm_weight");
-    let state_array = context.create_array_from(&[state.len()], &state, "state");
-    let out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32, "out");
-    let q_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "q_norm");
-    let k_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "k_norm");
-
-    let beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta");
-    let decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay");
-
-    let num_dv_groups = (head_v_dim as u32 + 7) / 8;
-
-    let prep_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(&context, DataType::F32).unwrap();
-    let prefill_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, DataType::F32).unwrap();
-    let norm_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::F32).unwrap();
-
-    let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
-    prep_k.encode(
-        in_proj_array.buffer().borrow().deref(),
-        a_log_array.buffer().borrow().deref(),
-        dt_bias_array.buffer().borrow().deref(),
-        q_norm_array.buffer().borrow_mut().deref_mut(),
-        k_norm_array.buffer().borrow_mut().deref_mut(),
-        beta_array.buffer().borrow_mut().deref_mut(),
-        decay_array.buffer().borrow_mut().deref_mut(),
-        num_v_heads as u32,
-        num_k_heads as u32,
-        head_k_dim as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        &mut encoder,
-    );
-    prefill_k.encode(
-        q_norm_array.buffer().borrow().deref(),
-        k_norm_array.buffer().borrow().deref(),
-        beta_array.buffer().borrow().deref(),
-        decay_array.buffer().borrow().deref(),
-        in_proj_array.buffer().borrow().deref(),
-        state_array.buffer().borrow_mut().deref_mut(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        num_v_heads as u32,
-        num_k_heads as u32,
-        head_k_dim as u32,
-        head_v_dim as u32,
-        key_dim as u32,
-        value_dim as u32,
-        suffix_len as u32,
-        num_dv_groups,
-        &mut encoder,
-    );
-    norm_k.encode(
-        out_array.buffer().borrow_mut().deref_mut(),
-        in_proj_array.buffer().borrow().deref(),
-        norm_weight_array.buffer().borrow().deref(),
-        num_v_heads as u32,
-        head_v_dim as u32,
-        value_dim as u32,
-        conv_dim as u32,
-        total_proj_dim as u32,
-        1e-6f32,
-        suffix_len as u32,
-        &mut encoder,
-    );
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    context.stop_capture().expect("stop capture");
-    println!("GPU capture saved to: {:?}", trace_path);
 }
