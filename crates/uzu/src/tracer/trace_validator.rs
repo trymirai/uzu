@@ -357,7 +357,8 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in delta_net_layers {
-            let arrays = state.arrays(&[ArrayId::DeltaNetConvState(index), ArrayId::DeltaNetSsmState(index)]);
+            let conv_state = state.array(ArrayId::DeltaNetConvState(index));
+            let ssm_state = state.array(ArrayId::DeltaNetSsmState(index));
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -369,7 +370,7 @@ impl<B: Backend> TraceValidator<B> {
                         metrics: Self::validate_array(
                             data_type,
                             &expected,
-                            &arrays[0],
+                            &conv_state,
                             Some(ArrayTransform::SsmConvState),
                         ),
                     });
@@ -383,7 +384,7 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(data_type, &expected, &arrays[1], None),
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
                     });
                 }
             }

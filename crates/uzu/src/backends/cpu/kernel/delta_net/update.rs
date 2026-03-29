@@ -12,7 +12,8 @@ use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
 //   4. RMSNorm output, gate with SiLU(z), write result
 #[kernel(DeltaNetUpdate)]
 #[variants(T, f32, f16, bf16)]
-pub fn delta_net_update<T: ArrayElement + Float>(
+#[variants(HEAD_K_DIM, 128)]
+pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,
     a_log: *const T,
     dt_bias: *const T,
@@ -21,7 +22,6 @@ pub fn delta_net_update<T: ArrayElement + Float>(
     out: *mut T,
     num_v_heads: u32,
     num_k_heads: u32,
-    head_k_dim: u32,
     head_v_dim: u32,
     key_dim: u32,
     value_dim: u32,
@@ -32,7 +32,7 @@ pub fn delta_net_update<T: ArrayElement + Float>(
     let nv = num_v_heads as usize;
     let nk = num_k_heads as usize;
     debug_assert!(nv % nk == 0, "num_v_heads must be a multiple of num_k_heads");
-    let dk = head_k_dim as usize;
+    let dk = HEAD_K_DIM as usize;
     let dv = head_v_dim as usize;
     let kd = key_dim as usize;
     let vd = value_dim as usize;

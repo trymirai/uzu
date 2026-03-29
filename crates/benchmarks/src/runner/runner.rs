@@ -78,6 +78,9 @@ impl Runner {
 
         let input = Input::Messages(self.task.messages.clone());
 
+        let warmup_config = RunConfig::default().tokens_limit(1);
+        session.run(input.clone(), warmup_config, Some(|_: Output| true))?;
+
         let mut results: Vec<TaskResult> = Vec::new();
         for run_index in 0..self.task.number_of_runs {
             let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();

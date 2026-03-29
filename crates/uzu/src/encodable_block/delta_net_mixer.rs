@@ -103,17 +103,20 @@ impl<B: Backend> DeltaNetMixer<B> {
 
         let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, data_type, has_bias)
             .expect("Failed to create DeltaNet conv update kernel");
-        let delta_net_update = <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, data_type)
-            .expect("Failed to create DeltaNet update kernel");
+        let delta_net_update =
+            <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, data_type, config.head_dim as u32)
+                .expect("Failed to create DeltaNet update kernel");
 
         let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
             .expect("Failed to create Conv1dPack kernel");
         let conv_scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, data_type, has_bias)
             .expect("Failed to create DeltaNet conv scan kernel");
-        let prefill_prep = <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, DataType::F32)
-            .expect("Failed to create DeltaNet prefill prep kernel");
-        let delta_net_prefill = <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, data_type)
-            .expect("Failed to create DeltaNet prefill V3T kernel");
+        let prefill_prep =
+            <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, data_type, config.head_dim as u32)
+                .expect("Failed to create DeltaNet prefill prep kernel");
+        let delta_net_prefill =
+            <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, data_type, config.head_dim as u32)
+                .expect("Failed to create DeltaNet prefill kernel");
         let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, data_type)
             .expect("Failed to create DeltaNet norm gate kernel");
 
@@ -237,7 +240,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             out.buffer().borrow_mut().deref_mut(),
             self.config.num_heads as u32,
             self.config.num_groups as u32,
-            self.config.head_dim as u32,
             self.config.value_head_dim as u32,
             self.config.key_dim() as u32,
             self.config.value_dim() as u32,
@@ -279,14 +281,12 @@ impl<B: Backend> DeltaNetMixer<B> {
             prep_decay.buffer().borrow_mut().deref_mut(),
             self.config.num_heads as u32,
             self.config.num_groups as u32,
-            self.config.head_dim as u32,
             self.config.key_dim() as u32,
             self.config.value_dim() as u32,
             suffix_length as u32,
             encoder,
         );
 
-        // V3T prefill: MLX-style, [Hv, Dv, Dk] state layout
         self.delta_net_prefill.encode(
             prep_q_norm.buffer().borrow().deref(),
             prep_k_norm.buffer().borrow().deref(),
@@ -297,7 +297,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             out.buffer().borrow_mut().deref_mut(),
             self.config.num_heads as u32,
             self.config.num_groups as u32,
-            self.config.head_dim as u32,
             self.config.value_head_dim as u32,
             self.config.key_dim() as u32,
             self.config.value_dim() as u32,

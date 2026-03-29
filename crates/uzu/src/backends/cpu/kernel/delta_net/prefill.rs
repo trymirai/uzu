@@ -6,7 +6,8 @@ use crate::ArrayElement;
 
 #[kernel(DeltaNetPrefill)]
 #[variants(T, f32, f16, bf16)]
-pub fn delta_net_prefill<T: ArrayElement + Float>(
+#[variants(HEAD_K_DIM, 128)]
+pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     q_norm: *const f32,
     k_norm: *const f32,
     beta_buf: *const f32,
@@ -16,7 +17,6 @@ pub fn delta_net_prefill<T: ArrayElement + Float>(
     out: *mut T,
     num_v_heads: u32,
     num_k_heads: u32,
-    head_k_dim: u32,
     head_v_dim: u32,
     key_dim: u32,
     value_dim: u32,
@@ -26,7 +26,7 @@ pub fn delta_net_prefill<T: ArrayElement + Float>(
     let state_ptr = state as *const T;
     let nv = num_v_heads as usize;
     let nk = num_k_heads as usize;
-    let dk = head_k_dim as usize;
+    let dk = HEAD_K_DIM as usize;
     let dv = head_v_dim as usize;
     let kd = key_dim as usize;
     let vd = value_dim as usize;
@@ -50,9 +50,7 @@ pub fn delta_net_prefill<T: ArrayElement + Float>(
                 let mut kv_mem = 0.0f32;
                 for j in 0..dk {
                     let s = unsafe { (*state_ptr.add(state_off + j)).to_f32().unwrap() };
-                    let decayed = decay * s;
-                    unsafe { *state.add(state_off + j) = T::from(decayed).unwrap() };
-                    kv_mem += decayed * unsafe { *k_norm.add(qk_off + j) };
+                    kv_mem += (decay * s) * unsafe { *k_norm.add(qk_off + j) };
                 }
 
                 let v_val = unsafe { (*in_proj.add(t * total_proj_dim + 2 * kd + hv * dv + dv_idx)).to_f32().unwrap() };
@@ -62,7 +60,7 @@ pub fn delta_net_prefill<T: ArrayElement + Float>(
                 for j in 0..dk {
                     let s = unsafe { (*state_ptr.add(state_off + j)).to_f32().unwrap() };
                     let k_j = unsafe { *k_norm.add(qk_off + j) };
-                    let new_s = s + k_j * delta;
+                    let new_s = decay * s + k_j * delta;
                     unsafe { *state.add(state_off + j) = T::from(new_s).unwrap() };
                     o_val += new_s * unsafe { *q_norm.add(qk_off + j) };
                 }
