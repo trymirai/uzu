@@ -125,6 +125,15 @@ impl InnerModelConfig {
             });
         }
 
+        if let Some(dn) = tf.layer_configs.iter().find_map(|layer| layer.mixer_config.as_delta_net()) {
+            return Ok(AttentionDims {
+                num_heads: dn.num_heads,
+                num_groups: dn.num_groups,
+                head_dim: dn.head_dim,
+                attention_scale: None,
+            });
+        }
+
         Ok(AttentionDims {
             num_heads: 1,
             num_groups: 1,
@@ -146,6 +155,14 @@ impl InnerModelConfig {
             },
             MixerConfig::ShortConv(config) => DecoderLayerType::ShortConv {
                 kernel_size: config.kernel_size,
+            },
+            MixerConfig::DeltaNet(config) => DecoderLayerType::DeltaNet {
+                conv_dim: config.conv_dim(),
+                kernel_size: config.kernel_size,
+                num_heads: config.num_heads,
+                num_groups: config.num_groups,
+                head_dim: config.head_dim,
+                value_head_dim: config.value_head_dim,
             },
         }
     }

@@ -328,8 +328,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         // Input Hadamard (standalone dispatch, or skipped if fused into preceding norm)
         if let Some((ref kernel, ref factors_buffer)) = self.input_hadamard {
             let input_total_blocks = (batch_size * self.input_dimension / 32) as u32;
-            let arrays = state.arrays(&[self.input_array_id]);
-            let input_array = &arrays[0];
+            let input_array = state.array(self.input_array_id);
             kernel.encode(
                 input_array.buffer().borrow_mut().deref_mut(),
                 factors_buffer.borrow().deref(),
@@ -342,9 +341,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         // QMV + Output Hadamard: fused for decode, separate for prefill
         if batch_size < 32 {
             if let Some(ref out_fused) = self.output_fused {
-                let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-                let input_array = &arrays[0];
-                let output_array = &arrays[1];
+                let input_array = state.array(self.input_array_id);
+                let output_array = state.array(self.output_array_id);
 
                 let w_borrow = out_fused.weights_buffer.borrow();
                 let s_borrow = out_fused.scales_buffer.borrow();
@@ -386,9 +384,8 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
         // Prefill fused path: QMM + Output Hadamard in one kernel
         if let Some(ref pf_fused) = self.prefill_fused {
-            let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-            let input_array = &arrays[0];
-            let output_array = &arrays[1];
+            let input_array = state.array(self.input_array_id);
+            let output_array = state.array(self.output_array_id);
 
             let w_borrow = pf_fused.weights_buffer.borrow();
             let s_borrow = pf_fused.scales_buffer.borrow();
@@ -432,8 +429,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
         {
             let output_total_blocks = (batch_size * self.output_dimension / 32) as u32;
-            let arrays = state.arrays(&[self.output_array_id]);
-            let output_array = &arrays[0];
+            let output_array = state.array(self.output_array_id);
             self.output_hadamard_kernel.encode(
                 output_array.buffer().borrow_mut().deref_mut(),
                 self.output_factors_buffer.borrow().deref(),

@@ -7,9 +7,14 @@ use crate::ArrayElement;
 #[kernel(MaskUpdate)]
 #[variants(T, f32, f16, bf16)]
 pub fn mask_update<T: ArrayElement + Float>(
-    #[allow(unused)] mask: *mut T,
-    #[allow(unused)] unmask_col: i32,
-    #[allow(unused)] mask_col: i32,
+    mask: *mut T,
+    unmask_col: i32,
+    mask_col: i32,
 ) {
-    todo!()
+    if (unmask_col >= 0) {
+        unsafe { *mask.add(unmask_col as usize) = T::zero() };
+    }
+    if (mask_col >= 0) {
+        unsafe { *mask.add(mask_col as usize) = T::neg_infinity() };
+    }
 }

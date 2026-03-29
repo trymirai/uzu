@@ -658,13 +658,6 @@ impl<B: Backend> ForwardPassState<B> {
     // Public API Methods (formerly trait methods)
     // ========================================================================
 
-    pub fn arrays(
-        &self,
-        ids: &[ArrayId],
-    ) -> Box<[Array<B>]> {
-        ids.iter().map(|id| self.array(*id)).collect()
-    }
-
     pub fn hashmaps(
         &self,
         ids: &[HashMapId],
@@ -749,13 +742,13 @@ impl<B: Backend> ForwardPassState<B> {
         source_array_id: ArrayId,
         destination_array: Array<B>,
     ) {
-        let source_ref = self.arrays(&[source_array_id])[0].clone();
+        let source_array = self.array(source_array_id);
 
-        let src_buf_rc = source_ref.buffer();
+        let src_buf_rc = source_array.buffer();
         let dst_buf_rc = destination_array.buffer();
 
         let copy_size_bytes = destination_array.size();
-        debug_assert_eq!(destination_array.size(), source_ref.size());
+        debug_assert_eq!(destination_array.size(), source_array.size());
 
         encoder.encode_copy(
             src_buf_rc.borrow().deref(),

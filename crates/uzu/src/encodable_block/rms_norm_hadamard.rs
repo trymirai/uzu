@@ -79,12 +79,9 @@ impl<B: Backend> RMSNormHadamard<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let input_binding = state.arrays(&[self.input_array_id]);
-        let output_binding = state.arrays(&[self.output_array_id]);
-
-        let input_array = &input_binding[0];
+        let input_array = state.array(self.input_array_id);
         let input_shape = input_array.shape().to_vec();
-        let output_array = &output_binding[0];
+        let output_array = state.array(self.output_array_id);
 
         let suffix_length = input_shape[0];
         let input_elem_size = input_array.data_type().size_in_bytes();

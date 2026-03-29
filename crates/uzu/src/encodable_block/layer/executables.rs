@@ -63,9 +63,8 @@ impl<B: Backend> FusedCopyNorm<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Shortcut]);
-        let main_array = &arrays[0];
-        let shortcut_array = &arrays[1];
+        let main_array = state.array(ArrayId::Main);
+        let shortcut_array = state.array(ArrayId::Shortcut);
         let batch_len = main_array.shape()[0].min(state.active_suffix_length()) as u32;
         let element_count = main_array.shape()[1] as u32;
         let main_buf_rc = main_array.buffer();
@@ -135,9 +134,8 @@ impl<B: Backend> FusedResidualAddNorm<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Shortcut]);
-        let main_array = &arrays[0];
-        let shortcut_array = &arrays[1];
+        let main_array = state.array(ArrayId::Main);
+        let shortcut_array = state.array(ArrayId::Shortcut);
         let batch_len = main_array.shape()[0].min(state.active_suffix_length()) as u32;
         let element_count = main_array.shape()[1] as u32;
         let main_buf_rc = main_array.buffer();
@@ -304,13 +302,10 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
             MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
+            MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
-        let copy_main_to_shortcut = TensorCopy::<B>::new(
-            context,
-            intermediate_data_type,
-            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-        )
-        .unwrap();
+        let copy_main_to_shortcut =
+            TensorCopy::<B>::new(context, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
 
         let norm_tree = decoder_layer_loader.subtree("pre_mixer_norm").unwrap();
 
@@ -528,6 +523,7 @@ impl<B: Backend> LayerExecutables<B> {
                     fused_pre_attn,
                 )
             },
+            MixerConfig::DeltaNet(_) => unimplemented!("DeltaNet mixer"),
         };
 
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
@@ -546,12 +542,8 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
-        let main_shortcut_add_swap = TensorAddSwap::<B>::new(
-            context,
-            intermediate_data_type,
-            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
-        )
-        .unwrap();
+        let main_shortcut_add_swap =
+            TensorAddSwap::<B>::new(context, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
 
         let mlp_norm_tree = decoder_layer_loader.subtree("pre_mlp_norm").unwrap();
 

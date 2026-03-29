@@ -48,12 +48,8 @@ impl<B: Backend> ClassifierLayer<B> {
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
-        let copy_main_to_shortcut_mixer = TensorCopy::<B>::new(
-            ctx,
-            intermediate_data_type,
-            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-        )
-        .unwrap();
+        let copy_main_to_shortcut_mixer =
+            TensorCopy::<B>::new(ctx, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
 
         let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_attention_norm_config {
             if layer_loader.subtree("pre_mixer_norm").is_ok() {
@@ -134,19 +130,11 @@ impl<B: Backend> ClassifierLayer<B> {
             None
         };
 
-        let mixer_residual_add = TensorAddSwap::<B>::new(
-            ctx,
-            intermediate_data_type,
-            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
-        )
-        .unwrap();
+        let mixer_residual_add =
+            TensorAddSwap::<B>::new(ctx, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
 
-        let copy_main_to_shortcut_mlp = TensorCopy::<B>::new(
-            ctx,
-            intermediate_data_type,
-            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-        )
-        .unwrap();
+        let copy_main_to_shortcut_mlp =
+            TensorCopy::<B>::new(ctx, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
 
         let pre_mlp_norm = Normalization::new(
             ctx,
@@ -195,12 +183,8 @@ impl<B: Backend> ClassifierLayer<B> {
         )
         .expect("Failed to create attention kernel");
 
-        let mlp_residual_add = TensorAddSwap::<B>::new(
-            ctx,
-            intermediate_data_type,
-            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
-        )
-        .unwrap();
+        let mlp_residual_add =
+            TensorAddSwap::<B>::new(ctx, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
 
         Self {
             layer_index,

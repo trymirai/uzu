@@ -42,9 +42,8 @@ impl<B: Backend> Activation<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let input_array = &arrays[0];
-        let output_array = &arrays[1];
+        let input_array = state.array(self.input_array_id);
+        let output_array = state.array(self.output_array_id);
 
         let n = input_array.shape().iter().product::<usize>();
         if self.activation.act_type() == ActivationType::IDENTITY {

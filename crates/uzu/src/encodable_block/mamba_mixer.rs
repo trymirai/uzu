@@ -149,20 +149,11 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmInProj,
-            ArrayId::SsmPacked(self.layer_index),
-            ArrayId::SsmZ(self.layer_index),
-            ArrayId::SsmDt(self.layer_index),
-        ]);
+        let in_proj = state.array(ArrayId::SsmInProj);
+        let conv_inputs = state.array(ArrayId::SsmPacked(self.layer_index));
+        let gate = state.array(ArrayId::SsmZ(self.layer_index));
+        let dt = state.array(ArrayId::SsmDt(self.layer_index));
 
-        let in_proj = &arrays[0];
-        let conv_inputs = &arrays[1];
-        let gate = &arrays[2];
-        let dt = &arrays[3];
-
-        let bias_buf_rc = self.gate_bias.buffer();
-        let bias_buf_borrow = bias_buf_rc.borrow();
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let num_heads = self.config.num_heads;
@@ -173,7 +164,7 @@ impl<B: Backend> MambaMixer<B> {
             conv_inputs.buffer().borrow_mut().deref_mut(),
             gate.buffer().borrow_mut().deref_mut(),
             dt.buffer().borrow_mut().deref_mut(),
-            bias_buf_borrow.deref(),
+            self.gate_bias.buffer().borrow().deref(),
             suffix_length as u32,
             total_dim as u32,
             conv_dim as u32,
@@ -189,18 +180,11 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmPacked(self.layer_index),
-            ArrayId::SsmConvState(self.layer_index),
-            ArrayId::SsmX(self.layer_index),
-            ArrayId::SsmB(self.layer_index),
-            ArrayId::SsmC(self.layer_index),
-        ]);
-        let conv_inputs = &arrays[0];
-        let conv_state = &arrays[1];
-        let x_arr = &arrays[2];
-        let b_arr = &arrays[3];
-        let c_arr = &arrays[4];
+        let conv_inputs = state.array(ArrayId::SsmPacked(self.layer_index));
+        let conv_state = state.array(ArrayId::SsmConvState(self.layer_index));
+        let x_arr = state.array(ArrayId::SsmX(self.layer_index));
+        let b_arr = state.array(ArrayId::SsmB(self.layer_index));
+        let c_arr = state.array(ArrayId::SsmC(self.layer_index));
 
         let weight_buf_rc = self.conv_weight.buffer();
         let weight_buf_borrow = weight_buf_rc.borrow();
@@ -288,26 +272,14 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let base_arrays = state.arrays(&[
-            ArrayId::SsmX(self.layer_index),
-            ArrayId::SsmB(self.layer_index),
-            ArrayId::SsmC(self.layer_index),
-            ArrayId::SsmDt(self.layer_index),
-            ArrayId::SsmZ(self.layer_index),
-            ArrayId::SsmState(self.layer_index),
-            ArrayId::AttentionOutput,
-        ]);
+        let x = state.array(ArrayId::SsmX(self.layer_index));
+        let b = state.array(ArrayId::SsmB(self.layer_index));
+        let c = state.array(ArrayId::SsmC(self.layer_index));
+        let dt = state.array(ArrayId::SsmDt(self.layer_index));
+        let z = state.array(ArrayId::SsmZ(self.layer_index));
+        let state_arr = state.array(ArrayId::SsmState(self.layer_index));
+        let out = state.array(ArrayId::AttentionOutput);
 
-        let x = &base_arrays[0];
-        let b = &base_arrays[1];
-        let c = &base_arrays[2];
-        let dt = &base_arrays[3];
-        let z = &base_arrays[4];
-        let state_arr = &base_arrays[5];
-        let out = &base_arrays[6];
-
-        let skip_rc = self.skip_connection_weight.buffer();
-        let skip_borrow = skip_rc.borrow();
         self.ssd_prefill.encode(
             encoder,
             SSDPrefillArguments {
@@ -315,7 +287,7 @@ impl<B: Backend> MambaMixer<B> {
                 dt: dt.buffer().borrow().deref(),
                 b: b.buffer().borrow().deref(),
                 c: c.buffer().borrow().deref(),
-                d: skip_borrow.deref(),
+                d: self.skip_connection_weight.buffer().borrow().deref(),
                 z: z.buffer().borrow().deref(),
                 state: state_arr.buffer().borrow_mut().deref_mut(),
                 y: out.buffer().borrow_mut().deref_mut(),
@@ -339,25 +311,13 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let arrays = state.arrays(&[
-            ArrayId::SsmX(self.layer_index),
-            ArrayId::SsmB(self.layer_index),
-            ArrayId::SsmC(self.layer_index),
-            ArrayId::SsmDt(self.layer_index),
-            ArrayId::SsmZ(self.layer_index),
-            ArrayId::SsmState(self.layer_index),
-            ArrayId::AttentionOutput,
-        ]);
-        let x = &arrays[0];
-        let b = &arrays[1];
-        let c = &arrays[2];
-        let dt = &arrays[3];
-        let z = &arrays[4];
-        let state_arr = &arrays[5];
-        let y = &arrays[6];
-
-        let skip_rc = self.skip_connection_weight.buffer();
-        let skip_borrow = skip_rc.borrow();
+        let x = state.array(ArrayId::SsmX(self.layer_index));
+        let b = state.array(ArrayId::SsmB(self.layer_index));
+        let c = state.array(ArrayId::SsmC(self.layer_index));
+        let dt = state.array(ArrayId::SsmDt(self.layer_index));
+        let z = state.array(ArrayId::SsmZ(self.layer_index));
+        let state_arr = state.array(ArrayId::SsmState(self.layer_index));
+        let y = state.array(ArrayId::AttentionOutput);
 
         let h = self.config.num_heads as u32;
         let g = self.config.num_groups as u32;
@@ -376,7 +336,7 @@ impl<B: Backend> MambaMixer<B> {
             dt.buffer().borrow().deref(),
             b.buffer().borrow().deref(),
             c.buffer().borrow().deref(),
-            skip_borrow.deref(),
+            self.skip_connection_weight.buffer().borrow().deref(),
             z.buffer().borrow().deref(),
             None::<&B::Buffer>,
             y.buffer().borrow_mut().deref_mut(),

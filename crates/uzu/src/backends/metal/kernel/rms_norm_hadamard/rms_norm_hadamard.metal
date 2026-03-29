@@ -35,8 +35,9 @@ PUBLIC KERNEL(RMSNormHadamardMul)(
     input = reinterpret_cast<const device InputT*>(output);
   }
 
-  threadgroup AccumT* shared_sum =
-      reinterpret_cast<threadgroup AccumT*>(&staging[STAGING_SIZE - METAL_SIMD_SIZE]);
+  threadgroup AccumT* shared_sum = reinterpret_cast<threadgroup AccumT*>(
+      &staging[STAGING_SIZE - METAL_SIMD_SIZE]
+  );
 
   const uint input_offset = batch_idx * element_count;
   const device InputT* input_data = input + input_offset;

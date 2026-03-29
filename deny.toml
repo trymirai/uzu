@@ -1,0 +1,23 @@
+[advisories]
+ignore = [
+    "RUSTSEC-2024-0370", # proc-macro-error is unmaintained
+    "RUSTSEC-2024-0436", # paste - no longer maintained
+    "RUSTSEC-2024-0375", # `atty` is unmaintained
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0",
+    "MPL-2.0",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "Unicode-3.0"
+]
+
+[bans]
+multiple-versions = "allow"
