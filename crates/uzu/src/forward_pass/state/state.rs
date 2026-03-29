@@ -590,6 +590,16 @@ impl<B: Backend> ForwardPassState<B> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
     }
 
+    pub fn delta_net_prep_buffers(&self) -> Option<(Array<B>, Array<B>, Array<B>, Array<B>)> {
+        let aux = self.llm_aux.as_ref()?;
+        Some((
+            aux.delta_net_prep_q_norm.clone()?,
+            aux.delta_net_prep_k_norm.clone()?,
+            aux.delta_net_prep_beta.clone()?,
+            aux.delta_net_prep_decay.clone()?,
+        ))
+    }
+
     // ========================================================================
     // Public API Methods (formerly trait methods)
     // ========================================================================

@@ -97,14 +97,15 @@ PUBLIC KERNEL(DeltaNetUpdate)(
       active ? float(in_proj[conv_dim + hv_idx * head_v_dim + vi]) : 0.0f;
 
   // State read — each thread handles bk rows
+  // State layout: [Hv, Dv, Dk]
   float sq_partial = 0.0f;
   float sk_partial = 0.0f;
-  const uint state_head_offset = hv_idx * head_k_dim * head_v_dim;
+  const uint state_row_offset =
+      hv_idx * head_v_dim * head_k_dim + vi * head_k_dim;
   const uint k_base = ki_part * bk;
   if (active) {
     for (uint j = 0; j < bk; ++j) {
-      float s =
-          float(state[state_head_offset + (k_base + j) * head_v_dim + vi]);
+      float s = float(state[state_row_offset + k_base + j]);
       sq_partial += s * shared_q[k_base + j];
       sk_partial += s * shared_k[k_base + j];
     }
@@ -121,7 +122,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   // State update — each thread updates its k-part
   if (active) {
     for (uint j = 0; j < bk; ++j) {
-      uint idx = state_head_offset + (k_base + j) * head_v_dim + vi;
+      uint idx = state_row_offset + k_base + j;
       float s = float(state[idx]);
       state[idx] = static_cast<T>(decay * s + shared_k[k_base + j] * delta_i);
     }

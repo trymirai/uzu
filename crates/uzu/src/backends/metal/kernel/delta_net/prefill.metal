@@ -1,29 +1,28 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
-#include "../common/thread_context.h"
-#include "../common/threadgroup_reduce.h"
 #include "../ssm/ssm_common.h"
 
 using namespace metal;
 
-// Multi-token delta net prefill: sequential scan, k-tiled state.
-// 128 threads per threadgroup, BV=64 v-columns per tile.
-// Thread mapping: vi = tid/2, ki_half = tid%2 — paired threads in same SIMD
-// group for simd_shuffle reduction.
-// Each thread holds head_k_dim/2 state floats. No RMSNorm/SiLU — outputs raw o.
-//
-// Grid: num_v_heads x num_v_tiles threadgroups
+// Each thread holds N_PER_T state floats; simd_sum reduces across Dk.
+// Grid: num_v_heads × num_dv_groups threadgroups
+// Threads: SIMD_SIZE * DV_PER_TG per threadgroup
 
-#define DN_TILED_BLOCK_SIZE 128
-#define DN_TILED_BV 64
-#define DN_TILED_MAX_BK_HALF 64
+#define DN_V3T_SIMD_SIZE 32
+#define DN_V3T_DV_PER_TG 8
+#define DN_V3T_BLOCK_SIZE (DN_V3T_SIMD_SIZE * DN_V3T_DV_PER_TG)
+
+// Compile-time n_per_t: Dk / SIMD_SIZE. Qwen3.5: 128/32 = 4.
+#define DN_V3T_N_PER_T 4
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(DeltaNetPrefill)(
+    device const float* q_norm,
+    device const float* k_norm,
+    device const float* beta_buf,
+    device const float* decay_buf,
     device const T* in_proj,
-    device const T* a_log,
-    device const T* dt_bias,
     device T* state,
     device T* out,
     constant const uint& num_v_heads,
@@ -33,151 +32,89 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     constant const uint& key_dim,
     constant const uint& value_dim,
     constant const uint& suffix_len,
-    constant const uint& num_v_tiles,
-    threadgroup float shared_qk[DN_TILED_BLOCK_SIZE * 2],
-    threadgroup float shared_scratch[32],
-    const ThreadContext thread_context,
+    constant const uint& num_dv_groups,
     const uint hv_idx GROUPS(num_v_heads),
-    const uint v_tile GROUPS(num_v_tiles),
-    const uint tid THREADS(DN_TILED_BLOCK_SIZE)
+    const uint dv_group GROUPS(num_dv_groups),
+    const uint tid THREADS(DN_V3T_BLOCK_SIZE)
 ) {
-  const uint vi_local = tid / 2;
-  const uint ki_half = tid % 2;
-  const uint vi_global = v_tile * DN_TILED_BV + vi_local;
-  const bool active = (vi_global < head_v_dim);
+  const uint dk_lane = tid % DN_V3T_SIMD_SIZE;
+  const uint dv_local = tid / DN_V3T_SIMD_SIZE;
+  const uint dv_idx = dv_group * DN_V3T_DV_PER_TG + dv_local;
+  const bool active = (dv_idx < head_v_dim);
 
-  threadgroup float* shared_q = shared_qk;
-  threadgroup float* shared_k = shared_qk + DN_TILED_BLOCK_SIZE;
-
-  const uint conv_dim = 2 * key_dim + value_dim;
-  const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
   const uint groups_per_head = num_v_heads / num_k_heads;
   const uint hk = hv_idx / groups_per_head;
-  const uint state_head_offset = hv_idx * head_k_dim * head_v_dim;
+  const uint conv_dim = 2 * key_dim + value_dim;
+  const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+  const uint dk_base = dk_lane * DN_V3T_N_PER_T;
 
-  const uint bk_half = head_k_dim / 2;
+  // Pointer bases — increment per token instead of re-computing index
+  device const float* q_ptr = q_norm + hk * head_k_dim + dk_base;
+  device const float* k_ptr = k_norm + hk * head_k_dim + dk_base;
+  device const float* beta_ptr = beta_buf + hv_idx;
+  device const float* decay_ptr = decay_buf + hv_idx;
+  device const T* v_ptr = in_proj + 2 * key_dim + hv_idx * head_v_dim + dv_idx;
 
-  // Load initial state into thread-local storage
-  thread float s_col[DN_TILED_MAX_BK_HALF];
+  // State layout: [Hv, Dv, Dk] — contiguous along Dk
+  device T* state_ptr =
+      state + (hv_idx * head_v_dim + dv_idx) * head_k_dim + dk_base;
+  device T* out_ptr = out + hv_idx * head_v_dim + dv_idx;
+
+  // Load state into registers
+  float s0 = 0.0f, s1 = 0.0f, s2 = 0.0f, s3 = 0.0f;
   if (active) {
-    const uint k_base = ki_half * bk_half;
-    for (uint j = 0; j < bk_half; ++j) {
-      s_col[j] = float(
-          state[state_head_offset + (k_base + j) * head_v_dim + vi_global]
-      );
-    }
+    s0 = float(state_ptr[0]);
+    s1 = float(state_ptr[1]);
+    s2 = float(state_ptr[2]);
+    s3 = float(state_ptr[3]);
   }
-
-  const float a_log_val = float(a_log[hv_idx]);
-  const float dt_bias_val = float(dt_bias[hv_idx]);
 
   for (uint t = 0; t < suffix_len; ++t) {
-    const uint tok = t * total_proj_dim;
+    float decay = *decay_ptr;
+    float beta = *beta_ptr;
 
-    // Load q, k into shared memory
-    if (tid < head_k_dim) {
-      shared_q[tid] = float(in_proj[tok + hk * head_k_dim + tid]);
-      shared_k[tid] = float(in_proj[tok + key_dim + hk * head_k_dim + tid]);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // Load and cache k_norm (used in both passes)
+    float k0 = k_ptr[0], k1 = k_ptr[1], k2 = k_ptr[2], k3 = k_ptr[3];
 
-    // L2 normalize q
-    float q_partial = (tid < head_k_dim) ? shared_q[tid] * shared_q[tid] : 0.0f;
-    float q_norm_sq = threadgroup_cooperative_reduce_sum<DN_TILED_BLOCK_SIZE>(
-        q_partial,
-        shared_scratch,
-        tid,
-        thread_context
-    );
-    float q_inv_norm = rsqrt(q_norm_sq + 1e-6f);
+    // Pass 1: decay state + kv_mem = (decayed S) @ k
+    s0 *= decay;
+    s1 *= decay;
+    s2 *= decay;
+    s3 *= decay;
+    float kv_partial = s0 * k0 + s1 * k1 + s2 * k2 + s3 * k3;
+    float kv_mem = simd_sum(kv_partial);
 
-    // L2 normalize k
-    float k_partial = (tid < head_k_dim) ? shared_k[tid] * shared_k[tid] : 0.0f;
-    float k_norm_sq = threadgroup_cooperative_reduce_sum<DN_TILED_BLOCK_SIZE>(
-        k_partial,
-        shared_scratch,
-        tid,
-        thread_context
-    );
-    float k_inv_norm = rsqrt(k_norm_sq + 1e-6f);
+    // Delta
+    float v_val = active ? float(*v_ptr) : 0.0f;
+    float delta = beta * (v_val - kv_mem);
 
-    // Apply normalization + scale q
-    float q_scale = rsqrt(float(head_k_dim));
-    if (tid < head_k_dim) {
-      shared_q[tid] *= q_inv_norm * q_scale;
-      shared_k[tid] *= k_inv_norm;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // Pass 2: update state + output = new_S @ q
+    s0 += k0 * delta;
+    s1 += k1 * delta;
+    s2 += k2 * delta;
+    s3 += k3 * delta;
+    float q0 = q_ptr[0], q1 = q_ptr[1], q2 = q_ptr[2], q3 = q_ptr[3];
+    float out_partial = s0 * q0 + s1 * q1 + s2 * q2 + s3 * q3;
+    float o_val = simd_sum(out_partial);
 
-    // dot(k, q)
-    float kq_partial =
-        (tid < head_k_dim) ? shared_k[tid] * shared_q[tid] : 0.0f;
-    float kq_dot = threadgroup_cooperative_reduce_sum<DN_TILED_BLOCK_SIZE>(
-        kq_partial,
-        shared_scratch,
-        tid,
-        thread_context
-    );
-
-    // Gating scalars
-    float beta_raw = float(in_proj[tok + conv_dim + value_dim + hv_idx]);
-    float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
-
-    float a_raw =
-        float(in_proj[tok + conv_dim + value_dim + num_v_heads + hv_idx]);
-    float sp = softplus(a_raw + dt_bias_val);
-    float decay = fast::exp(-fast::exp(a_log_val) * sp);
-
-    // Load v for this v-column
-    float v_i =
-        active
-            ? float(
-                  in_proj[tok + 2 * key_dim + hv_idx * head_v_dim + vi_global]
-              )
-            : 0.0f;
-
-    // State retrieval: partial dot products over ki_half's k-dims
-    float sq_partial = 0.0f;
-    float sk_partial = 0.0f;
-    if (active) {
-      const uint k_base = ki_half * bk_half;
-      for (uint j = 0; j < bk_half; ++j) {
-        sq_partial += s_col[j] * shared_q[k_base + j];
-        sk_partial += s_col[j] * shared_k[k_base + j];
-      }
+    if (active && dk_lane == 0) {
+      *out_ptr = static_cast<T>(o_val);
     }
 
-    // Reduce across k-halves via simd_shuffle (partner is adjacent lane)
-    float sq_acc = sq_partial + simd_shuffle_xor(sq_partial, 1);
-    float sk_acc = sk_partial + simd_shuffle_xor(sk_partial, 1);
-
-    // Delta rule + output
-    float retrieved_i = decay * sk_acc;
-    float delta_i = beta * (v_i - retrieved_i);
-    float o_i = decay * sq_acc + delta_i * kq_dot;
-
-    if (active && ki_half == 0) {
-      out[t * value_dim + hv_idx * head_v_dim + vi_global] =
-          static_cast<T>(o_i);
-    }
-
-    // Update state in registers
-    if (active) {
-      const uint k_base = ki_half * bk_half;
-      for (uint j = 0; j < bk_half; ++j) {
-        s_col[j] = decay * s_col[j] + shared_k[k_base + j] * delta_i;
-      }
-    }
-
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // Advance pointers to next token
+    q_ptr += key_dim;
+    k_ptr += key_dim;
+    beta_ptr += num_v_heads;
+    decay_ptr += num_v_heads;
+    v_ptr += total_proj_dim;
+    out_ptr += value_dim;
   }
 
-  // Write final state back
+  // Write final state
   if (active) {
-    const uint k_base = ki_half * bk_half;
-    for (uint j = 0; j < bk_half; ++j) {
-      state[state_head_offset + (k_base + j) * head_v_dim + vi_global] =
-          static_cast<T>(s_col[j]);
-    }
+    state_ptr[0] = static_cast<T>(s0);
+    state_ptr[1] = static_cast<T>(s1);
+    state_ptr[2] = static_cast<T>(s2);
+    state_ptr[3] = static_cast<T>(s3);
   }
 }

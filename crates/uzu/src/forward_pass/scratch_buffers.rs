@@ -34,6 +34,10 @@ pub struct ScratchBuffers<B: Backend> {
     pub ssm_c: Option<Array<B>>,
     pub ssm_dt: Option<Array<B>>,
     pub ssm_z: Option<Array<B>>,
+    pub delta_net_prep_q_norm: Option<Array<B>>,
+    pub delta_net_prep_k_norm: Option<Array<B>>,
+    pub delta_net_prep_beta: Option<Array<B>>,
+    pub delta_net_prep_decay: Option<Array<B>>,
 
     // 3-D
     pub rotated_queries: Array<B>,
@@ -128,6 +132,18 @@ impl<B: Backend> ScratchBuffers<B> {
             ssm_c: model_shape.ssm_bc_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_c")),
             ssm_dt: model_shape.ssm_dt_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_dt")),
             ssm_z: model_shape.ssm_z_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_z")),
+            delta_net_prep_q_norm: model_shape
+                .delta_net_prep_qk_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_q_norm")),
+            delta_net_prep_k_norm: model_shape
+                .delta_net_prep_qk_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_k_norm")),
+            delta_net_prep_beta: model_shape
+                .delta_net_prep_beta_decay_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_beta")),
+            delta_net_prep_decay: model_shape
+                .delta_net_prep_beta_decay_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_decay")),
             // 3-D
             rotated_queries: alloc(&model_shape.rotated_queries_shape(max_suffix_len), act_ty, "rotated_queries"),
             rotated_keys: alloc(&model_shape.rotated_keys_shape(max_suffix_len), act_ty, "rotated_keys"),
