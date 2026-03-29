@@ -7,7 +7,10 @@ use uzu::{
     backends::{
         common::{
             Backend, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
+            kernel::{
+                ManualKernels,
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            },
         },
         metal::Metal,
     },
@@ -34,7 +37,7 @@ fn fill_buffer_random(
 
 fn encode_and_run(
     context: &Ctx,
-    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
+    kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     shape: &TestShape,
     a_buffer: &Buf,
     b_buffer: &Buf,
@@ -48,15 +51,12 @@ fn encode_and_run(
             a: a_buffer,
             a_offset: 0,
             b: b_buffer,
+            ab_scale: 1.0,
+            c: MatmulArgumentC::None,
             d: d_buffer,
-            bias: None,
-            batch: shape.batch as i32,
-            input_dim: shape.input_dim as i32,
-            output_dim: shape.output_dim as i32,
-            leading_dimension_a: shape.input_dim as i32,
-            leading_dimension_b: shape.input_dim as i32,
-            leading_dimension_d: shape.output_dim as i32,
-            transpose_b: true,
+            batch_dim: shape.batch as u32,
+            input_dim: shape.input_dim as u32,
+            output_dim: shape.output_dim as u32,
         },
         &mut encoder,
     );
@@ -71,7 +71,7 @@ fn run_benchmark(
     data_type: DataType,
     shape: &TestShape,
 ) -> Result<f64, BenchError> {
-    let mut kernel = <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
         .map_err(|e| BenchError::Kernel(e.to_string()))?;
 
     let elem_size = data_type.size_in_bytes();

@@ -34,7 +34,7 @@ pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
 
 struct FishAudioSemanticBridge<B: Backend> {
     embedding_rows_sum: <B::Kernels as Kernels>::EmbeddingRowsSumKernel,
-    projection: <B::Kernels as MatmulKernels>::MatmulKernel,
+    projection: <B::Kernels as ManualKernels>::MatmulKernel,
     tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
     codebook_embeddings: Array<B>,
     codebook_token_indices: Array<B>,
@@ -104,7 +104,7 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
 
         let embedding_rows_sum = <B::Kernels as Kernels>::EmbeddingRowsSumKernel::new(context, data_type)
             .map_err(unable_to_create_context)?;
-        let projection = <<B::Kernels as MatmulKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
+        let projection = <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
             .map_err(unable_to_create_context)?;
         let tensor_copy =
             <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
@@ -540,15 +540,12 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     a: &hidden_buffer,
                     a_offset: hidden.offset() as u64,
                     b: &weights_buffer,
+                    ab_scale: 1.0,
+                    c: MatmulArgumentC::None,
                     d: &mut output_buffer,
-                    bias: None,
-                    batch: 1,
-                    input_dim: slow_model_dim as i32,
-                    output_dim: fast_model_dim as i32,
-                    leading_dimension_a: slow_model_dim as i32,
-                    leading_dimension_b: fast_model_dim as i32,
-                    leading_dimension_d: fast_model_dim as i32,
-                    transpose_b: false,
+                    batch_dim: 1,
+                    input_dim: slow_model_dim as u32,
+                    output_dim: fast_model_dim as u32,
                 },
                 encoder,
             );
