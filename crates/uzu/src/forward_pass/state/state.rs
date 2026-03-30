@@ -542,6 +542,14 @@ impl<B: Backend> ForwardPassState<B> {
                 let cache = self.llm_state().cache_layers.borrow();
                 cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").suffix_state.clone()
             },
+            ArrayId::DeltaNetConvState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").conv_state.clone()
+            },
+            ArrayId::DeltaNetSsmState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").ssm_state.clone()
+            },
 
             // MoE arrays (LLM only)
             ArrayId::MoeTopkIds => {
@@ -652,6 +660,16 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn conv_padded_buffer(&self) -> Option<Array<B>> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
+    }
+
+    pub fn delta_net_prep_buffers(&self) -> Option<(Array<B>, Array<B>, Array<B>, Array<B>)> {
+        let aux = self.llm_aux.as_ref()?;
+        Some((
+            aux.delta_net_prep_q_norm.clone()?,
+            aux.delta_net_prep_k_norm.clone()?,
+            aux.delta_net_prep_beta.clone()?,
+            aux.delta_net_prep_decay.clone()?,
+        ))
     }
 
     // ========================================================================
