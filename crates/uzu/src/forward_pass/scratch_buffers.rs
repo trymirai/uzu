@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
@@ -11,6 +9,7 @@ use crate::{
 pub struct ScratchBuffers<B: Backend> {
     // 1-D
     pub token_ids: Array<B>,
+    pub token_subtrie_ranges: Array<B>,
     pub token_positions: Array<B>,
     pub token_parents: Array<B>,
     pub token_bitmask: Array<B>,
@@ -18,7 +17,6 @@ pub struct ScratchBuffers<B: Backend> {
     pub sampling_output: Array<B>,
 
     // 2-D
-    pub attention_window_size_to_bias: HashMap<Option<usize>, Array<B>>,
     pub logits: Array<B>,
     pub main: Array<B>,
     pub shortcut: Array<B>,
@@ -72,7 +70,6 @@ impl<B: Backend> ScratchBuffers<B> {
         context: &B::Context,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        max_prefix_len: usize,
         max_suffix_len: usize,
     ) -> Self {
         // Helper closure for allocation
@@ -97,6 +94,11 @@ impl<B: Backend> ScratchBuffers<B> {
         Self {
             // 1-D
             token_ids: alloc(&[max_suffix_len], DataType::U64, "token_ids"),
+            token_subtrie_ranges: alloc(
+                &model_shape.subtrie_ranges_shape(max_suffix_len),
+                DataType::U32,
+                "token_subtrie_ranges",
+            ),
             token_positions: alloc(&[max_suffix_len], DataType::I32, "token_positions"),
             token_parents: alloc(&[max_suffix_len], DataType::I32, "token_parents"),
             token_bitmask: alloc(&model_shape.bitmask_shape(max_suffix_len), DataType::U32, "token_bitmask"),
@@ -104,23 +106,6 @@ impl<B: Backend> ScratchBuffers<B> {
             sampling_output: alloc(&[max_suffix_len], DataType::U32, "sampling_output"),
 
             // 2-D
-            attention_window_size_to_bias: model_shape
-                .sliding_window_length_per_layer
-                .iter()
-                .copied()
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .map(|window_size| {
-                    let label = match window_size {
-                        Some(ws) => {
-                            format!("attention_bias_for_window_size_{ws}")
-                        },
-                        None => "attention_bias_for_window_size_none".to_string(),
-                    };
-                    let shape = [max_suffix_len, max_suffix_len + max_prefix_len];
-                    (window_size, alloc(&shape, act_ty, &label))
-                })
-                .collect(),
             logits: alloc(&model_shape.logits_shape(max_suffix_len), act_ty, "logits"),
             main: alloc(&model_shape.main_shape(max_suffix_len), act_ty, "main"),
             shortcut: alloc(&model_shape.main_shape(max_suffix_len), act_ty, "shortcut"),

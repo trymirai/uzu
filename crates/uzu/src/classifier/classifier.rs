@@ -104,7 +104,6 @@ impl<B: Backend> Classifier<B> {
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
-            true,
             num_labels,
         );
 
@@ -157,7 +156,6 @@ impl<B: Backend> Classifier<B> {
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
-            true,
             num_labels,
         );
 

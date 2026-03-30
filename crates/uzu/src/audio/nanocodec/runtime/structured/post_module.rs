@@ -116,13 +116,7 @@ impl StructuredAudioCodecGraph {
                 local_rope.update_data(&transformer_tree, "local_rope");
             }
         }
-        let scratch_buffers = ScratchBuffers::new(
-            context.as_ref(),
-            &decoder_config,
-            &model_shape,
-            max_sequence_length,
-            max_sequence_length,
-        );
+        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_sequence_length);
         let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
             context.as_ref(),
             &decoder_config,
@@ -349,7 +343,6 @@ impl StructuredAudioCodecGraph {
             runtime.shared_buffers.clone(),
             &token_ids,
             &token_positions,
-            false,
             1,
         );
 
@@ -458,7 +451,6 @@ impl StructuredAudioCodecGraph {
                 runtime.shared_buffers.clone(),
                 &token_ids,
                 &token_positions,
-                false,
                 1,
             );
 

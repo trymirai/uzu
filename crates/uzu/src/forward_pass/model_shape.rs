@@ -169,6 +169,13 @@ impl ModelShape {
         [suffix_length, self.model_dim]
     }
 
+    pub fn subtrie_ranges_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 2] {
+        [suffix_length, 3]
+    }
+
     pub fn bitmask_shape(
         &self,
         suffix_length: usize,

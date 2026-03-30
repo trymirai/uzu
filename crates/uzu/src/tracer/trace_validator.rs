@@ -256,6 +256,7 @@ impl<B: Backend> TraceValidator<B> {
             ctx.cache_layers.clone(),
             ctx.shared_buffers.clone(),
             &token_ids,
+            None,
             &token_positions,
             None,
             &token_seeds,
@@ -263,9 +264,7 @@ impl<B: Backend> TraceValidator<B> {
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
             false,
-            None,
             false,
-            true,
             None,
             None,
         );
@@ -813,13 +812,8 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         let decoder_config = &context.decoder_config;
-        context.scratch_buffers = ScratchBuffers::new(
-            context.context.as_ref(),
-            decoder_config,
-            &context.model_shape,
-            resolved_prefix_length,
-            desired_suffix_length,
-        );
+        context.scratch_buffers =
+            ScratchBuffers::new(context.context.as_ref(), decoder_config, &context.model_shape, desired_suffix_length);
 
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.context.as_ref(),

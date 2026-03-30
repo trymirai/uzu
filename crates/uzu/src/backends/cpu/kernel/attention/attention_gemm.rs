@@ -2,7 +2,10 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::ArrayElement;
+use crate::{
+    ArrayElement,
+    backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
+};
 
 #[kernel(AttentionGemm)]
 #[variants(T, f32, f16, bf16)]
@@ -14,21 +17,29 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
     v: *const T,
     o: *mut T,
     params: crate::backends::common::gpu_types::attention::AttnParams,
-    #[optional(has_mask)] mask_params: Option<crate::backends::common::gpu_types::attention::AttnMaskParams>,
-    #[optional(has_mask)] mask: Option<*const T>,
+    #[optional(is_kv_cache_ring)] ring_params: Option<crate::backends::common::gpu_types::ring::RingParams>,
+    #[optional(is_trie)] trie: Option<*const TrieNode>,
+    #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
     #[optional(has_sinks)] sinks: Option<*const f32>,
     num_heads: u32,
     suffix_length: u32,
     #[specialize] align_q: bool,
     #[specialize] align_k: bool,
-    #[specialize] do_causal: bool,
-    #[specialize] has_mask: bool,
+    #[specialize] is_kv_cache_ring: bool,
+    #[specialize] is_causal: bool,
+    #[specialize] is_trie: bool,
+    #[specialize] is_sliding_window: bool,
     #[specialize] has_sinks: bool,
 ) {
     let q_len = params.q_len as usize;
     let k_len = params.k_len as usize;
     let head_dim = BD as usize;
-    let q_off = params.q_off as usize;
+    let prefix_length = params.q_off as usize;
+    let suffix_position = if is_kv_cache_ring {
+        ring_params.unwrap().ring_length as usize
+    } else {
+        prefix_length
+    };
 
     for head_idx in 0..num_heads as usize {
         let kv_head_idx = head_idx / params.gqa_factor as usize;
@@ -41,6 +52,13 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
         for qi in 0..q_len {
             let q_row = unsafe { q_head.add(qi * params.q_strides[2] as usize) };
             let o_row = unsafe { o_head.add(qi * params.o_strides[2] as usize) };
+
+            let query_position = if is_trie {
+                let trie_node = unsafe { &*trie.unwrap().add(qi) };
+                suffix_position + trie_node.height as usize
+            } else {
+                suffix_position + qi
+            };
 
             // Read query row and pre-scale
             let mut q_vec = vec![0.0f32; head_dim];
@@ -60,8 +78,17 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
 
             // Loop over all key positions
             for ki in 0..k_len {
-                // Causal mask: query at absolute position q_off + qi can only attend to ki <= q_off + qi
-                if do_causal && ki > q_off + qi {
+                if !should_use_key(
+                    ring_params,
+                    trie,
+                    sliding_window_size,
+                    qi as u32,
+                    prefix_length as u32,
+                    suffix_position as u32,
+                    query_position as u32,
+                    ki as u32,
+                    is_causal,
+                ) {
                     continue;
                 }
 
@@ -70,15 +97,6 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
                 let mut score = 0.0f32;
                 for j in 0..head_dim {
                     score += q_vec[j] * unsafe { *k_row.add(j) }.to_f32().unwrap();
-                }
-
-                // Add external mask bias
-                if has_mask {
-                    let mask_params = mask_params.unwrap();
-                    let mask = mask.unwrap();
-                    let mask_ptr = unsafe { mask.add(head_idx * mask_params.m_strides[1] as usize) };
-                    let mv = unsafe { *mask_ptr.add(qi * mask_params.m_strides[2] as usize + ki) }.to_f32().unwrap();
-                    score += f32::max(mv, -1e9);
                 }
 
                 // Online softmax update

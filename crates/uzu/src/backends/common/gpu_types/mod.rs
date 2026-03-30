@@ -9,6 +9,8 @@ pub mod attention;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod quantization;
+pub mod ring;
+pub mod trie;
 
 pub use activation_type::*;
 pub use argmax::*;
