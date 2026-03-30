@@ -3,7 +3,6 @@
 #include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "moe_commons.h"
 
 // ============================================================================
 // Pass A: x @ W13[expert] → hidden[k]

@@ -3,7 +3,6 @@
 #include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "moe_commons.h"
 using namespace metal;
 
 // === Pass A: Vectorized GEMV with float4 loads ===

@@ -3,7 +3,6 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../quant_matmul/mma.h"
-#include "moe_commons.h"
 
 // ------------------------ helpers ------------------------
 static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
