@@ -7,6 +7,7 @@ mod activation_test;
 mod attention;
 mod audio;
 mod embedding;
+mod hadamard_transform_test;
 mod kv_cache_update_test;
 mod layer_norm_test;
 mod mask_update_test;

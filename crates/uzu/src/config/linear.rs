@@ -28,6 +28,11 @@ pub enum LinearConfig {
         lora_rank: usize,
         lora_scale: f32,
     },
+    #[serde(rename = "RHTLinearWrapperConfig")]
+    RHTLinearWrapper {
+        block_size: usize,
+        inner_config: Box<LinearConfig>,
+    },
 }
 
 impl LinearConfig {
@@ -42,6 +47,10 @@ impl LinearConfig {
                 quantization,
                 ..
             } => quantization.activation_precision,
+            LinearConfig::RHTLinearWrapper {
+                inner_config,
+                ..
+            } => inner_config.activation_precision(),
         }
     }
 }
