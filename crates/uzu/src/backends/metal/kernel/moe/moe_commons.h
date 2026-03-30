@@ -21,9 +21,4 @@ static inline float gelu_approx(float x) {
   return 0.5f * x * (1.0f + metal::tanh(t));
 }
 
-static inline float silu(float x, float alpha) {
-  // alpha=1 gives standard SiLU; keep alpha param for parity with your API
-  return x / (1.0f + metal::exp(-alpha * x));
-}
-
 #endif // __MOE_COMMONS_H__

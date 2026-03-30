@@ -84,7 +84,7 @@ fn run_decode_case<B: Backend>(
     let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
 
-    let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE);
+    let num_tiles_k = d_ff.div_ceil(K_TILE);
 
     let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
     let mut output_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
@@ -234,7 +234,7 @@ fn run_two_pass_prefill_case<B: Backend>(
     let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
 
-    let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE);
+    let num_tiles_k = d_ff.div_ceil(K_TILE);
 
     let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
     let mut output_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
@@ -491,7 +491,7 @@ fn run_indirect_decode_timed<B: Backend>(
     let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
     let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
 
-    let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE);
+    let num_tiles_k = d_ff.div_ceil(K_TILE);
     let mut hidden_buf = alloc_buffer::<B, f32>(ctx, sum_k * d_ff);
     let mut output_buf = alloc_buffer::<B, bf16>(ctx, sum_k * d_model);
 

@@ -256,5 +256,5 @@ fn test_silu_in_place_large_f32() {
 
 #[test]
 fn test_gelu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::silu_default(), true);
+    test_activation_large::<f32>(ActivationType::GELU, true);
 }
