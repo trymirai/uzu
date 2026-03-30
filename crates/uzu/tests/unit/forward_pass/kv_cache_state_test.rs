@@ -6,7 +6,7 @@ use crate::{
         common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
-    forward_pass::kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState},
+    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 
 #[derive(Debug)]
@@ -15,13 +15,9 @@ struct Scenario {
     state: KVCacheLayerState,
     prefix_capacity: usize,
     suffix_capacity: usize,
-    initial_prefix_positions: Vec<usize>,
     accepted_suffix_indices: Vec<usize>,
-    accepted_token_positions: Vec<usize>,
-    suffix_token_positions: Vec<usize>,
+    number_of_accepted_tokens: usize,
     suffix_start: Option<usize>,
-    expected_prefix_positions: Vec<usize>,
-    expected_mask: Vec<Vec<bool>>,
     expected_ring_offset: Option<usize>,
     expected_ring_length: Option<usize>,
     expected_prefix_len: Option<usize>,
@@ -48,22 +44,10 @@ fn make_test_layer(
     let keys = context.create_array_zeros(&shape, DataType::F32, "kv_cache_keys");
     let values = context.create_array_zeros(&shape, DataType::F32, "kv_cache_values");
 
-    let prefix_token_positions = match &state {
-        KVCacheLayerState::Full {
-            ..
-        } => Vec::with_capacity(prefix_capacity),
-        KVCacheLayerState::Windowed {
-            window_length,
-            ..
-        } => vec![INVALID_POSITION; *window_length],
-    };
-
     KVCacheLayer {
         state,
         keys,
         values,
-        prefix_token_positions,
-        max_suffix_length: suffix_capacity,
     }
 }
 
@@ -127,30 +111,12 @@ fn expected_after_update(
     expected
 }
 
-fn collect_mask(
-    layer: &KVCacheLayer<Metal>,
-    suffix_positions: &[usize],
-) -> Vec<Vec<bool>> {
-    let suffix_length = suffix_positions.len();
-    let prefix_segment_length = layer.prefix_segment_length();
-
-    (0..suffix_length)
-        .map(|row| {
-            (0..prefix_segment_length + suffix_length)
-                .map(|col| layer.bias_should_be_neg_inf(row, col, suffix_positions))
-                .collect()
-        })
-        .collect()
-}
-
 fn run_scenario(
     context: &<Metal as Backend>::Context,
     scenario: &Scenario,
 ) {
     let mut layer =
         make_test_layer(context, scenario.state.clone(), scenario.prefix_capacity, scenario.suffix_capacity);
-
-    layer.prefix_token_positions = scenario.initial_prefix_positions.clone();
 
     let state_before_update = layer.state.clone();
 
@@ -170,9 +136,6 @@ fn run_scenario(
         } => window_length + scenario.suffix_capacity,
     };
 
-    let mask = collect_mask(&layer, &scenario.suffix_token_positions);
-    assert_eq!(mask, scenario.expected_mask, "{}: bias mask mismatch", scenario.name);
-
     let kv_cache_update = match KVCacheUpdate::new(context, DataType::F32, total_sequence_length) {
         Ok(update) => update,
         Err(e) => {
@@ -190,19 +153,13 @@ fn run_scenario(
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    layer.register_accepted_tokens(&scenario.accepted_token_positions);
+    layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
     let actual_keys = layer.keys.as_slice::<f32>().to_vec();
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
     let actual_values = layer.values.as_slice::<f32>().to_vec();
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
-
-    assert_eq!(
-        layer.prefix_token_positions, scenario.expected_prefix_positions,
-        "{}: prefix positions mismatch",
-        scenario.name
-    );
 
     match &layer.state {
         KVCacheLayerState::Full {
@@ -235,7 +192,7 @@ fn run_scenario(
 }
 
 #[test]
-fn kv_cache_state_and_mask_scenarios() {
+fn kv_cache_state_scenarios() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;
     };
@@ -250,17 +207,9 @@ fn kv_cache_state_and_mask_scenarios() {
             },
             prefix_capacity: 6,
             suffix_capacity: 3,
-            initial_prefix_positions: vec![6, 1, 2, 3, 4, 5],
             accepted_suffix_indices: vec![0, 1, 2],
-            accepted_token_positions: vec![7, 8, 9],
-            suffix_token_positions: vec![7, 8, 9],
+            number_of_accepted_tokens: 3,
             suffix_start: None,
-            expected_prefix_positions: vec![6, 7, 8, 9, 4, 5],
-            expected_mask: vec![
-                vec![false, true, false, false, false, false, false, true, true],
-                vec![false, true, true, false, false, false, false, false, true],
-                vec![false, true, true, true, false, false, false, false, false],
-            ],
             expected_ring_offset: Some(4),
             expected_ring_length: Some(6),
             expected_prefix_len: None,
@@ -275,17 +224,9 @@ fn kv_cache_state_and_mask_scenarios() {
             },
             prefix_capacity: 6,
             suffix_capacity: 3,
-            initial_prefix_positions: vec![0, 1, 2, 3, INVALID_POSITION, INVALID_POSITION],
             accepted_suffix_indices: vec![0, 1, 2],
-            accepted_token_positions: vec![4, 5, 6],
-            suffix_token_positions: vec![4, 5, 6],
+            number_of_accepted_tokens: 3,
             suffix_start: None,
-            expected_prefix_positions: vec![6, 1, 2, 3, 4, 5],
-            expected_mask: vec![
-                vec![false, false, false, false, true, true, false, true, true],
-                vec![false, false, false, false, true, true, false, false, true],
-                vec![true, false, false, false, true, true, false, false, false],
-            ],
             expected_ring_offset: Some(1),
             expected_ring_length: Some(6),
             expected_prefix_len: None,
@@ -300,13 +241,9 @@ fn kv_cache_state_and_mask_scenarios() {
             },
             prefix_capacity: 6,
             suffix_capacity: 1,
-            initial_prefix_positions: vec![11, 12, 13, 14, 15, 10],
             accepted_suffix_indices: vec![0],
-            accepted_token_positions: vec![16],
-            suffix_token_positions: vec![16],
+            number_of_accepted_tokens: 1,
             suffix_start: None,
-            expected_prefix_positions: vec![11, 12, 13, 14, 15, 16],
-            expected_mask: vec![vec![false, false, false, false, false, true, false]],
             expected_ring_offset: Some(0),
             expected_ring_length: Some(6),
             expected_prefix_len: None,
@@ -319,17 +256,9 @@ fn kv_cache_state_and_mask_scenarios() {
             },
             prefix_capacity: 6,
             suffix_capacity: 3,
-            initial_prefix_positions: vec![0, 1, 2, 3],
             accepted_suffix_indices: vec![0, 1, 2],
-            accepted_token_positions: vec![4, 5, 6],
-            suffix_token_positions: vec![4, 5, 6],
+            number_of_accepted_tokens: 3,
             suffix_start: None,
-            expected_prefix_positions: vec![0, 1, 2, 3, 4, 5, 6],
-            expected_mask: vec![
-                vec![false, false, false, false, false, true, true],
-                vec![false, false, false, false, false, false, true],
-                vec![false, false, false, false, false, false, false],
-            ],
             expected_ring_offset: None,
             expected_ring_length: None,
             expected_prefix_len: Some(7),
@@ -358,14 +287,11 @@ fn kv_cache_slice_apply_contiguous_window() {
         4,
         0,
     );
-    layer.prefix_token_positions = vec![10, 11, 12, INVALID_POSITION];
     let (initial_keys, initial_values) = fill_arrays(&mut layer);
 
     let slice = layer.slice(&context, 0..2).expect("slice should exist");
     // Mutate the captured slots.
     {
-        layer.prefix_token_positions[0] = 999;
-        layer.prefix_token_positions[1] = 998;
         layer.keys.as_slice_mut::<f32>()[0] = -1.0;
         layer.keys.as_slice_mut::<f32>()[1] = -2.0;
         layer.values.as_slice_mut::<f32>()[0] = -3.0;
@@ -373,12 +299,6 @@ fn kv_cache_slice_apply_contiguous_window() {
     }
 
     layer.apply_slice(&slice, None);
-
-    assert_eq!(
-        layer.prefix_token_positions,
-        vec![10, 11, 12, INVALID_POSITION],
-        "positions restored for contiguous slice"
-    );
 
     let keys_after = layer.keys.as_slice::<f32>().to_vec();
     let values_after = layer.values.as_slice::<f32>().to_vec();
@@ -402,14 +322,11 @@ fn kv_cache_slice_apply_wrap_window() {
         4,
         0,
     );
-    layer.prefix_token_positions = vec![30, 31, 32, 33];
     let (initial_keys, initial_values) = fill_arrays(&mut layer);
 
     let slice = layer.slice(&context, 2..4).expect("slice should exist");
     // Captured slots are expected to wrap; mutate them.
     {
-        layer.prefix_token_positions[2] = 777;
-        layer.prefix_token_positions[3] = 778;
         layer.keys.as_slice_mut::<f32>()[2] = -11.0;
         layer.keys.as_slice_mut::<f32>()[3] = -12.0;
         layer.values.as_slice_mut::<f32>()[2] = -13.0;
@@ -417,8 +334,6 @@ fn kv_cache_slice_apply_wrap_window() {
     }
 
     layer.apply_slice(&slice, None);
-
-    assert_eq!(layer.prefix_token_positions, vec![30, 31, 32, 33], "positions restored for wrapped slice");
 
     let keys_after = layer.keys.as_slice::<f32>().to_vec();
     let values_after = layer.values.as_slice::<f32>().to_vec();
@@ -440,7 +355,6 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         6,
         0,
     );
-    layer.prefix_token_positions = vec![1, 2, 3];
 
     let slice = layer.slice(&context, 0..2).expect("full slice exists");
 
@@ -451,11 +365,9 @@ fn kv_cache_slice_apply_full_restores_metadata() {
     {
         *prefix_len = 1;
     }
-    layer.prefix_token_positions = vec![9, 9, 9, 9];
 
     layer.apply_slice(&slice, None);
 
-    assert_eq!(layer.prefix_token_positions, vec![1, 2, 3], "full slice restores positions");
     if let KVCacheLayerState::Full {
         prefix_len,
     } = &layer.state

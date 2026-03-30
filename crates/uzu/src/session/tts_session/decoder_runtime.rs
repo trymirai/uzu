@@ -19,7 +19,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         transformer_subtree: &str,
         embedding_subtree: &str,
         readout_subtree: &str,
-        max_prefix_length: usize,
         max_suffix_length: usize,
     ) -> Result<Self, Error> {
         let weights_path = model_path.join("model.safetensors");
@@ -34,8 +33,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             &root_loader_view,
             transformer_subtree,
         )?;
-        let scratch_buffers =
-            ScratchBuffers::new(context.as_ref(), decoder_config, model_shape, max_prefix_length, max_suffix_length);
+        let scratch_buffers = ScratchBuffers::new(context.as_ref(), decoder_config, model_shape, max_suffix_length);
         let executables = Decoder::new_with_embedding_and_readout_subtrees(
             context.as_ref(),
             &decoder_config,
@@ -95,12 +93,10 @@ impl<B: Backend> TokenDecoderContext<B> {
         embedding_subtree: &str,
         readout_subtree: &str,
         runtime_config: &TextDecoderRuntimeConfig,
-    ) -> Result<(Self, DataType, bool), Error> {
+    ) -> Result<(Self, DataType), Error> {
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
         let max_prefix_length = decoder_config.context_length;
         let max_suffix_length = text_decoder_prefill_step_size(runtime_config, decoder_config.context_length).max(32);
-        let should_fill_attention_bias =
-            model_shape.sliding_window_length_per_layer.iter().any(|value| value.is_some());
         let activation_data_type = model_shape.activation_data_type();
         let loaded_model = TokenDecoderLoadedModel::<B>::load(
             &context,
@@ -110,7 +106,6 @@ impl<B: Backend> TokenDecoderContext<B> {
             transformer_subtree,
             embedding_subtree,
             readout_subtree,
-            max_prefix_length,
             max_suffix_length,
         )?;
         let async_chain_capacity = max_suffix_length.max(1);
@@ -145,7 +140,6 @@ impl<B: Backend> TokenDecoderContext<B> {
                 async_chain_capacity,
             },
             activation_data_type,
-            should_fill_attention_bias,
         ))
     }
 
@@ -200,7 +194,6 @@ pub(super) struct TokenDecoderRunner<B: Backend> {
     tensor_add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
     two_token_vocab_masks: HashMap<usize, Box<[u32]>>,
-    should_fill_attention_bias: bool,
     next_position: usize,
     instrumentation: RunnerInstrumentation,
 }
@@ -219,7 +212,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         readout_subtree: &str,
         runtime_config: &TextDecoderRuntimeConfig,
     ) -> Result<Self, Error> {
-        let (ctx, activation_data_type, should_fill_attention_bias) = TokenDecoderContext::new(
+        let (ctx, activation_data_type) = TokenDecoderContext::new(
             context,
             model_path,
             decoder_config,
@@ -248,7 +241,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
             tensor_add_scale,
             single_token_vocab_masks: HashMap::new(),
             two_token_vocab_masks: HashMap::new(),
-            should_fill_attention_bias,
             next_position: 0,
             instrumentation: RunnerInstrumentation::default(),
         })
@@ -281,6 +273,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 self.ctx.cache_layers.clone(),
                 self.ctx.shared_buffers.clone(),
                 token_ids,
+                None,
                 &positions,
                 None, // no bitmask
                 &token_seeds,
@@ -288,9 +281,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 0, // sampling_start: irrelevant
                 0, // sampling_length: no sampling
                 false,
-                None,
                 false,
-                self.should_fill_attention_bias,
                 None,
                 None,
             );
@@ -507,6 +498,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 cache_layers_rc.clone(),
                 shared_buffers_rc.clone(),
                 &token_ids,
+                None,
                 &[self.next_position + pass],
                 token_bitmask,
                 &[0],
@@ -514,9 +506,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 0,
                 1,
                 false,
-                None,
                 pass > 0 || results_offset_slots > 0,
-                self.should_fill_attention_bias,
                 Some((positions_rc.clone(), pass)),
                 Some((seeds_rc.clone(), pass)),
             );
@@ -568,7 +558,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
 
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
-            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&[self.next_position + pass]);
+            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(1);
         }
         Ok(())
     }
@@ -712,6 +702,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             self.ctx.cache_layers.clone(),
             self.ctx.shared_buffers.clone(),
             token_ids,
+            None,
             positions,
             token_bitmask,
             token_seeds,
@@ -719,9 +710,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             sampling_start,
             sampling_length,
             false,
-            None,
             false,
-            self.should_fill_attention_bias,
             None,
             None,
         );
@@ -808,12 +797,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
             positions_storage = [self.next_position, self.next_position + 1];
             &positions_storage[..]
         } else {
-            let v: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
-            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(&v);
+            self.ctx.cache_layers.borrow_mut().register_accepted_tokens(token_count);
             self.next_position = self.next_position.saturating_add(token_count);
             return;
         };
-        self.ctx.cache_layers.borrow_mut().register_accepted_tokens(positions);
+        self.ctx.cache_layers.borrow_mut().register_accepted_tokens(positions.len());
         self.next_position = self.next_position.saturating_add(token_count);
     }
 
