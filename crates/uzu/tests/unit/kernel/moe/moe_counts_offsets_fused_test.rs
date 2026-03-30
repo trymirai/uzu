@@ -3,40 +3,11 @@ use std::ops::{Deref, DerefMut};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
     ArrayContextExt, ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
+    backends::{
+        common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
+        cpu::Cpu,
+    },
 };
-
-fn cpu_bucket_counts(
-    topk_ids: &[i32],
-    t: usize,
-    k: usize,
-    e: usize,
-) -> Vec<u32> {
-    let mut counts = vec![0u32; e];
-    for ti in 0..t {
-        for kk in 0..k {
-            let id = topk_ids[ti * k + kk];
-            if id >= 0 {
-                let ue = id as usize;
-                if ue < e {
-                    counts[ue] += 1;
-                }
-            }
-        }
-    }
-    counts
-}
-
-fn cpu_offsets_from_counts(counts: &[u32]) -> (Vec<u32>, u32) {
-    let mut offsets = vec![0u32; counts.len() + 1];
-    let mut sum = 0u32;
-    for (i, &c) in counts.iter().enumerate() {
-        offsets[i] = sum;
-        sum += c;
-    }
-    offsets[counts.len()] = sum;
-    (offsets, sum)
-}
 
 fn gen_random_topk_ids(
     t: usize,
@@ -54,7 +25,7 @@ fn gen_random_topk_ids(
     topk_ids
 }
 
-fn run_kernel<B: Backend>(
+fn get_output<B: Backend>(
     topk_ids: &[i32],
     t: usize,
     e: usize,
@@ -73,7 +44,7 @@ fn run_kernel<B: Backend>(
     };
     let offsets_array = context.create_array_uninitialized(&[e + 1], u32::data_type(), "offsets");
     let sum_k_array = context.create_array_uninitialized(&[1], u32::data_type(), "sum_k");
-    let num_tiles = ((e + 511) / 512).max(1);
+    let num_tiles = e.div_ceil(512).max(1);
     let partials_array = context.create_array_uninitialized(&[num_tiles * 512], u32::data_type(), "partials");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -108,11 +79,9 @@ fn test_counts_offsets_fused_parity_random() {
             }
             let topk_ids = gen_random_topk_ids(t, e, k, 1234);
 
-            let counts_ref = cpu_bucket_counts(&topk_ids, t, k, e);
-            let (offsets_ref, sum_ref) = cpu_offsets_from_counts(&counts_ref);
-
-            for_each_backend!(|B| {
-                let (offsets, sum_k, partials) = run_kernel::<B>(&topk_ids, t, e, k);
+            let (offsets_ref, sum_ref, counts_ref) = get_output::<Cpu>(&topk_ids, t, e, k);
+            for_each_non_cpu_backend!(|B| {
+                let (offsets, sum_k, partials) = get_output::<B>(&topk_ids, t, e, k);
                 let backend_name = std::any::type_name::<B>();
                 assert_eq!(offsets, offsets_ref, "offsets mismatch T={} E={} K={} backend={}", t, e, k, backend_name);
                 assert_eq!(sum_k, sum_ref, "sum mismatch T={} E={} K={} backend={}", t, e, k, backend_name);
@@ -131,7 +100,7 @@ fn test_counts_offsets_fused_all_tokens_one_expert() {
     expected_offsets[4..].fill((t * k) as u32);
 
     for_each_backend!(|B| {
-        let (offsets, sum_k, _) = run_kernel::<B>(&topk_ids, t, e, k);
+        let (offsets, sum_k, _) = get_output::<B>(&topk_ids, t, e, k);
         let backend_name = std::any::type_name::<B>();
         assert_eq!(offsets, expected_offsets, "offsets mismatch backend={}", backend_name);
         assert_eq!(sum_k, (t * k) as u32, "sum mismatch backend={}", backend_name);
@@ -144,7 +113,7 @@ fn test_counts_offsets_fused_zero_tokens() {
     let topk_ids: Vec<i32> = vec![];
 
     for_each_backend!(|B| {
-        let (offsets, sum_k, _) = run_kernel::<B>(&topk_ids, t, e, k);
+        let (offsets, sum_k, _) = get_output::<B>(&topk_ids, t, e, k);
         let backend_name = std::any::type_name::<B>();
         assert!(offsets.iter().all(|&v| v == 0), "expected all-zero offsets for T=0, backend={}", backend_name,);
         assert_eq!(sum_k, 0, "sum should be 0 for T=0, backend={}", backend_name);
@@ -161,14 +130,12 @@ fn test_counts_offsets_fused_negative_ids_ignored() {
         topk_ids[ti * k] = (ti % e) as i32;
     }
 
-    let counts_ref = cpu_bucket_counts(&topk_ids, t, k, e);
-    let (offsets_ref, sum_ref) = cpu_offsets_from_counts(&counts_ref);
-
+    let (offsets_ref, sum_ref, counts_ref) = get_output::<Cpu>(&topk_ids, t, e, k);
     // sum should be t (only one valid id per token)
     assert_eq!(sum_ref, t as u32);
 
-    for_each_backend!(|B| {
-        let (offsets, sum_k, partials) = run_kernel::<B>(&topk_ids, t, e, k);
+    for_each_non_cpu_backend!(|B| {
+        let (offsets, sum_k, partials) = get_output::<B>(&topk_ids, t, e, k);
         let backend_name = std::any::type_name::<B>();
         assert_eq!(offsets, offsets_ref, "offsets mismatch backend={}", backend_name);
         assert_eq!(sum_k, sum_ref, "sum mismatch backend={}", backend_name);
@@ -186,7 +153,7 @@ fn test_counts_offsets_fused_single_token() {
     expected_offsets[8..].fill(1);
 
     for_each_backend!(|B| {
-        let (offsets, sum_k, _) = run_kernel::<B>(&topk_ids, t, e, k);
+        let (offsets, sum_k, _) = get_output::<B>(&topk_ids, t, e, k);
         let backend_name = std::any::type_name::<B>();
         assert_eq!(offsets, expected_offsets, "offsets mismatch backend={}", backend_name);
         assert_eq!(sum_k, 1, "sum mismatch backend={}", backend_name);
@@ -199,11 +166,10 @@ fn test_counts_offsets_fused_uniform_distribution() {
     let e = 8usize;
     let (t, k) = (e, 1usize);
     let topk_ids: Vec<i32> = (0..e as i32).collect();
-
     let expected_offsets: Vec<u32> = (0..=e as u32).collect();
 
     for_each_backend!(|B| {
-        let (offsets, sum_k, partials) = run_kernel::<B>(&topk_ids, t, e, k);
+        let (offsets, sum_k, partials) = get_output::<B>(&topk_ids, t, e, k);
         let backend_name = std::any::type_name::<B>();
         assert_eq!(offsets, expected_offsets, "offsets mismatch backend={}", backend_name);
         assert_eq!(sum_k, e as u32, "sum mismatch backend={}", backend_name);
@@ -217,11 +183,9 @@ fn test_counts_offsets_fused_large_t() {
     let (t, e, k) = (2048usize, 128usize, 4usize);
     let topk_ids = gen_random_topk_ids(t, e, k, 42);
 
-    let counts_ref = cpu_bucket_counts(&topk_ids, t, k, e);
-    let (offsets_ref, sum_ref) = cpu_offsets_from_counts(&counts_ref);
-
-    for_each_backend!(|B| {
-        let (offsets, sum_k, partials) = run_kernel::<B>(&topk_ids, t, e, k);
+    let (offsets_ref, sum_ref, counts_ref) = get_output::<Cpu>(&topk_ids, t, e, k);
+    for_each_non_cpu_backend!(|B| {
+        let (offsets, sum_k, partials) = get_output::<B>(&topk_ids, t, e, k);
         let backend_name = std::any::type_name::<B>();
         assert_eq!(offsets, offsets_ref, "offsets mismatch backend={}", backend_name);
         assert_eq!(sum_k, sum_ref, "sum mismatch backend={}", backend_name);
@@ -238,7 +202,7 @@ fn test_counts_offsets_fused_offsets_monotonic() {
         let topk_ids = gen_random_topk_ids(t, e, k, 99);
 
         for_each_backend!(|B| {
-            let (offsets, sum_k, _) = run_kernel::<B>(&topk_ids, t, e, k);
+            let (offsets, sum_k, _) = get_output::<B>(&topk_ids, t, e, k);
             let backend_name = std::any::type_name::<B>();
             for i in 1..offsets.len() {
                 assert!(

@@ -226,15 +226,15 @@ fn test_scatter_internal<B: Backend, T: ArrayElement + Float>(
 
 #[test]
 fn test_scatter_buckets_small() {
-    for_each_non_cpu_backend!(|B| { test_scatter_internal::<B, bf16>(1, 64, 4, 1) });
+    for_each_non_cpu_backend!(|B| test_scatter_internal::<B, bf16>(1, 64, 4, 1));
 }
 
 #[test]
 fn test_scatter_buckets_medium() {
-    for_each_non_cpu_backend!(|B| { test_scatter_internal::<B, bf16>(7, 64, 16, 2) });
+    for_each_non_cpu_backend!(|B| test_scatter_internal::<B, bf16>(7, 64, 16, 2));
 }
 
 #[test]
 fn test_scatter_buckets_big() {
-    for_each_non_cpu_backend!(|B| { test_scatter_internal::<B, bf16>(128, 64, 64, 2) });
+    for_each_non_cpu_backend!(|B| test_scatter_internal::<B, bf16>(128, 64, 64, 2));
 }
