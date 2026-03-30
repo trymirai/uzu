@@ -5,21 +5,21 @@ use num_traits::Float;
 use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
 
 // Multi-token causal conv1d with SiLU for DeltaNet.
-// Reads from padded buffer (Conv1dPack output), writes conv'd+SiLU'd values
-// back to in_out with stride out_stride, updates conv state.
+// Reads from conv_padded (Conv1dPack output), writes conv'd+SiLU'd values
+// back to in_proj with stride out_stride, updates conv state.
 //
-// padded:    [state_stride + suffix_len, row_stride] — packed history + input
-// w:         [conv_dim, kernel_size]
+// conv_padded: [state_stride + suffix_len, row_stride] — packed history + input
+// conv_weight: [conv_dim, kernel_size]
 // bias:      [conv_dim] (optional)
-// in_out:    [suffix_len, out_stride] — first conv_dim channels overwritten
+// in_proj:    [suffix_len, out_stride] — first conv_dim channels overwritten
 // state_out: [conv_dim, state_stride]
 #[kernel(DeltaNetConvScan)]
 #[variants(T, f32, f16, bf16)]
 pub fn delta_net_conv_scan<T: ArrayElement + Float>(
-    padded: *const T,
-    w: *const T,
+    conv_padded: *const T,
+    conv_weight: *const T,
     #[optional(has_bias)] bias: Option<*const T>,
-    in_out: *mut T,
+    in_proj: *mut T,
     state_out: *mut T,
     suffix_len: u32,
     kernel_size: u32,
@@ -49,12 +49,12 @@ pub fn delta_net_conv_scan<T: ArrayElement + Float>(
             for tap in 0..ks {
                 let padded_row = token + tap;
                 let padded_idx = padded_row * rs + ch;
-                let sample = unsafe { (*padded.add(padded_idx)).to_f32().unwrap() };
-                acc += unsafe { (*w.add(w_offset + tap)).to_f32().unwrap() } * sample;
+                let sample = unsafe { (*conv_padded.add(padded_idx)).to_f32().unwrap() };
+                acc += unsafe { (*conv_weight.add(w_offset + tap)).to_f32().unwrap() } * sample;
             }
 
             unsafe {
-                *in_out.add(token * os + ch) = T::from(ActivationType::SILU.activate(acc)).unwrap();
+                *in_proj.add(token * os + ch) = T::from(ActivationType::SILU.activate(acc)).unwrap();
             }
         }
     }
@@ -64,7 +64,7 @@ pub fn delta_net_conv_scan<T: ArrayElement + Float>(
         for tap in 0..ss {
             let padded_row = sl + tap;
             let padded_idx = padded_row * rs + ch;
-            let sample = unsafe { (*padded.add(padded_idx)).to_f32().unwrap() };
+            let sample = unsafe { (*conv_padded.add(padded_idx)).to_f32().unwrap() };
             unsafe {
                 *state_out.add(ch * ss + tap) = T::from(sample).unwrap();
             }

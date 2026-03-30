@@ -153,5 +153,3 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     out[hv_idx * head_v_dim + vi] = static_cast<T>(o_i * inv_rms * nw * z_silu);
   }
 }
-
-#undef UPDATE_THREADS

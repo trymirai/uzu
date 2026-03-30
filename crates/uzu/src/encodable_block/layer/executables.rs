@@ -12,7 +12,7 @@ use crate::{
         TensorAddSwap, TensorCopy,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::ParameterTree,
+    parameters::{ParameterTree, resolve_subtree},
 };
 
 /// A single decoder layer with all its components.
@@ -193,14 +193,62 @@ impl<B: Backend> LayerExecutables<B> {
                 }
             },
             MixerConfig::DeltaNet(delta_net_config) => {
+                let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
+                let conv_tree = resolve_subtree(&mixer_tree, &["conv", "conv1d"]);
+
+                let in_projection = <dyn Linear<B>>::new(
+                    &delta_net_config.in_proj_config,
+                    false,
+                    model_dim,
+                    [delta_net_config.total_proj_dim()],
+                    context,
+                    &resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"]),
+                    ArrayId::Main,
+                    ArrayId::SsmInProj,
+                )
+                .expect("Failed to create DeltaNet in-projection");
+
+                let out_projection = <dyn Linear<B>>::new(
+                    &delta_net_config.out_proj_config,
+                    false,
+                    delta_net_config.value_dim(),
+                    [model_dim],
+                    context,
+                    &resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"]),
+                    ArrayId::AttentionOutput,
+                    ArrayId::Main,
+                )
+                .expect("Failed to create DeltaNet out-projection");
+
+                let conv_weight = conv_tree.leaf("weights").unwrap().read_buffer().unwrap();
+                let conv_bias = if delta_net_config.conv_config.has_biases {
+                    Some(conv_tree.leaf("biases").unwrap().read_buffer().unwrap())
+                } else {
+                    None
+                };
+
+                let a_log = mixer_tree.leaf("a_log").unwrap().read_buffer().unwrap();
+                let dt_bias = mixer_tree.leaf("dt_bias").unwrap().read_buffer().unwrap();
+                let norm_weight = resolve_subtree(&mixer_tree, &["norm", "inner_norm"])
+                    .leaf("scales")
+                    .unwrap()
+                    .read_buffer()
+                    .unwrap();
+
                 let mixer = DeltaNetMixer::new(
                     context,
-                    layer_type.clone(),
                     delta_net_config.clone(),
                     layer_index,
-                    model_dim,
-                    decoder_layer_loader,
-                );
+                    in_projection,
+                    out_projection,
+                    conv_weight,
+                    conv_bias,
+                    a_log,
+                    dt_bias,
+                    norm_weight,
+                )
+                .expect("Failed to create DeltaNet mixer");
+
                 MixerExecutables::DeltaNet {
                     mixer,
                 }

@@ -59,7 +59,7 @@ pub struct ForwardPassState<B: Backend> {
     token_bitmask: Option<Array<B>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
     pub common_aux: CommonAuxBuffers<B>,
-    llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
+    pub llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
     mode: ForwardPassMode<B>,
 }
 
@@ -588,16 +588,6 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn conv_padded_buffer(&self) -> Option<Array<B>> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
-    }
-
-    pub fn delta_net_prep_buffers(&self) -> Option<(Array<B>, Array<B>, Array<B>, Array<B>)> {
-        let aux = self.llm_aux.as_ref()?;
-        Some((
-            aux.delta_net_prep_q_norm.clone()?,
-            aux.delta_net_prep_k_norm.clone()?,
-            aux.delta_net_prep_beta.clone()?,
-            aux.delta_net_prep_decay.clone()?,
-        ))
     }
 
     // ========================================================================

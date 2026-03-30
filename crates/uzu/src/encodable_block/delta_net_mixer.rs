@@ -1,8 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
+use thiserror::Error;
+
 use crate::{
     DataType,
-    array::Array,
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
@@ -10,11 +11,18 @@ use crate::{
             DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
         },
     },
-    config::{DecoderLayerType, DeltaNetAttentionConfig},
+    config::DeltaNetAttentionConfig,
     encodable_block::linear::Linear,
     forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::{ParameterTree, resolve_subtree},
 };
+
+#[derive(Debug, Error)]
+pub enum DeltaNetMixerError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(B::Error),
+    #[error("Unsupported configuration: {0}")]
+    UnsupportedConfiguration(String),
+}
 
 pub(crate) struct DeltaNetMixer<B: Backend> {
     layer_index: usize,
@@ -31,96 +39,68 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
     // Parameters
-    conv_weight: Array<B>,
-    conv_bias: Option<Array<B>>,
-    a_log: Array<B>,
-    dt_bias: Array<B>,
-    norm_weight: Array<B>,
+    conv_weight: B::Buffer,
+    conv_bias: Option<B::Buffer>,
+    a_log: B::Buffer,
+    dt_bias: B::Buffer,
+    norm_weight: B::Buffer,
 }
 
 impl<B: Backend> DeltaNetMixer<B> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: &B::Context,
-        layer_type: DecoderLayerType,
         config: DeltaNetAttentionConfig,
         layer_index: usize,
-        model_dim: usize,
-        decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> Self {
-        if !matches!(layer_type, DecoderLayerType::DeltaNet { .. }) {
-            panic!("Layer {} marked as non-DeltaNet but DeltaNet config provided", layer_index);
+        in_projection: Box<dyn Linear<B>>,
+        out_projection: Box<dyn Linear<B>>,
+        conv_weight: B::Buffer,
+        conv_bias: Option<B::Buffer>,
+        a_log: B::Buffer,
+        dt_bias: B::Buffer,
+        norm_weight: B::Buffer,
+    ) -> Result<Self, DeltaNetMixerError<B>> {
+        if config.kernel_size < 2 {
+            return Err(DeltaNetMixerError::UnsupportedConfiguration(format!(
+                "kernel_size must be >= 2, got {}",
+                config.kernel_size
+            )));
         }
-        assert!(config.kernel_size >= 2, "DeltaNet requires kernel_size >= 2, got {}", config.kernel_size);
-        if config.head_dim > 128 {
-            todo!("DeltaNet prefill kernel supports head_k_dim <= 128, got {}", config.head_dim);
+        if config.head_dim != 128 {
+            return Err(DeltaNetMixerError::UnsupportedConfiguration(format!(
+                "head_dim must be 128, got {}",
+                config.head_dim
+            )));
         }
-        if config.value_head_dim > 128 {
-            todo!("DeltaNet norm gate kernel supports head_v_dim <= 128, got {}", config.value_head_dim);
+        if config.value_head_dim != 128 {
+            return Err(DeltaNetMixerError::UnsupportedConfiguration(format!(
+                "value_head_dim must be 128, got {}",
+                config.value_head_dim
+            )));
         }
-
-        let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
-        let conv_tree = resolve_subtree(&mixer_tree, &["conv", "conv1d"]);
 
         let data_type: DataType = config.in_proj_config.activation_precision().into();
-
-        let in_projection = <dyn Linear<B>>::new(
-            &config.in_proj_config,
-            false,
-            model_dim,
-            [config.total_proj_dim()],
-            context,
-            &resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"]),
-            ArrayId::Main,
-            ArrayId::SsmInProj,
-        )
-        .expect("Failed to create in-projection kernel");
-
-        let out_projection = <dyn Linear<B>>::new(
-            &config.out_proj_config,
-            false,
-            config.value_dim(),
-            [model_dim],
-            context,
-            &resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"]),
-            ArrayId::AttentionOutput,
-            ArrayId::Main,
-        )
-        .expect("Failed to create out-projection kernel");
-
-        let conv_weight = conv_tree.leaf_array("weights").unwrap();
-        let conv_bias = if config.conv_config.has_biases {
-            Some(conv_tree.leaf_array("biases").unwrap())
-        } else {
-            None
-        };
-
-        let a_log = mixer_tree.leaf_array("a_log").unwrap();
-        let dt_bias = mixer_tree.leaf_array("dt_bias").unwrap();
-        let norm_weight = resolve_subtree(&mixer_tree, &["norm", "inner_norm"]).leaf_array("scales").unwrap();
-
         let has_bias = config.conv_config.has_biases;
 
         let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, data_type, has_bias)
-            .expect("Failed to create DeltaNet conv update kernel");
+            .map_err(DeltaNetMixerError::BackendError)?;
         let delta_net_update =
             <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, data_type, config.head_dim as u32)
-                .expect("Failed to create DeltaNet update kernel");
-
+                .map_err(DeltaNetMixerError::BackendError)?;
         let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
-            .expect("Failed to create Conv1dPack kernel");
+            .map_err(DeltaNetMixerError::BackendError)?;
         let conv_scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, data_type, has_bias)
-            .expect("Failed to create DeltaNet conv scan kernel");
+            .map_err(DeltaNetMixerError::BackendError)?;
         let prefill_prep =
             <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, data_type, config.head_dim as u32)
-                .expect("Failed to create DeltaNet prefill prep kernel");
+                .map_err(DeltaNetMixerError::BackendError)?;
         let delta_net_prefill =
             <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, data_type, config.head_dim as u32)
-                .expect("Failed to create DeltaNet prefill kernel");
+                .map_err(DeltaNetMixerError::BackendError)?;
         let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, data_type)
-            .expect("Failed to create DeltaNet norm gate kernel");
+            .map_err(DeltaNetMixerError::BackendError)?;
 
-        Self {
+        Ok(Self {
             layer_index,
             config,
             in_projection,
@@ -137,7 +117,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             a_log,
             dt_bias,
             norm_weight,
-        }
+        })
     }
 
     fn run_conv_update(
@@ -148,16 +128,11 @@ impl<B: Backend> DeltaNetMixer<B> {
         let in_proj = state.array(ArrayId::SsmInProj);
         let conv_state = state.array(ArrayId::DeltaNetConvState(self.layer_index));
 
-        let weight_buf_rc = self.conv_weight.buffer();
-        let weight_buf_borrow = weight_buf_rc.borrow();
-        let bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
         let kernel_size = self.config.kernel_size;
 
         self.conv_update.encode(
-            weight_buf_borrow.deref(),
-            bias_buf_borrow.as_deref(),
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
             in_proj.buffer().borrow_mut().deref_mut(),
             conv_state.buffer().borrow_mut().deref_mut(),
             kernel_size as u32,
@@ -181,11 +156,6 @@ impl<B: Backend> DeltaNetMixer<B> {
         let in_proj = state.array(ArrayId::SsmInProj);
         let conv_state = state.array(ArrayId::DeltaNetConvState(self.layer_index));
 
-        let weight_buf_rc = self.conv_weight.buffer();
-        let weight_buf_borrow = weight_buf_rc.borrow();
-        let bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
         let padded = state.conv_padded_buffer().expect("Missing conv padded buffer");
 
         self.conv_pack.encode(
@@ -201,8 +171,8 @@ impl<B: Backend> DeltaNetMixer<B> {
 
         self.conv_scan.encode(
             padded.buffer().borrow().deref(),
-            weight_buf_borrow.deref(),
-            bias_buf_borrow.as_deref(),
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
             in_proj.buffer().borrow_mut().deref_mut(),
             conv_state.buffer().borrow_mut().deref_mut(),
             suffix_length as u32,
@@ -224,18 +194,11 @@ impl<B: Backend> DeltaNetMixer<B> {
         let ssm_state = state.array(ArrayId::DeltaNetSsmState(self.layer_index));
         let out = state.array(ArrayId::AttentionOutput);
 
-        let a_log_rc = self.a_log.buffer();
-        let a_log_borrow = a_log_rc.borrow();
-        let dt_bias_rc = self.dt_bias.buffer();
-        let dt_bias_borrow = dt_bias_rc.borrow();
-        let norm_weight_rc = self.norm_weight.buffer();
-        let norm_weight_borrow = norm_weight_rc.borrow();
-
         self.delta_net_update.encode(
             in_proj.buffer().borrow().deref(),
-            a_log_borrow.deref(),
-            dt_bias_borrow.deref(),
-            norm_weight_borrow.deref(),
+            &self.a_log,
+            &self.dt_bias,
+            &self.norm_weight,
             ssm_state.buffer().borrow_mut().deref_mut(),
             out.buffer().borrow_mut().deref_mut(),
             self.config.num_heads as u32,
@@ -260,21 +223,16 @@ impl<B: Backend> DeltaNetMixer<B> {
         let ssm_state = state.array(ArrayId::DeltaNetSsmState(self.layer_index));
         let out = state.array(ArrayId::AttentionOutput);
 
-        let a_log_rc = self.a_log.buffer();
-        let a_log_borrow = a_log_rc.borrow();
-        let dt_bias_rc = self.dt_bias.buffer();
-        let dt_bias_borrow = dt_bias_rc.borrow();
-        let norm_weight_rc = self.norm_weight.buffer();
-        let norm_weight_borrow = norm_weight_rc.borrow();
-
-        // Prep buffers: pre-allocated in ScratchBuffers, reused across layers
-        let (prep_q_norm, prep_k_norm, prep_beta, prep_decay) =
-            state.delta_net_prep_buffers().expect("DeltaNet prep buffers not initialized");
+        let aux = state.llm_aux.as_ref().expect("DeltaNet prep buffers not initialized");
+        let prep_q_norm = aux.delta_net_prep_q_norm.as_ref().expect("DeltaNet prep_q_norm not initialized");
+        let prep_k_norm = aux.delta_net_prep_k_norm.as_ref().expect("DeltaNet prep_k_norm not initialized");
+        let prep_beta = aux.delta_net_prep_beta.as_ref().expect("DeltaNet prep_beta not initialized");
+        let prep_decay = aux.delta_net_prep_decay.as_ref().expect("DeltaNet prep_decay not initialized");
 
         self.prefill_prep.encode(
             in_proj.buffer().borrow().deref(),
-            a_log_borrow.deref(),
-            dt_bias_borrow.deref(),
+            &self.a_log,
+            &self.dt_bias,
             prep_q_norm.buffer().borrow_mut().deref_mut(),
             prep_k_norm.buffer().borrow_mut().deref_mut(),
             prep_beta.buffer().borrow_mut().deref_mut(),
@@ -309,7 +267,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         self.norm_gate.encode(
             out.buffer().borrow_mut().deref_mut(),
             in_proj.buffer().borrow().deref(),
-            norm_weight_borrow.deref(),
+            &self.norm_weight,
             self.config.num_heads as u32,
             self.config.value_head_dim as u32,
             self.config.value_dim() as u32,

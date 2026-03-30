@@ -6,22 +6,22 @@
 using namespace metal;
 
 // Multi-token causal conv1d with SiLU for DeltaNet.
-// Reads from padded buffer (Conv1dPack output), writes conv'd+SiLU'd values
-// back to in_out with stride out_stride, updates conv state.
+// Reads from conv_padded (Conv1dPack output), writes conv'd+SiLU'd
+// values back to in_proj with stride out_stride, updates conv state.
 //
-// padded:    [state_stride + suffix_len, row_stride]
-// w:         [conv_dim, kernel_size]
+// conv_padded:    [state_stride + suffix_len, row_stride]
+// conv_weight: [conv_dim, kernel_size]
 // bias:      [conv_dim] (optional)
-// in_out:    [suffix_len, out_stride] — first conv_dim channels overwritten
+// in_proj:    [suffix_len, out_stride] — first conv_dim channels overwritten
 // state_out: [conv_dim, state_stride]
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(DeltaNetConvScan)(
-    device const T* padded,
-    device const T* w,
+    device const T* conv_padded,
+    device const T* conv_weight,
     device const T* bias OPTIONAL(has_bias),
-    device T* in_out,
+    device T* in_proj,
     device T* state_out,
     constant const uint& suffix_len,
     constant const uint& kernel_size,
@@ -36,25 +36,22 @@ PUBLIC KERNEL(DeltaNetConvScan)(
   const uint tap_count = kernel_size - 1;
 
   if (token_idx < suffix_len) {
-    const device T* w_row = w + channel_idx * kernel_size;
+    const device T* weight_row = conv_weight + channel_idx * kernel_size;
 
     float acc = has_bias ? float(bias[channel_idx]) : 0.0f;
 
     for (uint tap = 0; tap < kernel_size; ++tap) {
       const uint padded_row = token_idx + tap;
       const uint padded_index = padded_row * row_stride + channel_idx;
-      acc += float(w_row[tap]) * float(padded[padded_index]);
+      acc += float(weight_row[tap]) * float(conv_padded[padded_index]);
     }
 
     const size_t dst = size_t(token_idx) * out_stride + channel_idx;
-    in_out[dst] = static_cast<T>(activate_silu(acc));
+    in_proj[dst] = static_cast<T>(activate_silu(acc));
   } else {
     const uint tap = token_idx - suffix_len;
-    if (tap >= tap_count) {
-      return;
-    }
-    const uint padded_index = size_t(token_idx) * row_stride + channel_idx;
+    const size_t padded_index = size_t(token_idx) * row_stride + channel_idx;
     const uint state_offset = channel_idx * state_stride;
-    state_out[state_offset + tap] = padded[padded_index];
+    state_out[state_offset + tap] = conv_padded[padded_index];
   }
 }

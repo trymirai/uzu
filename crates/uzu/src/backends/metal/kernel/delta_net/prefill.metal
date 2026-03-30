@@ -124,5 +124,3 @@ PUBLIC KERNEL(DeltaNetPrefill)(
       state_ptr[i] = static_cast<T>(s[i]);
   }
 }
-
-#undef PREFILL_THREADS
