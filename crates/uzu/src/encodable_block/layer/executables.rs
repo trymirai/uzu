@@ -49,13 +49,10 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
             MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
+            MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
-        let copy_main_to_shortcut = TensorCopy::<B>::new(
-            context,
-            intermediate_data_type,
-            vec![ArrayId::Main, ArrayId::Shortcut].into_boxed_slice(),
-        )
-        .unwrap();
+        let copy_main_to_shortcut =
+            TensorCopy::<B>::new(context, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
 
         let pre_attention_norm = RMSNorm::new(
             context,
@@ -183,6 +180,7 @@ impl<B: Backend> LayerExecutables<B> {
                     mixer,
                 }
             },
+            MixerConfig::DeltaNet(_) => unimplemented!("DeltaNet mixer"),
         };
 
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
@@ -201,12 +199,8 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
-        let main_shortcut_add_swap = TensorAddSwap::<B>::new(
-            context,
-            intermediate_data_type,
-            vec![ArrayId::Shortcut, ArrayId::Main].into_boxed_slice(),
-        )
-        .unwrap();
+        let main_shortcut_add_swap =
+            TensorAddSwap::<B>::new(context, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
 
         let pre_mlp_norm = RMSNorm::new(
             context,

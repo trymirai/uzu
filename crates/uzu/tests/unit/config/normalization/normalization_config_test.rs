@@ -21,6 +21,7 @@ fn test_normalization_config() {
         scale_offset: None,
         upcast_mode: UpcastMode::OnlyNormalization,
         subtract_mean: false,
+        use_bias: false,
     };
 
     let deserialized_config: NormalizationConfig = from_str(config_str).unwrap();

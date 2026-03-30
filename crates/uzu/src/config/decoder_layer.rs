@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    attention::AttentionConfig, mamba::Mamba2Config, mlp::MLPConfig, normalization::NormalizationConfig,
-    short_conv::ShortConvConfig,
+    attention::AttentionConfig, delta_net::DeltaNetAttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
+    normalization::NormalizationConfig, short_conv::ShortConvConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -14,6 +14,8 @@ pub enum MixerConfig {
     Mamba(Mamba2Config),
     #[serde(rename = "ShortConvConfig")]
     ShortConv(ShortConvConfig),
+    #[serde(rename = "DeltaNetAttentionConfig")]
+    DeltaNet(DeltaNetAttentionConfig),
 }
 
 impl MixerConfig {
@@ -38,11 +40,19 @@ impl MixerConfig {
         }
     }
 
+    pub fn as_delta_net(&self) -> Option<&DeltaNetAttentionConfig> {
+        match self {
+            MixerConfig::DeltaNet(config) => Some(config),
+            _ => None,
+        }
+    }
+
     pub fn num_heads(&self) -> Option<usize> {
         match self {
             MixerConfig::Attention(config) => config.num_heads,
             MixerConfig::Mamba(config) => Some(config.num_heads),
             MixerConfig::ShortConv(_) => None,
+            MixerConfig::DeltaNet(config) => Some(config.num_heads),
         }
     }
 
@@ -51,6 +61,7 @@ impl MixerConfig {
             MixerConfig::Attention(config) => config.num_groups,
             MixerConfig::Mamba(config) => Some(config.num_groups),
             MixerConfig::ShortConv(_) => None,
+            MixerConfig::DeltaNet(config) => Some(config.num_groups),
         }
     }
 
@@ -59,22 +70,21 @@ impl MixerConfig {
             MixerConfig::Attention(config) => config.head_dim,
             MixerConfig::Mamba(config) => Some(config.head_dim),
             MixerConfig::ShortConv(_) => None,
+            MixerConfig::DeltaNet(config) => Some(config.head_dim),
         }
     }
 
     pub fn sliding_window_size(&self) -> Option<usize> {
         match self {
             MixerConfig::Attention(config) => config.sliding_window_size,
-            MixerConfig::Mamba(_) => None,
-            MixerConfig::ShortConv(_) => None,
+            MixerConfig::Mamba(_) | MixerConfig::ShortConv(_) | MixerConfig::DeltaNet(_) => None,
         }
     }
 
     pub fn attention_scale(&self) -> Option<f32> {
         match self {
             MixerConfig::Attention(config) => config.scale,
-            MixerConfig::Mamba(_) => None,
-            MixerConfig::ShortConv(_) => None,
+            MixerConfig::Mamba(_) | MixerConfig::ShortConv(_) | MixerConfig::DeltaNet(_) => None,
         }
     }
 }

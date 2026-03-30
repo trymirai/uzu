@@ -9,6 +9,7 @@ use crate::{
 unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
     a: SendPtr<T>,
     b: SendPtr<T>,
+    ab_scale: f32,
     d: SendPtrMut<T>,
     row: usize,
     n: usize,
@@ -16,6 +17,7 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
     leading_dimension_a: usize,
     leading_dimension_b: usize,
     leading_dimension_d: usize,
+    is_accumulate: bool,
 ) {
     unsafe {
         for col in 0..n {
@@ -25,7 +27,12 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
                 let b_val = *b.0.add(col * leading_dimension_b + i);
                 acc = acc + a_val.to_f32().unwrap() * b_val.to_f32().unwrap();
             }
-            *d.0.add(row * leading_dimension_d + col) = T::from(acc).unwrap();
+            let d_element = d.0.add(row * leading_dimension_d + col);
+            acc *= ab_scale;
+            if is_accumulate {
+                acc += (*d_element).to_f32().unwrap();
+            }
+            *d_element = T::from(acc).unwrap();
         }
     }
 }
@@ -33,6 +40,7 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
 pub fn matmul_gemm_impl<T: ArrayElement + Float>(
     a: *const T,
     b: *const T,
+    ab_scale: f32,
     d: *mut T,
     m: usize,
     n: usize,
@@ -40,6 +48,7 @@ pub fn matmul_gemm_impl<T: ArrayElement + Float>(
     leading_dimension_a: usize,
     leading_dimension_b: usize,
     leading_dimension_d: usize,
+    is_accumulate: bool,
 ) {
     let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let a = SendPtr(a);
@@ -66,6 +75,7 @@ pub fn matmul_gemm_impl<T: ArrayElement + Float>(
                         matmul_gemm_compute_row(
                             a,
                             b,
+                            ab_scale,
                             d,
                             row,
                             n,
@@ -73,6 +83,7 @@ pub fn matmul_gemm_impl<T: ArrayElement + Float>(
                             leading_dimension_a,
                             leading_dimension_b,
                             leading_dimension_d,
+                            is_accumulate,
                         );
                     }
                 });

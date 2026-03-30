@@ -20,6 +20,7 @@ using namespace metal;
 
 #define VARIANTS(TYPENAME, ...)                                                \
   DSL_META("dsl.variants", #TYPENAME, #__VA_ARGS__)
+#define CONSTRAINT(C) DSL_META("dsl.constraint", #C)
 #define PUBLIC DSL_META("dsl.public")
 #define KERNEL(NAME) DSL_META("dsl.kernel") void NAME
 

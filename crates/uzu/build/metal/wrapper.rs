@@ -82,6 +82,7 @@ fn kernel_wrappers(
         Vec::new()
     };
 
+    let engine = rhai::Engine::new();
     for type_variant in if let Some(variants) = &kernel.variants {
         variants
             .iter()
@@ -100,6 +101,25 @@ fn kernel_wrappers(
     } else {
         vec![None]
     } {
+        if let Some(type_variant) = &type_variant {
+            let mut scope = rhai::Scope::with_capacity(type_variant.len());
+            for (type_variant_name, type_variant_value) in type_variant {
+                scope.push(
+                    type_variant_name.clone(),
+                    engine
+                        .eval_expression::<rhai::Dynamic>(type_variant_value.as_ref())
+                        .unwrap_or_else(|_| type_variant_value.clone().into()),
+                );
+            }
+            if !kernel
+                .constraints
+                .iter()
+                .all(|constraint_expr| engine.eval_expression_with_scope(&mut scope, constraint_expr.as_ref()).unwrap())
+            {
+                continue;
+            }
+        }
+
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
             (
                 static_mangle(kernel.name.as_ref(), type_variant.iter().map(|(_k, v)| v.as_str())),

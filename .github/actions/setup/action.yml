@@ -23,20 +23,21 @@ runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
-    - uses: dtolnay/rust-toolchain@nightly
+    - if: inputs.linters == 'true'
+      uses: dtolnay/rust-toolchain@nightly
       with:
         components: rustfmt
-    - if: inputs.nextest == 'true'
-      uses: taiki-e/install-action@nextest
     - if: inputs.linters == 'true'
       run: |
-        arch -arm64 brew install clang-format
+        arch -arm64 brew install clang-format cargo-deny
       shell: bash
     - if: inputs.metal == 'true'
       run: |
         arch -arm64 brew install cmake
         xcodebuild -downloadComponent MetalToolchain
       shell: bash
+    - if: inputs.nextest == 'true'
+      uses: taiki-e/install-action@nextest
     - if: inputs.test_model == 'true'
       uses: astral-sh/setup-uv@v7
       with:

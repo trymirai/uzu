@@ -10,7 +10,6 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    array::Array,
     backends::common::{
         Backend, Encoder, Kernels,
         gpu_types::ActivationType,
@@ -200,53 +199,27 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let suffix_length = state.active_suffix_length();
-        let arrays = state.arrays(&[
-            ArrayId::Main,
-            ArrayId::MoeTopkIds,
-            ArrayId::MoeTopkProbs,
-            ArrayId::MoeOffsets,
-            ArrayId::MoeSumK,
-            ArrayId::MoeBucketedTokenIds,
-            ArrayId::MoeBucketedProbs,
-            ArrayId::MoeXPerm,
-            ArrayId::MoeTok2Row,
-            ArrayId::MoeYPartial,
-            ArrayId::MoeTileCounts,
-            ArrayId::MoeTileOffsets,
-            ArrayId::MoeTileMap,
-            ArrayId::MoeTotalTiles,
-            ArrayId::MoeDispatchArgs,
-            ArrayId::MoeScatterPartials,
-            ArrayId::MoeScatterBlockBases,
-            ArrayId::MoeBlockAlloc,
-            ArrayId::MoeHidden,
-            ArrayId::MoeTwoPassRowExpertMap,
-        ]);
 
-        let clone_buffer = |array: &Array<B>| -> Rc<RefCell<B::Buffer>> { array.buffer() };
-
-        let mut array_iter = arrays.iter();
-        let main_buf = clone_buffer(array_iter.next().unwrap());
-        let topk_ids_buf = clone_buffer(array_iter.next().unwrap());
-        let topk_probs_buf = clone_buffer(array_iter.next().unwrap());
-        let offsets_buf = clone_buffer(array_iter.next().unwrap());
-        let sumk_buf = clone_buffer(array_iter.next().unwrap());
-        let bucketed_ids_buf = clone_buffer(array_iter.next().unwrap());
-        let bucketed_probs_buf = clone_buffer(array_iter.next().unwrap());
-        let x_perm_buf = clone_buffer(array_iter.next().unwrap());
-        let tok2row_buf = clone_buffer(array_iter.next().unwrap());
-        let y_partial_buf = clone_buffer(array_iter.next().unwrap());
-        let tile_counts_buf = clone_buffer(array_iter.next().unwrap());
-        let tile_offsets_buf = clone_buffer(array_iter.next().unwrap());
-        let tile_map_buf = clone_buffer(array_iter.next().unwrap());
-        let total_tiles_buf = clone_buffer(array_iter.next().unwrap());
-        let dispatch_args_buf = clone_buffer(array_iter.next().unwrap());
-        let partials_buf = clone_buffer(array_iter.next().unwrap());
-        let block_bases_buf = clone_buffer(array_iter.next().unwrap());
-        let block_alloc_buf = clone_buffer(array_iter.next().unwrap());
-        let hidden_buf = clone_buffer(array_iter.next().unwrap());
-        let row_expert_map_buf = clone_buffer(array_iter.next().unwrap());
-        debug_assert!(array_iter.next().is_none());
+        let main_buf = state.array(ArrayId::Main).buffer();
+        let topk_ids_buf = state.array(ArrayId::MoeTopkIds).buffer();
+        let topk_probs_buf = state.array(ArrayId::MoeTopkProbs).buffer();
+        let offsets_buf = state.array(ArrayId::MoeOffsets).buffer();
+        let sumk_buf = state.array(ArrayId::MoeSumK).buffer();
+        let bucketed_ids_buf = state.array(ArrayId::MoeBucketedTokenIds).buffer();
+        let bucketed_probs_buf = state.array(ArrayId::MoeBucketedProbs).buffer();
+        let x_perm_buf = state.array(ArrayId::MoeXPerm).buffer();
+        let tok2row_buf = state.array(ArrayId::MoeTok2Row).buffer();
+        let y_partial_buf = state.array(ArrayId::MoeYPartial).buffer();
+        let tile_counts_buf = state.array(ArrayId::MoeTileCounts).buffer();
+        let tile_offsets_buf = state.array(ArrayId::MoeTileOffsets).buffer();
+        let tile_map_buf = state.array(ArrayId::MoeTileMap).buffer();
+        let total_tiles_buf = state.array(ArrayId::MoeTotalTiles).buffer();
+        let dispatch_args_buf = state.array(ArrayId::MoeDispatchArgs).buffer();
+        let partials_buf = state.array(ArrayId::MoeScatterPartials).buffer();
+        let block_bases_buf = state.array(ArrayId::MoeScatterBlockBases).buffer();
+        let block_alloc_buf = state.array(ArrayId::MoeBlockAlloc).buffer();
+        let hidden_buf = state.array(ArrayId::MoeHidden).buffer();
+        let row_expert_map_buf = state.array(ArrayId::MoeTwoPassRowExpertMap).buffer();
 
         let e = self.moe_config.num_routed_experts;
         let k = self.moe_config.num_active_routed_experts;

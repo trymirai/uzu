@@ -10,8 +10,8 @@ use crate::{
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulKernels},
+            FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
+            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable, QuantizedMatmulType,
@@ -48,7 +48,7 @@ enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
         weights: B::Buffer,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
+        readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
         weights: B::Buffer,
@@ -75,7 +75,7 @@ enum UntiedEmbeddingLookupType<B: Backend> {
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
         weights: B::Buffer,
-        readout: RefCell<<B::Kernels as MatmulKernels>::MatmulKernel>,
+        readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
         weights: B::Buffer,
@@ -213,7 +213,7 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)?);
+                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?);
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::FullPrecision {
@@ -239,7 +239,7 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)?);
+                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?);
 
                 EmbeddingTying::Untied {
                     input_ty: UntiedEmbeddingLookupType::FullPrecision {
@@ -493,14 +493,12 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<(), EmbeddingError<B>> {
         let batch_size = state.active_suffix_length() as u32;
 
-        let arrays = state.arrays(&[ArrayId::TokenIds, ArrayId::Main]);
-
-        let token_ids_array = &arrays[0];
+        let token_ids_array = state.array(ArrayId::TokenIds);
         let token_ids_buffer_rc = token_ids_array.buffer();
         let token_ids_buffer_borrow = token_ids_buffer_rc.borrow();
         let token_ids = token_ids_buffer_borrow.deref();
 
-        let output_array = &arrays[1];
+        let output_array = state.array(ArrayId::Main);
         let output_buffer_rc = output_array.buffer();
         let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
         let output = output_buffer_borrow.deref_mut();
@@ -580,14 +578,12 @@ impl<B: Backend> Embedding<B> {
             return Ok(());
         }
 
-        let arrays = state.arrays(&[ArrayId::Main, ArrayId::Logits]);
-
-        let input_array = &arrays[0];
+        let input_array = state.array(ArrayId::Main);
         let input_buffer_rc = input_array.buffer();
         let input_buffer_borrow = input_buffer_rc.borrow();
         let input = input_buffer_borrow.deref();
 
-        let output_array = &arrays[1];
+        let output_array = state.array(ArrayId::Logits);
         let output_buffer_rc = output_array.buffer();
         let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
         let output = output_buffer_borrow.deref_mut();
@@ -619,15 +615,12 @@ impl<B: Backend> Embedding<B> {
                         a: input,
                         a_offset: input_offset as u64,
                         b: weights,
+                        ab_scale: 1.0,
+                        c: MatmulArgumentC::None,
                         d: output,
-                        bias: None,
-                        batch: batch_size as i32,
-                        input_dim: input_dim as i32,
-                        output_dim: output_dim as i32,
-                        leading_dimension_a: input_dim as i32,
-                        leading_dimension_b: input_dim as i32,
-                        leading_dimension_d: output_dim as i32,
-                        transpose_b: true,
+                        batch_dim: batch_size as u32,
+                        input_dim: input_dim as u32,
+                        output_dim: output_dim as u32,
                     },
                     encoder,
                 );

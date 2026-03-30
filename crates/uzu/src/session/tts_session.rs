@@ -33,10 +33,10 @@ use crate::{
     backends::common::{
         Backend, Context as BackendContext, Encoder, Kernels,
         kernel::{
-            EmbeddingRowsSumKernel, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
+            EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
             TokenCopyToResultsKernel,
             kv_cache_update::KVCacheUpdate,
-            matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
+            matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
         },
     },
     config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},

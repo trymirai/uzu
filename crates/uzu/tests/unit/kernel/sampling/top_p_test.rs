@@ -283,7 +283,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
         kernel
             .encode(
                 logits_array.buffer().borrow_mut().deref_mut(),
-                Some(seeds_array.buffer().borrow().deref()),
+                seeds_array.buffer().borrow().deref(),
                 0,
                 None,
                 0,
@@ -388,7 +388,7 @@ fn test_topp_sampling_statistical_large() {
             kernel
                 .encode(
                     logits_array.buffer().borrow_mut().deref_mut(),
-                    Some(seeds_array.buffer().borrow().deref()),
+                    seeds_array.buffer().borrow().deref(),
                     0,
                     None,
                     0,
@@ -465,7 +465,7 @@ fn perf_topp_128k_vocab() {
         kernel
             .encode(
                 logits_array.buffer().borrow_mut().deref_mut(),
-                Some(seeds_array.buffer().borrow().deref()),
+                seeds_array.buffer().borrow().deref(),
                 0,
                 None,
                 0,

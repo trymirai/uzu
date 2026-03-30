@@ -186,25 +186,13 @@ impl<B: Backend> Classifier<B> {
         &self,
         state: &ForwardPassState<B>,
     ) -> Result<Box<[f32]>, Error> {
-        let logits_arrays = state.arrays(&[ArrayId::ClassifierPredictionHeadLogits]);
-        let logits_array = &logits_arrays[0];
-
         let num_labels = self.context.model_config.model_config.num_labels;
-        let buffer = logits_array.as_bytes();
+        let logits = state.array(ArrayId::ClassifierPredictionHeadLogits).view(&[num_labels]);
 
-        match logits_array.data_type() {
-            DataType::F32 => {
-                let slice: &[f32] = bytemuck::cast_slice(buffer);
-                Ok(slice[..num_labels].into())
-            },
-            DataType::F16 => {
-                let slice: &[half::f16] = bytemuck::cast_slice(buffer);
-                Ok(slice[..num_labels].iter().map(|&x| x.to_f32()).collect::<Vec<_>>().into_boxed_slice())
-            },
-            DataType::BF16 => {
-                let slice: &[half::bf16] = bytemuck::cast_slice(buffer);
-                Ok(slice[..num_labels].iter().map(|&x| x.to_f32()).collect::<Vec<_>>().into_boxed_slice())
-            },
+        match logits.data_type() {
+            DataType::F32 => Ok(logits.as_slice::<f32>().into()),
+            DataType::F16 => Ok(logits.as_slice::<half::f16>().iter().map(|&x| x.to_f32()).collect::<Box<[_]>>()),
+            DataType::BF16 => Ok(logits.as_slice::<half::bf16>().iter().map(|&x| x.to_f32()).collect::<Box<[_]>>()),
             _ => Err(Error::UnableToDecodeText),
         }
     }
