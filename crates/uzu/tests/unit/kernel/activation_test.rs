@@ -155,33 +155,33 @@ fn test_activation_large<T: ArrayElement + Float + Debug + Display>(
 // SILU out-of-place tests
 #[test]
 fn test_silu_f32() {
-    test_activation::<f32>(ActivationType::silu_default(), false);
+    test_activation::<f32>(ActivationType::SILU, false);
 }
 
 #[test]
 fn test_silu_f16() {
-    test_activation::<f16>(ActivationType::silu_default(), false);
+    test_activation::<f16>(ActivationType::SILU, false);
 }
 
 #[test]
 fn test_silu_bf16() {
-    test_activation::<bf16>(ActivationType::silu_default(), false);
+    test_activation::<bf16>(ActivationType::SILU, false);
 }
 
 // SILU in-place tests
 #[test]
 fn test_silu_in_place_f32() {
-    test_activation::<f32>(ActivationType::silu_default(), true);
+    test_activation::<f32>(ActivationType::SILU, true);
 }
 
 #[test]
 fn test_silu_in_place_f16() {
-    test_activation::<f16>(ActivationType::silu_default(), true);
+    test_activation::<f16>(ActivationType::SILU, true);
 }
 
 #[test]
 fn test_silu_in_place_bf16() {
-    test_activation::<bf16>(ActivationType::silu_default(), true);
+    test_activation::<bf16>(ActivationType::SILU, true);
 }
 
 // GELU out-of-place tests
@@ -219,17 +219,17 @@ fn test_gelu_in_place_bf16() {
 // Large SILU tests
 #[test]
 fn test_silu_large_f32() {
-    test_activation_large::<f32>(ActivationType::silu_default(), false);
+    test_activation_large::<f32>(ActivationType::SILU, false);
 }
 
 #[test]
 fn test_silu_large_f16() {
-    test_activation_large::<f16>(ActivationType::silu_default(), false);
+    test_activation_large::<f16>(ActivationType::SILU, false);
 }
 
 #[test]
 fn test_silu_large_bf16() {
-    test_activation_large::<bf16>(ActivationType::silu_default(), false);
+    test_activation_large::<bf16>(ActivationType::SILU, false);
 }
 
 // Large GELU tests
@@ -251,7 +251,7 @@ fn test_gelu_large_bf16() {
 // Large in-place tests
 #[test]
 fn test_silu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::silu_default(), true);
+    test_activation_large::<f32>(ActivationType::SILU, true);
 }
 
 #[test]

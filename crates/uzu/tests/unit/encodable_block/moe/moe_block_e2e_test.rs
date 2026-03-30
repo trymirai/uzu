@@ -4,7 +4,7 @@ use uzu::{
     DataType,
     backends::common::{
         Backend, Buffer, Encoder, Kernels,
-        gpu_types::ActivationType,
+        gpu_types::{ActivationType, activation_silu_alpha},
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
@@ -105,10 +105,10 @@ fn moe_cpu_reference(
             for i in 0..d_ff {
                 hidden[i] = match gating_code {
                     0 => ActivationType::GELU.activate(up_out[i]),
-                    1 => ActivationType::silu(silu_alpha).activate(up_out[i]),
-                    2 => ActivationType::silu(silu_alpha).activate(gate_out[i]) * up_out[i],
+                    1 => activation_silu_alpha(up_out[i], silu_alpha),
+                    2 => activation_silu_alpha(gate_out[i], silu_alpha) * up_out[i],
                     3 => ActivationType::GELU.activate(gate_out[i]) * up_out[i],
-                    _ => ActivationType::silu(silu_alpha).activate(gate_out[i]) * up_out[i], // fallback to SwiGLU
+                    _ => activation_silu_alpha(gate_out[i], silu_alpha) * up_out[i], // fallback to SwiGLU
                 };
             }
 

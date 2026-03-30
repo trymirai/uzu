@@ -2,7 +2,10 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{
+    ArrayElement,
+    backends::common::gpu_types::{ActivationType, activation_silu_alpha},
+};
 
 #[kernel(MoeExpertsDecodeSinglePassA)]
 #[variants(T, f32, f16, bf16)]
@@ -64,7 +67,7 @@ pub fn moe_experts_decode_single_pass_a<T: ArrayElement + Float>(
                 if gating_sel == 0 {
                     ActivationType::GELU.activate(up_val)
                 } else {
-                    ActivationType::silu(silu_alpha).activate(up_val)
+                    activation_silu_alpha(up_val, silu_alpha)
                 }
             } else {
                 let up_val = (acc_up + unsafe { *biases.add(bias_base + h_idx) }.to_f32().unwrap())
@@ -72,7 +75,7 @@ pub fn moe_experts_decode_single_pass_a<T: ArrayElement + Float>(
                 let gate_val = (acc_gate + unsafe { *biases.add(bias_base + df + h_idx) }.to_f32().unwrap())
                     .clamp(gate_clip_min, gate_clip_max);
                 let gate_act = if gating_sel == 2 {
-                    ActivationType::silu(silu_alpha).activate(gate_val)
+                    activation_silu_alpha(gate_val, silu_alpha)
                 } else {
                     ActivationType::GELU.activate(gate_val)
                 };

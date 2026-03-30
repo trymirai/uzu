@@ -12,7 +12,7 @@ use uzu::{
     DataType,
     backends::common::{
         Buffer, Encoder,
-        gpu_types::ActivationType,
+        gpu_types::{ActivationType, activation_silu_alpha},
         kernel::moe::{
             MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
             MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
@@ -229,7 +229,7 @@ fn cpu_moe_reference(
                     if gating_code == 0 {
                         ActivationType::GELU.activate(up_val)
                     } else {
-                        ActivationType::silu(silu_alpha).activate(up_val)
+                        activation_silu_alpha(up_val, silu_alpha)
                     }
                 } else {
                     // SwiGLU or GEGLU - need gate projection too
@@ -245,7 +245,7 @@ fn cpu_moe_reference(
                     let gate_val = acc_gate.clamp(gate_clip_min, gate_clip_max);
 
                     let gate_act = if gating_code == 2 {
-                        ActivationType::silu(silu_alpha).activate(gate_val)
+                        activation_silu_alpha(gate_val, silu_alpha)
                     } else {
                         ActivationType::GELU.activate(gate_val)
                     };

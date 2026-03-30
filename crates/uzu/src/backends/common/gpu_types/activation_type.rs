@@ -6,33 +6,21 @@ const GELU_K1: f32 = 0.7978845608; // sqrt(2/pi)
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ActivationType {
-    SILU {
-        alpha: f32,
-    },
+    SILU,
     GELU,
     TANH,
     IDENTITY,
 }
 
 impl ActivationType {
-    pub fn silu_default() -> ActivationType {
-        ActivationType::silu(1.0f32)
-    }
-
-    pub fn silu(alpha: f32) -> ActivationType {
-        ActivationType::SILU {
-            alpha,
-        }
-    }
-
     pub fn activate<T: Float>(
         &self,
         x: T,
     ) -> T {
         match self {
             ActivationType::SILU {
-                alpha,
-            } => silu(x, *alpha),
+                ..
+            } => silu(x),
             ActivationType::GELU => gelu(x),
             ActivationType::TANH => tanh_activation(x),
             ActivationType::IDENTITY => x,
@@ -40,13 +28,17 @@ impl ActivationType {
     }
 }
 
-fn silu<T: Float>(
+pub fn activation_silu_alpha<T: Float>(
     x: T,
     alpha: f32,
 ) -> T {
     let x_float = x.to_f32().unwrap();
     let y_float = x_float / (1.0f32 + (-alpha * x_float).exp());
     T::from(y_float).unwrap()
+}
+
+fn silu<T: Float>(x: T) -> T {
+    activation_silu_alpha(x, 1.0f32)
 }
 
 fn gelu<T: Float>(x: T) -> T {
