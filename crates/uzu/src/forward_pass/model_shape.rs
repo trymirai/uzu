@@ -116,7 +116,7 @@ impl ModelShape {
                 MixerConfig::Attention(attn) => {
                     let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
                     max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
-                    has_gate = has_gate || attn.has_gate;
+                    has_gate = has_gate || attn.has_gate || attn.gate_projection_config.is_some();
                     linear_configs.extend([&attn.qkv_projection_config, &attn.out_projection_config]);
                 },
                 MixerConfig::Mamba(mamba) => {
