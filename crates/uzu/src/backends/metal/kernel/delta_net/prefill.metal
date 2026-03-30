@@ -67,27 +67,28 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   device T* out_ptr = out + hv_idx * head_v_dim + dv_idx;
 
   // Load state into registers
-  float s0 = 0.0f, s1 = 0.0f, s2 = 0.0f, s3 = 0.0f;
-  if (active) {
-    s0 = float(state_ptr[0]);
-    s1 = float(state_ptr[1]);
-    s2 = float(state_ptr[2]);
-    s3 = float(state_ptr[3]);
-  }
+  float s[n_per_t];
+  METAL_PRAGMA_UNROLL
+  for (uint i = 0; i < n_per_t; ++i)
+    s[i] = active ? float(state_ptr[i]) : 0.0f;
 
   for (uint t = 0; t < suffix_len; ++t) {
     float decay = *decay_ptr;
     float beta = *beta_ptr;
 
     // Load and cache k_norm (used in both passes)
-    float k0 = k_ptr[0], k1 = k_ptr[1], k2 = k_ptr[2], k3 = k_ptr[3];
+    float k[n_per_t];
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < n_per_t; ++i)
+      k[i] = k_ptr[i];
 
     // Pass 1: decay state + kv_mem = (decayed S) @ k
-    s0 *= decay;
-    s1 *= decay;
-    s2 *= decay;
-    s3 *= decay;
-    float kv_partial = s0 * k0 + s1 * k1 + s2 * k2 + s3 * k3;
+    float kv_partial = 0.0f;
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < n_per_t; ++i) {
+      s[i] *= decay;
+      kv_partial += s[i] * k[i];
+    }
     float kv_mem = simd_sum(kv_partial);
 
     // Delta
@@ -95,12 +96,12 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     float delta = beta * (v_val - kv_mem);
 
     // Pass 2: update state + output = new_S @ q
-    s0 += k0 * delta;
-    s1 += k1 * delta;
-    s2 += k2 * delta;
-    s3 += k3 * delta;
-    float q0 = q_ptr[0], q1 = q_ptr[1], q2 = q_ptr[2], q3 = q_ptr[3];
-    float out_partial = s0 * q0 + s1 * q1 + s2 * q2 + s3 * q3;
+    float out_partial = 0.0f;
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < n_per_t; ++i) {
+      s[i] += k[i] * delta;
+      out_partial += s[i] * q_ptr[i];
+    }
     float o_val = simd_sum(out_partial);
 
     if (active && dk_lane == 0) {
@@ -118,10 +119,9 @@ PUBLIC KERNEL(DeltaNetPrefill)(
 
   // Write final state
   if (active) {
-    state_ptr[0] = static_cast<T>(s0);
-    state_ptr[1] = static_cast<T>(s1);
-    state_ptr[2] = static_cast<T>(s2);
-    state_ptr[3] = static_cast<T>(s3);
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < n_per_t; ++i)
+      state_ptr[i] = static_cast<T>(s[i]);
   }
 }
 
