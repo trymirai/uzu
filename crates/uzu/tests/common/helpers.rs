@@ -13,6 +13,11 @@ pub fn alloc_buffer_with_data<B: Backend, T: bytemuck::NoUninit>(
     context: &B::Context,
     data: &[T],
 ) -> B::Buffer {
+    if data.len() == 0 {
+        // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
+        return context.create_buffer(1).expect("Failed to create buffer");
+    }
+
     let slice: &[u8] = bytemuck::cast_slice(data);
     let buffer = context.create_buffer(slice.len()).expect("Failed to create buffer");
     let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, buffer.length()) };
