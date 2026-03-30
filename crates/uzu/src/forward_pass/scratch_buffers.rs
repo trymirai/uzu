@@ -27,6 +27,7 @@ pub struct ScratchBuffers<B: Backend> {
     pub attention_output: Array<B>,
     pub mlp_fused_up: Array<B>,
     pub mlp_hidden: Array<B>,
+    pub lora_intermediate: Option<Array<B>>,
     pub ssm_inproj: Option<Array<B>>,
     pub ssm_packed: Option<Array<B>>,
     pub ssm_conv_padded: Option<Array<B>>,
@@ -129,6 +130,9 @@ impl<B: Backend> ScratchBuffers<B> {
             attention_output: alloc(&model_shape.attention_output_shape(max_suffix_len), act_ty, "attention_output"),
             mlp_fused_up: alloc(&model_shape.mlp_fused_up_shape(max_suffix_len), act_ty, "mlp_fused_up"),
             mlp_hidden: alloc(&model_shape.mlp_hidden_shape(max_suffix_len), act_ty, "mlp_hidden"),
+            lora_intermediate: model_shape
+                .lora_intermediate(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty, "lora_intermediate")),
             ssm_inproj: model_shape.ssm_inproj_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_inproj")),
             ssm_packed: model_shape.ssm_packed_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_packed")),
             ssm_conv_padded: model_shape
