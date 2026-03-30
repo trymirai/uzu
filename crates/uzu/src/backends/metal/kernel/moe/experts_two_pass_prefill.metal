@@ -341,7 +341,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
         float out_val;
         if (gating_sel <= 1u) {
           out_val =
-              (gating_sel == 0u) ? gelu_approx(up_v) : activate_silu_alpha(up_v, silu_alpha);
+              (gating_sel == 0u) ? activate_gelu(up_v) : activate_silu_alpha(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_0 + bias_gate[col0],
@@ -349,7 +349,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
               gate_clip_max
           );
           const float gate_act = (gating_sel == 2u) ? activate_silu_alpha(gate_v, silu_alpha)
-                                                    : gelu_approx(gate_v);
+                                                    : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col0;
@@ -362,7 +362,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
         float out_val;
         if (gating_sel <= 1u) {
           out_val =
-              (gating_sel == 0u) ? gelu_approx(up_v) : activate_silu_alpha(up_v, silu_alpha);
+              (gating_sel == 0u) ? activate_gelu(up_v) : activate_silu_alpha(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_1 + bias_gate[col1],
@@ -370,7 +370,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
               gate_clip_max
           );
           const float gate_act = (gating_sel == 2u) ? activate_silu_alpha(gate_v, silu_alpha)
-                                                    : gelu_approx(gate_v);
+                                                    : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col1;
