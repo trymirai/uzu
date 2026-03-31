@@ -14,6 +14,7 @@ use crate::{
     config::DeltaNetAttentionConfig,
     encodable_block::linear::Linear,
     forward_pass::state::{ArrayId, ForwardPassState},
+    parameters::{ParameterTree, resolve_subtree},
 };
 
 #[derive(Debug, Error)]
@@ -22,6 +23,8 @@ pub enum DeltaNetMixerError<B: Backend> {
     BackendError(B::Error),
     #[error("Unsupported configuration: {0}")]
     UnsupportedConfiguration(String),
+    #[error("Failed to load parameters: {0}")]
+    LoadError(String),
 }
 
 pub(crate) struct DeltaNetMixer<B: Backend> {
@@ -47,18 +50,12 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
 }
 
 impl<B: Backend> DeltaNetMixer<B> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: &B::Context,
         config: DeltaNetAttentionConfig,
         layer_index: usize,
-        in_projection: Box<dyn Linear<B>>,
-        out_projection: Box<dyn Linear<B>>,
-        conv_weight: B::Buffer,
-        conv_bias: Option<B::Buffer>,
-        a_log: B::Buffer,
-        dt_bias: B::Buffer,
-        norm_weight: B::Buffer,
+        model_dim: usize,
+        decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Result<Self, DeltaNetMixerError<B>> {
         if config.kernel_size < 2 {
             return Err(DeltaNetMixerError::UnsupportedConfiguration(format!(
@@ -82,6 +79,53 @@ impl<B: Backend> DeltaNetMixer<B> {
         let data_type: DataType = config.in_proj_config.activation_precision().into();
         let has_bias = config.conv_config.has_biases;
 
+        // Load weights
+        let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
+        let conv_tree = resolve_subtree(&mixer_tree, &["conv", "conv1d"]);
+
+        let in_projection = <dyn Linear<B>>::new(
+            &config.in_proj_config,
+            false,
+            model_dim,
+            [config.total_proj_dim()],
+            context,
+            &resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"]),
+            ArrayId::Main,
+            ArrayId::SsmInProj,
+        )
+        .map_err(|e| DeltaNetMixerError::LoadError(format!("in-projection: {e:?}")))?;
+
+        let out_projection = <dyn Linear<B>>::new(
+            &config.out_proj_config,
+            false,
+            config.value_dim(),
+            [model_dim],
+            context,
+            &resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"]),
+            ArrayId::AttentionOutput,
+            ArrayId::Main,
+        )
+        .map_err(|e| DeltaNetMixerError::LoadError(format!("out-projection: {e:?}")))?;
+
+        let load = |tree: &ParameterTree<B::Context>, name: &str| {
+            tree.leaf(name)
+                .and_then(|l| l.read_buffer())
+                .map_err(|e| DeltaNetMixerError::LoadError(format!("{name}: {e}")))
+        };
+
+        let conv_weight = load(&conv_tree, "weights")?;
+        let conv_bias = if has_bias {
+            Some(load(&conv_tree, "biases")?)
+        } else {
+            None
+        };
+
+        let a_log = load(&mixer_tree, "a_log")?;
+        let dt_bias = load(&mixer_tree, "dt_bias")?;
+        let norm_tree = resolve_subtree(&mixer_tree, &["norm", "inner_norm"]);
+        let norm_weight = load(&norm_tree, "scales")?;
+
+        // Create kernels
         let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, data_type, has_bias)
             .map_err(DeltaNetMixerError::BackendError)?;
         let delta_net_update =
