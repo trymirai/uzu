@@ -198,4 +198,55 @@ pub fn short_conv_trie<T: ArrayElement + Float>(
     model_dim: u32,
     #[specialize] has_bias: bool,
 ) {
+    let suffix_len = suffix_len as usize;
+    let kernel_size = kernel_size as usize;
+    let in_proj_stride = in_proj_stride as usize;
+    let state_stride = state_stride as usize;
+    let model_dim = model_dim as usize;
+
+    unsafe {
+        for channel_idx in 0..model_dim {
+            let tap_count = kernel_size.saturating_sub(1);
+            let w_row = w.add(channel_idx * kernel_size);
+            let base_state_offset = channel_idx * state_stride;
+
+            for node in 0..suffix_len {
+                let in_proj_idx = node * in_proj_stride + channel_idx;
+                let pre_conv_gate = (*in_proj.add(in_proj_idx)).to_f32().unwrap();
+                let post_conv_gate = (*in_proj.add(in_proj_idx + model_dim)).to_f32().unwrap();
+                let x_in = (*in_proj.add(in_proj_idx + 2 * model_dim)).to_f32().unwrap();
+                let x = (x_in * pre_conv_gate).to_f32().unwrap();
+
+                // Select parent state (root uses base_state)
+                let parent = *parents.add(node);
+                let parent_state = if parent < 0 {
+                    base_state.add(base_state_offset)
+                } else {
+                    let parent = parent as usize;
+                    suffix_state.add((parent * model_dim + channel_idx) * state_stride)
+                };
+
+                let mut acc = 0.0f32;
+                if has_bias {
+                    acc = (*b.unwrap().add(channel_idx)).to_f32().unwrap();
+                }
+                for tap in 0..tap_count {
+                    let sample = (*parent_state.add(tap)).to_f32().unwrap();
+                    acc += (*w_row.add(tap)).to_f32().unwrap() * sample;
+                }
+                acc += (*w_row.add(tap_count)).to_f32().unwrap() * x;
+
+                let gated_output = acc * post_conv_gate;
+                *out.add(node * model_dim + channel_idx) = T::from(gated_output).unwrap();
+
+                if tap_count > 0 {
+                    let dst_state = suffix_state.add((node * model_dim + channel_idx) * state_stride);
+                    for tap in 0..tap_count - 1 {
+                        *dst_state.add(tap) = *parent_state.add(tap + 1);
+                    }
+                    *dst_state.add(tap_count - 1) = T::from(x).unwrap();
+                }
+            }
+        }
+    }
 }
