@@ -24,40 +24,42 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     #[allow(unused)] num_dv_groups: u32,
 ) {
     let state_ptr = state as *const T;
-    let nv = num_v_heads as usize;
-    let nk = num_k_heads as usize;
-    let dk = HEAD_K_DIM as usize;
-    let dv = head_v_dim as usize;
-    let kd = key_dim as usize;
-    let vd = value_dim as usize;
-    let conv_dim = 2 * kd + vd;
-    let total_proj_dim = conv_dim + vd + nv + nv;
-    let sl = suffix_len as usize;
-    let groups_per_head = nv / nk;
+    let num_v_heads = num_v_heads as usize;
+    let num_k_heads = num_k_heads as usize;
+    let head_k_dim = HEAD_K_DIM as usize;
+    let head_v_dim = head_v_dim as usize;
+    let key_dim = key_dim as usize;
+    let value_dim = value_dim as usize;
+    let conv_dim = 2 * key_dim + value_dim;
+    let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+    let suffix_len = suffix_len as usize;
+    let groups_per_head = num_v_heads / num_k_heads;
 
-    for hv in 0..nv {
+    for hv in 0..num_v_heads {
         let hk = hv / groups_per_head;
 
-        for t in 0..sl {
-            let qk_off = t * kd + hk * dk;
-            let decay = unsafe { *decay_buf.add(t * nv + hv) };
-            let beta = unsafe { *beta_buf.add(t * nv + hv) };
+        for token in 0..suffix_len {
+            let qk_off = token * key_dim + hk * head_k_dim;
+            let decay = unsafe { *decay_buf.add(token * num_v_heads + hv) };
+            let beta = unsafe { *beta_buf.add(token * num_v_heads + hv) };
 
-            for dv_idx in 0..dv {
+            for i in 0..head_v_dim {
                 // State layout: [Hv, Dv, Dk]
-                let state_off = (hv * dv + dv_idx) * dk;
+                let state_off = (hv * head_v_dim + i) * head_k_dim;
 
                 let mut kv_mem = 0.0f32;
-                for j in 0..dk {
+                for j in 0..head_k_dim {
                     let s = unsafe { (*state_ptr.add(state_off + j)).to_f32().unwrap() };
                     kv_mem += (decay * s) * unsafe { *k_norm.add(qk_off + j) };
                 }
 
-                let v_val = unsafe { (*in_proj.add(t * total_proj_dim + 2 * kd + hv * dv + dv_idx)).to_f32().unwrap() };
+                let v_val = unsafe {
+                    (*in_proj.add(token * total_proj_dim + 2 * key_dim + hv * head_v_dim + i)).to_f32().unwrap()
+                };
                 let delta = beta * (v_val - kv_mem);
 
                 let mut o_val = 0.0f32;
-                for j in 0..dk {
+                for j in 0..head_k_dim {
                     let s = unsafe { (*state_ptr.add(state_off + j)).to_f32().unwrap() };
                     let k_j = unsafe { *k_norm.add(qk_off + j) };
                     let new_s = decay * s + k_j * delta;
@@ -65,7 +67,7 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
                     o_val += new_s * unsafe { *q_norm.add(qk_off + j) };
                 }
 
-                unsafe { *out.add(t * vd + hv * dv + dv_idx) = T::from(o_val).unwrap() };
+                unsafe { *out.add(token * value_dim + hv * head_v_dim + i) = T::from(o_val).unwrap() };
             }
         }
     }

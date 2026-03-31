@@ -72,7 +72,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   for (uint i = 0; i < n_per_t; ++i)
     s[i] = active ? float(state_ptr[i]) : 0.0f;
 
-  for (uint t = 0; t < suffix_len; ++t) {
+  for (uint token = 0; token < suffix_len; ++token) {
     float decay = *decay_ptr;
     float beta = *beta_ptr;
 

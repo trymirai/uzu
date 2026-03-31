@@ -29,44 +29,44 @@ pub fn delta_net_conv_scan<T: ArrayElement + Float>(
     out_stride: u32,
     #[specialize] has_bias: bool,
 ) {
-    let sl = suffix_len as usize;
-    let ks = kernel_size as usize;
-    let rs = row_stride as usize;
-    let ss = state_stride as usize;
-    let cd = conv_dim as usize;
-    let os = out_stride as usize;
+    let suffix_len = suffix_len as usize;
+    let kernel_size = kernel_size as usize;
+    let row_stride = row_stride as usize;
+    let state_stride = state_stride as usize;
+    let conv_dim = conv_dim as usize;
+    let out_stride = out_stride as usize;
 
-    for token in 0..sl {
-        for ch in 0..cd {
-            let w_offset = ch * ks;
+    for token in 0..suffix_len {
+        for channel in 0..conv_dim {
+            let w_offset = channel * kernel_size;
 
             let mut acc = if has_bias {
-                unsafe { (*bias.unwrap().add(ch)).to_f32().unwrap() }
+                unsafe { (*bias.unwrap().add(channel)).to_f32().unwrap() }
             } else {
                 0.0f32
             };
 
-            for tap in 0..ks {
+            for tap in 0..kernel_size {
                 let padded_row = token + tap;
-                let padded_idx = padded_row * rs + ch;
+                let padded_idx = padded_row * row_stride + channel;
                 let sample = unsafe { (*conv_padded.add(padded_idx)).to_f32().unwrap() };
                 acc += unsafe { (*conv_weight.add(w_offset + tap)).to_f32().unwrap() } * sample;
             }
 
             unsafe {
-                *in_proj.add(token * os + ch) = T::from(ActivationType::SILU.activate(acc)).unwrap();
+                *in_proj.add(token * out_stride + channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
             }
         }
     }
 
     // state_out layout: [conv_dim, state_stride] (channel-major)
-    for ch in 0..cd {
-        for tap in 0..ss {
-            let padded_row = sl + tap;
-            let padded_idx = padded_row * rs + ch;
+    for channel in 0..conv_dim {
+        for tap in 0..state_stride {
+            let padded_row = suffix_len + tap;
+            let padded_idx = padded_row * row_stride + channel;
             let sample = unsafe { (*conv_padded.add(padded_idx)).to_f32().unwrap() };
             unsafe {
-                *state_out.add(ch * ss + tap) = T::from(sample).unwrap();
+                *state_out.add(channel * state_stride + tap) = T::from(sample).unwrap();
             }
         }
     }

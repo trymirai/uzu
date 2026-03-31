@@ -25,7 +25,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     constant const uint& key_dim,
     constant const uint& value_dim,
     constant const uint& suffix_len,
-    const uint t_idx GROUPS(suffix_len),
+    const uint token_idx GROUPS(suffix_len),
     const uint hk_idx GROUPS(num_k_heads),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
@@ -39,7 +39,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
   const uint groups_per_head = num_v_heads / num_k_heads;
 
-  const uint tok_offset = t_idx * total_proj_dim;
+  const uint tok_offset = token_idx * total_proj_dim;
   const uint q_base = tok_offset + hk_idx * HEAD_K_DIM;
   const uint k_base = tok_offset + key_dim + hk_idx * HEAD_K_DIM;
 
@@ -65,8 +65,8 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
   float q_scale = rsqrt(float(HEAD_K_DIM));
 
   // Normalize and scale q, write q and k
-  const uint out_q_base = t_idx * key_dim + hk_idx * HEAD_K_DIM;
-  const uint out_k_base = t_idx * key_dim + hk_idx * HEAD_K_DIM;
+  const uint out_q_base = token_idx * key_dim + hk_idx * HEAD_K_DIM;
+  const uint out_k_base = token_idx * key_dim + hk_idx * HEAD_K_DIM;
 
   for (uint i = 0; i < elems_per_thread; ++i) {
     uint idx = lane + i * METAL_SIMD_SIZE;
@@ -80,8 +80,8 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
 
   // Compute beta and decay for v-heads belonging to this k-head
   // groups_per_head v-heads share this k-head; distribute across lanes
-  for (uint g = lane; g < groups_per_head; g += METAL_SIMD_SIZE) {
-    uint hv = hk_idx * groups_per_head + g;
+  for (uint group = lane; group < groups_per_head; group += METAL_SIMD_SIZE) {
+    uint hv = hk_idx * groups_per_head + group;
 
     float beta_raw = float(in_proj[tok_offset + conv_dim + value_dim + hv]);
     float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
@@ -91,7 +91,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     float sp = softplus(a_raw + float(dt_bias[hv]));
     float decay = fast::exp(-fast::exp(float(a_log[hv])) * sp);
 
-    beta_out[t_idx * num_v_heads + hv] = beta;
-    decay_out[t_idx * num_v_heads + hv] = decay;
+    beta_out[token_idx * num_v_heads + hv] = beta;
+    decay_out[token_idx * num_v_heads + hv] = decay;
   }
 }

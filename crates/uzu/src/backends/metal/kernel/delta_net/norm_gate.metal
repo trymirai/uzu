@@ -30,31 +30,32 @@ PUBLIC KERNEL(DeltaNetNormGate)(
     constant const uint& suffix_len,
     threadgroup float shared_scratch[32],
     const ThreadContext thread_context,
-    const uint t GROUPS(suffix_len),
-    const uint hv GROUPS(num_v_heads),
-    const uint lane_i THREADS(HEAD_V_DIM)
+    const uint token_idx GROUPS(suffix_len),
+    const uint hv_idx GROUPS(num_v_heads),
+    const uint tid THREADS(HEAD_V_DIM)
 ) {
-  const bool active = (lane_i < head_v_dim);
-  const uint base = t * value_dim + hv * head_v_dim;
+  const bool active = (tid < head_v_dim);
+  const uint base = token_idx * value_dim + hv_idx * head_v_dim;
 
   // Load value
-  float o_i = active ? float(in_out[base + lane_i]) : 0.0f;
+  float o_i = active ? float(in_out[base + tid]) : 0.0f;
 
   // RMSNorm: cooperative sum of squares
   float o_sq = active ? o_i * o_i : 0.0f;
   float o_sumsq = threadgroup_cooperative_reduce_sum<HEAD_V_DIM>(
       o_sq,
       shared_scratch,
-      lane_i,
+      tid,
       thread_context
   );
   float inv_rms = rsqrt(o_sumsq / float(head_v_dim) + norm_epsilon);
 
   // Apply norm + SiLU gate (in-place)
   if (active) {
-    float nw = float(norm_weight[lane_i]);
-    uint z_idx = t * total_proj_dim + conv_dim + hv * head_v_dim + lane_i;
+    float nw = float(norm_weight[tid]);
+    uint z_idx =
+        token_idx * total_proj_dim + conv_dim + hv_idx * head_v_dim + tid;
     float z_silu = activate_silu(float(in_proj[z_idx]));
-    in_out[base + lane_i] = static_cast<T>(o_i * inv_rms * nw * z_silu);
+    in_out[base + tid] = static_cast<T>(o_i * inv_rms * nw * z_silu);
   }
 }

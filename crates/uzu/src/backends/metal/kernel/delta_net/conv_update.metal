@@ -9,7 +9,7 @@ using namespace metal;
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(DeltaNetConvUpdate)(
-    device const T* w,
+    device const T* conv_weight,
     device const T* bias OPTIONAL(has_bias),
     device T* in_out,
     device T* state,
@@ -21,16 +21,16 @@ PUBLIC KERNEL(DeltaNetConvUpdate)(
 ) {
   const uint tap_count = kernel_size - 1;
   const uint state_offset = channel_idx * state_stride;
-  const device T* w_row = w + channel_idx * kernel_size;
+  const device T* weight_row = conv_weight + channel_idx * kernel_size;
 
   float x = float(in_out[channel_idx]);
 
   float acc = has_bias ? float(bias[channel_idx]) : 0.0f;
 
   for (uint tap = 0; tap < tap_count; ++tap) {
-    acc += float(w_row[tap]) * float(state[state_offset + tap]);
+    acc += float(weight_row[tap]) * float(state[state_offset + tap]);
   }
-  acc += float(w_row[tap_count]) * x;
+  acc += float(weight_row[tap_count]) * x;
 
   in_out[channel_idx] = static_cast<T>(activate_silu(acc));
 
