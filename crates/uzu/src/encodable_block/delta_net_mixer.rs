@@ -12,19 +12,21 @@ use crate::{
         },
     },
     config::DeltaNetAttentionConfig,
-    encodable_block::linear::Linear,
+    encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::{ParameterTree, resolve_subtree},
+    parameters::{ParameterLoaderError, ParameterTree, resolve_subtree},
 };
 
 #[derive(Debug, Error)]
 pub enum DeltaNetMixerError<B: Backend> {
     #[error("Backend error: {0}")]
-    BackendError(B::Error),
+    BackendError(#[source] B::Error),
     #[error("Unsupported configuration: {0}")]
     UnsupportedConfiguration(String),
-    #[error("Failed to load parameters: {0}")]
-    LoadError(String),
+    #[error("Linear error: {0}")]
+    InnerLinearError(#[from] Box<LinearBlockError<B>>),
+    #[error("Parameter loader error: {0}")]
+    ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
 pub(crate) struct DeltaNetMixer<B: Backend> {
@@ -93,7 +95,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             ArrayId::Main,
             ArrayId::SsmInProj,
         )
-        .map_err(|e| DeltaNetMixerError::LoadError(format!("in-projection: {e:?}")))?;
+        .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
         let out_projection = <dyn Linear<B>>::new(
             &config.out_proj_config,
@@ -105,25 +107,19 @@ impl<B: Backend> DeltaNetMixer<B> {
             ArrayId::AttentionOutput,
             ArrayId::Main,
         )
-        .map_err(|e| DeltaNetMixerError::LoadError(format!("out-projection: {e:?}")))?;
+        .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
-        let load = |tree: &ParameterTree<B::Context>, name: &str| {
-            tree.leaf(name)
-                .and_then(|l| l.read_buffer())
-                .map_err(|e| DeltaNetMixerError::LoadError(format!("{name}: {e}")))
-        };
-
-        let conv_weight = load(&conv_tree, "weights")?;
+        let conv_weight = conv_tree.leaf("weights")?.read_buffer()?;
         let conv_bias = if has_bias {
-            Some(load(&conv_tree, "biases")?)
+            Some(conv_tree.leaf("biases")?.read_buffer()?)
         } else {
             None
         };
 
-        let a_log = load(&mixer_tree, "a_log")?;
-        let dt_bias = load(&mixer_tree, "dt_bias")?;
+        let a_log = mixer_tree.leaf("a_log")?.read_buffer()?;
+        let dt_bias = mixer_tree.leaf("dt_bias")?.read_buffer()?;
         let norm_tree = resolve_subtree(&mixer_tree, &["norm", "inner_norm"]);
-        let norm_weight = load(&norm_tree, "scales")?;
+        let norm_weight = norm_tree.leaf("scales")?.read_buffer()?;
 
         // Create kernels
         let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, data_type, has_bias)

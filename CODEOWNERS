@@ -4,7 +4,7 @@
 /crates/uzu/build @uuuvn
 /crates/uzu/examples @alexxale
 /crates/uzu/src/backends/cpu @uuuvn
-/crates/uzu/src/backends/metal @LuckyIYI @eugenebokhan @uuuvn @CCYEH
+/crates/uzu/src/backends/metal @LuckyIYI @eugenebokhan @uuuvn @CC-Yeh
 /crates/uzu/src/classifier @eugenebokhan
 /crates/uzu/src/config @uuuvn
 /crates/uzu/src/device @uuuvn
