@@ -1,5 +1,6 @@
 use dsl::kernel;
 use half::{bf16, f16};
+use libc::kern_return_t;
 use num_traits::Float;
 
 use crate::ArrayElement;
@@ -44,44 +45,95 @@ pub fn short_conv_pack<T: ArrayElement + Float>(
 #[kernel(ShortConvPrefill)]
 #[variants(T, f32, f16, bf16)]
 pub fn short_conv_prefill<T: ArrayElement + Float>(
-    #[allow(unused)] padded: *const T,
-    #[allow(unused)] in_proj: *const T,
-    #[allow(unused)] w: *const T,
-    #[allow(unused)]
-    #[optional(has_bias)]
-    b: Option<*const T>,
-    #[allow(unused)] out: *mut T,
-    #[allow(unused)] state_out: *mut T,
-    #[allow(unused)] suffix_len: u32,
-    #[allow(unused)] kernel_size: u32,
-    #[allow(unused)] in_proj_stride: u32,
-    #[allow(unused)] state_stride: u32,
-    #[allow(unused)] model_dim: u32,
-    #[allow(unused)]
-    #[specialize]
-    has_bias: bool,
+    padded: *const T,
+    in_proj: *const T,
+    w: *const T,
+    #[optional(has_bias)] b: Option<*const T>,
+    out: *mut T,
+    state_out: *mut T,
+    suffix_len: u32,
+    kernel_size: u32,
+    in_proj_stride: u32,
+    state_stride: u32,
+    model_dim: u32,
+    #[specialize] has_bias: bool,
 ) {
-    todo!()
+    let suffix_len = suffix_len as usize;
+    let kernel_size = kernel_size as usize;
+    let in_proj_stride = in_proj_stride as usize;
+    let state_stride = state_stride as usize;
+    let model_dim = model_dim as usize;
+    let tap_count = if kernel_size > 0 {
+        kernel_size - 1
+    } else {
+        0
+    };
+
+    unsafe {
+        for token_idx in 0..suffix_len + kernel_size.saturating_sub(1) {
+            for channel_idx in 0..model_dim {
+                let tap_count = kernel_size.saturating_sub(1);
+                let w_row = w.add(channel_idx * kernel_size);
+
+                // Threads [0..suffix_len-1]: Compute outputs
+                if token_idx < suffix_len {
+                    let mut acc = 0.0f32;
+                    if has_bias {
+                        acc = (*b.unwrap().add(channel_idx)).to_f32().unwrap();
+                    }
+
+                    // Convolve using padded buffer
+                    for tap in 0..kernel_size {
+                        let padded_row = token_idx + tap;
+                        let padded_offset = padded_row * model_dim + channel_idx;
+                        let sample = (*padded.add(padded_offset)).to_f32().unwrap();
+                        acc += (*w_row.add(tap)).to_f32().unwrap() * sample;
+                    }
+
+                    // Apply post-gate from in_proj
+                    let in_proj_idx = token_idx * in_proj_stride + channel_idx;
+                    let post_conv_gate = (*in_proj.add(in_proj_idx + model_dim)).to_f32().unwrap();
+                    let gated_output = acc * post_conv_gate;
+
+                    // Write output
+                    let out_idx = token_idx * model_dim + channel_idx;
+                    *out.add(out_idx) = T::from(gated_output).unwrap();
+                } else if tap_count > 0 {
+                    let tap = token_idx - suffix_len;
+                    if tap >= tap_count {
+                        return;
+                    }
+
+                    // Copy last tap_count values from padded to state_out
+                    let padded_row = suffix_len + tap;
+                    let padded_offset = padded_row * model_dim + channel_idx;
+                    let state_idx = channel_idx * state_stride + tap;
+
+                    *state_out.add(state_idx) = T::from(*padded.add(padded_offset)).unwrap();
+                }
+            }
+        }
+    }
 }
 
 #[kernel(ShortConvDecode)]
 #[variants(T, f32, f16, bf16)]
 pub fn short_conv_decode<T: ArrayElement + Float>(
-    #[allow(unused)] in_proj: *const T,
-    #[allow(unused)] w: *const T,
+    in_proj: *const T,
+    w: *const T,
     #[allow(unused)]
     #[optional(has_bias)]
     b: Option<*const T>,
     #[allow(unused)]
     #[optional(!state_in_place)]
     state: Option<*const T>,
-    #[allow(unused)] out: *mut T,
-    #[allow(unused)] next_state: *mut T,
-    #[allow(unused)] suffix_len: u32,
-    #[allow(unused)] kernel_size: u32,
-    #[allow(unused)] in_proj_stride: u32,
-    #[allow(unused)] state_stride: u32,
-    #[allow(unused)] model_dim: u32,
+    out: *mut T,
+    next_state: *mut T,
+    suffix_len: u32,
+    kernel_size: u32,
+    in_proj_stride: u32,
+    state_stride: u32,
+    model_dim: u32,
     #[allow(unused)]
     #[specialize]
     has_bias: bool,
@@ -95,20 +147,20 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
 #[kernel(ShortConvTrie)]
 #[variants(T, f32, f16, bf16)]
 pub fn short_conv_trie<T: ArrayElement + Float>(
-    #[allow(unused)] in_proj: *const T,
-    #[allow(unused)] w: *const T,
+    in_proj: *const T,
+    w: *const T,
     #[allow(unused)]
     #[optional(has_bias)]
     b: Option<*const T>,
-    #[allow(unused)] base_state: *const T,
-    #[allow(unused)] parents: *const i32,
-    #[allow(unused)] out: *mut T,
-    #[allow(unused)] suffix_state: *mut T,
-    #[allow(unused)] suffix_len: u32,
-    #[allow(unused)] kernel_size: u32,
-    #[allow(unused)] in_proj_stride: u32,
-    #[allow(unused)] state_stride: u32,
-    #[allow(unused)] model_dim: u32,
+    base_state: *const T,
+    parents: *const i32,
+    out: *mut T,
+    suffix_state: *mut T,
+    suffix_len: u32,
+    kernel_size: u32,
+    in_proj_stride: u32,
+    state_stride: u32,
+    model_dim: u32,
     #[allow(unused)]
     #[specialize]
     has_bias: bool,
