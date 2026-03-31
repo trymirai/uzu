@@ -1,13 +1,12 @@
 #![cfg(all(feature = "audio-runtime", metal_backend))]
 
-mod common;
-
-use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 use uzu::{
     NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
     backends::metal::Metal,
     prelude::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid},
 };
+
+use crate::common::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 
 fn create_runtime() -> NanoCodecFsqRuntime<Metal> {
     let config =

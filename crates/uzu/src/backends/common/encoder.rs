@@ -118,7 +118,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn add_completion_handler(
         &mut self,
-        handler: impl FnOnce(Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>) + 'static,
+        handler: impl FnOnce(Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>) + Send + 'static,
     ) {
         self.command_buffer.add_completion_handler(handler);
     }
