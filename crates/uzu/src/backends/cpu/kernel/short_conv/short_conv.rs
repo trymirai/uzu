@@ -1,7 +1,7 @@
 use dsl::kernel;
 use half::{bf16, f16};
 use libc::kern_return_t;
-use num_traits::Float;
+use num_traits::{Float, ToPrimitive};
 
 use crate::ArrayElement;
 
@@ -121,12 +121,8 @@ pub fn short_conv_prefill<T: ArrayElement + Float>(
 pub fn short_conv_decode<T: ArrayElement + Float>(
     in_proj: *const T,
     w: *const T,
-    #[allow(unused)]
-    #[optional(has_bias)]
-    b: Option<*const T>,
-    #[allow(unused)]
-    #[optional(!state_in_place)]
-    state: Option<*const T>,
+    #[optional(has_bias)] b: Option<*const T>,
+    #[optional(!state_in_place)] state: Option<*const T>,
     out: *mut T,
     next_state: *mut T,
     suffix_len: u32,
@@ -134,14 +130,55 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
     in_proj_stride: u32,
     state_stride: u32,
     model_dim: u32,
-    #[allow(unused)]
-    #[specialize]
-    has_bias: bool,
-    #[allow(unused)]
-    #[specialize]
-    state_in_place: bool,
+    #[specialize] has_bias: bool,
+    #[specialize] state_in_place: bool,
 ) {
-    todo!()
+    let suffix_len = suffix_len as usize;
+    let kernel_size = kernel_size as usize;
+    let in_proj_stride = in_proj_stride as usize;
+    let state_stride = state_stride as usize;
+    let model_dim = model_dim as usize;
+
+    let state = match state_in_place {
+        true => next_state,
+        false => state.unwrap(),
+    };
+
+    unsafe {
+        for token_idx in 0..suffix_len {
+            for channel_idx in 0..model_dim {
+                let tap_count = kernel_size.saturating_sub(1);
+                let state_offset = channel_idx * state_stride;
+                let w_row = w.add(channel_idx * kernel_size);
+                let in_proj_idx = token_idx * in_proj_stride + channel_idx;
+                let pre_conv_gate = (*in_proj.add(in_proj_idx)).to_f32().unwrap();
+                let post_conv_gate = (*in_proj.add(in_proj_idx + model_dim)).to_f32().unwrap();
+                let x_in = (*in_proj.add(in_proj_idx + 2 * model_dim)).to_f32().unwrap();
+                let x = (x_in * pre_conv_gate).to_f32().unwrap();
+
+                let mut acc = 0.0f32;
+                if has_bias {
+                    acc = (*b.unwrap().add(channel_idx)).to_f32().unwrap();
+                }
+                for tap in 0..tap_count {
+                    let sample = (*state.add(state_offset + tap)).to_f32().unwrap();
+                    acc += (*w_row.add(tap)).to_f32().unwrap() * sample;
+                }
+                acc += (*w_row.add(tap_count)).to_f32().unwrap() * x;
+
+                let gated_output = acc * post_conv_gate;
+                let out_idx = token_idx * model_dim + channel_idx;
+                *out.add(out_idx) = T::from(gated_output).unwrap();
+
+                if tap_count > 0 {
+                    for tap in 0..tap_count {
+                        *next_state.add(state_offset + tap) = *state.add(state_offset + tap + 1);
+                    }
+                    *next_state.add(state_offset + tap_count - 1) = T::from(x).unwrap();
+                }
+            }
+        }
+    }
 }
 
 #[kernel(ShortConvTrie)]
@@ -149,9 +186,7 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
 pub fn short_conv_trie<T: ArrayElement + Float>(
     in_proj: *const T,
     w: *const T,
-    #[allow(unused)]
-    #[optional(has_bias)]
-    b: Option<*const T>,
+    #[optional(has_bias)] b: Option<*const T>,
     base_state: *const T,
     parents: *const i32,
     out: *mut T,
@@ -161,9 +196,6 @@ pub fn short_conv_trie<T: ArrayElement + Float>(
     in_proj_stride: u32,
     state_stride: u32,
     model_dim: u32,
-    #[allow(unused)]
-    #[specialize]
-    has_bias: bool,
+    #[specialize] has_bias: bool,
 ) {
-    todo!()
 }
