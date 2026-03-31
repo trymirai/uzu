@@ -339,16 +339,17 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
         float out_val;
         if (gating_sel <= 1u) {
-          out_val =
-              (gating_sel == 0u) ? activate_gelu(up_v) : activate_silu_alpha(up_v, silu_alpha);
+          out_val = (gating_sel == 0u) ? activate_gelu(up_v)
+                                       : activate_silu_alpha(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_0 + bias_gate[col0],
               gate_clip_min,
               gate_clip_max
           );
-          const float gate_act = (gating_sel == 2u) ? activate_silu_alpha(gate_v, silu_alpha)
-                                                    : activate_gelu(gate_v);
+          const float gate_act = (gating_sel == 2u)
+                                     ? activate_silu_alpha(gate_v, silu_alpha)
+                                     : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col0;
@@ -360,16 +361,17 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
         float out_val;
         if (gating_sel <= 1u) {
-          out_val =
-              (gating_sel == 0u) ? activate_gelu(up_v) : activate_silu_alpha(up_v, silu_alpha);
+          out_val = (gating_sel == 0u) ? activate_gelu(up_v)
+                                       : activate_silu_alpha(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_1 + bias_gate[col1],
               gate_clip_min,
               gate_clip_max
           );
-          const float gate_act = (gating_sel == 2u) ? activate_silu_alpha(gate_v, silu_alpha)
-                                                    : activate_gelu(gate_v);
+          const float gate_act = (gating_sel == 2u)
+                                     ? activate_silu_alpha(gate_v, silu_alpha)
+                                     : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col1;
