@@ -7,15 +7,38 @@ use crate::ArrayElement;
 #[kernel(ShortConvPack)]
 #[variants(T, f32, f16, bf16)]
 pub fn short_conv_pack<T: ArrayElement + Float>(
-    #[allow(unused)] state_in: *const T,
-    #[allow(unused)] in_proj: *const T,
-    #[allow(unused)] padded: *mut T,
-    #[allow(unused)] state_stride: u32,
-    #[allow(unused)] suffix_len: u32,
-    #[allow(unused)] in_proj_stride: u32,
-    #[allow(unused)] model_dim: u32,
+    state_in: *const T,
+    in_proj: *const T,
+    padded: *mut T,
+    state_stride: u32,
+    suffix_len: u32,
+    in_proj_stride: u32,
+    model_dim: u32,
 ) {
-    todo!()
+    let state_stride = state_stride as usize;
+    let suffix_len = suffix_len as usize;
+    let in_proj_stride = in_proj_stride as usize;
+    let model_dim = model_dim as usize;
+
+    unsafe {
+        for channel_idx in 0..model_dim {
+            for row_idx in 0..state_stride + suffix_len {
+                let padded_offset = row_idx * model_dim + channel_idx;
+                if row_idx < state_stride {
+                    let state_idx = channel_idx * state_stride + row_idx;
+                    *padded.add(padded_offset) = *state_in.add(state_idx);
+                } else {
+                    let token = row_idx - state_stride;
+                    let in_proj_idx = token * in_proj_stride + channel_idx;
+
+                    let pre_gate = (*in_proj.add(in_proj_idx)).to_f32().unwrap();
+                    let x_in = (*in_proj.add(in_proj_idx + 2 * model_dim)).to_f32().unwrap();
+                    let x = x_in * pre_gate;
+                    *padded.add(padded_offset) = T::from(x).unwrap();
+                }
+            }
+        }
+    }
 }
 
 #[kernel(ShortConvPrefill)]
