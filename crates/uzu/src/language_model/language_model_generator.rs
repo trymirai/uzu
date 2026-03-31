@@ -44,7 +44,7 @@ struct Task<'a> {
     token_bitmask: Option<&'a [u32]>,
     token_seeds: &'a [u64],
     expected_number_of_new_tokens: usize,
-    active_suffix_length: usize,
+    active_row_count: usize,
     sampling_start: usize,
     sampling_length: usize,
     is_prefilling: bool,
@@ -55,7 +55,7 @@ struct TaskEncodingKey {
     context_len: usize,
     batch_size: usize,
     expected_number_of_new_tokens: usize,
-    active_suffix_len: usize,
+    active_row_count: usize,
     sampling_method: SamplingMethod,
     sampling_start: usize,
     sampling_len: usize,
@@ -224,7 +224,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let step_token_positions = step_token_positions.collect::<Box<[usize]>>();
             let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
 
-            let active_suffix_length = step_token_positions.len();
+            let active_row_count = step_token_positions.len();
             let is_last_prefill_step = step == prefill_steps - 1;
             let should_sample_after_step = sample_suffix && is_last_prefill_step;
 
@@ -233,7 +233,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             // suffix-root token, which is the last prompt token).
             let (sampling_start, sampling_length) = if should_sample_after_step {
                 let suffix_root_index_in_step = (tokens_length - 1).saturating_sub(tokens_start_index);
-                let sampling_length = active_suffix_length.saturating_sub(suffix_root_index_in_step);
+                let sampling_length = active_row_count.saturating_sub(suffix_root_index_in_step);
                 debug_assert!(sampling_length > 0, "Expected at least one token to sample on the last prefill step");
                 (suffix_root_index_in_step, sampling_length)
             } else {
@@ -276,7 +276,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 token_bitmask: step_token_bitmask.as_deref(),
                 token_seeds: &step_token_seeds,
                 expected_number_of_new_tokens: step_token_ids.len(),
-                active_suffix_length,
+                active_row_count,
                 sampling_start,
                 sampling_length,
                 is_prefilling: !should_sample_after_step,
@@ -357,21 +357,21 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         );
 
         let flat_trie = suffix_root.linearize();
-        let active_suffix_length = flat_trie.len();
+        let active_row_count = flat_trie.len();
 
         let token_ids =
-            flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_suffix_length)).collect::<Box<[u64]>>();
+            flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
 
         let token_subtrie_ranges = flat_trie
             .token_subtrie_ranges()
-            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_suffix_length))
+            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
             .collect::<Box<[[u32; 3]]>>();
 
         let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
             let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
             flat_trie
                 .token_masks()
-                .chain(repeat_n(None, suffix_length - active_suffix_length))
+                .chain(repeat_n(None, suffix_length - active_row_count))
                 .map(|mask| match mask {
                     Some(mask) => Either::Left(
                         mask.iter()
@@ -389,11 +389,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_positions = flat_trie
             .token_positions()
             .map(|trie_position| start_position + trie_position)
-            .chain(repeat_n(INVALID_POSITION, suffix_length - active_suffix_length))
+            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
             .collect::<Box<[usize]>>();
 
         let token_seeds =
-            flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_suffix_length)).collect::<Box<[u64]>>();
+            flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
 
         let task = Task {
             token_ids: &token_ids,
@@ -402,9 +402,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             token_bitmask: token_bitmask.as_deref(),
             token_seeds: &token_seeds,
             expected_number_of_new_tokens: 1,
-            active_suffix_length,
+            active_row_count,
             sampling_start: 0,
-            sampling_length: active_suffix_length,
+            sampling_length: active_row_count,
             is_prefilling: false,
         };
 
@@ -414,7 +414,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let (accepted_tokens, accepted_token_indices) =
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
-        let speculator_proposed = active_suffix_length.saturating_sub(1);
+        let speculator_proposed = active_row_count.saturating_sub(1);
         let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 
         self.update_cache_layers(&accepted_token_indices, None, false)?;
@@ -481,7 +481,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             token_bitmask: None,
             token_seeds: &[0], // Ignored, using async buffer
             expected_number_of_new_tokens: 1,
-            active_suffix_length: 1,
+            active_row_count: 1,
             sampling_start: 0,
             sampling_length: 1,
             is_prefilling: false,
@@ -510,9 +510,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &task.token_positions,
             task.token_bitmask,
             &task.token_seeds,
-            task.active_suffix_length,
+            task.active_row_count,
             /*sampling_start=*/ 0,
-            /*sampling_length=*/ task.active_suffix_length,
+            /*sampling_length=*/ task.active_row_count,
             task.is_prefilling,
             skip_token_ids_copy,
             async_positions,
@@ -719,7 +719,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             task.token_positions,
             task.token_bitmask,
             task.token_seeds,
-            task.active_suffix_length,
+            task.active_row_count,
             task.sampling_start,
             task.sampling_length,
             task.is_prefilling,
@@ -736,7 +736,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             context_len: self.tokens.len(),
             batch_size: task.token_ids.len(),
             expected_number_of_new_tokens: task.expected_number_of_new_tokens,
-            active_suffix_len: task.active_suffix_length,
+            active_row_count: task.active_row_count,
             sampling_method,
             sampling_start: task.sampling_start,
             sampling_len: task.sampling_length,

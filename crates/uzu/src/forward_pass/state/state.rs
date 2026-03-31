@@ -35,7 +35,7 @@ pub struct LanguageModelGeneratorModeState<B: Backend> {
     pub sampling_method: Option<SamplingMethod>,
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace<B>>>,
-    pub active_suffix_length: usize,
+    pub active_row_count: usize,
     pub sampling_start: usize,
     pub sampling_length: usize,
     pub is_prefilling: bool,
@@ -46,6 +46,7 @@ pub struct ClassifierModeState<B: Backend> {
     pub dense: Array<B>,
     pub norm: Array<B>,
     pub classifier_logits: Array<B>,
+    pub active_row_count: usize,
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace<B>>>,
 }
@@ -151,7 +152,7 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
         token_bitmask: Option<&[u32]>,
         token_seeds: &[u64],
-        active_suffix_length: usize,
+        active_row_count: usize,
         sampling_start: usize,
         sampling_length: usize,
         is_prefilling: bool,
@@ -239,7 +240,7 @@ impl<B: Backend> ForwardPassState<B> {
             sampling_method: None,
             #[cfg(feature = "tracing")]
             traces,
-            active_suffix_length,
+            active_row_count,
             sampling_start,
             sampling_length,
             is_prefilling,
@@ -312,23 +313,24 @@ impl<B: Backend> ForwardPassState<B> {
         suffix_length: usize,
     ) -> ClassifierModeState<B> {
         let data_type = model_shape.activation_data_type();
-        let batch_size = 1;
+        let batch_dim = 1;
 
         let create_buffer = |size: usize| -> Array<B> {
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, size / batch_size], data_type) }
+            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_dim, size / batch_dim], data_type) }
         };
 
         ClassifierModeState {
-            pooling: create_buffer(batch_size * model_dim),
-            dense: create_buffer(batch_size * model_dim),
-            norm: create_buffer(batch_size * model_dim),
+            pooling: create_buffer(batch_dim * model_dim),
+            dense: create_buffer(batch_dim * model_dim),
+            norm: create_buffer(batch_dim * model_dim),
             classifier_logits: {
-                let buffer_size = batch_size * num_labels * data_type.size_in_bytes();
+                let buffer_size = batch_dim * num_labels * data_type.size_in_bytes();
                 let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-                unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_size, num_labels], data_type) }
+                unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_dim, num_labels], data_type) }
             },
+            active_row_count: suffix_length,
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,
                 model_shape,
@@ -344,10 +346,10 @@ impl<B: Backend> ForwardPassState<B> {
         model_shape: &ModelShape,
         model_dim: usize,
         num_labels: usize,
-        _suffix_length: usize,
+        suffix_length: usize,
     ) -> ClassifierModeState<B> {
         let data_type = model_shape.activation_data_type();
-        let batch_size = 1;
+        let batch_dim = 1;
 
         let create_buffer = |dims: &[usize]| -> Array<B> {
             let size: usize = dims.iter().product();
@@ -357,10 +359,11 @@ impl<B: Backend> ForwardPassState<B> {
         };
 
         ClassifierModeState {
-            pooling: create_buffer(&[batch_size, model_dim]),
-            dense: create_buffer(&[batch_size, model_dim]),
-            norm: create_buffer(&[batch_size, model_dim]),
-            classifier_logits: create_buffer(&[batch_size, num_labels]),
+            pooling: create_buffer(&[batch_dim, model_dim]),
+            dense: create_buffer(&[batch_dim, model_dim]),
+            norm: create_buffer(&[batch_dim, model_dim]),
+            classifier_logits: create_buffer(&[batch_dim, num_labels]),
+            active_row_count: suffix_length,
         }
     }
 
@@ -586,10 +589,20 @@ impl<B: Backend> ForwardPassState<B> {
     // Public API Methods (formerly trait methods)
     // ========================================================================
 
-    pub fn active_suffix_length(&self) -> usize {
+    pub fn active_row_count(&self) -> usize {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.active_suffix_length,
-            ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
+            ForwardPassMode::LanguageModelGenerator(state) => state.active_row_count,
+            ForwardPassMode::Classifier(state) => state.active_row_count,
+        }
+    }
+
+    pub fn set_active_row_count(
+        &mut self,
+        active_row_count: usize,
+    ) {
+        match &mut self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => state.active_row_count = active_row_count,
+            ForwardPassMode::Classifier(state) => state.active_row_count = active_row_count,
         }
     }
 
