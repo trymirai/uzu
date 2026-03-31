@@ -1,6 +1,4 @@
-mod common;
-
-use common::audio_nanocodec_fsq_reference::{fsq_decode_reference, fsq_encode_reference};
+use crate::common::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 
 #[test]
 fn fsq_decode_reference_masks_values_beyond_lengths() {

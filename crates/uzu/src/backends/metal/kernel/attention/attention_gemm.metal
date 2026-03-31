@@ -3,11 +3,16 @@
 #include "../common/thread_context.h"
 #include "../matmul/common/loader.h"
 #include "../matmul/common/simdgroup_fragment.h"
-#include "attention.h"
+#include "../generated/ring.h"
+#include "../generated/trie.h"
+#include "../generated/attention.h"
+#include "mask.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 using namespace uzu::attention;
+using namespace uzu::ring;
+using namespace uzu::trie;
 
 template <typename T>
 struct TransformScale {
@@ -46,37 +51,37 @@ PUBLIC KERNEL(AttentionGemm)(
     const device T* v,
     device T* o,
     const constant AttnParams& params,
-    const constant AttnMaskParams& mask_params OPTIONAL(has_mask),
-    const device T* mask OPTIONAL(has_mask),
+    const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
+    const device TrieNode* trie OPTIONAL(is_trie),
+    const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     const device float* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
     const bool align_q SPECIALIZE,
     const bool align_k SPECIALIZE,
-    const bool do_causal SPECIALIZE,
-    const bool has_mask SPECIALIZE,
+    const bool is_kv_cache_ring SPECIALIZE,
+    const bool is_causal SPECIALIZE,
+    const bool is_trie SPECIALIZE,
+    const bool is_sliding_window SPECIALIZE,
     const bool has_sinks SPECIALIZE,
     threadgroup T q_smem[BLOCK_QUERY_ROWS * (BD + 16 / sizeof(T))],
     threadgroup T kv_smem[BK * (BD + 16 / sizeof(T))],
     const ThreadContext thread_context,
-    const uint tgid_x GROUPS(suffix_length.div_ceil(BLOCK_QUERY_ROWS)),
-    const uint tgid_y GROUPS(num_heads),
-    const uint tgid_z GROUPS(1),
+    const uint q_tile_idx GROUPS(suffix_length.div_ceil(BLOCK_QUERY_ROWS)),
+    const uint head_idx GROUPS(num_heads),
+    const uint batch_idx GROUPS(1),
     const uint lid THREADS(128)
 ) {
   // -------------------------------------------------------------------------
   // Pointer setup (all strides are in elements)
-  // tgid_x: query tile index (BLOCK_QUERY_ROWS rows)
-  // tgid_y: query head index
-  // tgid_z: batch index (currently 1 in uzu, but kept for completeness)
-  const uint batch_idx = tgid_z;
-  const uint head_idx = tgid_y;
-  const uint q_tile_idx = tgid_x;
+  // q_tile_idx: query tile index (BLOCK_QUERY_ROWS rows)
+  // head_idx: query head index
+  // batch_idx: batch index (currently 1 in uzu, but kept for completeness)
 
   q += batch_idx * params.q_strides[0] + head_idx * params.q_strides[1] +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.q_strides[2];
 
-  const int kv_head_idx = int(tgid_y) / params.gqa_factor;
+  const int kv_head_idx = int(head_idx) / params.gqa_factor;
   k += batch_idx * params.k_strides[0] +
        int64_t(kv_head_idx) * params.k_strides[1];
   v += batch_idx * params.v_strides[0] +
@@ -85,9 +90,8 @@ PUBLIC KERNEL(AttentionGemm)(
   o += batch_idx * params.o_strides[0] + head_idx * params.o_strides[1] +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.o_strides[2];
 
-  if (has_mask) {
-    mask += batch_idx * mask_params.m_strides[0] +
-            head_idx * mask_params.m_strides[1];
+  if (is_trie) {
+    trie += batch_idx * suffix_length;
   }
 
   // -------------------------------------------------------------------------
@@ -242,7 +246,7 @@ PUBLIC KERNEL(AttentionGemm)(
   // Load Q block once (and apply scaling)
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  if (!align_q && int(tgid_x) == params.nq_aligned) {
+  if (!align_q && int(q_tile_idx) == params.nq_aligned) {
     query_loader.load_safe(short2(BD, params.q_rem));
   } else {
     query_loader.load_unsafe();
@@ -256,21 +260,29 @@ PUBLIC KERNEL(AttentionGemm)(
   AccumType sum_score = AccumType(0);
 
   if (has_sinks) {
-    max_score = M_LOG2E_F * static_cast<AccumType>(sinks[tgid_y]);
+    max_score = M_LOG2E_F * static_cast<AccumType>(sinks[head_idx]);
     sum_score = AccumType(1);
   }
 
   // Determine K block loop limit (causal can early-stop)
   int kb_lim = params.nk;
-  if (do_causal) {
-    const int q_max = (int(tgid_x) + 1) * BLOCK_QUERY_ROWS + params.q_off;
+  if (is_causal) {
+    const int q_max = (int(q_tile_idx) + 1) * BLOCK_QUERY_ROWS + params.q_off;
     kb_lim = (q_max + BK - 1) / BK;
     kb_lim = min(params.nk, kb_lim);
   }
 
-  const int q_rel = int(tgid_x) * BLOCK_QUERY_ROWS + int(simdgroup_row_base) +
-                    int(lane_row);        // [0, q_len)
-  const int q_abs = q_rel + params.q_off; // [0, k_len)
+  const int q_rel = int(q_tile_idx) * BLOCK_QUERY_ROWS +
+                    int(simdgroup_row_base) + int(lane_row); // [0, q_len)
+
+  const int prefix_length = params.q_off;
+
+  const int suffix_position =
+      is_kv_cache_ring ? int(ring_params.ring_length) : prefix_length;
+
+  const int query_position = (is_trie && q_rel < params.q_len)
+                                 ? suffix_position + int(trie[q_rel].height)
+                                 : suffix_position + q_rel;
 
   // Loop over KV blocks
   for (int kb = 0; kb < kb_lim; kb++) {
@@ -323,31 +335,8 @@ PUBLIC KERNEL(AttentionGemm)(
       }
     }
 
-    // Causal mask (only needed for the last few blocks near the diagonal)
-    if (do_causal) {
-      const int tail_blocks = (BLOCK_QUERY_ROWS + BK - 1) / BK + int(!align_k);
-      const int tail_start = kb_lim - tail_blocks;
-      if (kb >= tail_start) {
-        METAL_PRAGMA_UNROLL
-        for (short j = 0; j < KEY_GRID_COLS; j++) {
-          thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
-          const int col_base =
-              kb * BK + int(lane_col) + int(j) * SIMDGROUP_BLOCK_SIZE;
-          if (q_abs < col_base) {
-            frag[0] = neg_inf;
-          }
-          if (q_abs < (col_base + 1)) {
-            frag[1] = neg_inf;
-          }
-        }
-      }
-    }
-
-    // Add external mask (additive bias in natural-log domain; convert to log2)
-    if (has_mask && q_rel < params.q_len) {
-      const int64_t row_stride = mask_params.m_strides[2];
-      const int64_t row_base = int64_t(q_rel) * row_stride;
-
+    // Unified masking: causal, trie, ring, sliding window
+    if (q_rel < params.q_len) {
       METAL_PRAGMA_UNROLL
       for (short j = 0; j < KEY_GRID_COLS; j++) {
         thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
@@ -357,16 +346,37 @@ PUBLIC KERNEL(AttentionGemm)(
         const int k0 = col_base;
         const int k1 = col_base + 1;
 
-        if (k0 < params.k_len) {
-          AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k0)]);
-          mv = metal::max(mv, static_cast<AccumType>(-1e9f));
-          frag[0] += M_LOG2E_F * mv;
-        }
-        if (k1 < params.k_len) {
-          AccumType mv = static_cast<AccumType>(mask[row_base + int64_t(k1)]);
-          mv = metal::max(mv, static_cast<AccumType>(-1e9f));
-          frag[1] += M_LOG2E_F * mv;
-        }
+        if (k0 < params.k_len && !should_use_key(
+                                     ring_params,
+                                     trie,
+                                     sliding_window_size,
+                                     q_rel,
+                                     prefix_length,
+                                     suffix_position,
+                                     query_position,
+                                     k0,
+                                     is_kv_cache_ring,
+                                     is_causal,
+                                     is_trie,
+                                     is_sliding_window
+                                 ))
+          frag[0] = neg_inf;
+
+        if (k1 < params.k_len && !should_use_key(
+                                     ring_params,
+                                     trie,
+                                     sliding_window_size,
+                                     q_rel,
+                                     prefix_length,
+                                     suffix_position,
+                                     query_position,
+                                     k1,
+                                     is_kv_cache_ring,
+                                     is_causal,
+                                     is_trie,
+                                     is_sliding_window
+                                 ))
+          frag[1] = neg_inf;
       }
     }
 
@@ -466,7 +476,7 @@ PUBLIC KERNEL(AttentionGemm)(
   o += int64_t(simdgroup_row_base + lane_row) * params.o_strides[2] +
        int64_t(lane_col);
 
-  if (!align_q && int(tgid_x) == params.nq_aligned) {
+  if (!align_q && int(q_tile_idx) == params.nq_aligned) {
     const short2 dst_tile_dims =
         short2(BD - lane_col, params.q_rem - (simdgroup_row_base + lane_row));
 

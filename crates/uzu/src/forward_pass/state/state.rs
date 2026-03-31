@@ -1,6 +1,8 @@
 #[cfg(feature = "tracing")]
 use std::ops::{Deref, DerefMut};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
+
+use ndarray::ArrayView2;
 
 #[cfg(feature = "tracing")]
 use crate::backends::common::Encoder;
@@ -15,10 +17,9 @@ use crate::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
-        state::{ArrayId, CommonAuxBuffers, HashMapId, LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers},
+        state::{ArrayId, CommonAuxBuffers, LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers},
     },
     session::parameter::SamplingMethod,
-    utils::attention::fill_attention_bias,
 };
 
 pub enum ForwardPassMode<B: Backend> {
@@ -52,12 +53,12 @@ pub struct ClassifierModeState<B: Backend> {
 pub struct ForwardPassState<B: Backend> {
     context: Rc<B::Context>,
     token_ids: Array<B>,
+    pub token_subtrie_ranges: Option<Array<B>>,
     token_positions: Array<B>,
     token_parents: Array<B>,
     token_bitmask: Option<Array<B>>,
-    attention_bias: HashMap<Option<usize>, Array<B>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
-    common_aux: CommonAuxBuffers<B>,
+    pub common_aux: CommonAuxBuffers<B>,
     llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
     mode: ForwardPassMode<B>,
 }
@@ -146,6 +147,7 @@ impl<B: Backend> ForwardPassState<B> {
         cache_layers: Rc<RefCell<CacheLayers<B>>>,
         shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
         token_ids: &[u64],
+        token_subtrie_ranges: Option<&[[u32; 3]]>,
         token_positions: &[usize],
         token_bitmask: Option<&[u32]>,
         token_seeds: &[u64],
@@ -153,9 +155,7 @@ impl<B: Backend> ForwardPassState<B> {
         sampling_start: usize,
         sampling_length: usize,
         is_prefilling: bool,
-        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
         skip_token_ids_copy: bool,
-        should_fill_attention_bias: bool,
         async_positions: Option<(Rc<RefCell<B::Buffer>>, usize)>,
         async_seeds: Option<(Rc<RefCell<B::Buffer>>, usize)>,
     ) -> Self {
@@ -169,6 +169,18 @@ impl<B: Backend> ForwardPassState<B> {
         } else {
             Self::init_token_ids(scratch, token_ids)
         };
+
+        // Token subtrie ranges
+        let token_subtrie_ranges_cell = token_subtrie_ranges.map(|subtrie_ranges| {
+            let subtrie_ranges_shape = model_shape.subtrie_ranges_shape(suffix_length);
+            let mut subtrie_ranges_array = scratch.token_subtrie_ranges.view(&subtrie_ranges_shape);
+            subtrie_ranges_array.as_slice_mut::<u32>().fill(0);
+            subtrie_ranges_array.copy_from_view(
+                ArrayView2::from_shape((subtrie_ranges.len(), 3), bytemuck::cast_slice::<_, u32>(subtrie_ranges))
+                    .unwrap(),
+            );
+            subtrie_ranges_array
+        });
 
         // Token positions - use async buffer if provided
         let token_positions_cell = if let Some((async_buf, offset)) = async_positions {
@@ -209,16 +221,6 @@ impl<B: Backend> ForwardPassState<B> {
         // Sampling output
         let sampling_output = Some(scratch.sampling_output.view(&[suffix_length]));
 
-        // Attention bias (causal + sliding window)
-        let attention_bias = Self::init_llm_attention_bias(
-            scratch,
-            &cache_layers,
-            suffix_length,
-            token_positions,
-            external_bias_fn,
-            should_fill_attention_bias,
-        );
-
         // Common aux buffers
         let common_aux = CommonAuxBuffers::new(scratch, model_shape, suffix_length);
 
@@ -245,51 +247,15 @@ impl<B: Backend> ForwardPassState<B> {
         Self {
             context,
             token_ids: token_ids_cell,
+            token_subtrie_ranges: token_subtrie_ranges_cell,
             token_positions: token_positions_cell,
             token_parents: token_parents_cell,
             token_bitmask: token_bitmask_cell,
-            attention_bias,
             shared_buffers,
             common_aux,
             llm_aux,
             mode,
         }
-    }
-
-    fn init_llm_attention_bias(
-        scratch: &ScratchBuffers<B>,
-        cache_layers: &Rc<RefCell<CacheLayers<B>>>,
-        suffix_length: usize,
-        token_positions: &[usize],
-        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-        should_fill_attention_bias: bool,
-    ) -> HashMap<Option<usize>, Array<B>> {
-        let cache_ref = cache_layers.borrow();
-        let mut attention_bias_map: HashMap<Option<usize>, Array<B>> = scratch
-            .attention_window_size_to_bias
-            .iter()
-            .map(|(window_size, buffer)| {
-                let prefix_length = window_size.unwrap_or(cache_ref.max_prefix_length());
-                let attention_bias_shape = [suffix_length, suffix_length + prefix_length];
-                let array = buffer.view(&attention_bias_shape);
-                (*window_size, array)
-            })
-            .collect();
-        drop(cache_ref);
-
-        // Use cache_layers' fill_attention_bias which properly handles
-        // both causal masking and sliding window constraints
-        // Skip fill for async decode passes after the first one (bias already set)
-        if should_fill_attention_bias {
-            cache_layers.borrow().fill_attention_bias(
-                &mut attention_bias_map,
-                token_positions,
-                suffix_length,
-                external_bias_fn,
-            );
-        }
-
-        attention_bias_map
     }
 
     // ========================================================================
@@ -304,7 +270,6 @@ impl<B: Backend> ForwardPassState<B> {
         shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
         token_ids: &[u64],
         token_positions: &[usize],
-        bidirectional_attention: bool,
         num_labels: usize,
     ) -> Self {
         let suffix_length = token_ids.len();
@@ -313,9 +278,6 @@ impl<B: Backend> ForwardPassState<B> {
         let token_ids_cell = Self::init_token_ids(scratch, token_ids);
         let token_positions_cell = Self::init_token_positions(scratch, token_positions);
         let token_parents_cell = Self::init_token_parents(scratch, token_positions, 0, 0);
-
-        // Attention bias (bidirectional or causal)
-        let attention_bias = Self::init_classifier_attention_bias(scratch, suffix_length, bidirectional_attention);
 
         // Common aux buffers
         let common_aux = CommonAuxBuffers::new(scratch, model_shape, suffix_length);
@@ -330,49 +292,15 @@ impl<B: Backend> ForwardPassState<B> {
         Self {
             context,
             token_ids: token_ids_cell,
+            token_subtrie_ranges: None,
             token_positions: token_positions_cell,
             token_parents: token_parents_cell,
             token_bitmask: None,
-            attention_bias,
             shared_buffers,
             common_aux,
             llm_aux: None,
             mode,
         }
-    }
-
-    fn init_classifier_attention_bias(
-        scratch: &ScratchBuffers<B>,
-        suffix_length: usize,
-        bidirectional_attention: bool,
-    ) -> HashMap<Option<usize>, Array<B>> {
-        let mut attention_bias_map: HashMap<Option<usize>, Array<B>> = scratch
-            .attention_window_size_to_bias
-            .iter()
-            .map(|(window_size, buffer)| {
-                let attention_bias_shape = [suffix_length, suffix_length];
-                let array = buffer.view(&attention_bias_shape);
-                (*window_size, array)
-            })
-            .collect();
-
-        for (window, bias_array) in attention_bias_map.iter_mut() {
-            if bidirectional_attention {
-                if let Some(window_size) = window {
-                    let half_window = (window_size / 2) as isize;
-                    fill_attention_bias(bias_array, suffix_length, 0, |row, col| {
-                        let distance = (row as isize) - (col as isize);
-                        distance.abs() > half_window
-                    });
-                } else {
-                    fill_attention_bias(bias_array, suffix_length, 0, |_row, _col| false);
-                }
-            } else {
-                fill_attention_bias(bias_array, suffix_length, 0, |row, col| row < col);
-            }
-        }
-
-        attention_bias_map
     }
 
     #[cfg(feature = "tracing")]
@@ -657,17 +585,6 @@ impl<B: Backend> ForwardPassState<B> {
     // ========================================================================
     // Public API Methods (formerly trait methods)
     // ========================================================================
-
-    pub fn hashmaps(
-        &self,
-        ids: &[HashMapId],
-    ) -> Box<[HashMap<Option<usize>, Array<B>>]> {
-        ids.iter()
-            .map(|id| match id {
-                HashMapId::AttentionBias => self.attention_bias.clone(),
-            })
-            .collect()
-    }
 
     pub fn active_suffix_length(&self) -> usize {
         match &self.mode {

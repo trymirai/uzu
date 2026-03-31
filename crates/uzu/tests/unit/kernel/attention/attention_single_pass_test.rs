@@ -19,7 +19,6 @@ struct Input<T: ArrayElement + Float> {
     queries: Box<[T]>,
     keys: Box<[T]>,
     values: Box<[T]>,
-    mask: Option<Box<[T]>>,
     num_heads: u32,
     gqa_factor: u32,
     sequence_length: u32,
@@ -27,7 +26,6 @@ struct Input<T: ArrayElement + Float> {
     head_dim: u32,
     scale: f32,
     do_causal: bool,
-    has_mask: bool,
 }
 
 fn get_input<T: ArrayElement + Float>(
@@ -37,7 +35,6 @@ fn get_input<T: ArrayElement + Float>(
     suffix_length: u32,
     head_dim: u32,
     do_causal: bool,
-    with_mask: bool,
 ) -> Input<T> {
     let gqa_factor = num_heads / num_kv_heads;
 
@@ -62,32 +59,12 @@ fn get_input<T: ArrayElement + Float>(
         values[i] = T::from((i as f32 * 0.11 + 2.0).sin() * 0.5).unwrap();
     }
 
-    // mask: [sequence_length * suffix_length] (broadcast over heads with stride 0)
-    let mask = if with_mask {
-        let m_size = (suffix_length * sequence_length) as usize;
-        let mut m = vec![T::zero(); m_size];
-        for q in 0..suffix_length {
-            for k in 0..sequence_length {
-                let idx = (q * sequence_length + k) as usize;
-                // Create a sliding window mask: allow only nearby keys
-                let diff = (k as i32) - (sequence_length as i32 - suffix_length as i32 + q as i32);
-                if diff.abs() > 3 {
-                    m[idx] = T::from(-1e9f32).unwrap();
-                }
-            }
-        }
-        Some(m.into_boxed_slice())
-    } else {
-        None
-    };
-
     let scale = 1.0 / (head_dim as f32).sqrt();
 
     Input {
         queries: queries.into_boxed_slice(),
         keys: keys.into_boxed_slice(),
         values: values.into_boxed_slice(),
-        mask,
         num_heads,
         gqa_factor,
         sequence_length,
@@ -95,22 +72,21 @@ fn get_input<T: ArrayElement + Float>(
         head_dim,
         scale,
         do_causal,
-        has_mask: with_mask,
     }
 }
 
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let float_mask = input.has_mask;
     let kernel = <<B as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
         &context,
         T::data_type(),
         input.head_dim,
-        float_mask,
-        input.has_mask,
+        false,
         false,
         input.do_causal,
+        false,
+        false,
     )
     .expect("Failed to create AttentionSinglePassKernel");
 
@@ -120,15 +96,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
     let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
-
-    let mask_array = input.mask.as_ref().map(|m| context.create_array_from(&[m.len()], m, ""));
-    let mask_buf_rc = mask_array.as_ref().map(|a| a.buffer());
-    let mask_buf_borrow = mask_buf_rc.as_ref().map(|rc| rc.borrow());
-    let mask_buffer: Option<&B::Buffer> = mask_buf_borrow.as_ref().map(|b| b.deref());
-
-    let mask_kv_seq_stride: Option<u32> = input.has_mask.then_some(1);
-    let mask_q_seq_stride: Option<u32> = input.has_mask.then_some(input.sequence_length);
-    let mask_head_stride: Option<u32> = input.has_mask.then_some(0);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -142,11 +109,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.head_dim,
         input.sequence_length * input.head_dim,
         input.head_dim,
+        None,
         input.scale,
-        mask_buffer,
-        mask_kv_seq_stride,
-        mask_q_seq_stride,
-        mask_head_stride,
+        None::<&B::Buffer>,
+        None,
         None::<&B::Buffer>,
         input.num_heads,
         input.suffix_length,
@@ -170,68 +136,56 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(input);
         let msg = format!(
-            "AttentionSinglePass failed (backend={}, heads={}, seq={}, suffix={}, head_dim={}, causal={}, mask={})",
+            "AttentionSinglePass failed (backend={}, heads={}, seq={}, suffix={}, head_dim={}, causal={})",
             std::any::type_name::<B>(),
             input.num_heads,
             input.sequence_length,
             input.suffix_length,
             input.head_dim,
             input.do_causal,
-            input.has_mask,
         );
         assert_eq_float::<T>(expected, &output, eps, &msg);
     });
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
-    // Non-causal, no mask, single token
-    let input = get_input::<T>(4, 4, 8, 1, 64, false, false);
+    // Non-causal, single token
+    let input = get_input::<T>(4, 4, 8, 1, 64, false);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 
-    // Non-causal, no mask, multiple tokens
-    let input = get_input::<T>(4, 4, 8, 4, 64, false, false);
+    // Non-causal, multiple tokens
+    let input = get_input::<T>(4, 4, 8, 4, 64, false);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 }
 
 fn test_causal<T: ArrayElement + Float + Debug + Display>() {
     // Causal, single token decode
-    let input = get_input::<T>(4, 4, 16, 1, 64, true, false);
+    let input = get_input::<T>(4, 4, 16, 1, 64, true);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 
     // Causal, multi-token prefill
-    let input = get_input::<T>(4, 4, 8, 4, 64, true, false);
+    let input = get_input::<T>(4, 4, 8, 4, 64, true);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 }
 
 fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
     // GQA: 8 query heads, 2 kv heads
-    let input = get_input::<T>(8, 2, 8, 1, 64, false, false);
+    let input = get_input::<T>(8, 2, 8, 1, 64, false);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 
     // GQA causal
-    let input = get_input::<T>(8, 2, 8, 4, 64, true, false);
-    let expected = get_output::<T, Cpu>(&input);
-    test_internal(&input, &expected);
-}
-
-fn test_mask<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_input::<T>(4, 4, 8, 4, 64, false, true);
-    let expected = get_output::<T, Cpu>(&input);
-    test_internal(&input, &expected);
-
-    // Causal + mask
-    let input = get_input::<T>(4, 4, 8, 4, 64, true, true);
+    let input = get_input::<T>(8, 2, 8, 4, 64, true);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 }
 
 fn test_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_input::<T>(4, 4, 8, 2, 128, true, false);
+    let input = get_input::<T>(4, 4, 8, 2, 128, true);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 }
@@ -282,22 +236,6 @@ fn test_gqa_f16() {
 #[test]
 fn test_gqa_bf16() {
     test_gqa::<bf16>();
-}
-
-// Mask tests
-#[test]
-fn test_mask_f32() {
-    test_mask::<f32>();
-}
-
-#[test]
-fn test_mask_f16() {
-    test_mask::<f16>();
-}
-
-#[test]
-fn test_mask_bf16() {
-    test_mask::<bf16>();
 }
 
 // Head dim 128

@@ -4,7 +4,7 @@ use std::mem::size_of;
 
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use ndarray::{Array3, Array4, s};
+use ndarray::{Array4, s};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use test_tag::tag;
 
@@ -23,12 +23,12 @@ use crate::{
 };
 
 fn reference_attention(
-    queries: &Array4<f32>,      // [batch, num_heads, seq_len, head_dim]
-    keys: &Array4<f32>,         // [batch, num_kv_heads, seq_len, head_dim]
-    values: &Array4<f32>,       // [batch, num_kv_heads, seq_len, head_dim]
-    mask: Option<&Array3<f32>>, // [batch, seq_len, seq_len] or None
+    queries: &Array4<f32>, // [batch, num_heads, seq_len, head_dim]
+    keys: &Array4<f32>,    // [batch, num_kv_heads, seq_len, head_dim]
+    values: &Array4<f32>,  // [batch, num_kv_heads, seq_len, head_dim]
     sinks: Option<&[f32]>,
     scale: f32,
+    is_causal: bool,
 ) -> Array4<f32> {
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_, num_kv_heads, kv_seq_len, _) = keys.dim();
@@ -51,9 +51,12 @@ fn reference_attention(
                     // Efficient matrix multiplication: scores = Q @ K^T
                     let mut scores = q.dot(&k.t());
 
-                    if let Some(mask_data) = mask {
-                        let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                        scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)]).zip_mut_with(&mask_slice, |s, &m| *s += m);
+                    if is_causal {
+                        for i in 0..seq_len {
+                            for j in (i + 1)..kv_seq_len {
+                                scores[[i, j]] = f32::NEG_INFINITY;
+                            }
+                        }
                     }
 
                     // Softmax with optional sink logit
@@ -84,9 +87,12 @@ fn reference_attention(
                 // Efficient matrix multiplication: scores = Q @ K^T
                 let mut scores = q.dot(&k.t());
 
-                if let Some(mask_data) = mask {
-                    let mask_slice = mask_data.slice(s![b, .., ..kv_seq_len.min(seq_len)]);
-                    scores.slice_mut(s![.., ..kv_seq_len.min(seq_len)]).zip_mut_with(&mask_slice, |s, &m| *s += m);
+                if is_causal {
+                    for i in 0..seq_len {
+                        for j in (i + 1)..kv_seq_len {
+                            scores[[i, j]] = f32::NEG_INFINITY;
+                        }
+                    }
                 }
 
                 // Softmax with optional sink logit
@@ -120,7 +126,7 @@ fn create_test_data(
     seq_len: usize,
     head_dim: usize,
     seed: u64,
-) -> (Array4<f32>, Array4<f32>, Array4<f32>, Array3<f32>) {
+) -> (Array4<f32>, Array4<f32>, Array4<f32>) {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -131,15 +137,7 @@ fn create_test_data(
 
     let values = Array4::from_shape_fn((batch_size, num_kv_heads, seq_len, head_dim), |_| rng.random_range(-0.5..0.5));
 
-    let mask = Array3::from_shape_fn((batch_size, seq_len, seq_len), |(_, i, j)| {
-        if j <= i {
-            0.0
-        } else {
-            -1e9
-        }
-    });
-
-    (queries, keys, values, mask)
+    (queries, keys, values)
 }
 
 /// Convert ndarray to Metal buffer layout expected by our kernel
@@ -217,49 +215,6 @@ fn create_value_cache_buffer(
         .expect("Failed to create buffer")
 }
 
-fn create_mask_buffer(
-    mask: &Array3<f32>,
-    num_heads: usize,
-    context: &<Metal as Backend>::Context,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    let (_batch_size, seq_len, _) = mask.dim();
-
-    // Create mask buffer - the kernel expects mask layout: [num_heads, seq_len, seq_len]
-    let mut mask_data = vec![0.0f32; num_heads * seq_len * seq_len];
-    for h in 0..num_heads {
-        for i in 0..seq_len {
-            for j in 0..seq_len {
-                let mask_idx = h * seq_len * seq_len + i * seq_len + j;
-                mask_data[mask_idx] = mask[[0, i, j]];
-            }
-        }
-    }
-
-    context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&mask_data), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer")
-}
-
-fn create_mask_2d_buffer(
-    mask: &Array3<f32>,
-    context: &<Metal as Backend>::Context,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    let (_batch_size, seq_len, _) = mask.dim();
-
-    let mut mask_data = vec![0.0f32; seq_len * seq_len];
-    for i in 0..seq_len {
-        for j in 0..seq_len {
-            mask_data[i * seq_len + j] = mask[[0, i, j]];
-        }
-    }
-
-    context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&mask_data), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer")
-}
-
 fn create_sinks_buffer(
     sinks: &[f32],
     context: &<Metal as Backend>::Context,
@@ -297,7 +252,6 @@ fn run_single_pass_attention(
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
-    mask: Option<&Array3<f32>>,
     sinks: Option<&[f32]>,
     scale: f32,
 ) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
@@ -308,7 +262,6 @@ fn run_single_pass_attention(
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
-    let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let mut output_buffer = context
@@ -317,15 +270,6 @@ fn run_single_pass_attention(
         .expect("Failed to create buffer");
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-
-    let mut mask_kv_seq_stride: Option<u32> = None;
-    let mut mask_q_seq_stride: Option<u32> = None;
-    let mut mask_head_stride: Option<u32> = None;
-    if mask_buffer.is_some() {
-        mask_kv_seq_stride = Some(1);
-        mask_q_seq_stride = Some(seq_len as u32);
-        mask_head_stride = Some(0);
-    }
 
     kernel.encode(
         &query_buffer,
@@ -338,11 +282,10 @@ fn run_single_pass_attention(
         head_dim as u32,
         (seq_len * head_dim) as u32,
         head_dim as u32,
+        None,
         scale,
-        mask_buffer.as_ref().map(|b| b),
-        mask_kv_seq_stride,
-        mask_q_seq_stride,
-        mask_head_stride,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None,
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
@@ -364,7 +307,6 @@ fn run_single_pass_attention_with_is_causal(
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
-    mask: Option<&Array3<f32>>,
     sinks: Option<&[f32]>,
     scale: f32,
     _is_causal: bool,
@@ -376,8 +318,6 @@ fn run_single_pass_attention_with_is_causal(
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
-    let has_mask = mask.is_some();
-    let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let mut output_buffer = context
@@ -387,14 +327,6 @@ fn run_single_pass_attention_with_is_causal(
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
-    let mut mask_kv_seq_stride: Option<u32> = None;
-    let mut mask_q_seq_stride: Option<u32> = None;
-    let mut mask_head_stride: Option<u32> = None;
-    if has_mask {
-        mask_kv_seq_stride = Some(1);
-        mask_q_seq_stride = Some(seq_len as u32);
-        mask_head_stride = Some(0);
-    }
     kernel.encode(
         &query_buffer,
         &key_cache_buffer,
@@ -406,11 +338,10 @@ fn run_single_pass_attention_with_is_causal(
         head_dim as u32,
         (seq_len * head_dim) as u32,
         head_dim as u32,
+        None,
         scale,
-        mask_buffer.as_ref().map(|b| b),
-        mask_kv_seq_stride,
-        mask_q_seq_stride,
-        mask_head_stride,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None,
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
         seq_len as u32,
@@ -432,7 +363,6 @@ fn run_gemm_attention(
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
-    mask: Option<&Array3<f32>>,
     sinks: Option<&[f32]>,
     scale: f32,
     is_causal: bool,
@@ -444,7 +374,6 @@ fn run_gemm_attention(
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
 
-    let mask_buffer = mask.map(|m| create_mask_2d_buffer(m, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let mut output_buffer = context
@@ -459,7 +388,7 @@ fn run_gemm_attention(
         keys_buffer: &key_cache_buffer,
         values_buffer: &value_cache_buffer,
         output_buffer: &mut output_buffer,
-        mask_buffer: mask_buffer.as_ref(),
+        trie_buffer: None,
         sinks_buffer: sinks_buffer.as_ref(),
         num_heads,
         num_groups: num_kv_heads,
@@ -467,7 +396,9 @@ fn run_gemm_attention(
         sequence_length: seq_len,
         segment_prefix_length: 0,
         max_sequence_length: seq_len,
+        ring_params: None,
         head_dim,
+        sliding_window_size: None,
         is_causal,
         scale,
     };
@@ -542,14 +473,14 @@ fn test_single_pass_attention_basic() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    println!("Testing reference implementation without mask...");
-    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
+    println!("Testing reference implementation...");
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
 
     let ref_max = reference_output.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
     let ref_min = reference_output.iter().fold(f32::INFINITY, |a, &b| a.min(b.abs()));
-    println!("Reference output range (no mask): [{}, {}]", ref_min, ref_max);
+    println!("Reference output range: [{}, {}]", ref_min, ref_max);
     println!("Reference sample values: {:?}", &reference_output.slice(s![0, 0, 0, 0..4]).to_vec());
 
     let is_causal = false; // Non-causal attention for this test
@@ -559,13 +490,13 @@ fn test_single_pass_attention_basic() {
         head_dim as u32,
         false,
         false,
-        false,
         is_causal,
+        false,
+        false,
     )
     .expect("Failed to create attention single pass metal");
 
-    let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
-    {
+    let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, scale) {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run single-pass attention: {:?}", e);
@@ -589,14 +520,14 @@ fn test_gemm_attention_basic() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
     let kernel = AttentionGemmBlock::new(DataType::F32);
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
 
     let kernel_output =
-        run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, None, scale, /*is_causal=*/ false)
+        run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, scale, /*is_causal=*/ false)
             .expect("run gemm attention");
 
     let tolerance = 1e-2;
@@ -616,14 +547,14 @@ fn test_gemm_attention_f32_head_dim_128() {
     let head_dim = 128;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 456);
 
     let kernel = AttentionGemmBlock::new(DataType::F32);
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
 
     let kernel_output =
-        run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, None, scale, /*is_causal=*/ false)
+        run_gemm_attention(&kernel, &context, &queries, &keys, &values, None, scale, /*is_causal=*/ false)
             .expect("run gemm attention f32 head_dim=128");
 
     let tolerance = 1e-2;
@@ -644,40 +575,31 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = true;
 
-    let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 2026);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 2026);
 
-    // CPU reference (uses the same additive mask)
-    let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
+    // CPU reference
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, is_causal);
 
     // vector attention path (single-pass)
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
         &context,
         DataType::F32,
         head_dim as u32,
-        true,
-        true,
+        false,
         false,
         is_causal,
+        false,
+        false,
     )
     .expect("Failed to create attention single pass metal");
-    let vector_output = run_single_pass_attention_with_is_causal(
-        &kernel,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        Some(&mask),
-        None,
-        scale,
-        is_causal,
-    )
-    .expect("run vector attention");
+    let vector_output =
+        run_single_pass_attention_with_is_causal(&kernel, &context, &queries, &keys, &values, None, scale, is_causal)
+            .expect("run vector attention");
 
     // matrix attention path (gemm)
     let gemm_kernel = AttentionGemmBlock::new(DataType::F32);
-    let matrix_output =
-        run_gemm_attention(&gemm_kernel, &context, &queries, &keys, &values, Some(&mask), None, scale, is_causal)
-            .expect("run matrix attention");
+    let matrix_output = run_gemm_attention(&gemm_kernel, &context, &queries, &keys, &values, None, scale, is_causal)
+        .expect("run matrix attention");
 
     // Compare both to CPU
     let tol_cpu = 5e-2;
@@ -697,53 +619,6 @@ fn test_matrix_attention_matches_vector_and_cpu_seq256() {
 }
 
 #[test]
-fn test_single_pass_attention_with_mask() {
-    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
-
-    let batch_size = 1;
-    let num_heads = 4;
-    let num_kv_heads = 4;
-    let seq_len = 8;
-    let head_dim = 64;
-    let scale = 1.0 / (head_dim as f32).sqrt();
-
-    let (queries, keys, values, mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
-        &context,
-        DataType::F32,
-        head_dim as u32,
-        true,
-        true,
-        false,
-        false,
-    )
-    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
-    let kernel_output =
-        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, Some(&mask), None, scale) {
-            Ok(output) => output,
-            Err(e) => {
-                panic!("Failed to run single-pass attention with mask: {:?}", e);
-            },
-        };
-
-    let reference_output = reference_attention(&queries, &keys, &values, Some(&mask), None, scale);
-
-    println!("Mask values:");
-    for i in 0..seq_len.min(4) {
-        for j in 0..seq_len.min(4) {
-            print!("{:8.1} ", mask[[0, i, j]]);
-        }
-        println!();
-    }
-
-    let tolerance = 1e-2;
-    if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention with mask") {
-        panic!("{}", e);
-    }
-}
-
-#[test]
 fn test_single_pass_attention_with_sinks() {
     let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
 
@@ -754,7 +629,7 @@ fn test_single_pass_attention_with_sinks() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 444);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 444);
 
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 - (num_heads as f32 / 2.0)) * 0.25).collect();
     println!("Using sinks: {:?}", sinks);
@@ -763,17 +638,18 @@ fn test_single_pass_attention_with_sinks() {
         &context,
         DataType::F32,
         head_dim as u32,
-        false,
-        false,
         true,
+        false,
+        false,
+        false,
         false,
     )
     .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
+    let reference_output = reference_attention(&queries, &keys, &values, Some(&sinks), scale, false);
 
     let kernel_output =
-        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, Some(&sinks), scale) {
+        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, Some(&sinks), scale) {
             Ok(output) => output,
             Err(e) => {
                 panic!("Failed to run single-pass attention with sinks: {:?}", e);
@@ -797,7 +673,7 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 777);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 777);
 
     let sinks: Vec<f32> = (0..num_heads).map(|h| (h as f32 * 0.1) - 0.15).collect();
     println!("Long sequence sinks: {:?}", sinks);
@@ -806,17 +682,18 @@ fn test_single_pass_attention_with_sinks_long_sequence() {
         &context,
         DataType::F32,
         head_dim as u32,
-        false,
-        false,
         true,
+        false,
+        false,
+        false,
         false,
     )
     .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, Some(&sinks), scale);
+    let reference_output = reference_attention(&queries, &keys, &values, Some(&sinks), scale, false);
 
     let kernel_output =
-        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, Some(&sinks), scale) {
+        match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, Some(&sinks), scale) {
             Ok(output) => output,
             Err(e) => {
                 panic!("Failed to run single-pass attention long sequence with sinks: {:?}", e);
@@ -845,7 +722,7 @@ fn test_single_pass_attention_gqa() {
     let head_dim = 64;
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
     let is_causal = false; // Non-causal attention for this test
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
@@ -854,20 +731,20 @@ fn test_single_pass_attention_gqa() {
         head_dim as u32,
         false,
         false,
-        false,
         is_causal,
+        false,
+        false,
     )
     .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
 
-    let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, None, scale)
-    {
+    let kernel_output = match run_single_pass_attention(&kernel, &context, &queries, &keys, &values, None, scale) {
         Ok(output) => output,
         Err(e) => {
             panic!("Failed to run single-pass attention GQA: {:?}", e);
         },
     };
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
 
     let tolerance = 1e-2;
     if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention GQA") {
@@ -882,7 +759,6 @@ fn run_two_pass_attention(
     queries: &Array4<f32>,
     keys: &Array4<f32>,
     values: &Array4<f32>,
-    mask: Option<&Array3<f32>>,
     sinks: Option<&[f32]>,
     scale: f32,
 ) -> Result<Array4<f32>, Box<dyn std::error::Error>> {
@@ -892,7 +768,6 @@ fn run_two_pass_attention(
     let queries_buffer = create_query_buffer(queries, context);
     let keys_buffer = create_key_cache_buffer(keys, seq_len, context);
     let values_buffer = create_value_cache_buffer(values, seq_len, context);
-    let mask_buffer = mask.map(|m| create_mask_buffer(m, num_heads, context));
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let total_blocks_count = 32;
@@ -924,14 +799,6 @@ fn run_two_pass_attention(
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
-    let mut mask_kv_seq_stride: Option<u32> = None;
-    let mut mask_q_seq_stride: Option<u32> = None;
-    let mut mask_head_stride: Option<u32> = None;
-    if mask_buffer.is_some() {
-        mask_kv_seq_stride = Some(1);
-        mask_q_seq_stride = Some(seq_len as u32);
-        mask_head_stride = Some(0);
-    }
     kernel_pass1.encode(
         &queries_buffer,
         &keys_buffer,
@@ -945,13 +812,12 @@ fn run_two_pass_attention(
         head_dim as u32,
         (seq_len * head_dim) as u32,
         head_dim as u32,
+        None,
         scale,
         num_heads as u32,
         seq_len as u32,
-        mask_buffer.as_ref().map(|b| b),
-        mask_kv_seq_stride,
-        mask_q_seq_stride,
-        mask_head_stride,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None,
         sinks_buffer.as_ref().map(|b| b),
         &mut encoder,
     );
@@ -986,9 +852,9 @@ fn test_two_pass_attention() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false; // Non-causal attention for this test
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
 
     let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
         &context,
@@ -996,8 +862,9 @@ fn test_two_pass_attention() {
         head_dim as u32,
         false,
         false,
-        false,
         is_causal,
+        false,
+        false,
     )
     .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel");
     let kernel_pass2 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
@@ -1006,22 +873,13 @@ fn test_two_pass_attention() {
         head_dim as u32,
     )
     .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel");
-    let kernel_output = match run_two_pass_attention(
-        &kernel_pass1,
-        &kernel_pass2,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        None,
-        None,
-        scale,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            panic!("Failed to run two-pass attention: {:?}", e);
-        },
-    };
+    let kernel_output =
+        match run_two_pass_attention(&kernel_pass1, &kernel_pass2, &context, &queries, &keys, &values, None, scale) {
+            Ok(output) => output,
+            Err(e) => {
+                panic!("Failed to run two-pass attention: {:?}", e);
+            },
+        };
 
     let tolerance = 1e-2;
     if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Two-pass attention") {
@@ -1041,16 +899,17 @@ fn test_two_pass_attention_gqa() {
     let scale = 1.0 / (head_dim as f32).sqrt();
     let is_causal = false; // Non-causal attention for this test
 
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 42);
 
-    let reference_output = reference_attention(&queries, &keys, &values, None, None, scale);
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
 
     let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
         &context,
         DataType::F32,
         head_dim as u32,
-        is_causal,
         false,
+        false,
+        is_causal,
         false,
         false,
     )
@@ -1061,22 +920,13 @@ fn test_two_pass_attention_gqa() {
         head_dim as u32,
     )
     .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel");
-    let kernel_output = match run_two_pass_attention(
-        &kernel_pass1,
-        &kernel_pass2,
-        &context,
-        &queries,
-        &keys,
-        &values,
-        None,
-        None,
-        scale,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            panic!("Failed to run two-pass attention GQA: {:?}", e);
-        },
-    };
+    let kernel_output =
+        match run_two_pass_attention(&kernel_pass1, &kernel_pass2, &context, &queries, &keys, &values, None, scale) {
+            Ok(output) => output,
+            Err(e) => {
+                panic!("Failed to run two-pass attention GQA: {:?}", e);
+            },
+        };
 
     let tolerance = 1e-2;
     if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Two-pass attention GQA") {
@@ -1106,14 +956,15 @@ fn perf_two_pass_attention() {
         seq_len - suffix_length,
         suffix_length
     );
-    let (queries, keys, values, _mask) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
 
     let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
         &context,
         DataType::F32,
         head_dim as u32,
-        is_causal,
         false,
+        false,
+        is_causal,
         false,
         false,
     )
@@ -1159,7 +1010,6 @@ fn perf_two_pass_attention() {
     // ---- Launch and time ----
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-    let mask_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
     let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
     kernel_pass1.encode(
         &queries_buffer,
@@ -1174,12 +1024,11 @@ fn perf_two_pass_attention() {
         head_dim as u32,
         (seq_len * head_dim) as u32,
         head_dim as u32,
+        None,
         scale,
         num_heads as u32,
         suffix_length as u32,
-        mask_buffer.as_ref().map(|b| b),
-        None,
-        None,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
         None,
         sinks_buffer.as_ref().map(|b| b),
         &mut encoder,

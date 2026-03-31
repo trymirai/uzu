@@ -1,10 +1,12 @@
 mod full_precision;
+mod qlora_wrapper;
 mod quantized;
 mod rht_wrapper;
 
 use std::{cell::RefCell, rc::Rc};
 
 pub use full_precision::{FullPrecisionLinear, FullPrecisionLinearError};
+pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use quantized::{QuantizedLinear, QuantizedLinearError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
@@ -27,13 +29,13 @@ pub trait Linear<B: Backend> {
 #[derive(Debug, Error)]
 pub enum LinearBlockError<B: Backend> {
     #[error("QuantizedLinear error: {0}")]
-    QuantizedLinearError(#[source] QuantizedLinearError<B>),
+    QuantizedLinearError(#[from] QuantizedLinearError<B>),
     #[error("FullPrecisionLinear error: {0}")]
-    FullPrecisionLinearError(#[source] FullPrecisionLinearError<B>),
+    FullPrecisionLinearError(#[from] FullPrecisionLinearError<B>),
     #[error("RHTLinearWrapper error: {0}")]
-    RHTLinearWrapperError(#[source] RHTLinearWrapperError<B>),
-    #[error("QLoRA linear layer not supported")]
-    QLoRaNotSupported,
+    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("QLoRALinearWrapper error: {0}")]
+    QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
 }
 
 impl<B: Backend> dyn Linear<B> {
@@ -58,8 +60,7 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
-                )
-                .map_err(LinearBlockError::QuantizedLinearError)?;
+                )?;
                 Ok(Box::new(block))
             },
             LinearConfig::FullPrecision {
@@ -73,13 +74,27 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
-                )
-                .map_err(LinearBlockError::FullPrecisionLinearError)?;
+                )?;
                 Ok(Box::new(block))
             },
             LinearConfig::QLoRA {
-                ..
-            } => Err(LinearBlockError::QLoRaNotSupported),
+                quantization,
+                lora_rank,
+                lora_scale,
+            } => {
+                let block = QLoRALinearWrapper::new(
+                    context,
+                    quantization,
+                    *lora_rank,
+                    *lora_scale,
+                    input_dimension,
+                    output_dimension_sum,
+                    parameter_tree,
+                    input_array_id,
+                    output_array_id,
+                )?;
+                Ok(Box::new(block))
+            },
             LinearConfig::RHTLinearWrapper {
                 block_size,
                 inner_config,
@@ -93,8 +108,7 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
-                )
-                .map_err(LinearBlockError::RHTLinearWrapperError)?;
+                )?;
                 Ok(Box::new(block))
             },
         }
@@ -125,8 +139,7 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
-                )
-                .map_err(LinearBlockError::RHTLinearWrapperError)?;
+                )?;
                 let factors = block.take_input_hadamard_factors();
                 Ok((Box::new(block), factors))
             },

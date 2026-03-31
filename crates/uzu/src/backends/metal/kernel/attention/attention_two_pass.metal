@@ -2,11 +2,17 @@
 #include <metal_simdgroup>
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../generated/ring.h"
+#include "../generated/trie.h"
+#include "mask.h"
 
 #define HEAD_BLOCK_SIZE 32
 #define SEQUENCE_BLOCK_SIZE_1 8
 #define SEQUENCE_BLOCK_SIZE_2 32
 #define TOTAL_BLOCKS_COUNT 32
+
+using namespace uzu::ring;
+using namespace uzu::trie;
 
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
@@ -24,18 +30,18 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     const constant uint& k_seq_stride,
     const constant uint& v_head_stride,
     const constant uint& v_seq_stride,
+    const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
     const constant float& scale,
     const constant uint& num_heads,
     const constant uint& suffix_length,
-    const device T* fmask OPTIONAL(float_mask),
-    const constant uint& mask_kv_seq_stride OPTIONAL(has_mask),
-    const constant uint& mask_q_seq_stride OPTIONAL(has_mask),
-    const constant uint& mask_head_stride OPTIONAL(has_mask),
+    const device TrieNode* trie OPTIONAL(is_trie),
+    const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     const device float* sinks OPTIONAL(has_sinks),
-    const bool float_mask SPECIALIZE,
-    const bool has_mask SPECIALIZE,
     const bool has_sinks SPECIALIZE,
-    const bool do_causal SPECIALIZE,
+    const bool is_kv_cache_ring SPECIALIZE,
+    const bool is_causal SPECIALIZE,
+    const bool is_trie SPECIALIZE,
+    const bool is_sliding_window SPECIALIZE,
     threadgroup float shared_max_scores[SEQUENCE_BLOCK_SIZE_1],
     threadgroup float shared_sum_exp_scores[SEQUENCE_BLOCK_SIZE_1],
     threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE_1 * HEAD_BLOCK_SIZE],
@@ -45,8 +51,6 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     const uint block_idx GROUPS(TOTAL_BLOCKS_COUNT),
     const uint tid THREADS(256)
 ) {
-  const uint3 tpg = {num_heads, suffix_length, TOTAL_BLOCKS_COUNT};
-
   constexpr bool query_transposed = false;
   constexpr uint value_dim = HEAD_DIM;
   constexpr uint qk_elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
@@ -60,12 +64,20 @@ PUBLIC KERNEL(AttentionTwoPass1)(
   thread U k[qk_elements_per_thread];
   thread U o[value_elements_per_thread];
 
-  const uint o_offset = q_seq_idx * tpg.x + head_idx; // Our custom layout
+  const uint o_offset = q_seq_idx * num_heads + head_idx; // Our custom layout
   const uint q_offset =
       query_transposed
-          ? tpg.x * q_seq_idx + head_idx
-          : head_idx * tpg.y + q_seq_idx; // Consistent with single-pass
+          ? num_heads * q_seq_idx + head_idx
+          : head_idx * suffix_length + q_seq_idx; // Consistent with single-pass
   const uint kv_head_idx = head_idx / gqa_factor;
+
+  const uint prefix_length = sequence_length - suffix_length;
+
+  const uint suffix_position =
+      is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
+
+  const uint query_position = is_trie ? suffix_position + trie[q_seq_idx].height
+                                      : suffix_position + q_seq_idx;
 
   queries += q_offset * HEAD_DIM +
              thread_context.simdgroup_index * qk_elements_per_thread;
@@ -81,13 +93,6 @@ PUBLIC KERNEL(AttentionTwoPass1)(
       thread_context.simdgroup_index * value_elements_per_thread;
   out += o_offset * TOTAL_BLOCKS_COUNT * value_dim + block_idx * value_dim +
          thread_context.simdgroup_index * value_elements_per_thread;
-  if (float_mask) {
-    fmask +=
-        head_idx * mask_head_stride +
-        (block_idx * SEQUENCE_BLOCK_SIZE_1 + thread_context.threadgroup_index) *
-            mask_kv_seq_stride +
-        q_seq_idx * mask_q_seq_stride;
-  }
   sums += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
   maxs += o_offset * TOTAL_BLOCKS_COUNT + block_idx;
 
@@ -102,7 +107,7 @@ PUBLIC KERNEL(AttentionTwoPass1)(
   U max_score = -1e9;
   U sum_exp_score = 0;
   if (has_sinks && block_idx == 0 && thread_context.threadgroup_index == 0) {
-    const uint num_q_heads = tpg.x;
+    const uint num_q_heads = num_heads;
     int q_head_idx = head_idx % num_q_heads;
     max_score = static_cast<U>(sinks[q_head_idx]);
     sum_exp_score = 1;
@@ -113,12 +118,20 @@ PUBLIC KERNEL(AttentionTwoPass1)(
            block_idx * SEQUENCE_BLOCK_SIZE_1 + thread_context.threadgroup_index;
        i < sequence_length;
        i += TOTAL_BLOCKS_COUNT * SEQUENCE_BLOCK_SIZE_1) {
-    bool use_key = true;
-    if (do_causal) {
-      use_key = i <= (sequence_length - tpg.y + q_seq_idx);
-    }
-
-    if (use_key) {
+    if (should_use_key(
+            ring_params,
+            trie,
+            sliding_window_size,
+            q_seq_idx,
+            prefix_length,
+            suffix_position,
+            query_position,
+            i,
+            is_kv_cache_ring,
+            is_causal,
+            is_trie,
+            is_sliding_window
+        )) {
       // Read the key
       for (uint j = 0; j < qk_elements_per_thread; j++) {
         k[j] = keys[j];
@@ -130,9 +143,6 @@ PUBLIC KERNEL(AttentionTwoPass1)(
         score += q[j] * k[j];
       }
       score = simd_sum(score);
-      if (float_mask) {
-        score += max(-1e9f, static_cast<U>(fmask[0]));
-      }
 
       // Update the accumulators
       U new_max = max(max_score, score);
@@ -151,9 +161,6 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     // Move the pointers to the next kv
     keys += TOTAL_BLOCKS_COUNT * inner_k_stride;
     values += TOTAL_BLOCKS_COUNT * inner_v_stride;
-    if (float_mask) {
-      fmask += SEQUENCE_BLOCK_SIZE_1 * TOTAL_BLOCKS_COUNT * mask_kv_seq_stride;
-    }
   }
 
   // Each thread has a partial part of the output so we need to combine them.
@@ -219,13 +226,12 @@ PUBLIC KERNEL(AttentionTwoPass2)(
     const uint q_seq_idx GROUPS(suffix_length),
     const uint tid THREADS(1024)
 ) {
-  const uint3 tpg = {num_heads, suffix_length, 1};
   constexpr uint elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
 
   typedef float U;
   thread U o[elements_per_thread];
 
-  const uint o_offset = q_seq_idx * tpg.x + head_idx; // Our custom layout
+  const uint o_offset = q_seq_idx * num_heads + head_idx; // Our custom layout
 
   partials += o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM +
               thread_context.threadgroup_index * HEAD_DIM +

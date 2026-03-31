@@ -1,9 +1,9 @@
-use std::{cell::UnsafeCell, os::raw::c_void, ptr::NonNull};
+use std::{cell::UnsafeCell, os::raw::c_void, pin::Pin, ptr::NonNull};
 
 use super::Cpu;
 use crate::backends::common::Buffer;
 
-impl Buffer for UnsafeCell<Box<[u8]>> {
+impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
     type Backend = Cpu;
 
     fn set_label(

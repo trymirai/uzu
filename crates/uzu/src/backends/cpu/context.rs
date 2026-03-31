@@ -1,22 +1,37 @@
 use std::{
-    cell::{RefCell, UnsafeCell},
+    cell::UnsafeCell,
     path::Path,
+    pin::Pin,
     rc::Rc,
+    sync::{atomic::AtomicU64, mpsc},
+    thread,
 };
 
-use super::{Cpu, command_buffer::CpuCommandBuffer, error::CpuError};
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Allocator, Context};
+use crate::backends::{
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
+};
 
 pub struct CpuContext {
     allocator: Rc<Allocator<Cpu>>,
+    command_queue: mpsc::Sender<Box<dyn FnOnce() + Send>>,
 }
 
 impl Context for CpuContext {
     type Backend = Cpu;
 
     fn new() -> Result<Rc<Self>, CpuError> {
+        let (command_queue_sender, command_queue_receiever) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+
+        thread::spawn(|| {
+            for command_buffer in command_queue_receiever {
+                command_buffer();
+            }
+        });
+
         Ok(Rc::new_cyclic(|weak_self| CpuContext {
             allocator: Allocator::new(weak_self.clone()),
+            command_queue: command_queue_sender,
         }))
     }
 
@@ -38,8 +53,8 @@ impl Context for CpuContext {
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<UnsafeCell<Box<[u8]>>, CpuError> {
-        Ok(UnsafeCell::new(vec![0; size].into_boxed_slice()))
+    ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
+        Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
     }
 
     fn create_allocation(
@@ -57,12 +72,12 @@ impl Context for CpuContext {
         self.allocator.create_pool(reusable)
     }
 
-    fn create_command_buffer(&self) -> Result<CpuCommandBuffer, CpuError> {
-        Ok(CpuCommandBuffer::new())
+    fn create_command_buffer(&self) -> Result<CpuCommandBufferInitial, CpuError> {
+        Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
     }
 
-    fn create_event(&self) -> Result<RefCell<u64>, CpuError> {
-        Ok(RefCell::new(0))
+    fn create_event(&self) -> Result<Pin<Box<AtomicU64>>, CpuError> {
+        Ok(Box::pin(AtomicU64::new(0)))
     }
 
     fn enable_capture() {}

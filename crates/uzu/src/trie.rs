@@ -32,8 +32,15 @@ pub struct TrieNode {
 }
 
 #[derive(Debug)]
+struct FlatTrieNode<'a> {
+    node: &'a TrieNode,
+    subtrie_range: (usize, usize),
+    height: usize,
+}
+
+#[derive(Debug)]
 pub struct FlatTrie<'a> {
-    tokens: Box<[(&'a TrieNode, usize)]>,
+    tokens: Box<[FlatTrieNode<'a>]>,
 }
 
 impl TrieNode {
@@ -170,20 +177,21 @@ impl TrieNode {
     }
 
     pub fn linearize(&self) -> FlatTrie<'_> {
-        let mut tokens = vec![(self, 0)];
+        let mut tokens = vec![FlatTrieNode::new(self, (0, 0), 0)];
 
-        let mut stack = vec![(self, 0)];
-        while let Some((cur_node, next_child_idx)) = stack.last_mut() {
-            let Some(next_node) = cur_node.next.get(*next_child_idx) else {
+        let mut stack = vec![(0, 0)];
+        while let Some((cur_node_idx, next_child_idx)) = stack.last_mut() {
+            let Some(next_node) = tokens[*cur_node_idx].node.next.get(*next_child_idx) else {
+                tokens[*cur_node_idx].subtrie_range.1 = tokens.len() - 1;
                 stack.pop();
                 continue;
             };
             *next_child_idx += 1;
 
-            tokens.push((next_node, stack.len()));
+            tokens.push(FlatTrieNode::new(next_node, (tokens.len(), tokens.len()), stack.len()));
 
             if !next_node.next.is_empty() {
-                stack.push((next_node, 0));
+                stack.push((tokens.len() - 1, 0));
             }
         }
 
@@ -191,8 +199,22 @@ impl TrieNode {
     }
 }
 
+impl<'a> FlatTrieNode<'a> {
+    fn new(
+        node: &'a TrieNode,
+        subtrie_range: (usize, usize),
+        height: usize,
+    ) -> Self {
+        Self {
+            node,
+            subtrie_range,
+            height,
+        }
+    }
+}
+
 impl<'a> FlatTrie<'a> {
-    pub fn new(tokens: Box<[(&'a TrieNode, usize)]>) -> Self {
+    fn new(tokens: Box<[FlatTrieNode<'a>]>) -> Self {
         Self {
             tokens,
         }
@@ -203,30 +225,38 @@ impl<'a> FlatTrie<'a> {
     }
 
     pub fn token_ids(&self) -> impl Iterator<Item = u64> {
-        self.tokens.iter().map(|&(n, _p)| n.token)
+        self.tokens.iter().map(|n| n.node.token)
+    }
+
+    pub fn token_subtrie_ranges(&self) -> impl Iterator<Item = [u32; 3]> {
+        self.tokens.iter().map(|n| {
+            let (start, end) = n.subtrie_range;
+
+            [start as u32, end as u32, n.height as u32]
+        })
     }
 
     pub fn token_positions(&self) -> impl Iterator<Item = usize> {
-        self.tokens.iter().map(|&(_n, p)| p)
+        self.tokens.iter().map(|n| n.height)
     }
 
     pub fn token_masks(&self) -> impl Iterator<Item = Option<&[u32]>> {
-        self.tokens.iter().map(|&(n, _p)| n.mask.as_deref())
+        self.tokens.iter().map(|n| n.node.mask.as_deref())
     }
 
     pub fn token_seeds(&self) -> impl Iterator<Item = u64> {
-        self.tokens.iter().map(|&(n, _p)| n.seed)
+        self.tokens.iter().map(|n| n.node.seed)
     }
 
     pub fn root(&self) -> Option<&TrieNode> {
-        self.tokens.first().map(|&(n, _p)| n)
+        self.tokens.first().map(|n| n.node)
     }
 
     pub fn index(
         &self,
         node: &'a TrieNode,
     ) -> Option<usize> {
-        self.tokens.iter().position(|&(n, _)| std::ptr::eq(n, node))
+        self.tokens.iter().position(|n| std::ptr::eq(n.node, node))
     }
 
     pub fn accept(

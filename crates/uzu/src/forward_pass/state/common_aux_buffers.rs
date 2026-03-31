@@ -13,6 +13,7 @@ pub struct CommonAuxBuffers<B: Backend> {
     pub attention_output: Array<B>,
     pub mlp_fused_up: Array<B>,
     pub mlp_hidden: Array<B>,
+    pub lora_intermediate: Option<Array<B>>,
     pub rotated_queries: Array<B>,
     pub rotated_keys: Array<B>,
     pub extracted_values: Array<B>,
@@ -36,6 +37,11 @@ impl<B: Backend> CommonAuxBuffers<B> {
             attention_output: scratch.attention_output.view(&model_shape.attention_output_shape(suffix_length)),
             mlp_fused_up: scratch.mlp_fused_up.view(&model_shape.mlp_fused_up_shape(suffix_length)),
             mlp_hidden: scratch.mlp_hidden.view(&model_shape.mlp_hidden_shape(suffix_length)),
+            lora_intermediate: scratch
+                .lora_intermediate
+                .as_ref()
+                .zip(model_shape.lora_intermediate(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
             rotated_queries: scratch.rotated_queries.view(&model_shape.rotated_queries_shape(suffix_length)),
             rotated_keys: scratch.rotated_keys.view(&model_shape.rotated_keys_shape(suffix_length)),
             extracted_values: scratch.extracted_values.view(&model_shape.extracted_values_shape(suffix_length)),
