@@ -54,7 +54,7 @@ pub fn moe_router_top_k<ScalarT: ArrayElement + Float>(
                 let v = row[expert];
                 let mut insert_pos = None;
                 for j in (0..k).rev() {
-                    if v > best_vals[j] || (v == best_vals[j] && (expert as i32) < best_ids[j]) {
+                    if v > best_vals[j] || (v == best_vals[j] && (best_ids[j] < 0 || (expert as i32) < best_ids[j])) {
                         insert_pos = Some(j);
                     }
                 }

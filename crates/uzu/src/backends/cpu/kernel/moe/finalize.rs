@@ -27,10 +27,21 @@ pub fn moe_finalize<T: ArrayElement + Float>(
                     let idx = ti * k_input + kk;
                     let row = *tok2row.add(idx);
                     if row >= 0 {
-                        let rowu = row as usize;
-                        acc += (*probs.add(idx)).to_f32().unwrap()
-                            * (*y_partial.add(rowu * d_model + f)).to_f32().unwrap();
+                        let mut prob = (*probs.add(idx)).to_f32().unwrap();
+                        if !prob.is_finite() {
+                            prob = 0.0;
+                        }
+
+                        let row_u = row as usize;
+                        let mut val = (*y_partial.add(row_u * d_model + f)).to_f32().unwrap();
+                        if !val.is_finite() {
+                            val = 0.0;
+                        }
+                        acc = prob * val + acc;
                     }
+                }
+                if !acc.is_finite() {
+                    acc = 0.0;
                 }
                 *y.add(ti * d_model + f) = T::from(acc).unwrap();
             }
