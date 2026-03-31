@@ -171,7 +171,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn add_completion_handler(
         &mut self,
-        handler: impl FnOnce(Result<&MetalCommandBufferCompleted, MetalError>) + 'static,
+        handler: impl FnOnce(Result<&MetalCommandBufferCompleted, MetalError>) + Send + 'static,
     ) {
         let cell = Cell::new(Some(handler));
         self.command_buffer.add_completed_handler(&MTLCommandBufferHandler::new(move |command_buffer| {

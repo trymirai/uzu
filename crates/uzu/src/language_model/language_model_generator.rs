@@ -34,6 +34,7 @@ use crate::{
         types::Error,
     },
     trie::{TrieCreationConfig, TrieNode},
+    utils::pointers::SendPtr,
 };
 
 #[derive(Debug, Clone)]
@@ -573,11 +574,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
-        let results_buffer_ptr = results_buffer.borrow().cpu_ptr().as_ptr() as *const u32;
+        let results_buffer_ptr = SendPtr(results_buffer.borrow().cpu_ptr().as_ptr() as *const u32);
 
         let handler = move |result: Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>| {
             result.expect("async decoding forward pass completed with error");
-            let token = { unsafe { *results_buffer_ptr.add(slot) as u64 } };
+            let token = { unsafe { *results_buffer_ptr.as_ptr().add(slot) as u64 } };
             on_complete(token);
         };
 
