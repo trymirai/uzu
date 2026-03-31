@@ -138,7 +138,7 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
     let state_stride = state_stride as usize;
     let model_dim = model_dim as usize;
 
-    let state = match state_in_place {
+    let mut state: *const T = match state_in_place {
         true => next_state,
         false => state.unwrap(),
     };
@@ -175,6 +175,11 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
                     }
                     *next_state.add(state_offset + tap_count - 1) = T::from(x).unwrap();
                 }
+            }
+            // After processing all channels for this token, subsequent tokens
+            // must read from the updated state in next_state.
+            if !state_in_place {
+                state = next_state;
             }
         }
     }
