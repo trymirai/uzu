@@ -1,6 +1,5 @@
 use dsl::kernel;
 use half::{bf16, f16};
-use libc::kern_return_t;
 use num_traits::{Float, ToPrimitive};
 
 use crate::ArrayElement;
@@ -171,7 +170,7 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
                 *out.add(out_idx) = T::from(gated_output).unwrap();
 
                 if tap_count > 0 {
-                    for tap in 0..tap_count {
+                    for tap in 0..tap_count - 1 {
                         *next_state.add(state_offset + tap) = *state.add(state_offset + tap + 1);
                     }
                     *next_state.add(state_offset + tap_count - 1) = T::from(x).unwrap();
