@@ -324,19 +324,19 @@ impl<B: Backend> DeltaNetMixer<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let active_suffix_length = state.active_suffix_length();
-        if active_suffix_length == 0 {
+        let active_row_count = state.active_row_count();
+        if active_row_count == 0 {
             return Ok(());
         }
 
         self.in_projection.encode(state, encoder)?;
 
-        if active_suffix_length == 1 {
+        if active_row_count == 1 {
             self.run_conv_update(state, encoder);
             self.run_delta_rule(state, encoder);
         } else {
-            self.run_conv_scan(state, encoder, active_suffix_length);
-            self.run_delta_rule_prefill(state, encoder, active_suffix_length);
+            self.run_conv_scan(state, encoder, active_row_count);
+            self.run_delta_rule_prefill(state, encoder, active_row_count);
         }
 
         self.out_projection.encode(state, encoder)?;

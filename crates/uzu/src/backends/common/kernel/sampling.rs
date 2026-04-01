@@ -11,12 +11,9 @@ use crate::{
     backends::common::{
         Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
-        kernel::{
-            ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel, MinPKernel,
-            TemperatureKernel, TopKKernel, TopPKernel,
-        },
+        kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, StochasticKernel},
     },
-    session::parameter::{SamplingMethod, SamplingProcessingOrder},
+    session::parameter::SamplingMethod,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,14 +33,14 @@ enum ArgmaxImplementation<B: Backend> {
     },
 }
 
+// StochasticKernel retains N_CANDIDATES=64 candidates; top_k must not exceed this.
+const MAX_TOP_K: u32 = 64;
+
 pub struct SamplingKernel<B: Backend> {
     bitmask: <B::Kernels as Kernels>::BitmaskKernel,
-    temperature: <B::Kernels as Kernels>::TemperatureKernel,
-    topk: <B::Kernels as Kernels>::TopKKernel,
-    topp: <B::Kernels as Kernels>::TopPKernel,
-    minp: <B::Kernels as Kernels>::MinPKernel,
-    gumbel: <B::Kernels as Kernels>::GumbelKernel,
     argmax_implementation: ArgmaxImplementation<B>,
+    stochastic: <B::Kernels as Kernels>::StochasticKernel,
+    stochastic_masked: <B::Kernels as Kernels>::StochasticKernel,
     max_batch_size: usize,
     max_vocab_size: usize,
 }
@@ -58,6 +55,10 @@ pub enum SamplingError<B: Backend> {
     BatchSizeExceeded(usize, usize),
     #[error("Vocab size {0} exceeds maximum {1}")]
     VocabSizeExceeded(usize, usize),
+    #[error("Stochastic: top_k={0} exceeds N_CANDIDATES={MAX_TOP_K}")]
+    TopKTooLarge(u32),
+    #[error("Stochastic: top_p={0} is not in (0, 1]")]
+    TopPOutOfRange(f32),
 }
 
 impl<B: Backend> SamplingKernel<B> {
@@ -78,16 +79,6 @@ impl<B: Backend> SamplingKernel<B> {
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError<B>> {
         let bitmask = <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type, true)
-            .map_err(SamplingError::BackendError)?;
-        let temperature = <B::Kernels as Kernels>::TemperatureKernel::new(context, data_type, true)
-            .map_err(SamplingError::BackendError)?;
-        let topk =
-            <B::Kernels as Kernels>::TopKKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
-        let topp =
-            <B::Kernels as Kernels>::TopPKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
-        let minp =
-            <B::Kernels as Kernels>::MinPKernel::new(context, data_type, true).map_err(SamplingError::BackendError)?;
-        let gumbel = <B::Kernels as Kernels>::GumbelKernel::new(context, data_type, true)
             .map_err(SamplingError::BackendError)?;
 
         let argmax_implementation = match argmax_strategy {
@@ -126,14 +117,16 @@ impl<B: Backend> SamplingKernel<B> {
             },
         };
 
+        let stochastic = <B::Kernels as Kernels>::StochasticKernel::new(context, data_type, false)
+            .map_err(SamplingError::BackendError)?;
+        let stochastic_masked = <B::Kernels as Kernels>::StochasticKernel::new(context, data_type, true)
+            .map_err(SamplingError::BackendError)?;
+
         Ok(Self {
             bitmask,
-            temperature,
-            topk,
-            topp,
-            minp,
-            gumbel,
             argmax_implementation,
+            stochastic,
+            stochastic_masked,
             max_batch_size,
             max_vocab_size,
         })
@@ -159,85 +152,50 @@ impl<B: Backend> SamplingKernel<B> {
             return Err(SamplingError::VocabSizeExceeded(vocab_size, self.max_vocab_size));
         }
 
-        if let Some(bitmask_buffer) = bitmask_buffer {
-            self.bitmask.encode(
-                None::<&B::Buffer>,
-                (bitmask_buffer, bitmask_offset),
-                logits_buffer.deref_mut(),
-                batch_size as u32,
-                vocab_size as u32,
-                encoder,
-            );
-        }
-
         if let SamplingMethod::Stochastic {
             temperature,
             top_k,
             top_p,
             min_p,
-            processing_order,
+            ..
         } = sampling_method
         {
-            if let Some(temperature) = temperature
-                && processing_order == SamplingProcessingOrder::TemperatureThenFilters
-            {
-                self.temperature.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
-                    batch_size as u32,
-                    vocab_size as u32,
-                    temperature,
-                    encoder,
-                );
+            let top_k_val = top_k.unwrap_or(0);
+            if top_k_val > MAX_TOP_K {
+                return Err(SamplingError::TopKTooLarge(top_k_val));
+            }
+            if let Some(p) = top_p {
+                if p <= 0.0 || p > 1.0 {
+                    return Err(SamplingError::TopPOutOfRange(p));
+                }
             }
 
-            if let Some(top_k) = top_k {
-                self.topk.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
-                    batch_size as u32,
-                    vocab_size as u32,
-                    top_k,
-                    encoder,
-                );
-            }
-            if let Some(top_p) = top_p {
-                self.topp.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
-                    batch_size as u32,
-                    vocab_size as u32,
-                    top_p,
-                    encoder,
-                );
-            }
-            if let Some(min_p) = min_p {
-                self.minp.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
-                    batch_size as u32,
-                    vocab_size as u32,
-                    min_p,
-                    encoder,
-                );
-            }
-
-            if let Some(temperature) = temperature
-                && processing_order == SamplingProcessingOrder::FiltersThenTemperature
-            {
-                self.temperature.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
-                    batch_size as u32,
-                    vocab_size as u32,
-                    temperature,
-                    encoder,
-                );
-            }
-
-            self.gumbel.encode(
-                None::<&B::Buffer>,
+            let kernel = if bitmask_buffer.is_some() {
+                &self.stochastic_masked
+            } else {
+                &self.stochastic
+            };
+            kernel.encode(
+                logits_buffer.deref(),
                 (seeds_buffer, seeds_offset),
+                sampled_tokens_buffer,
+                bitmask_buffer.map(|b| (b, bitmask_offset)),
+                batch_size as u32,
+                vocab_size as u32,
+                temperature.unwrap_or(1.0),
+                top_k_val,
+                top_p.unwrap_or(1.0),
+                min_p.unwrap_or(0.0),
+                encoder,
+            );
+            return Ok(());
+        }
+
+        // SamplingMethod::Greedy
+        if let Some(bitmask_buffer) = bitmask_buffer {
+            self.bitmask.encode(
+                None::<&B::Buffer>,
+                (bitmask_buffer, bitmask_offset),
                 logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,
