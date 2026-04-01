@@ -198,7 +198,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let suffix_length = state.active_suffix_length();
+        let suffix_length = state.active_row_count();
 
         let main_buf = state.array(ArrayId::Main).buffer();
         let topk_ids_buf = state.array(ArrayId::MoeTopkIds).buffer();

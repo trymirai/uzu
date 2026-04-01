@@ -491,7 +491,7 @@ impl<B: Backend> Embedding<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), EmbeddingError<B>> {
-        let batch_size = state.active_suffix_length() as u32;
+        let batch_dim = state.active_row_count() as u32;
 
         let token_ids_array = state.array(ArrayId::TokenIds);
         let token_ids_buffer_rc = token_ids_array.buffer();
@@ -523,7 +523,7 @@ impl<B: Backend> Embedding<B> {
                 token_ids,
                 weights,
                 output,
-                batch_size,
+                batch_dim,
                 self.vocab_size,
                 self.model_dim,
                 self.input_scale,
@@ -555,7 +555,7 @@ impl<B: Backend> Embedding<B> {
                     scales,
                     biases,
                     output,
-                    batch_size,
+                    batch_dim,
                     self.vocab_size,
                     self.model_dim,
                     self.input_scale,
@@ -572,9 +572,9 @@ impl<B: Backend> Embedding<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), EmbeddingError<B>> {
-        let batch_size = state.sampling_length();
+        let batch_dim = state.sampling_length();
 
-        if batch_size == 0 {
+        if batch_dim == 0 {
             return Ok(());
         }
 
@@ -618,7 +618,7 @@ impl<B: Backend> Embedding<B> {
                         ab_scale: 1.0,
                         c: MatmulArgumentC::None,
                         d: output,
-                        batch_dim: batch_size as u32,
+                        batch_dim: batch_dim as u32,
                         input_dim: input_dim as u32,
                         output_dim: output_dim as u32,
                     },
@@ -654,7 +654,7 @@ impl<B: Backend> Embedding<B> {
                         scales_buffer: scales,
                         zero_points_or_biases_buffer: biases,
                         output_buffer: output,
-                        batch: batch_size,
+                        batch: batch_dim,
                         input_dim: self.model_dim as usize,
                         output_dim: self.vocab_size as usize,
                         quantization_type: QuantizedMatmulType::Mlx,

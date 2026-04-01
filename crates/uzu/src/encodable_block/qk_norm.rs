@@ -127,7 +127,7 @@ impl<B: Backend> QKNorm<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let qkv_array = state.array(self.qkv_array_id);
-        let batch_size = qkv_array.shape()[0] as u32;
+        let batch_dim = qkv_array.shape()[0] as u32;
 
         // Process query normalization if configured
         if let (Some(query_kernel), Some(query_scales_buffer), Some(query_config)) =
@@ -137,7 +137,7 @@ impl<B: Backend> QKNorm<B> {
                 None::<&B::Buffer>,
                 query_scales_buffer.borrow().deref(),
                 qkv_array.buffer().borrow_mut().deref_mut(),
-                batch_size,
+                batch_dim,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 self.head_dim as u32,
@@ -158,7 +158,7 @@ impl<B: Backend> QKNorm<B> {
                 None::<&B::Buffer>,
                 key_scales_buffer.borrow().deref(),
                 qkv_array.buffer().borrow_mut().deref_mut(),
-                batch_size,
+                batch_dim,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 self.head_dim as u32,

@@ -581,21 +581,6 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        // Embedding norm (classifier-specific)
-        if let Some(embedding_norm) = &traces.borrow().embedding_norm {
-            if traces_view.leaf_array("activation_trace.embedding_norm").is_ok() {
-                results.push(TracerValidationResult {
-                    name: "activation_trace.embedding_norm".to_string(),
-                    metrics: Self::validate_array_with_name(
-                        data_type,
-                        traces_view,
-                        "activation_trace.embedding_norm",
-                        embedding_norm,
-                    ),
-                });
-            }
-        }
-
         // Output pooling (classifier-specific)
         if let Some(output_pooling) = &traces.borrow().output_pooling {
             if traces_view.leaf_array("activation_trace.output_pooling").is_ok() {
