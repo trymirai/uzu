@@ -23,11 +23,6 @@ use crate::{
 
 const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::STORAGE_MODE_SHARED;
 
-fn silu_scalar(x: f32) -> f32 {
-    let y = 1.0 / (1.0 + (-x).exp());
-    x * y
-}
-
 fn write_buffer(
     buf: &ProtocolObject<dyn MTLBuffer>,
     data: &[f32],
@@ -91,7 +86,7 @@ fn ssd_prefill_cpu_reference(
                 let dt_val = ActivationType::SOFTPLUS.activate(dt_raw);
                 let decay_val = (-dt_val).exp();
                 let dt_scaled_input = x_val;
-                let gate = silu_scalar(z_data[x_idx]);
+                let gate = ActivationType::SILU.activate(z_data[x_idx]);
                 let mut acc = d_data[h] * x_val;
 
                 for s in 0..state_dim {
