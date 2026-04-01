@@ -36,7 +36,7 @@ PUBLIC KERNEL(Rope)(
     constant uint& max_sequence_length,
     const uint head_index AXIS(num_heads, 1),
     const uint token_index AXIS(suffix_length, 1),
-    const uint dimension_index AXIS(head_dim, 32)
+    const uint dimension_index AXIS(head_dim, 128)
 ) {
   if (head_index >= num_heads || token_index >= suffix_length ||
       dimension_index >= head_dim)

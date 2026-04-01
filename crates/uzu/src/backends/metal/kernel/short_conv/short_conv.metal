@@ -11,7 +11,7 @@ PUBLIC KERNEL(ShortConvPack)(
     constant const uint& suffix_len,
     constant const uint& in_proj_stride,
     constant const uint& model_dim,
-    const uint channel_idx AXIS(model_dim, 32),
+    const uint channel_idx AXIS(model_dim, 256),
     const uint row_idx AXIS(state_stride + suffix_len, 1)
 ) {
   const uint padded_offset = row_idx * model_dim + channel_idx;
@@ -47,8 +47,8 @@ PUBLIC KERNEL(ShortConvPrefill)(
     constant const uint& state_stride,
     constant const uint& model_dim,
     const bool has_bias SPECIALIZE,
-    const uint token_idx AXIS(suffix_len + kernel_size.saturating_sub(1), 32),
-    const uint channel_idx AXIS(model_dim, 1)
+    const uint token_idx AXIS(suffix_len + kernel_size.saturating_sub(1), 1),
+    const uint channel_idx AXIS(model_dim, 256)
 ) {
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
   const device T* w_row = w + channel_idx * kernel_size;
@@ -109,8 +109,8 @@ PUBLIC KERNEL(ShortConvDecode)(
     constant const uint& model_dim,
     const bool has_bias SPECIALIZE,
     const bool state_in_place SPECIALIZE,
-    const uint token_idx AXIS(suffix_len, 32),
-    const uint channel_idx AXIS(model_dim, 1)
+    const uint token_idx AXIS(suffix_len, 1),
+    const uint channel_idx AXIS(model_dim, 256)
 ) {
   if (state_in_place) {
     state = next_state;
@@ -168,7 +168,7 @@ PUBLIC KERNEL(ShortConvTrie)(
     constant const uint& state_stride,
     constant const uint& model_dim,
     const bool has_bias SPECIALIZE,
-    const uint channel_idx AXIS(model_dim, 32)
+    const uint channel_idx AXIS(model_dim, 256)
 ) {
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
   const device T* w_row = w + channel_idx * kernel_size;
