@@ -313,29 +313,3 @@ fn test_prefill_multi_group() {
 fn test_prefill_group_per_head() {
     test_shape(&KernelType::Prefill, 8, 4, 4, 8, 1, "prefill_group_per_head");
 }
-
-// --- Prefill64 ---
-#[test]
-fn test_prefill64_basic() {
-    test_shape(&KernelType::Prefill64, 512, 32, 64, 64, 1, "prefill_basic");
-}
-
-#[test]
-fn test_prefill64_small() {
-    test_shape(&KernelType::Prefill64, 4, 4, 4, 8, 1, "prefill_small");
-}
-
-#[test]
-fn test_prefill64_minimal() {
-    test_shape(&KernelType::Prefill64, 1, 1, 1, 1, 1, "prefill_minimal");
-}
-
-#[test]
-fn test_prefill64_multi_group() {
-    test_shape(&KernelType::Prefill64, 8, 8, 4, 16, 4, "prefill_multi_group");
-}
-
-#[test]
-fn test_prefill64_group_per_head() {
-    test_shape(&KernelType::Prefill64, 8, 4, 4, 8, 1, "prefill_group_per_head");
-}

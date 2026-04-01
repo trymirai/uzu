@@ -58,20 +58,13 @@ PUBLIC KERNEL(SSDPrefill64)(
   const uint idx0 = lane_idx;
   const uint idx1 = lane_idx + thread_context.simdgroup_size;
 
-  float state0 = 0.0f;
-  float state1 = 0.0f;
-  uint state_idx0 = 0;
-  uint state_idx1 = 0;
-  state_idx0 = state_base + idx0 * state_inner_stride;
-  state0 = float(state[state_idx0]);
+  const uint state_idx0 = state_base + idx0 * state_inner_stride;
+  const uint state_idx1 = state_base + idx1 * state_inner_stride;
+  float state0 = float(state[state_idx0]);
+  float state1 = float(state[state_idx1]);
 
-  state_idx1 = state_base + idx1 * state_inner_stride;
-  state1 = float(state[state_idx1]);
-
-  uint cb_idx0 = 0;
-  uint cb_idx1 = 0;
-  cb_idx0 = cb_group_base + idx0 * cb_state_stride;
-  cb_idx1 = cb_group_base + idx1 * cb_state_stride;
+  uint cb_idx0 = cb_group_base + idx0 * cb_state_stride;
+  uint cb_idx1 = cb_group_base + idx1 * cb_state_stride;
 
   for (uint token = 0; token < suffix_len; ++token) {
     const uint x_idx = token * x_token_stride + x_base;
