@@ -1,4 +1,8 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use crate::{
     DataType,
@@ -35,7 +39,7 @@ impl<B: Backend> ShortConvMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> Self {
+    ) -> (Self, Option<Rc<RefCell<B::Buffer>>>) {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
@@ -45,7 +49,7 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
-        let in_projection = <dyn Linear<B>>::new(
+        let (in_projection, in_proj_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &short_conv_config.in_projection_config,
             false,
             model_dim,
@@ -86,19 +90,22 @@ impl<B: Backend> ShortConvMixer<B> {
         let short_conv_trie = <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
             .expect("Failed to create short conv trie kernel");
 
-        Self {
-            layer_index,
-            config: short_conv_config,
-            model_dim,
-            in_projection,
-            out_projection,
-            short_conv_pack,
-            short_conv_prefill,
-            short_conv_decode,
-            short_conv_trie,
-            conv_weight,
-            conv_bias,
-        }
+        (
+            Self {
+                layer_index,
+                config: short_conv_config,
+                model_dim,
+                in_projection,
+                out_projection,
+                short_conv_pack,
+                short_conv_prefill,
+                short_conv_decode,
+                short_conv_trie,
+                conv_weight,
+                conv_bias,
+            },
+            in_proj_input_hadamard_factors,
+        )
     }
 
     fn clear_suffix_state_valid_range(
