@@ -30,7 +30,7 @@ struct Input<T: ArrayElement + Float> {
     num_heads: usize,
     head_dim: usize,
     state_dim: usize,
-    group_size: i32,
+    group_size: u32,
     x_strides: [usize; 3],
     dt_strides: [usize; 2],
     cb_strides: [usize; 3],
@@ -44,6 +44,7 @@ struct Output<T: ArrayElement + Float> {
 
 enum KernelType {
     Prefill,
+    Prefill64,
     Sequential,
 }
 
@@ -52,7 +53,7 @@ fn get_input<T: ArrayElement + Float>(
     num_heads: usize,
     head_dim: usize,
     state_dim: usize,
-    group_size: i32,
+    group_size: u32,
 ) -> Input<T> {
     let safe_group = group_size.max(1) as usize;
     let group_count = num_heads / safe_group;
@@ -131,8 +132,32 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
                 state_array.buffer().borrow_mut().deref_mut(),
                 y_array.buffer().borrow_mut().deref_mut(),
                 input.suffix_len as u32,
-                input.group_size,
-                input.state_dim as i32,
+                input.group_size as u32,
+                input.state_dim as u32,
+                &x_strides,
+                &dt_strides,
+                &cb_strides,
+                &state_strides,
+                input.num_heads as u32,
+                input.head_dim as u32,
+                &mut encoder,
+            );
+        },
+        KernelType::Prefill64 => {
+            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefill64Kernel::new(&context, T::data_type())
+                .expect("Failed to create SSDPrefillKernel");
+            kernel.encode(
+                x_array.buffer().borrow().deref(),
+                dt_array.buffer().borrow().deref(),
+                b_array.buffer().borrow().deref(),
+                c_array.buffer().borrow().deref(),
+                d_array.buffer().borrow().deref(),
+                z_array.buffer().borrow().deref(),
+                state_array.buffer().borrow_mut().deref_mut(),
+                y_array.buffer().borrow_mut().deref_mut(),
+                input.suffix_len as u32,
+                input.group_size as u32,
+                input.state_dim as u32,
                 &x_strides,
                 &dt_strides,
                 &cb_strides,
@@ -156,8 +181,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
                 state_array.buffer().borrow_mut().deref_mut(),
                 y_array.buffer().borrow_mut().deref_mut(),
                 input.suffix_len as u32,
-                input.group_size,
-                input.state_dim as i32,
+                input.group_size as u32,
+                input.state_dim as u32,
                 &x_strides,
                 &dt_strides,
                 &cb_strides,
@@ -216,7 +241,7 @@ fn test_shape(
     num_heads: usize,
     head_dim: usize,
     state_dim: usize,
-    group_size: i32,
+    group_size: u32,
     label: &str,
 ) {
     fn run<T: ArrayElement + Float + Debug + Display>(
@@ -225,7 +250,7 @@ fn test_shape(
         num_heads: usize,
         head_dim: usize,
         state_dim: usize,
-        group_size: i32,
+        group_size: u32,
         label: &str,
     ) {
         let input = get_input::<T>(suffix_len, num_heads, head_dim, state_dim, group_size);
@@ -287,4 +312,30 @@ fn test_prefill_multi_group() {
 #[test]
 fn test_prefill_group_per_head() {
     test_shape(&KernelType::Prefill, 8, 4, 4, 8, 1, "prefill_group_per_head");
+}
+
+// --- Prefill64 ---
+#[test]
+fn test_prefill64_basic() {
+    test_shape(&KernelType::Prefill64, 512, 32, 64, 64, 1, "prefill_basic");
+}
+
+#[test]
+fn test_prefill64_small() {
+    test_shape(&KernelType::Prefill64, 4, 4, 4, 8, 1, "prefill_small");
+}
+
+#[test]
+fn test_prefill64_minimal() {
+    test_shape(&KernelType::Prefill64, 1, 1, 1, 1, 1, "prefill_minimal");
+}
+
+#[test]
+fn test_prefill64_multi_group() {
+    test_shape(&KernelType::Prefill64, 8, 8, 4, 16, 4, "prefill_multi_group");
+}
+
+#[test]
+fn test_prefill64_group_per_head() {
+    test_shape(&KernelType::Prefill64, 8, 4, 4, 8, 1, "prefill_group_per_head");
 }

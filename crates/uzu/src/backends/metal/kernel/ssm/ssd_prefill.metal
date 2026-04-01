@@ -20,8 +20,8 @@ PUBLIC KERNEL(SSDPrefill64)(
     device T* state,        // (h, dh, n)
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
-    constant const int& group_size,
-    constant const int& state_size,
+    constant const uint& group_size,
+    constant const uint& state_size,
     constant const uint* x_strides,
     constant const uint* dt_strides,
     constant const uint* cb_strides,
@@ -34,7 +34,7 @@ PUBLIC KERNEL(SSDPrefill64)(
 ) {
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
-  const uint safe_group = uint(max(group_size, 1));
+  const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
 
   const uint x_token_stride = x_strides[0];
@@ -118,8 +118,8 @@ PUBLIC KERNEL(SSDPrefill)(
     device T* state,        // (h, dh, n)
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
-    constant const int& group_size,
-    constant const int& state_size,
+    constant const uint& group_size,
+    constant const uint& state_size,
     constant const uint* x_strides,
     constant const uint* dt_strides,
     constant const uint* cb_strides,
@@ -133,7 +133,7 @@ PUBLIC KERNEL(SSDPrefill)(
   const int state_dim = state_size;
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
-  const uint safe_group = uint(max(group_size, 1));
+  const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
 
   const uint x_token_stride = x_strides[0];
@@ -227,8 +227,8 @@ PUBLIC KERNEL(SSDPrefillSequential)(
     device T* state,        // (h, dh, n)
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
-    constant const int& group_size,
-    constant const int& state_size,
+    constant const uint& group_size,
+    constant const uint& state_size,
     constant const uint* x_strides,
     constant const uint* dt_strides,
     constant const uint* cb_strides,
@@ -238,7 +238,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
     const uint h_idx AXIS(channels, 32),
     const uint dh_idx AXIS(head_dim, 32)
 ) {
-  const uint safe_group = uint(max(group_size, 1));
+  const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
   device T* state_row = state + size_t(h_idx) * state_strides[0] +
                         size_t(dh_idx) * state_strides[1];
