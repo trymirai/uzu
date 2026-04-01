@@ -18,7 +18,9 @@ impl ActivationType {
         x: T,
     ) -> T {
         match self {
-            ActivationType::SILU => silu(x),
+            ActivationType::SILU {
+                ..
+            } => silu(x),
             ActivationType::GELU => gelu(x),
             ActivationType::TANH => tanh_activation(x),
             ActivationType::IDENTITY => x,
@@ -26,10 +28,17 @@ impl ActivationType {
     }
 }
 
-fn silu<T: Float>(x: T) -> T {
+pub fn activation_silu_alpha<T: Float>(
+    x: T,
+    alpha: f32,
+) -> T {
     let x_float = x.to_f32().unwrap();
-    let y_float = x_float / (1.0f32 + (-x_float).exp());
+    let y_float = x_float / (1.0f32 + (-alpha * x_float).exp());
     T::from(y_float).unwrap()
+}
+
+fn silu<T: Float>(x: T) -> T {
+    activation_silu_alpha(x, 1.0f32)
 }
 
 fn gelu<T: Float>(x: T) -> T {

@@ -1,114 +1,115 @@
-#![cfg(metal_backend)]
+use std::ops::{Deref, DerefMut};
 
 use half::bf16;
-use metal::MTLBuffer;
+use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
-    DataType,
+    ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
-        metal::Metal,
+        cpu::Cpu,
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
+use crate::common::{assert::assert_eq_float, helpers::create_context};
 
-fn cpu_finalize(
-    tok2row: &[i32],
-    probs: &[bf16],
-    y_partial: &[bf16],
+struct Input<T: ArrayElement + Float> {
+    tok2row: Box<[i32]>,
+    probs: Box<[T]>,
+    y_partial: Box<[T]>,
     t: usize,
     d_model: usize,
     k: usize,
-) -> Vec<bf16> {
-    let mut y = vec![bf16::from_f32(0.0); t * d_model];
-    for ti in 0..t {
-        for f in 0..d_model {
-            let mut acc = 0f32;
-            for kk in 0..k {
-                let idx = ti * k + kk;
-                let row = tok2row[idx];
-                if row >= 0 {
-                    let rowu = row as usize;
-                    acc += f32::from(probs[idx]) * f32::from(y_partial[rowu * d_model + f]);
-                }
+}
+
+fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+    let context = create_context::<B>();
+    let tok2row_array = context.create_array_from(&[input.tok2row.len()], &input.tok2row, "");
+    let probs_array = context.create_array_from(&[input.probs.len()], &input.probs, "");
+    let y_partial_array = context.create_array_from(&[input.y_partial.len()], &input.y_partial, "");
+    let y_out_array = context.create_array_uninitialized(&[input.t * input.d_model], T::data_type(), "");
+
+    let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&context, DataType::BF16).expect("finalize kernel");
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    finalize.encode(
+        tok2row_array.buffer().borrow().deref(),
+        probs_array.buffer().borrow().deref(),
+        y_partial_array.buffer().borrow().deref(),
+        y_out_array.buffer().borrow_mut().deref_mut(),
+        input.t as u32,
+        input.d_model as u32,
+        input.k as u32,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    y_out_array.as_slice().to_vec()
+}
+
+fn test_finalize_internal(
+    t: usize,
+    k: usize,
+    d_model: usize,
+    sum_k: usize,
+) {
+    let mut rng = StdRng::seed_from_u64(2026);
+
+    // Generate random tok2row mapping: maps (token, k_idx) → row in y_partial
+    // Some entries can be -1 (no expert selected)
+    let mut tok2row: Vec<i32> = (0..t * k)
+        .map(|_| {
+            if rng.random_bool(0.9) {
+                rng.random_range(0..sum_k as i32)
+            } else {
+                -1 // No expert selected
             }
-            y[ti * d_model + f] = bf16::from_f32(acc);
-        }
+        })
+        .collect();
+
+    // Ensure we use all rows in sum_k (avoid unused rows)
+    for row in 0..sum_k.min(t * k) {
+        tok2row[row] = row as i32;
     }
-    y
+
+    // Generate random probabilities (should sum to 1 per token, but not critical for unit test)
+    let probs: Vec<bf16> = (0..t * k).map(|_| bf16::from_f32(rng.random_range(0.0..1.0))).collect();
+
+    // Generate random y_partial (expert outputs)
+    let y_partial: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
+
+    // CPU reference
+    let input = Input {
+        tok2row: tok2row.into_boxed_slice(),
+        probs: probs.into_boxed_slice(),
+        y_partial: y_partial.into_boxed_slice(),
+        t,
+        d_model,
+        k,
+    };
+    let y_cpu = get_output::<Cpu, bf16>(&input);
+
+    for_each_non_cpu_backend!(|B| {
+        let y_gpu = get_output::<B, bf16>(&input);
+        assert_eq_float(&y_cpu, &y_gpu, 1e-2, "finalize output");
+    });
 }
 
 #[test]
-fn test_finalize_correctness() {
-    let ctx = create_ctx();
-    let mut rng = StdRng::seed_from_u64(2026);
+fn test_finalize_single_token() {
+    test_finalize_internal(1, 2, 64, 2)
+}
 
-    // Test multiple shapes: (T, K, d_model, sum_k)
-    let shapes = vec![
-        (1, 2, 64, 2),    // Single token, K=2
-        (4, 2, 128, 8),   // Small batch
-        (8, 4, 256, 32),  // Medium
-        (16, 2, 512, 32), // Large d_model
-    ];
+#[test]
+fn test_finalize_small_batch() {
+    test_finalize_internal(4, 2, 128, 8)
+}
 
-    for (t, k, d_model, sum_k) in shapes {
-        eprintln!("[FinalizeTest] T={}, K={}, d_model={}, sum_k={}", t, k, d_model, sum_k);
+#[test]
+fn test_finalize_medium() {
+    test_finalize_internal(8, 4, 256, 32)
+}
 
-        // Generate random tok2row mapping: maps (token, k_idx) → row in y_partial
-        // Some entries can be -1 (no expert selected)
-        let mut tok2row: Vec<i32> = (0..t * k)
-            .map(|_| {
-                if rng.random_bool(0.9) {
-                    rng.random_range(0..sum_k as i32)
-                } else {
-                    -1 // No expert selected
-                }
-            })
-            .collect();
-
-        // Ensure we use all rows in sum_k (avoid unused rows)
-        for row in 0..sum_k.min(t * k) {
-            tok2row[row] = row as i32;
-        }
-
-        // Generate random probabilities (should sum to 1 per token, but not critical for unit test)
-        let probs: Vec<bf16> = (0..t * k).map(|_| bf16::from_f32(rng.random_range(0.0..1.0))).collect();
-
-        // Generate random y_partial (expert outputs)
-        let y_partial: Vec<bf16> = (0..sum_k * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
-
-        // CPU reference
-        let y_cpu = cpu_finalize(&tok2row, &probs, &y_partial, t, d_model, k);
-
-        // GPU buffers
-        let tok2row_buf = alloc_buffer_with_data(&ctx, &tok2row);
-        let probs_buf = alloc_buffer_with_data(&ctx, &probs);
-        let y_partial_buf = alloc_buffer_with_data(&ctx, &y_partial);
-        let mut y_out_buf = alloc_buffer::<bf16>(&ctx, t * d_model);
-
-        // Execute finalize kernel
-        let finalize = <<Metal as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16)
-            .expect("finalize kernel");
-        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-        finalize.encode(
-            &tok2row_buf,
-            &probs_buf,
-            &y_partial_buf,
-            &mut y_out_buf,
-            t as u32,
-            d_model as u32,
-            k as u32,
-            &mut encoder,
-        );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-        // Compare
-        let y_gpu = unsafe { std::slice::from_raw_parts(y_out_buf.contents().as_ptr() as *const bf16, t * d_model) };
-
-        // BF16 has limited precision, especially for weighted sums
-        assert_bf16_close(y_gpu, &y_cpu, 1e-2, "finalize output");
-
-        eprintln!("[FinalizeTest] ✓ PASSED");
-    }
+#[test]
+fn test_finalize_large() {
+    test_finalize_internal(16, 2, 512, 32)
 }

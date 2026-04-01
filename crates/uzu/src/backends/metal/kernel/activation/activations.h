@@ -1,14 +1,22 @@
+#ifndef __UZU_ACTIVATIONS_H__
+#define __UZU_ACTIVATIONS_H__
+
 #include <metal_stdlib>
 #include "activation_type.h"
 
 using namespace uzu::activation_type;
 
 template <typename T>
-inline T activate_silu(T x) {
+inline T activate_silu_alpha(T x, float alpha) {
   float xf = float(x);
-  float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
+  float y = 1.0f / (1.0f + fast::exp(-fabs(xf) * alpha));
   float out = (xf < 0.0f) ? (1.0f - y) * xf : y * xf;
   return static_cast<T>(out);
+}
+
+template <typename T>
+inline T activate_silu(T x) {
+  return activate_silu_alpha(x, 1.0);
 }
 
 template <typename T>
@@ -46,3 +54,5 @@ inline T activate(T x, ActivationType type) {
     return x;
   }
 }
+
+#endif // __UZU_ACTIVATIONS_H__

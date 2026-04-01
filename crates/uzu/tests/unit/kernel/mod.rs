@@ -16,6 +16,7 @@ mod qk_norm_test;
 mod rms_norm_test;
 mod rope_test;
 mod sampling;
+mod short_conv;
 mod sigmoid_test;
 mod ssm;
 mod tensor_add_bias_test;
