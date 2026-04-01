@@ -17,11 +17,14 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
     state_stride: u32,
     #[specialize] has_bias: bool,
 ) {
-    let tap_count = kernel_size as usize - 1;
+    let kernel_size = kernel_size as usize;
+    let conv_dim = conv_dim as usize;
+    let state_stride = state_stride as usize;
+    let tap_count = kernel_size - 1;
 
-    for channel in 0..conv_dim as usize {
-        let state_offset = channel * state_stride as usize;
-        let w_offset = channel * kernel_size as usize;
+    for channel in 0..conv_dim {
+        let state_offset = channel * state_stride;
+        let weight_offset = channel * kernel_size;
 
         let x = unsafe { (*in_out.add(channel)).to_f32().unwrap() };
 
@@ -33,9 +36,9 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
 
         for tap in 0..tap_count {
             acc += unsafe { (*state.add(state_offset + tap)).to_f32().unwrap() }
-                * unsafe { (*conv_weight.add(w_offset + tap)).to_f32().unwrap() };
+                * unsafe { (*conv_weight.add(weight_offset + tap)).to_f32().unwrap() };
         }
-        acc += x * unsafe { (*conv_weight.add(w_offset + tap_count)).to_f32().unwrap() };
+        acc += x * unsafe { (*conv_weight.add(weight_offset + tap_count)).to_f32().unwrap() };
 
         unsafe {
             *in_out.add(channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();

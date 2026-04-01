@@ -41,7 +41,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
       HEAD_K_DIM % METAL_SIMD_SIZE == 0,
       "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
   );
-  constexpr uint n_per_t = HEAD_K_DIM / METAL_SIMD_SIZE;
+  constexpr uint elems_per_thread = HEAD_K_DIM / METAL_SIMD_SIZE;
 
   const uint dk_lane = tid % METAL_SIMD_SIZE;
   const uint dv_local = tid / METAL_SIMD_SIZE;
@@ -52,7 +52,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   const uint hk = hv_idx / groups_per_head;
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-  const uint dk_base = dk_lane * n_per_t;
+  const uint dk_base = dk_lane * elems_per_thread;
 
   // Pointer bases — increment per token instead of re-computing index
   device const float* q_ptr = q_norm + hk * HEAD_K_DIM + dk_base;
@@ -67,9 +67,9 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   device T* out_ptr = out + hv_idx * head_v_dim + dv_idx;
 
   // Load state into registers
-  float s[n_per_t];
+  float s[elems_per_thread];
   METAL_PRAGMA_UNROLL
-  for (uint i = 0; i < n_per_t; ++i)
+  for (uint i = 0; i < elems_per_thread; ++i)
     s[i] = active ? float(state_ptr[i]) : 0.0f;
 
   for (uint token = 0; token < suffix_len; ++token) {
@@ -77,15 +77,15 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     float beta = *beta_ptr;
 
     // Load and cache k_norm (used in both passes)
-    float k[n_per_t];
+    float k[elems_per_thread];
     METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < n_per_t; ++i)
+    for (uint i = 0; i < elems_per_thread; ++i)
       k[i] = k_ptr[i];
 
     // Pass 1: decay state + kv_mem = (decayed S) @ k
     float kv_partial = 0.0f;
     METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < n_per_t; ++i) {
+    for (uint i = 0; i < elems_per_thread; ++i) {
       s[i] *= decay;
       kv_partial += s[i] * k[i];
     }
@@ -98,7 +98,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     // Pass 2: update state + output = new_S @ q
     float out_partial = 0.0f;
     METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < n_per_t; ++i) {
+    for (uint i = 0; i < elems_per_thread; ++i) {
       s[i] += k[i] * delta;
       out_partial += s[i] * q_ptr[i];
     }
@@ -120,7 +120,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   // Write final state
   if (active) {
     METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < n_per_t; ++i)
+    for (uint i = 0; i < elems_per_thread; ++i)
       state_ptr[i] = static_cast<T>(s[i]);
   }
 }

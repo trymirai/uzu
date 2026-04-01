@@ -33,11 +33,11 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     let groups_per_head = num_v_heads / num_k_heads;
 
     for token in 0..suffix_len {
-        let tok = token * total_proj_dim;
+        let tok_offset = token * total_proj_dim;
 
         for hk in 0..num_k_heads {
             // Load and L2-normalize q
-            let q_off = tok + hk * head_k_dim;
+            let q_off = tok_offset + hk * head_k_dim;
             let mut q_sq = 0.0f32;
             for j in 0..head_k_dim {
                 let v = unsafe { (*in_proj.add(q_off + j)).to_f32().unwrap() };
@@ -51,7 +51,7 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
             }
 
             // Load and L2-normalize k
-            let k_off = tok + key_dim + hk * head_k_dim;
+            let k_off = tok_offset + key_dim + hk * head_k_dim;
             let mut k_sq = 0.0f32;
             for j in 0..head_k_dim {
                 let v = unsafe { (*in_proj.add(k_off + j)).to_f32().unwrap() };
@@ -67,12 +67,13 @@ pub fn delta_net_prefill_prep<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
             for group in 0..groups_per_head {
                 let hv = hk * groups_per_head + group;
 
-                let beta_raw = unsafe { (*in_proj.add(tok + conv_dim + value_dim + hv)).to_f32().unwrap() };
+                let beta_raw = unsafe { (*in_proj.add(tok_offset + conv_dim + value_dim + hv)).to_f32().unwrap() };
                 let beta = 1.0 / (1.0 + (-beta_raw).exp());
 
                 let a_log_val = unsafe { (*a_log.add(hv)).to_f32().unwrap() };
                 let dt_bias_val = unsafe { (*dt_bias.add(hv)).to_f32().unwrap() };
-                let a_raw = unsafe { (*in_proj.add(tok + conv_dim + value_dim + num_v_heads + hv)).to_f32().unwrap() };
+                let a_raw =
+                    unsafe { (*in_proj.add(tok_offset + conv_dim + value_dim + num_v_heads + hv)).to_f32().unwrap() };
                 let sp_in = a_raw + dt_bias_val;
                 let sp = if sp_in > 20.0 {
                     sp_in
