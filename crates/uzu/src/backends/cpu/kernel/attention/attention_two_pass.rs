@@ -8,7 +8,6 @@ use crate::{
 };
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;
-const SEQUENCE_BLOCK_SIZE_1: u32 = 8;
 
 #[kernel(AttentionTwoPass1)]
 #[variants(T, f32, f16, bf16)]
@@ -29,6 +28,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[optional(is_kv_cache_ring)] ring_params: Option<crate::backends::common::gpu_types::ring::RingParams>,
     scale: f32,
     num_heads: u32,
+    #[allow(unused)] num_groups: u32,
     suffix_length: u32,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
@@ -80,55 +80,47 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                 let mut sum_exp_score = 0.0f32;
 
                 if has_sinks && block_idx == 0 {
-                    let q_head_idx = head_idx % num_heads;
-                    max_score = unsafe { *sinks.unwrap().add(q_head_idx as usize) };
+                    max_score = unsafe { *sinks.unwrap().add(head_idx as usize) };
                     sum_exp_score = 1.0;
                 }
 
                 // Iterate over sequence positions assigned to this block
-                let mut chunk_start = block_idx * SEQUENCE_BLOCK_SIZE_1;
-                while chunk_start < sequence_length {
-                    for t in 0..SEQUENCE_BLOCK_SIZE_1 {
-                        let i = chunk_start + t;
-                        if i >= sequence_length {
-                            break;
+                let mut i = block_idx;
+                while i < sequence_length {
+                    if should_use_key(
+                        ring_params,
+                        trie,
+                        sliding_window_size,
+                        q_seq_idx,
+                        prefix_length,
+                        suffix_position,
+                        query_position,
+                        i,
+                        is_causal,
+                    ) {
+                        let keys_ptr = unsafe { keys_base.add((i * k_seq_stride) as usize) };
+
+                        // Compute the i-th score
+                        let mut score = 0.0f32;
+                        for j in 0..HEAD_DIM as usize {
+                            score += q[j] * unsafe { *keys_ptr.add(j) }.to_f32().unwrap();
                         }
 
-                        if should_use_key(
-                            ring_params,
-                            trie,
-                            sliding_window_size,
-                            q_seq_idx,
-                            prefix_length,
-                            suffix_position,
-                            query_position,
-                            i,
-                            is_causal,
-                        ) {
-                            let keys_ptr = unsafe { keys_base.add((i * k_seq_stride) as usize) };
+                        // Update the accumulators
+                        let new_max = f32::max(max_score, score);
+                        let factor = (max_score - new_max).exp();
+                        let exp_score = (score - new_max).exp();
 
-                            // Compute the i-th score
-                            let mut score = 0.0f32;
-                            for j in 0..HEAD_DIM as usize {
-                                score += q[j] * unsafe { *keys_ptr.add(j) }.to_f32().unwrap();
-                            }
+                        max_score = new_max;
+                        sum_exp_score = sum_exp_score * factor + exp_score;
 
-                            // Update the accumulators
-                            let new_max = f32::max(max_score, score);
-                            let factor = (max_score - new_max).exp();
-                            let exp_score = (score - new_max).exp();
-
-                            max_score = new_max;
-                            sum_exp_score = sum_exp_score * factor + exp_score;
-
-                            // Update the output accumulator
-                            let values_ptr = unsafe { values_base.add((i * v_seq_stride) as usize) };
-                            for j in 0..HEAD_DIM as usize {
-                                o[j] = o[j] * factor + exp_score * unsafe { *values_ptr.add(j) }.to_f32().unwrap();
-                            }
+                        // Update the output accumulator
+                        let values_ptr = unsafe { values_base.add((i * v_seq_stride) as usize) };
+                        for j in 0..HEAD_DIM as usize {
+                            o[j] = o[j] * factor + exp_score * unsafe { *values_ptr.add(j) }.to_f32().unwrap();
                         }
                     }
-                    chunk_start += TOTAL_BLOCKS_COUNT * SEQUENCE_BLOCK_SIZE_1;
+                    i += TOTAL_BLOCKS_COUNT;
                 }
 
                 // Write partial output, sum, and max for this block

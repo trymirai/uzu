@@ -130,6 +130,7 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         None,
         input.scale,
         input.num_heads,
+        input.num_heads / input.gqa_factor,
         input.suffix_length,
         None::<&B::Buffer>,
         None,
