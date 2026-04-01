@@ -182,11 +182,8 @@ impl<B: Backend> MoeBlock<B> {
             ActivationType::SILU {
                 ..
             } => 2,
-            ActivationType::TANH => {
-                panic!("Tanh activation is not supported for MoE kernels")
-            },
-            ActivationType::IDENTITY => {
-                panic!("Identity activation is not supported for MoE kernels")
+            _ => {
+                panic!("{}", format!("{:?} is not supported for MoE kernels", activation))
             },
         }
     }

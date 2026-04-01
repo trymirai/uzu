@@ -3,7 +3,6 @@
 #include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "ssm_common.h"
 
 using namespace metal;
 
@@ -79,7 +78,7 @@ PUBLIC KERNEL(SSDPrefill64)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
+    const float decay_val = fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -176,7 +175,7 @@ PUBLIC KERNEL(SSDPrefill)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
+    const float decay_val = fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -244,7 +243,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
 
     const T this_x = x[x_idx];
     const T dt_raw_val = dt_raw[dt_idx];
-    const T this_dt = softplus(dt_raw_val);
+    const T this_dt = activate_softplus(dt_raw_val);
     const T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
     const T this_D = d[h_idx];
     const T this_z = activate_silu(z[x_idx]);

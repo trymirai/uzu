@@ -1,7 +1,6 @@
 #include <metal_stdlib>
 #include "../activation/activations.h"
 #include "../common/dsl.h"
-#include "ssm_common.h"
 
 using namespace metal;
 
@@ -52,7 +51,7 @@ PUBLIC KERNEL(SSDUpdate)(
   // load data
   T this_x = x[x_idx];
   T dt_raw_val = dt_raw[dt_idx];
-  T this_dt = softplus(dt_raw_val);
+  T this_dt = activate_softplus(dt_raw_val);
   T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
   T this_d = d[h_idx];
   T this_z = z[x_idx];

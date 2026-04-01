@@ -37,6 +37,17 @@ inline T activate_leaky_relu(T x, float alpha) {
 }
 
 template <typename T>
+inline T activate_softplus(T x) {
+  float xf = static_cast<float>(x);
+  if (xf > 20.0f) {
+    return x;
+  }
+  
+  float result = log(1.0f + fast::exp(xf));
+  return static_cast<T>(result);
+}
+
+template <typename T>
 inline T activate_tanh(T x) {
   return static_cast<T>(metal::tanh(float(x)));
 }
@@ -52,6 +63,8 @@ inline T activate(T x, ActivationType type) {
     return activate_tanh(x);
   case IDENTITY:
     return x;
+  case SOFTPLUS:
+    return activate_softplus(x);
   }
 }
 

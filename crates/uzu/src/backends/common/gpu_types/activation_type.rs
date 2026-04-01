@@ -10,6 +10,7 @@ pub enum ActivationType {
     GELU,
     TANH,
     IDENTITY,
+    SOFTPLUS,
 }
 
 impl ActivationType {
@@ -24,6 +25,7 @@ impl ActivationType {
             ActivationType::GELU => gelu(x),
             ActivationType::TANH => tanh_activation(x),
             ActivationType::IDENTITY => x,
+            ActivationType::SOFTPLUS => softplus(x),
         }
     }
 }
@@ -51,4 +53,11 @@ fn gelu<T: Float>(x: T) -> T {
 fn tanh_activation<T: Float>(x: T) -> T {
     let x_float = x.to_f32().unwrap();
     T::from(x_float.tanh()).unwrap()
+}
+
+fn softplus<T: Float>(x: T) -> T {
+    if x > T::from(20.0).unwrap() {
+        return x;
+    }
+    (T::one() + x.exp()).ln()
 }

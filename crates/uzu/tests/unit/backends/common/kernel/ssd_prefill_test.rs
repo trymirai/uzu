@@ -28,14 +28,6 @@ fn silu_scalar(x: f32) -> f32 {
     x * y
 }
 
-fn softplus_f32(x: f32) -> f32 {
-    if x > 20.0 {
-        x
-    } else {
-        (1.0 + x.exp()).ln()
-    }
-}
-
 fn write_buffer(
     buf: &ProtocolObject<dyn MTLBuffer>,
     data: &[f32],
@@ -96,7 +88,7 @@ fn ssd_prefill_cpu_reference(
 
                 let x_val = x_data[x_idx];
                 let dt_raw = dt_raw_data[dt_idx];
-                let dt_val = softplus_f32(dt_raw);
+                let dt_val = ActivationType::SOFTPLUS.activate(dt_raw);
                 let decay_val = (-dt_val).exp();
                 let dt_scaled_input = x_val;
                 let gate = silu_scalar(z_data[x_idx]);
