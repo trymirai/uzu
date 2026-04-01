@@ -111,7 +111,7 @@ pub fn conv1d_decode<T: ArrayElement + Float>(
                     *c_out.add(dst) = activated;
                 }
                 if state_taps == 0 {
-                    return;
+                    break;
                 }
 
                 for tap in 0..state_taps - 1 {
