@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "moe_commons.h"
 using namespace metal;
 
 // === Pass A: Vectorized GEMV with float4 loads ===
@@ -109,13 +109,14 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
 
     float activated;
     if (gating_sel <= 1) {
-      activated =
-          (gating_sel == 0) ? gelu_approx(up_val) : silu(up_val, silu_alpha);
+      activated = (gating_sel == 0) ? activate_gelu(up_val)
+                                    : activate_silu_alpha(up_val, silu_alpha);
     } else {
       float gate_val = acc_gate + float(up_biases[bias_base + d_ff + h_idx]);
       gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
-      float gate_act = (gating_sel == 2) ? silu(gate_val, silu_alpha)
-                                         : gelu_approx(gate_val);
+      float gate_act = (gating_sel == 2)
+                           ? activate_silu_alpha(gate_val, silu_alpha)
+                           : activate_gelu(gate_val);
       activated = gate_act * up_val;
     }
 
