@@ -8,8 +8,8 @@ use crate::{
     backends::common::{Backend, Encoder},
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
-        Attention, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer, TensorAddSwap,
-        TensorCopy,
+        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer,
+        TensorAddSwap, TensorCopy,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -68,11 +68,18 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
+                let layer_num_heads = attention_config.num_heads.unwrap_or(num_heads);
+                let layer_num_groups = attention_config.num_groups.unwrap_or(num_groups);
+                let layer_head_dim = attention_config.head_dim.unwrap_or(head_dim);
+
+                let q_dim = layer_num_heads * layer_head_dim;
+                let kv_dim = layer_num_groups * layer_head_dim;
+
                 let qkv_projection = <dyn Linear<B>>::new(
                     &attention_config.qkv_projection_config,
                     attention_config.has_qkv_biases,
                     model_dim,
-                    [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
+                    [q_dim, kv_dim, kv_dim],
                     context,
                     &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
                     ArrayId::Main,
@@ -80,13 +87,18 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create qkv projection");
 
-                let gate_projection = if attention_config.has_gate {
+                let has_gate = attention_config.has_gate || attention_config.gate_projection_config.is_some();
+                let gate_projection = if has_gate {
+                    let gate_config = attention_config
+                        .gate_projection_config
+                        .as_ref()
+                        .unwrap_or(&attention_config.qkv_projection_config);
                     Some(
                         <dyn Linear<B>>::new(
-                            &attention_config.qkv_projection_config,
+                            gate_config,
                             false,
                             model_dim,
-                            [num_heads * head_dim],
+                            [q_dim],
                             context,
                             &decoder_layer_loader.subtree("mixer.gate_projection").unwrap(),
                             ArrayId::Main,
@@ -107,9 +119,9 @@ impl<B: Backend> LayerExecutables<B> {
                             attention_config.key_norm_config.clone(),
                             ArrayId::QKV,
                             &decoder_layer_loader.subtree("mixer").unwrap(),
-                            num_heads,
-                            num_groups,
-                            head_dim,
+                            layer_num_heads,
+                            layer_num_groups,
+                            layer_head_dim,
                         ) {
                             Ok(qk_norm) => Some(qk_norm),
                             Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
@@ -121,7 +133,7 @@ impl<B: Backend> LayerExecutables<B> {
                 let out_projection = <dyn Linear<B>>::new(
                     &attention_config.out_projection_config,
                     attention_config.has_out_biases,
-                    num_heads * head_dim,
+                    q_dim,
                     [model_dim],
                     context,
                     &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
@@ -138,7 +150,7 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_sinks,
                     attention_config.is_causal.unwrap_or(true),
                     attention_config.sliding_window_size,
-                    attention_config.has_gate,
+                    has_gate,
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
@@ -180,7 +192,15 @@ impl<B: Backend> LayerExecutables<B> {
                     mixer,
                 }
             },
-            MixerConfig::DeltaNet(_) => unimplemented!("DeltaNet mixer"),
+            MixerConfig::DeltaNet(delta_net_config) => {
+                let mixer =
+                    DeltaNetMixer::new(context, delta_net_config.clone(), layer_index, model_dim, decoder_layer_loader)
+                        .expect("Failed to create DeltaNet mixer");
+
+                MixerExecutables::DeltaNet {
+                    mixer,
+                }
+            },
         };
 
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
@@ -308,6 +328,15 @@ impl<B: Backend> LayerExecutables<B> {
                 }
             },
             MixerExecutables::ShortConv {
+                mixer,
+            } => {
+                mixer.encode(state, encoder)?;
+                #[cfg(feature = "tracing")]
+                if let Some(ref layer_traces) = layer_traces {
+                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
+                }
+            },
+            MixerExecutables::DeltaNet {
                 mixer,
             } => {
                 mixer.encode(state, encoder)?;

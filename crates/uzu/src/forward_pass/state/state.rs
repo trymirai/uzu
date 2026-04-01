@@ -59,7 +59,7 @@ pub struct ForwardPassState<B: Backend> {
     token_bitmask: Option<Array<B>>,
     pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
     pub common_aux: CommonAuxBuffers<B>,
-    llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
+    pub llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
     mode: ForwardPassMode<B>,
 }
 
@@ -469,6 +469,14 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::ShortConvSuffixState(layer_index) => {
                 let cache = self.llm_state().cache_layers.borrow();
                 cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").suffix_state.clone()
+            },
+            ArrayId::DeltaNetConvState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").conv_state.clone()
+            },
+            ArrayId::DeltaNetSsmState(layer_index) => {
+                let cache = self.llm_state().cache_layers.borrow();
+                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").ssm_state.clone()
             },
 
             // MoE arrays (LLM only)
