@@ -137,33 +137,30 @@ PUBLIC KERNEL(Conv1dScan)(
     if (has_bias) {
       acc = float(b[channel_idx]);
     }
+
     for (uint tap = 0; tap < kernel_size; ++tap) {
-      const uint padded_idx = size_t(token_idx) + size_t(tap);
-      float sample = 0.0f;
-      const uint padded_index = size_t(padded_idx) * row_stride + channel_idx;
-      sample = float(padded[padded_index]);
+      const uint padded_index = (token_idx + tap) * row_stride + channel_idx;
+      float sample = float(padded[padded_index]);
       acc += float(w_row[tap]) * sample;
     }
 
     const T activated = activate(static_cast<T>(acc), activation_type);
     if (channel_idx < inner_dim) {
-      const size_t dst = size_t(token_idx) * inner_dim + channel_idx;
+      const uint dst = token_idx * inner_dim + channel_idx;
       x_out[dst] = activated;
     } else if (channel_idx < inner_dim + proj_dim) {
-      const size_t dst =
-          size_t(token_idx) * proj_dim + (channel_idx - inner_dim);
+      const uint dst = token_idx * proj_dim + (channel_idx - inner_dim);
       b_out[dst] = activated;
     } else if (channel_idx < inner_dim + 2 * proj_dim) {
-      const size_t dst =
-          size_t(token_idx) * proj_dim + (channel_idx - inner_dim - proj_dim);
+      const uint dst = token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
       c_out[dst] = activated;
     }
   } else if (tap_count > 0) {
-    const size_t tap = size_t(token_idx - suffix_len);
-    if (tap >= size_t(tap_count)) {
+    const uint tap = token_idx - suffix_len;
+    if (tap >= tap_count) {
       return;
     }
-    const size_t padded_index = size_t(token_idx) * row_stride + channel_idx;
+    const uint padded_index = token_idx * row_stride + channel_idx;
     const float sample = float(padded[padded_index]);
     state_out[state_offset + tap] = static_cast<T>(sample);
   }
