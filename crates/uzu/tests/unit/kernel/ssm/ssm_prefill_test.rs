@@ -43,6 +43,7 @@ struct Output<T: ArrayElement + Float> {
 }
 
 enum KernelType {
+    Prefill,
     Sequential,
 }
 
@@ -117,6 +118,30 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     match kernel_type {
+        KernelType::Prefill => {
+            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
+                .expect("Failed to create SSDPrefillKernel");
+            kernel.encode(
+                x_array.buffer().borrow().deref(),
+                dt_array.buffer().borrow().deref(),
+                b_array.buffer().borrow().deref(),
+                c_array.buffer().borrow().deref(),
+                d_array.buffer().borrow().deref(),
+                z_array.buffer().borrow().deref(),
+                state_array.buffer().borrow_mut().deref_mut(),
+                y_array.buffer().borrow_mut().deref_mut(),
+                input.suffix_len as u32,
+                input.group_size,
+                input.state_dim as i32,
+                &x_strides,
+                &dt_strides,
+                &cb_strides,
+                &state_strides,
+                input.num_heads as u32,
+                input.head_dim as u32,
+                &mut encoder,
+            );
+        },
         KernelType::Sequential => {
             let kernel =
                 <<B as Backend>::Kernels as Kernels>::SSDPrefillSequentialKernel::new(&context, T::data_type())
@@ -213,28 +238,53 @@ fn test_shape(
 }
 
 // --- Sequential ---
-
 #[test]
 fn test_sequential_basic() {
-    test_shape(&KernelType::Sequential, 512, 32, 64, 64, 1, "basic");
+    test_shape(&KernelType::Sequential, 512, 32, 64, 64, 1, "sequential_basic");
 }
 
 #[test]
 fn test_sequential_small() {
-    test_shape(&KernelType::Sequential, 4, 4, 4, 8, 1, "small");
+    test_shape(&KernelType::Sequential, 4, 4, 4, 8, 1, "sequential_small");
 }
 
 #[test]
 fn test_sequential_minimal() {
-    test_shape(&KernelType::Sequential, 1, 1, 1, 1, 1, "minimal");
+    test_shape(&KernelType::Sequential, 1, 1, 1, 1, 1, "sequential_minimal");
 }
 
 #[test]
 fn test_sequential_multi_group() {
-    test_shape(&KernelType::Sequential, 8, 8, 4, 16, 4, "multi_group");
+    test_shape(&KernelType::Sequential, 8, 8, 4, 16, 4, "sequential_multi_group");
 }
 
 #[test]
 fn test_sequential_group_per_head() {
-    test_shape(&KernelType::Sequential, 8, 4, 4, 8, 1, "group_per_head");
+    test_shape(&KernelType::Sequential, 8, 4, 4, 8, 1, "sequential_group_per_head");
+}
+
+// --- Prefill ---
+#[test]
+fn test_prefill_basic() {
+    test_shape(&KernelType::Prefill, 512, 32, 64, 64, 1, "prefill_basic");
+}
+
+#[test]
+fn test_prefill_small() {
+    test_shape(&KernelType::Prefill, 4, 4, 4, 8, 1, "prefill_small");
+}
+
+#[test]
+fn test_prefill_minimal() {
+    test_shape(&KernelType::Prefill, 1, 1, 1, 1, 1, "prefill_minimal");
+}
+
+#[test]
+fn test_prefill_multi_group() {
+    test_shape(&KernelType::Prefill, 8, 8, 4, 16, 4, "prefill_multi_group");
+}
+
+#[test]
+fn test_prefill_group_per_head() {
+    test_shape(&KernelType::Prefill, 8, 4, 4, 8, 1, "prefill_group_per_head");
 }

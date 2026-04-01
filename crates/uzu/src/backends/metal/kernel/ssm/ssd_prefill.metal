@@ -166,8 +166,12 @@ PUBLIC KERNEL(SSDPrefill)(
 #pragma unroll
   for (int chunk = 0; chunk < chunk_count; ++chunk) {
     const int idx = chunk * int(thread_context.simdgroup_size) + int(lane_idx);
-    const uint state_idx = state_base + idx * state_inner_stride;
-    lane_states[chunk] = float(state[state_idx]);
+    if (idx < state_dim) {
+      const uint state_idx = state_base + idx * state_inner_stride;
+      lane_states[chunk] = float(state[state_idx]);
+    } else {
+      lane_states[chunk] = 0.0f;
+    }
   }
 
   for (uint token = 0; token < suffix_len; ++token) {
@@ -185,12 +189,14 @@ PUBLIC KERNEL(SSDPrefill)(
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
       const int idx =
           chunk * int(thread_context.simdgroup_size) + int(lane_idx);
-      const uint cb_idx =
-          cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
-      const float new_state =
-          decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
-      lane_states[chunk] = new_state;
-      contrib_sum += new_state * float(c[cb_idx]);
+      if (idx < state_dim) {
+        const uint cb_idx =
+            cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
+        const float new_state =
+            decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
+        lane_states[chunk] = new_state;
+        contrib_sum += new_state * float(c[cb_idx]);
+      }
     }
 
     float dot = simd_sum(contrib_sum);
@@ -202,8 +208,10 @@ PUBLIC KERNEL(SSDPrefill)(
 #pragma unroll
   for (int chunk = 0; chunk < chunk_count; ++chunk) {
     const int idx = chunk * int(thread_context.simdgroup_size) + int(lane_idx);
-    const uint state_idx = state_base + uint(idx) * state_inner_stride;
-    state[state_idx] = static_cast<T>(lane_states[chunk]);
+    if (idx < state_dim) {
+      const uint state_idx = state_base + uint(idx) * state_inner_stride;
+      state[state_idx] = static_cast<T>(lane_states[chunk]);
+    }
   }
 }
 
