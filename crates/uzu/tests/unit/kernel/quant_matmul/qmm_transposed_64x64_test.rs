@@ -5,7 +5,7 @@ use num_traits::Float;
 use uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedWideKernel},
+        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposed64x64Kernel},
         cpu::Cpu,
     },
 };
@@ -15,7 +15,7 @@ use crate::common::helpers::alloc_buffer_with_data;
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel::new(
+    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel::new(
         &context,
         T::data_type(),
         input.group_size,
@@ -23,7 +23,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         input.use_zero_points,
         input.use_mlx_quant,
     )
-    .expect("Failed to create QuantizedMatmulQmmTransposedWideKernel");
+    .expect("Failed to create QuantizedMatmulQmmTransposed64x64Kernel");
 
     let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
     let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
@@ -56,7 +56,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
 }
 
-/// Create test data for transposed wide qmm: x[m×k] * w_transposed[n×k] = y[m×n]
+/// Create test data for transposed 64x64 qmm: x[m×k] * w_transposed[n×k] = y[m×n]
 /// Weights are in transposed [n × k] layout.
 fn get_test_data_basic<T: ArrayElement + Float>(
     m: usize,
@@ -245,7 +245,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         assert_eq!(
             errors,
             0,
-            "QMM transposed wide kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+            "QMM transposed 64x64 kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
             std::any::type_name::<B>(),
             input.m,
             input.k,
@@ -264,7 +264,7 @@ fn get_test_dims(
     bits: i32,
 ) -> Vec<(usize, usize, usize)> {
     let gs = group_size as usize;
-    // Wide kernel: BM=64, BK=32, BN=64.
+    // 64x64 kernel: BM=64, BK=64, BN=64.
     // K must be >= group_size (transposed grouping along K).
     // N must be a multiple of 64 (BN tile size).
     // bf16 8-bit: keep dims small to avoid catastrophic cancellation.
@@ -302,11 +302,6 @@ fn test_edge(
 // -- 4-bit, zero points -------------------------------------------------------
 
 #[test]
-fn test_bf16_gs32_4bit_zp() {
-    test_basic(32, 4, true, false);
-}
-
-#[test]
 fn test_bf16_gs64_4bit_zp() {
     test_basic(64, 4, true, false);
 }
@@ -317,11 +312,6 @@ fn test_bf16_gs128_4bit_zp() {
 }
 
 // -- 8-bit, zero points -------------------------------------------------------
-
-#[test]
-fn test_bf16_gs32_8bit_zp() {
-    test_basic(32, 8, true, false);
-}
 
 #[test]
 fn test_bf16_gs64_8bit_zp() {
@@ -336,11 +326,6 @@ fn test_bf16_gs128_8bit_zp() {
 // -- 4-bit, mlx quant ----------------------------------------------------------
 
 #[test]
-fn test_bf16_gs32_4bit_mlx() {
-    test_basic(32, 4, false, true);
-}
-
-#[test]
 fn test_bf16_gs64_4bit_mlx() {
     test_basic(64, 4, false, true);
 }
@@ -351,11 +336,6 @@ fn test_bf16_gs128_4bit_mlx() {
 }
 
 // -- 8-bit, mlx quant ----------------------------------------------------------
-
-#[test]
-fn test_bf16_gs32_8bit_mlx() {
-    test_basic(32, 8, false, true);
-}
 
 #[test]
 fn test_bf16_gs64_8bit_mlx() {
@@ -371,20 +351,20 @@ fn test_bf16_gs128_8bit_mlx() {
 
 #[test]
 fn test_edge_bf16_4bit_zp() {
-    test_edge(32, 4, true, false);
+    test_edge(64, 4, true, false);
 }
 
 #[test]
 fn test_edge_bf16_8bit_zp() {
-    test_edge(32, 8, true, false);
+    test_edge(64, 8, true, false);
 }
 
 #[test]
 fn test_edge_bf16_4bit_mlx() {
-    test_edge(32, 4, false, true);
+    test_edge(64, 4, false, true);
 }
 
 #[test]
 fn test_edge_bf16_8bit_mlx() {
-    test_edge(32, 8, false, true);
+    test_edge(64, 8, false, true);
 }

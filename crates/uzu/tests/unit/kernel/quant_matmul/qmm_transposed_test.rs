@@ -4,88 +4,16 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayElement, DataType,
-    backends::common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
+    backends::{
+        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
+        cpu::Cpu,
+    },
 };
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::common::helpers::alloc_buffer_with_data;
 
-/// Compute reference output using the same formula as qmm.rs but with
-/// transposed [N × K] weight indexing and grouping along K.
-fn compute_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
-    let k = input.k as usize;
-    let n = input.n as usize;
-    let m = input.m as usize;
-    let group_size = input.group_size as usize;
-    let num_groups_k = (k + group_size - 1) / group_size;
-    let bits = input.bits;
-
-    let zp_stride = if bits == 4 {
-        (num_groups_k + 1) / 2
-    } else {
-        num_groups_k
-    };
-
-    let w = &input.w_packed;
-    let scales = &input.scales;
-
-    let mut y = vec![T::zero(); m * n];
-
-    for i in 0..m {
-        for j in 0..n {
-            let mut acc = 0.0f32;
-
-            for l in 0..k {
-                let group_idx = l / group_size;
-
-                // Transposed: weight at row j, col l
-                let weight_linear_idx = j * k + l;
-
-                let val_q = if bits == 4 {
-                    let u32_idx = weight_linear_idx / 8;
-                    let bit_offset = (weight_linear_idx % 8) * 4;
-                    ((w[u32_idx] >> bit_offset) & 0xF) as f32
-                } else {
-                    let u32_idx = weight_linear_idx / 4;
-                    let byte_offset = (weight_linear_idx % 4) * 8;
-                    ((w[u32_idx] >> byte_offset) & 0xFF) as f32
-                };
-
-                let val_a = input.x[i * k + l].to_f32().unwrap();
-                let scale = scales[j * num_groups_k + group_idx].to_f32().unwrap();
-
-                let bias = if input.use_zero_points {
-                    let zp = input.zero_points.as_ref().unwrap();
-                    let zp_val = if bits == 4 {
-                        let byte_index = j * zp_stride + (group_idx >> 1);
-                        let byte_val = zp[byte_index];
-                        if (group_idx & 1) == 0 {
-                            (byte_val & 0x0F) as f32
-                        } else {
-                            ((byte_val >> 4) & 0x0F) as f32
-                        }
-                    } else {
-                        zp[j * zp_stride + group_idx] as f32
-                    };
-                    -scale * zp_val
-                } else if input.use_mlx_quant {
-                    let biases = input.biases.as_ref().unwrap();
-                    biases[j * num_groups_k + group_idx].to_f32().unwrap()
-                } else {
-                    0.0f32
-                };
-
-                acc += val_a * (scale * val_q + bias);
-            }
-
-            y[i * n + j] = T::from(acc).unwrap();
-        }
-    }
-
-    y
-}
-
-fn get_gpu_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let aligned_n = (input.n % 32) == 0;
     let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
@@ -228,7 +156,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         use_mlx_quant,
     };
 
-    let expected = compute_reference(&input);
+    let expected = get_output::<Cpu, T>(&input);
     (input, expected)
 }
 
@@ -287,7 +215,7 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         use_mlx_quant,
     };
 
-    let expected = compute_reference(&input);
+    let expected = get_output::<Cpu, T>(&input);
     (input, expected)
 }
 
@@ -306,7 +234,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_gpu_output::<B, T>(input);
+        let output = get_output::<B, T>(input);
         assert_eq!(expected.len(), output.len(), "Output length mismatch");
 
         let mut errors = 0;
