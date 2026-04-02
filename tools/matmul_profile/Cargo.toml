@@ -2,6 +2,7 @@
 name = "matmul-profile"
 version.workspace = true
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 uzu = { path = "../../crates/uzu", features = ["metal"] }

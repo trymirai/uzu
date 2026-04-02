@@ -5,7 +5,10 @@ use uzu::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
+            kernel::{
+                ManualKernels,
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            },
         },
         metal::Metal,
     },
@@ -18,7 +21,6 @@ enum KernelChoice {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppDirect,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -70,38 +72,35 @@ fn fill_buffer_random(
 
 fn run_iteration(
     context: &Ctx,
-    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
+    kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     kernel_choice: KernelChoice,
     a_buffer: &<Metal as Backend>::Buffer,
     b_buffer: &<Metal as Backend>::Buffer,
     d_buffer: &mut <Metal as Backend>::Buffer,
-    m: i32,
-    k: i32,
-    n: i32,
+    m: u32,
+    k: u32,
+    n: u32,
 ) -> f64 {
     let mut encoder = Encoder::<Metal>::new(context).unwrap();
+
+    let ab_scale = match kernel_choice {
+        KernelChoice::Gemv | KernelChoice::GemmMpp => 1.0,
+        KernelChoice::Gemm => 0.5,
+    };
 
     let arguments = MatmulArguments {
         a: a_buffer,
         a_offset: 0,
         b: b_buffer,
+        ab_scale,
+        c: MatmulArgumentC::None,
         d: d_buffer,
-        bias: None,
-        batch: m,
+        batch_dim: m,
         input_dim: k,
         output_dim: n,
-        leading_dimension_a: k,
-        leading_dimension_b: k,
-        leading_dimension_d: n,
-        transpose_b: true,
     };
 
-    match kernel_choice {
-        KernelChoice::Gemv => kernel.encode_gemv(context, arguments, &mut encoder).unwrap(),
-        KernelChoice::Gemm => kernel.encode_gemm(context, arguments, &mut encoder).unwrap(),
-        KernelChoice::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut encoder).unwrap(),
-        KernelChoice::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, arguments, &mut encoder).unwrap(),
-    }
+    kernel.encode(context, arguments, &mut encoder);
 
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
@@ -109,6 +108,9 @@ fn run_iteration(
 
 fn main() {
     let args = Args::parse();
+    let m = args.m as u32;
+    let k = args.k as u32;
+    let n = args.n as u32;
 
     let data_type = match args.dtype {
         DtypeChoice::Bf16 => DataType::BF16,
@@ -125,10 +127,22 @@ fn main() {
         args.kernel, args.m, args.k, args.n, args.dtype, args.warmup, args.iterations
     );
 
+    unsafe {
+        match args.kernel {
+            // Keep gemv enabled for the requested M.
+            KernelChoice::Gemv => std::env::set_var("UZU_GEMV_MAX_BATCH", args.m.to_string()),
+            // Disable gemv fallback so we can target gemm/gemm_mpp behavior.
+            KernelChoice::Gemm | KernelChoice::GemmMpp => std::env::set_var("UZU_GEMV_MAX_BATCH", "0"),
+        }
+    }
+
     let context = Ctx::new().expect("Metal context required");
     eprintln!("Device: {}", context.device.name());
+    if matches!(args.kernel, KernelChoice::GemmMpp) && !context.device_capabilities().supports_mxu {
+        eprintln!("Warning: this device has no MXU support; GemmMpp selection will fall back to Gemm");
+    }
 
-    let mut kernel = <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(&context, data_type)
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, data_type)
         .expect("Failed to create kernel");
 
     let a_buffer = fill_buffer_random(&context, a_bytes);
@@ -136,33 +150,13 @@ fn main() {
     let mut d_buffer = fill_buffer_random(&context, d_bytes);
 
     for i in 0..args.warmup {
-        let ms = run_iteration(
-            &context,
-            &mut kernel,
-            args.kernel,
-            &a_buffer,
-            &b_buffer,
-            &mut d_buffer,
-            args.m as i32,
-            args.k as i32,
-            args.n as i32,
-        );
+        let ms = run_iteration(&context, &mut kernel, args.kernel, &a_buffer, &b_buffer, &mut d_buffer, m, k, n);
         eprintln!("  warmup {}: {:.3} ms", i, ms);
     }
 
     let mut total_ms = 0.0;
     for i in 0..args.iterations {
-        let ms = run_iteration(
-            &context,
-            &mut kernel,
-            args.kernel,
-            &a_buffer,
-            &b_buffer,
-            &mut d_buffer,
-            args.m as i32,
-            args.k as i32,
-            args.n as i32,
-        );
+        let ms = run_iteration(&context, &mut kernel, args.kernel, &a_buffer, &b_buffer, &mut d_buffer, m, k, n);
         total_ms += ms;
         if i < 5 || i == args.iterations - 1 {
             eprintln!("  iter {}: {:.3} ms", i, ms);
