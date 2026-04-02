@@ -24,7 +24,8 @@ struct ThreadgroupGemmMpp {
   METAL_CONST short PREFETCH_K = 32;
   METAL_CONST short THREADGROUP_PADDING = short(16 / sizeof(T));
   METAL_CONST short THREADGROUP_LD = PREFETCH_K + THREADGROUP_PADDING;
-  METAL_CONST short THREADGROUP_SIZE = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
+  METAL_CONST short THREADGROUP_SIZE =
+      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
   METAL_CONST short SIMDGROUP_BLOCK_M = BLOCK_ROWS / SIMDGROUPS_PER_ROW;
   METAL_CONST short SIMDGROUP_BLOCK_N = BLOCK_COLS / SIMDGROUPS_PER_COLUMN;
   METAL_CONST short TILES_M = SIMDGROUP_BLOCK_M / SUBTILE_ROWS;
@@ -46,15 +47,20 @@ struct ThreadgroupGemmMpp {
   ) {
     // Morton curve remapping for better L2 cache locality
     int tid_x, tid_y;
-    if (threadgroup_position.y == 0 && threadgroup_position.x >= uint(params->threadgroups_per_row)) {
+    if (threadgroup_position.y == 0 &&
+        threadgroup_position.x >= uint(params->threadgroups_per_row)) {
       uint linear_id = threadgroup_position.x;
       uint mx = linear_id;
       uint my = linear_id >> 1;
-      mx &= 0x55555555u; mx = (mx | (mx >> 1)) & 0x33333333u;
-      mx = (mx | (mx >> 2)) & 0x0F0F0F0Fu; mx = (mx | (mx >> 4)) & 0x00FF00FFu;
+      mx &= 0x55555555u;
+      mx = (mx | (mx >> 1)) & 0x33333333u;
+      mx = (mx | (mx >> 2)) & 0x0F0F0F0Fu;
+      mx = (mx | (mx >> 4)) & 0x00FF00FFu;
       mx = (mx | (mx >> 8)) & 0x0000FFFFu;
-      my &= 0x55555555u; my = (my | (my >> 1)) & 0x33333333u;
-      my = (my | (my >> 2)) & 0x0F0F0F0Fu; my = (my | (my >> 4)) & 0x00FF00FFu;
+      my &= 0x55555555u;
+      my = (my | (my >> 1)) & 0x33333333u;
+      my = (my | (my >> 2)) & 0x0F0F0F0Fu;
+      my = (my | (my >> 4)) & 0x00FF00FFu;
       my = (my | (my >> 8)) & 0x0000FFFFu;
       tid_x = int(mx);
       tid_y = int(my);
@@ -63,7 +69,8 @@ struct ThreadgroupGemmMpp {
       tid_y = int(threadgroup_position.y);
     }
 
-    if (params->threadgroups_per_row <= tid_x || params->threadgroups_per_column <= tid_y) {
+    if (params->threadgroups_per_row <= tid_x ||
+        params->threadgroups_per_column <= tid_y) {
       return;
     }
 
@@ -74,19 +81,47 @@ struct ThreadgroupGemmMpp {
     const size_t block_row_start_long = size_t(block_row_start);
     const size_t block_col_start_long = size_t(block_col_start);
 
-    const device T* left_block_ptr = left_matrix + block_row_start_long * params->leading_dimension_a;
-    const device T* right_block_ptr = right_matrix + block_col_start_long * params->leading_dimension_b;
+    const device T* left_block_ptr =
+        left_matrix + block_row_start_long * params->leading_dimension_a;
+    const device T* right_block_ptr =
+        right_matrix + block_col_start_long * params->leading_dimension_b;
 
-    ThreadgroupLoader<T, BLOCK_ROWS, PREFETCH_K, THREADGROUP_LD, 1, THREADGROUP_SIZE> loader_a(
-        left_block_ptr, params->leading_dimension_a, left_shared, ushort(simd_group_id), ushort(simd_lane_id));
-    ThreadgroupLoader<T, BLOCK_COLS, PREFETCH_K, THREADGROUP_LD, 1, THREADGROUP_SIZE> loader_b(
-        right_block_ptr, params->leading_dimension_b, right_shared, ushort(simd_group_id), ushort(simd_lane_id));
+    ThreadgroupLoader<
+        T,
+        BLOCK_ROWS,
+        PREFETCH_K,
+        THREADGROUP_LD,
+        1,
+        THREADGROUP_SIZE>
+        loader_a(
+            left_block_ptr,
+            params->leading_dimension_a,
+            left_shared,
+            ushort(simd_group_id),
+            ushort(simd_lane_id)
+        );
+    ThreadgroupLoader<
+        T,
+        BLOCK_COLS,
+        PREFETCH_K,
+        THREADGROUP_LD,
+        1,
+        THREADGROUP_SIZE>
+        loader_b(
+            right_block_ptr,
+            params->leading_dimension_b,
+            right_shared,
+            ushort(simd_group_id),
+            ushort(simd_lane_id)
+        );
 
     // Setup MPP matmul operation
     using AccumulatorType = float;
 
-    const short tile_row_offset = SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
-    const short tile_col_offset = SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
+    const short tile_row_offset =
+        SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
+    const short tile_col_offset =
+        SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* output_ptr =
         output_matrix + block_row_start_long * params->leading_dimension_d +
@@ -95,10 +130,16 @@ struct ThreadgroupGemmMpp {
 
     const short simdgroup_limit_m =
         align_m ? SIMDGROUP_BLOCK_M
-                : short(min(int(SIMDGROUP_BLOCK_M), int(params->M) - (block_row_start + tile_row_offset)));
+                : short(
+                      min(int(SIMDGROUP_BLOCK_M),
+                          int(params->M) - (block_row_start + tile_row_offset))
+                  );
     const short simdgroup_limit_n =
         align_n ? SIMDGROUP_BLOCK_N
-                : short(min(int(SIMDGROUP_BLOCK_N), int(params->N) - (block_col_start + tile_col_offset)));
+                : short(
+                      min(int(SIMDGROUP_BLOCK_N),
+                          int(params->N) - (block_col_start + tile_col_offset))
+                  );
 
     constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
         SUBTILE_ROWS,
@@ -110,12 +151,24 @@ struct ThreadgroupGemmMpp {
         mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
     );
 
-    mpp::tensor_ops::matmul2d<matmul_descriptor, metal::execution_simdgroup> matmul_operation;
+    mpp::tensor_ops::matmul2d<matmul_descriptor, metal::execution_simdgroup>
+        matmul_operation;
 
-    auto left_tensor = matmul_operation.template get_left_input_cooperative_tensor<T, T, AccumulatorType>();
-    auto right_tensor = matmul_operation.template get_right_input_cooperative_tensor<T, T, AccumulatorType>();
-    auto accumulator_tensor = matmul_operation.template get_destination_cooperative_tensor<
-        decltype(left_tensor), decltype(right_tensor), AccumulatorType>();
+    auto left_tensor =
+        matmul_operation.template get_left_input_cooperative_tensor<
+            T,
+            T,
+            AccumulatorType>();
+    auto right_tensor =
+        matmul_operation.template get_right_input_cooperative_tensor<
+            T,
+            T,
+            AccumulatorType>();
+    auto accumulator_tensor =
+        matmul_operation.template get_destination_cooperative_tensor<
+            decltype(left_tensor),
+            decltype(right_tensor),
+            AccumulatorType>();
 
     const short accumulator_capacity = accumulator_tensor.get_capacity();
 
@@ -131,8 +184,12 @@ struct ThreadgroupGemmMpp {
     const int full_prefetch_iterations = params->K / PREFETCH_K;
     const int k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
 
-    const short actual_bm = align_m ? BLOCK_ROWS : short(min(int(BLOCK_ROWS), int(params->M) - block_row_start));
-    const short actual_bn = align_n ? BLOCK_COLS : short(min(int(BLOCK_COLS), int(params->N) - block_col_start));
+    const short actual_bm =
+        align_m ? BLOCK_ROWS
+                : short(min(int(BLOCK_ROWS), int(params->M) - block_row_start));
+    const short actual_bn =
+        align_n ? BLOCK_COLS
+                : short(min(int(BLOCK_COLS), int(params->N) - block_col_start));
 
     // Main loop
     for (int outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {
@@ -166,13 +223,17 @@ struct ThreadgroupGemmMpp {
             METAL_PRAGMA_UNROLL
             for (short i = 0; i < left_tensor.get_capacity(); i++) {
               auto coord = left_tensor.get_multidimensional_index(i);
-              left_tensor[i] = left_shared[(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+              left_tensor[i] = left_shared
+                  [(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                   k_offset];
             }
 
             METAL_PRAGMA_UNROLL
             for (short i = 0; i < right_tensor.get_capacity(); i++) {
               auto coord = right_tensor.get_multidimensional_index(i);
-              right_tensor[i] = right_shared[(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+              right_tensor[i] = right_shared
+                  [(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                   k_offset];
             }
 
             matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
@@ -196,7 +257,8 @@ struct ThreadgroupGemmMpp {
       loader_b.load_safe(short2(k_remainder, actual_bn));
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
-      const short remainder_steps = short((k_remainder + MATMUL_K_STEP - 1) / MATMUL_K_STEP);
+      const short remainder_steps =
+          short((k_remainder + MATMUL_K_STEP - 1) / MATMUL_K_STEP);
 
       METAL_PRAGMA_UNROLL
       for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
@@ -217,13 +279,17 @@ struct ThreadgroupGemmMpp {
             METAL_PRAGMA_UNROLL
             for (short i = 0; i < left_tensor.get_capacity(); i++) {
               auto coord = left_tensor.get_multidimensional_index(i);
-              left_tensor[i] = left_shared[(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+              left_tensor[i] = left_shared
+                  [(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                   k_offset];
             }
 
             METAL_PRAGMA_UNROLL
             for (short i = 0; i < right_tensor.get_capacity(); i++) {
               auto coord = right_tensor.get_multidimensional_index(i);
-              right_tensor[i] = right_shared[(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] + k_offset];
+              right_tensor[i] = right_shared
+                  [(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                   k_offset];
             }
 
             matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
@@ -246,8 +312,12 @@ struct ThreadgroupGemmMpp {
       for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
         const short row_offset = tile_m * SUBTILE_ROWS;
         const short col_offset = tile_n * SUBTILE_COLS;
-        const short m_limit = align_m ? SUBTILE_ROWS : short(max(0, int(simdgroup_limit_m) - row_offset));
-        const short n_limit = align_n ? SUBTILE_COLS : short(max(0, int(simdgroup_limit_n) - col_offset));
+        const short m_limit =
+            align_m ? SUBTILE_ROWS
+                    : short(max(0, int(simdgroup_limit_m) - row_offset));
+        const short n_limit =
+            align_n ? SUBTILE_COLS
+                    : short(max(0, int(simdgroup_limit_n) - col_offset));
         if (m_limit <= 0 || n_limit <= 0)
           continue;
 

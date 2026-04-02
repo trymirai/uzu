@@ -17,10 +17,10 @@ use crate::{
         metal::{
             Metal,
             context::MetalContext,
-            metal_extensions::DeviceExt,
             kernel::{
                 MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
             },
+            metal_extensions::DeviceExt,
         },
     },
 };
