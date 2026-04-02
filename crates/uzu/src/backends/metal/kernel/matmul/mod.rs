@@ -120,10 +120,10 @@ impl MatmulMetalKernel {
                 let kernel = MatmulGemmMppMetalKernel::new(
                     context,
                     self.data_type,
-                    specialization.block_rows as u32,
-                    specialization.block_cols as u32,
-                    specialization.simdgroups_per_row as u32,
-                    specialization.simdgroups_per_column as u32,
+                    specialization.block_rows,
+                    specialization.block_cols,
+                    specialization.simdgroups_per_row,
+                    specialization.simdgroups_per_column,
                     specialization.align_m,
                     specialization.align_n,
                 )
@@ -226,16 +226,11 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let bias = match arguments.c {
-            MatmulArgumentC::Bias(bias) => Some(bias),
-            MatmulArgumentC::None | MatmulArgumentC::Accumulate => None,
-        };
+        let specialization = gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim, arguments.output_dim);
 
-        let specialization =
-            gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim as i32, arguments.output_dim as i32);
-        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols as u32);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows as u32);
-        let swizzle_log = specialization.swizzle_log2 as u32;
+        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
+        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
+
         let params = GemmParams {
             M: arguments.batch_dim,
             N: arguments.output_dim,
@@ -245,22 +240,8 @@ impl MatmulMetalKernel {
             leading_dimension_d: arguments.output_dim,
             threadgroups_per_row,
             threadgroups_per_column,
-            swizzle_log,
+            swizzle_log: 0,
             aligned_inner_iterations: 0,
-        };
-
-        let tg_rows = params.threadgroups_per_column;
-        let tg_cols = params.threadgroups_per_row;
-        let max_dim = tg_rows.max(tg_cols);
-        let min_dim = tg_rows.min(tg_cols);
-        let morton_dim = max_dim.next_power_of_two();
-        let morton_total = morton_dim.saturating_mul(morton_dim);
-        let actual_total = tg_rows.saturating_mul(tg_cols);
-        let use_morton = min_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
-        let (group_count_x, group_count_y) = if use_morton {
-            (morton_total, 1_u32)
-        } else {
-            (tg_cols, tg_rows)
         };
 
         let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
@@ -269,12 +250,12 @@ impl MatmulMetalKernel {
             arguments.b,
             &mut *arguments.d,
             std::slice::from_ref(&params),
-            group_count_x,
-            group_count_y,
+            threadgroups_per_row,
+            threadgroups_per_column,
             encoder,
         );
 
-        if let Some(bias) = bias {
+        if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
                 None::<&<Metal as crate::backends::common::Backend>::Buffer>,
                 bias,
@@ -317,7 +298,7 @@ impl MatmulKernel for MatmulMetalKernel {
             kernel.get_or_create_gemm(context, config)?;
         }
         if context.device.supports_mxu() {
-            for &config in gemm_mpp::GemmMppSpecialization::precompile_configs().iter() {
+            for &config in gemm_mpp::GemmMppSpecialization::precompile_configs() {
                 kernel.get_or_create_gemm_mpp(context, config)?;
             }
         }
