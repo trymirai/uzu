@@ -127,4 +127,14 @@ inline float uniform_float(thread PhiloxState* state) {
   return float(philox_next(state)) * (1.0f / 4294967296.0f); /* (0,1) */
 }
 
+// Stateless uniform float: deterministic for (seed, offset, word).
+// Matches gumbel.rs::uniform_float(key, (offset, word)).
+inline float uniform_float_stateless(uint64_t seed, uint offset, uint word) {
+  uint ctr[4] = {offset, 0u, 0u, 0u};
+  uint key[2] = {uint(seed), uint(seed >> 32)};
+  uint out[4];
+  curand_philox4x32_10(ctr, key, out);
+  return float(out[word]) * (1.0f / 4294967296.0f);
+}
+
 #endif /* rng_metal */

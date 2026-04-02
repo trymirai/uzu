@@ -1,17 +1,11 @@
-#![cfg(metal_backend)]
-
+mod common;
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use rand::seq::SliceRandom;
-
-// for Vec::shuffle
-use crate::{
+use uzu::{
     DataType,
     backends::{
-        common::{
-            Backend, Context, Encoder,
-            kernel::sampling::{ArgmaxStrategy, SamplingKernel},
-        },
+        common::{Backend, Context, Encoder, kernel::sampling::SamplingKernel},
         metal::Metal,
     },
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
@@ -19,200 +13,6 @@ use crate::{
 
 // Constant seed for reproducible test results
 const TEST_SAMPLING_SEED: u64 = 42;
-
-fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping argmax test: {}", e);
-            return;
-        },
-    };
-
-    let batch_size = 2;
-    let vocab_size = 4;
-
-    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, batch_size, vocab_size, strategy)
-        .expect("Failed to create argmax kernel");
-
-    // Create test data: batch_size=2, vocab_size=4
-    // First batch: [1.0, 3.0, 2.0, 0.5] -> should select index 1
-    // Second batch: [0.1, 0.5, 2.5, 1.0] -> should select index 2
-    let test_logits: Vec<f32> = vec![
-        1.0, 3.0, 2.0, 0.5, // batch 0
-        0.1, 0.5, 2.5, 1.0, // batch 1
-    ];
-
-    let mut logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&test_logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let seeds_buffer = context
-        .device
-        .new_buffer_with_data(&vec![0; 16], MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut output_buffer = context
-        .device
-        .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel
-        .encode(
-            &mut logits_buffer,
-            &seeds_buffer,
-            0,
-            None,
-            0,
-            &mut output_buffer,
-            SamplingMethod::Greedy,
-            batch_size,
-            vocab_size,
-            &mut encoder,
-        )
-        .expect("Argmax sampling should succeed");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    // Check results
-    let result_ptr = output_buffer.contents().as_ptr() as *const u32;
-    let results = unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
-
-    assert_eq!(results[0], 1, "First batch should select token 1 (highest logit: 3.0)");
-    assert_eq!(results[1], 2, "Second batch should select token 2 (highest logit: 2.5)");
-
-    println!("✓ Argmax sampling test passed with {:?} strategy - selected tokens: {:?}", strategy, results);
-}
-
-#[test]
-fn test_argmax_sampling_single_pass() {
-    test_argmax_sampling_with_strategy(ArgmaxStrategy::SinglePass);
-}
-
-#[test]
-fn test_argmax_sampling_two_pass() {
-    test_argmax_sampling_with_strategy(ArgmaxStrategy::TwoPass);
-}
-
-#[test]
-fn test_argmax_sampling() {
-    // Keep the original test for backward compatibility - defaults to single-pass
-    test_argmax_sampling_with_strategy(ArgmaxStrategy::SinglePass);
-}
-
-#[allow(dead_code)]
-fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
-    use std::time::Instant;
-
-    use rand::{RngExt, SeedableRng, rngs::StdRng};
-
-    // ---- Metal context ----
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Skipping argmax perf test: {}", e);
-            return;
-        },
-    };
-
-    // ---- Problem sizes ----
-    const BATCH: usize = 8;
-    const VOCAB: usize = 128000; // 128K
-
-    // ---- Kernel ----
-    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, BATCH, VOCAB, strategy)
-        .expect("Failed to create Argmax kernel");
-
-    // ---- Build random logits ----
-    let mut rng = StdRng::seed_from_u64(123);
-    let mut logits = vec![0.0f32; BATCH * VOCAB];
-    for x in logits.iter_mut() {
-        *x = rng.random_range(-6.0f32..6.0f32);
-    }
-
-    let mut logits_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-    let seeds_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut output_buf = context
-        .device
-        .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    // ---- Launch once and time ----
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-
-    kernel
-        .encode(
-            &mut logits_buf,
-            &seeds_buf,
-            0,
-            None,
-            0,
-            &mut output_buf,
-            SamplingMethod::Greedy,
-            BATCH,
-            VOCAB,
-            &mut encoder,
-        )
-        .expect("encode");
-
-    // Time both host-side and GPU execution
-    let host_timer = Instant::now();
-    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
-
-    match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
-        Some(gpu_time_ms) => {
-            println!(
-                "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, strategy, gpu_time_ms, host_elapsed_ms
-            );
-        },
-        None => {
-            println!(
-                "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): Host-side={:.2} ms (GPU timing unavailable)",
-                BATCH, VOCAB, strategy, host_elapsed_ms
-            );
-        },
-    }
-
-    // Ensure the kernel produced *some* output (sanity).
-    let ptr = output_buf.contents().as_ptr() as *const u32;
-    let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
-    for &tok in sample_ids {
-        assert!((tok as usize) < VOCAB, "Sampled id out of range");
-    }
-
-    // Also verify correctness by checking if selected tokens have highest logits
-    for b in 0..BATCH {
-        let row_logits = &logits[b * VOCAB..(b + 1) * VOCAB];
-        let selected_token = sample_ids[b] as usize;
-        let selected_logit = row_logits[selected_token];
-
-        // Find the actual maximum logit
-        let max_logit = row_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-        assert!(
-            (selected_logit - max_logit).abs() < 1e-5,
-            "Batch {}: selected token {} with logit {:.6}, but max logit is {:.6}",
-            b,
-            selected_token,
-            selected_logit,
-            max_logit
-        );
-    }
-
-    println!("✓ Argmax correctness verified with {:?} strategy", strategy);
-}
 
 #[test]
 fn test_categorical_sampling() {
@@ -511,8 +311,8 @@ fn perf_categorical_128k_vocab() {
             &mut output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
-                top_k: None,
-                top_p: None,
+                top_k: Some(20),
+                top_p: Some(0.95),
                 min_p: None,
                 processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
@@ -526,11 +326,14 @@ fn perf_categorical_128k_vocab() {
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
-        Some(gpu_time_ms) => {
+    match completed.gpu_execution_time() {
+        Some(gpu_time) => {
             println!(
                 "Categorical sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, gpu_time_ms, host_elapsed_ms
+                BATCH,
+                VOCAB,
+                gpu_time.as_secs_f64() * 1e3,
+                host_elapsed_ms
             );
         },
         None => {
