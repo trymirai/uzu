@@ -42,7 +42,7 @@ inline T activate_softplus(T x) {
   if (xf > 20.0f) {
     return x;
   }
-  
+
   float result = log(1.0f + fast::exp(xf));
   return static_cast<T>(result);
 }

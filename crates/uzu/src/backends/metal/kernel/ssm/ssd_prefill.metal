@@ -71,7 +71,8 @@ PUBLIC KERNEL(SSDPrefill64)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val = fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
+    const float decay_val =
+        fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -172,7 +173,8 @@ PUBLIC KERNEL(SSDPrefill)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val = fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
+    const float decay_val =
+        fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -183,8 +185,8 @@ PUBLIC KERNEL(SSDPrefill)(
       const int idx =
           chunk * int(thread_context.simdgroup_size) + int(lane_idx);
       if (idx < state_dim) {
-        const uint cb_idx =
-            cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
+        const uint cb_idx = cb_group_base + uint(idx) * cb_state_stride +
+                            token * cb_token_stride;
         const float new_state =
             decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
         lane_states[chunk] = new_state;
