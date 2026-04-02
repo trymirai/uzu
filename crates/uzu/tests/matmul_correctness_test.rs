@@ -11,7 +11,10 @@ use uzu::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
+            kernel::{
+                ManualKernels,
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            },
         },
         metal::Metal,
     },
@@ -22,7 +25,6 @@ enum DispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppDirect,
 }
 
 impl DispatchPath {
@@ -31,69 +33,62 @@ impl DispatchPath {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
             Self::GemmMpp => "GemmMpp",
-            Self::GemmMppDirect => "GemmMppDirect",
         }
     }
 }
 
-const ALL_DISPATCH_PATHS: [DispatchPath; 4] =
-    [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMpp, DispatchPath::GemmMppDirect];
+const ALL_DISPATCH_PATHS: [DispatchPath; 3] = [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMpp];
 
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
-    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
+    kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     a_data: &[bf16],
     b_data: &[bf16],
     m: usize,
     k: usize,
     n: usize,
     transpose_b: bool,
-    dispatch_path: DispatchPath,
+    _dispatch_path: DispatchPath,
 ) -> Result<Vec<bf16>, String> {
     let a_buf = ctx
         .device
         .new_buffer_with_data(bytemuck::cast_slice(a_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
+    let b_data = if transpose_b {
+        b_data.to_vec()
+    } else {
+        let mut transposed = vec![bf16::from_f32(0.0); n * k];
+        for row in 0..k {
+            for col in 0..n {
+                transposed[col * k + row] = b_data[row * n + col];
+            }
+        }
+        transposed
+    };
     let b_buf = ctx
         .device
-        .new_buffer_with_data(bytemuck::cast_slice(b_data), MTLResourceOptions::STORAGE_MODE_SHARED)
+        .new_buffer_with_data(bytemuck::cast_slice(&b_data), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
     let mut d_buf = ctx
         .device
         .new_buffer(m * n * core::mem::size_of::<bf16>(), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
-    let leading_dim_b = if transpose_b {
-        k
-    } else {
-        n
-    };
-
-    let mut command_buffer = Encoder::<Metal>::new(ctx).unwrap();
+    let mut encoder = Encoder::<Metal>::new(ctx).unwrap();
     let arguments = MatmulArguments {
         a: &a_buf,
         a_offset: 0,
         b: &b_buf,
+        ab_scale: 1.0,
+        c: MatmulArgumentC::None,
         d: &mut d_buf,
-        bias: None,
-        batch: m as i32,
-        input_dim: k as i32,
-        output_dim: n as i32,
-        leading_dimension_a: k as i32,
-        leading_dimension_b: leading_dim_b as i32,
-        leading_dimension_d: n as i32,
-        transpose_b,
+        batch_dim: m as u32,
+        input_dim: k as u32,
+        output_dim: n as u32,
     };
 
-    let encode_result = match dispatch_path {
-        DispatchPath::Gemv => kernel.encode_gemv(ctx, arguments, &mut command_buffer),
-        DispatchPath::Gemm => kernel.encode_gemm(ctx, arguments, &mut command_buffer),
-        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, arguments, &mut command_buffer),
-        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(ctx, arguments, &mut command_buffer),
-    };
-
-    encode_result.map_err(|e| e.to_string())?;
-    command_buffer.end_encoding().submit().wait_until_completed().map_err(|e| e.to_string())?;
+    kernel.encode(ctx, arguments, &mut encoder);
+    encoder.end_encoding().submit().wait_until_completed().map_err(|e| e.to_string())?;
 
     Ok(unsafe {
         let ptr = d_buf.contents().as_ptr() as *const bf16;
@@ -320,10 +315,9 @@ fn matmul_correctness_comprehensive() {
     eprintln!("Device: {} (supports_mxu={})", ctx.device_capabilities().family_name, supports_mxu);
 
     let mut kernel =
-        <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(&ctx, DataType::BF16).expect("kernel");
+        <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&ctx, DataType::BF16).expect("kernel");
 
     let mut passed = 0usize;
-    let mut expected_mxu_failures = 0usize;
     let mut failed: Vec<(String, f32, usize, usize, f32)> = Vec::new();
 
     for case in &cases {
@@ -337,19 +331,13 @@ fn matmul_correctness_comprehensive() {
 
         for &path in &ALL_DISPATCH_PATHS {
             let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
-            let is_mxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppDirect) && !supports_mxu;
 
             let metal_result =
                 match run_metal_matmul(&ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path) {
                     Ok(result) => result,
                     Err(err) => {
-                        if is_mxu_on_pre_m5 {
-                            eprintln!("⊘ {label}: encode error (expected on pre-M5): {err}");
-                            expected_mxu_failures += 1;
-                        } else {
-                            eprintln!("✗ {label}: encode error: {err}");
-                            failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
-                        }
+                        eprintln!("✗ {label}: encode error: {err}");
+                        failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
                         continue;
                     },
                 };
@@ -360,29 +348,15 @@ fn matmul_correctness_comprehensive() {
                     eprintln!("✓ {label}");
                 },
                 Err((max_diff, idx, count)) => {
-                    if is_mxu_on_pre_m5 {
-                        eprintln!(
-                            "⊘ {label}: wrong results (expected on pre-M5) max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
-                            case.tolerance,
-                        );
-                        expected_mxu_failures += 1;
-                    } else {
-                        eprintln!(
-                            "✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
-                            case.tolerance,
-                        );
-                        failed.push((label, max_diff, idx, count, case.tolerance));
-                    }
+                    eprintln!("✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})", case.tolerance,);
+                    failed.push((label, max_diff, idx, count, case.tolerance));
                 },
             }
         }
     }
 
-    let total = passed + failed.len() + expected_mxu_failures;
-    eprintln!(
-        "\n{passed}/{total} passed, {} failed, {expected_mxu_failures} expected MXU failures (pre-M5)",
-        failed.len()
-    );
+    let total = passed + failed.len();
+    eprintln!("\n{passed}/{total} passed, {} failed", failed.len());
 
     if !failed.is_empty() {
         eprintln!("\nUnexpected failures:");

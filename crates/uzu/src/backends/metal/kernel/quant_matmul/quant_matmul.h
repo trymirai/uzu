@@ -137,9 +137,9 @@ inline U qdot_zero_point(
   if (bits == 4) {
     const device uint16_t* ws = (const device uint16_t*)w;
     const uint16_t zp0 = static_cast<uint16_t>(zero_point);
-    const uint16_t zp1 = static_cast<uint16_t>(zero_point) << 4;
-    const uint16_t zp2 = static_cast<uint16_t>(zero_point) << 8;
-    const uint16_t zp3 = static_cast<uint16_t>(zero_point) << 12;
+    const uint16_t zp1 = static_cast<uint16_t>(zero_point) * 16;
+    const uint16_t zp2 = static_cast<uint16_t>(zero_point) * 256;
+    const uint16_t zp3 = static_cast<uint16_t>(zero_point) * 4096;
 
     for (int i = 0; i < (values_per_thread / 4); i++) {
       uint16_t word = ws[i];

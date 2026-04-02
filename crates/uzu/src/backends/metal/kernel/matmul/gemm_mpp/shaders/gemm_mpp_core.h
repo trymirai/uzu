@@ -60,13 +60,13 @@ METAL_FUNC void gemm_mpp_core(
       align_m ? SIMDGROUP_BLOCK_M
               : short(
                     min(int(SIMDGROUP_BLOCK_M),
-                        params->M - (block_row_start + tile_row_offset))
+                        int(params->M) - (block_row_start + tile_row_offset))
                 );
   const short simdgroup_limit_n =
       align_n ? SIMDGROUP_BLOCK_N
               : short(
                     min(int(SIMDGROUP_BLOCK_N),
-                        params->N - (block_col_start + tile_col_offset))
+                        int(params->N) - (block_col_start + tile_col_offset))
                 );
 
   constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
@@ -109,9 +109,9 @@ METAL_FUNC void gemm_mpp_core(
   const int k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
 
   const short actual_bm =
-      align_m ? BLOCK_M : short(min(int(BLOCK_M), params->M - block_row_start));
+      align_m ? BLOCK_M : short(min(int(BLOCK_M), int(params->M) - block_row_start));
   const short actual_bn =
-      align_n ? BLOCK_N : short(min(int(BLOCK_N), params->N - block_col_start));
+      align_n ? BLOCK_N : short(min(int(BLOCK_N), int(params->N) - block_col_start));
 
   for (int outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {
     threadgroup_barrier(mem_flags::mem_threadgroup);

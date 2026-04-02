@@ -25,7 +25,6 @@ enum DispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppDirect,
 }
 
 impl DispatchPath {
@@ -34,17 +33,11 @@ impl DispatchPath {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
             Self::GemmMpp => "GemmMpp",
-            Self::GemmMppDirect => "GemmMppDirect",
         }
     }
 }
 
-const ALL_DISPATCH_PATHS: [DispatchPath; 4] = [
-    DispatchPath::Gemv,
-    DispatchPath::Gemm,
-    DispatchPath::GemmMpp,
-    DispatchPath::GemmMppDirect,
-];
+const ALL_DISPATCH_PATHS: [DispatchPath; 3] = [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMpp];
 
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
@@ -93,7 +86,6 @@ fn run_metal_matmul(
         DispatchPath::Gemv => kernel.encode_gemv(ctx, arguments, &mut encoder),
         DispatchPath::Gemm => kernel.encode_gemm(ctx, arguments, &mut encoder),
         DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, arguments, &mut encoder),
-        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(ctx, arguments, &mut encoder),
     };
 
     encode_result.map_err(|e| e.to_string())?;
@@ -326,19 +318,12 @@ fn matmul_correctness_comprehensive() {
 
         for &path in &ALL_DISPATCH_PATHS {
             let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
-            let is_mxu_on_pre_m5 = matches!(path, DispatchPath::GemmMppDirect) && !supports_mxu;
-
             let metal_result =
                 match run_metal_matmul(&ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path) {
                     Ok(result) => result,
                     Err(err) => {
-                        if is_mxu_on_pre_m5 {
-                            eprintln!("⊘ {label}: encode error (expected on pre-M5): {err}");
-                            expected_mxu_failures += 1;
-                        } else {
-                            eprintln!("✗ {label}: encode error: {err}");
-                            failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
-                        }
+                        eprintln!("✗ {label}: encode error: {err}");
+                        failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
                         continue;
                     },
                 };
@@ -349,19 +334,8 @@ fn matmul_correctness_comprehensive() {
                     eprintln!("✓ {label}");
                 },
                 Err((max_diff, idx, count)) => {
-                    if is_mxu_on_pre_m5 {
-                        eprintln!(
-                            "⊘ {label}: wrong results (expected on pre-M5) max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
-                            case.tolerance,
-                        );
-                        expected_mxu_failures += 1;
-                    } else {
-                        eprintln!(
-                            "✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})",
-                            case.tolerance,
-                        );
-                        failed.push((label, max_diff, idx, count, case.tolerance));
-                    }
+                    eprintln!("✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})", case.tolerance,);
+                    failed.push((label, max_diff, idx, count, case.tolerance));
                 },
             }
         }

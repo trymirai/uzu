@@ -29,7 +29,6 @@ pub enum DispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppDirect,
 }
 
 impl DispatchPath {
@@ -38,16 +37,11 @@ impl DispatchPath {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
             Self::GemmMpp => "GemmMpp",
-            Self::GemmMppDirect => "GemmMppDirect",
         }
     }
 
-    pub fn available_paths(context: &Ctx) -> Vec<Self> {
-        let mut paths = vec![Self::Gemv, Self::Gemm, Self::GemmMpp];
-        if context.device_capabilities().supports_mxu {
-            paths.push(Self::GemmMppDirect);
-        }
-        paths
+    pub fn available_paths() -> Vec<Self> {
+        vec![Self::Gemv, Self::Gemm, Self::GemmMpp]
     }
 }
 
@@ -65,6 +59,7 @@ fn fill_buffer_random(
 fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
+    _dispatch_path: DispatchPath,
     shape: &TestShape,
     a_buffer: &Buf,
     b_buffer: &Buf,
@@ -72,21 +67,18 @@ fn encode_and_run(
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
-    kernel.encode(
-        context,
-        MatmulArguments {
-            a: a_buffer,
-            a_offset: 0,
-            b: b_buffer,
-            ab_scale: 1.0,
-            c: MatmulArgumentC::None,
-            d: d_buffer,
-            batch_dim: shape.batch as u32,
-            input_dim: shape.input_dim as u32,
-            output_dim: shape.output_dim as u32,
-        },
-        &mut encoder,
-    );
+    let arguments = MatmulArguments {
+        a: a_buffer,
+        a_offset: 0,
+        b: b_buffer,
+        ab_scale: 1.0,
+        c: MatmulArgumentC::None,
+        d: d_buffer,
+        batch_dim: shape.batch as u32,
+        input_dim: shape.input_dim as u32,
+        output_dim: shape.output_dim as u32,
+    };
+    kernel.encode(context, arguments, &mut encoder);
 
     let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 

@@ -579,7 +579,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         for token_index in 0..limit {
             let word = token_index / 32;
             let bit = token_index % 32;
-            mask[word] |= 1_u32 << bit;
+            mask[word] |= 1_u32 * 2_u32.pow(bit as u32);
         }
         self.single_token_vocab_masks.insert(limit, mask.into_boxed_slice());
         Ok(())
@@ -606,7 +606,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         for token_index in 0..limit {
             let word = token_index / 32;
             let bit = token_index % 32;
-            mask[row_words + word] |= 1_u32 << bit;
+            mask[row_words + word] |= 1_u32 * 2_u32.pow(bit as u32);
         }
         self.two_token_vocab_masks.insert(limit, mask.into_boxed_slice());
         Ok(())
@@ -852,7 +852,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         for token_index in 0..limit {
                             let word = token_index / 32;
                             let bit = token_index % 32;
-                            mask[word] |= 1_u32 << bit;
+                            mask[word] |= 1_u32 * 2_u32.pow(bit as u32);
                         }
                         Some(mask.into_boxed_slice())
                     }
@@ -870,7 +870,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         for token_index in 0..limit {
                             let word = token_index / 32;
                             let bit = token_index % 32;
-                            mask[sampling_start * row_words + word] |= 1_u32 << bit;
+                            mask[sampling_start * row_words + word] |= 1_u32 * 2_u32.pow(bit as u32);
                         }
                         Some(mask.into_boxed_slice())
                     }

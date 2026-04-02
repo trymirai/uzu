@@ -304,7 +304,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   // layout used above.
   const uint lane_qid = sg_lin >> 2;
   const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
-  const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
+  const uint lane_col_base = ((lane_qid & 2u) * 2u) + ((sg_lin & 1u) * 2u);
 
   METAL_PRAGMA_UNROLL
   for (uint n_sub = 0; n_sub < SgBn; n_sub += SG_TILE) {
@@ -567,7 +567,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   const uint lane_row =
       (lane_qid & 4u) + ((thread_context.simdgroup_index >> 1) & 3u);
   const uint lane_col_base =
-      ((lane_qid & 2u) << 1) + ((thread_context.simdgroup_index & 1u) << 1);
+      ((lane_qid & 2u) * 2u) + ((thread_context.simdgroup_index & 1u) * 2u);
 
   const uint local_row = row_sg_off + lane_row;
   if (local_row >= m_rows)

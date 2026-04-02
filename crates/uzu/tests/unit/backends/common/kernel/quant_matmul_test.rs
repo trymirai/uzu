@@ -26,9 +26,9 @@ fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity((values.len() + 3) / 4 * 2);
     for chunk in values.chunks(4) {
         let w0 = (*chunk.get(0).unwrap_or(&0) as u16) & 0x0F;
-        let w1 = ((*chunk.get(1).unwrap_or(&0) as u16) & 0x0F) << 4;
-        let w2 = ((*chunk.get(2).unwrap_or(&0) as u16) & 0x0F) << 8;
-        let w3 = ((*chunk.get(3).unwrap_or(&0) as u16) & 0x0F) << 12;
+        let w1 = ((*chunk.get(1).unwrap_or(&0) as u16) & 0x0F) * 16;
+        let w2 = ((*chunk.get(2).unwrap_or(&0) as u16) & 0x0F) * 256;
+        let w3 = ((*chunk.get(3).unwrap_or(&0) as u16) & 0x0F) * 4096;
 
         let word: u16 = w0 | w1 | w2 | w3;
         out.push(word as u8);
@@ -118,7 +118,7 @@ fn get_4bit_value(
     let byte_idx = word_idx * 2;
 
     let word = if byte_idx + 1 < data.len() {
-        data[byte_idx] as u16 | ((data[byte_idx + 1] as u16) << 8)
+        data[byte_idx] as u16 | ((data[byte_idx + 1] as u16) * 256)
     } else {
         0
     };
@@ -304,7 +304,7 @@ fn generate_test_quant_params(
                         if (g & 1) == 0 {
                             zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val_u8 & 0x0F);
                         } else {
-                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val_u8 & 0x0F) << 4);
+                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val_u8 & 0x0F) * 16);
                         }
                     } else {
                         zero_points[k * zero_points_stride + g] = zp_val_u8;
@@ -343,7 +343,7 @@ fn generate_test_quant_params(
                         if (g & 1) == 0 {
                             zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val & 0x0F);
                         } else {
-                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
+                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val & 0x0F) * 16);
                         }
                     } else {
                         let byte_index = j * zero_points_stride + g;

@@ -134,7 +134,7 @@ impl GemmSpecialization {
         let prefer_half_or_tf32 = !is_float32 || MetalContext::tf32_enabled();
 
         let (block_rows, block_cols, block_depth, simdgroups_per_row, simdgroups_per_column) =
-            if context.is_high_performance() && overall_work_elements >= (1 << 20) {
+            if context.is_high_performance() && overall_work_elements >= (1024 * 1024) {
                 if prefer_half_or_tf32 {
                     if 2 * std::cmp::max(arguments.batch_dim, arguments.output_dim) > arguments.input_dim {
                         (64, 64, 16, 2, 2)

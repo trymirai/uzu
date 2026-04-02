@@ -42,7 +42,7 @@ fn get_test_data<T: ArrayElement + Float>(quant_mode: QuantizationMode) -> (Inpu
     let packing_divisor = quant_mode.packing_divisor() as u32;
     let weights_stride = model_dim / packing_divisor;
     let weights: Vec<u8> = (0..vocab_size as usize * weights_stride as usize)
-        .map(|i| ((i % 16) as u8) | ((((i + 3) % 16) as u8) << 4))
+        .map(|i| ((i % 16) as u8) | ((((i + 3) % 16) as u8) * 16))
         .collect();
 
     let num_groups = (model_dim + group_size - 1) / group_size;

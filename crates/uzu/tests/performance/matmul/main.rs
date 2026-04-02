@@ -48,7 +48,7 @@ fn matmul_perf() {
 
     let data_types = [DataType::BF16, DataType::F16];
     let test_shapes = test_shapes();
-    let dispatch_paths = DispatchPath::available_paths(&context);
+    let dispatch_paths = DispatchPath::available_paths();
 
     let caps = context.device_capabilities();
     eprintln!(

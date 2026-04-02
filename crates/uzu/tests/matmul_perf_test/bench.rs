@@ -25,7 +25,6 @@ pub enum DispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppDirect,
 }
 
 impl DispatchPath {
@@ -34,16 +33,11 @@ impl DispatchPath {
             Self::Gemv => "Gemv",
             Self::Gemm => "Gemm",
             Self::GemmMpp => "GemmMpp",
-            Self::GemmMppDirect => "GemmMppDirect",
         }
     }
 
-    pub fn available_paths(context: &Ctx) -> Vec<Self> {
-        let mut paths = vec![Self::Gemv, Self::Gemm, Self::GemmMpp];
-        if context.device_capabilities().supports_mxu {
-            paths.push(Self::GemmMppDirect);
-        }
-        paths
+    pub fn available_paths() -> Vec<Self> {
+        vec![Self::Gemv, Self::Gemm, Self::GemmMpp]
     }
 }
 
@@ -88,7 +82,6 @@ fn encode_and_run(
         DispatchPath::Gemv => kernel.encode_gemv(context, arguments, &mut command_buffer),
         DispatchPath::Gemm => kernel.encode_gemm(context, arguments, &mut command_buffer),
         DispatchPath::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut command_buffer),
-        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, arguments, &mut command_buffer),
     };
 
     encode_result.map_err(|e| BenchError::Kernel(e.to_string()))?;
