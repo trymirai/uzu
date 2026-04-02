@@ -153,6 +153,7 @@ fn test_decoder_config() {
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
+                use_bias: false,
             },
             pre_mlp_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
@@ -161,6 +162,7 @@ fn test_decoder_config() {
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
                 subtract_mean: false,
+                use_bias: false,
             },
             mixer_config: MixerConfig::Attention(AttentionConfig {
                 qkv_projection_config: LinearConfig::QLoRA {
@@ -196,6 +198,7 @@ fn test_decoder_config() {
                 has_qkv_biases: false,
                 has_out_biases: false,
                 has_gate: false,
+                gate_projection_config: None,
                 partial_rope_dim: None,
             }),
             mlp_config: MLPConfig::Dense(DenseMLPConfig {
@@ -226,6 +229,7 @@ fn test_decoder_config() {
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,
             subtract_mean: false,
+            use_bias: false,
         },
         layer_configs: None,
         vocab_size: 128256,

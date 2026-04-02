@@ -58,8 +58,6 @@ pub enum SamplingError<B: Backend> {
     BatchSizeExceeded(usize, usize),
     #[error("Vocab size {0} exceeds maximum {1}")]
     VocabSizeExceeded(usize, usize),
-    #[error("Stochastic sampling encode must have a seed")]
-    StochasticWithoutSeed,
 }
 
 impl<B: Backend> SamplingKernel<B> {
@@ -144,7 +142,7 @@ impl<B: Backend> SamplingKernel<B> {
     pub fn encode(
         &self,
         mut logits_buffer: &mut B::Buffer,
-        seeds_buffer: Option<&B::Buffer>,
+        seeds_buffer: &B::Buffer,
         seeds_offset: usize,
         bitmask_buffer: Option<&B::Buffer>,
         bitmask_offset: usize,
@@ -239,7 +237,7 @@ impl<B: Backend> SamplingKernel<B> {
 
             self.gumbel.encode(
                 None::<&B::Buffer>,
-                (seeds_buffer.ok_or(SamplingError::StochasticWithoutSeed)?, seeds_offset),
+                (seeds_buffer, seeds_offset),
                 logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,

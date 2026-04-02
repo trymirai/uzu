@@ -2,6 +2,10 @@
 name = "uzu"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 build = "build/main.rs"
 
 [dependencies]
@@ -67,12 +71,14 @@ cbindgen.workspace = true
 # metal on macos requires clang-ast for dsl build
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
 
 [features]
 default = ["metal"]
 
 metal = [
     "dep:clang-ast",
+    "dep:rhai",
     "dep:objc2",
     "dep:objc2-foundation",
     "dep:bytesize",

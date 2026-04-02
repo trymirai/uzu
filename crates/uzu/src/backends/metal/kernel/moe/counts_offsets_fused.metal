@@ -5,6 +5,40 @@
 #include "../common/thread_context.h"
 #include "../common/threadgroup_reduce.h"
 
+template <ushort BLOCK_SIZE, typename T>
+static T threadgroup_raking_prefix_exclusive_sum(
+    T value,
+    threadgroup T* shared,
+    const ushort lid
+) {
+  shared[lid] = value;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  if (lid < 32) {
+    const short values_per_thread = BLOCK_SIZE / 32;
+    const short first_index = lid * values_per_thread;
+    for (short i = first_index + 1; i < first_index + values_per_thread; i++) {
+      shared[i] += shared[i - 1];
+    }
+    T partial_sum = shared[first_index + values_per_thread - 1];
+    for (short i = first_index + values_per_thread - 1; i > first_index; i--) {
+      shared[i] = shared[i - 1];
+    }
+    shared[first_index] = 0;
+
+    T prefix = simd_prefix_exclusive_sum(partial_sum);
+
+    for (short i = first_index; i < first_index + values_per_thread; i++) {
+      shared[i] += prefix;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  const T result = shared[lid];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return result;
+}
+
 #define BLOCK_SIZE 128
 #define TILE_E 512
 
@@ -100,12 +134,12 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
       offsets[base + lid] = prefix_global;
     }
 
-    uint block_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-        v,
-        reduce_shared,
-        (ushort)lid,
-        thread_context
-    );
+    uint block_sum =
+        threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(
+            v,
+            reduce_shared,
+            thread_context
+        );
     if (lid == 0) {
       carry += block_sum;
     }

@@ -256,6 +256,7 @@ impl<B: Backend> TraceValidator<B> {
             ctx.cache_layers.clone(),
             ctx.shared_buffers.clone(),
             &token_ids,
+            None,
             &token_positions,
             None,
             &token_seeds,
@@ -263,9 +264,7 @@ impl<B: Backend> TraceValidator<B> {
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
             false,
-            None,
             false,
-            true,
             None,
             None,
         );
@@ -292,19 +291,20 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in transformer_layers {
-            let arrays = state.arrays(&[ArrayId::Keys(index), ArrayId::Values(index)]);
+            let keys = state.array(ArrayId::Keys(index));
+            let values = state.array(ArrayId::Values(index));
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
-                    metrics: Self::validate_array(data_type, &expected, &arrays[0], Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_array(data_type, &expected, &keys, Some(ArrayTransform::KVCacheSlice)),
                 });
             }
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
-                    metrics: Self::validate_array(data_type, &expected, &arrays[1], Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_array(data_type, &expected, &values, Some(ArrayTransform::KVCacheSlice)),
                 });
             }
         }
@@ -316,7 +316,8 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in ssm_layers {
-            let arrays = state.arrays(&[ArrayId::SsmConvState(index), ArrayId::SsmState(index)]);
+            let conv_state = state.array(ArrayId::SsmConvState(index));
+            let ssm_state = state.array(ArrayId::SsmState(index));
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -328,7 +329,7 @@ impl<B: Backend> TraceValidator<B> {
                         metrics: Self::validate_array(
                             data_type,
                             &expected,
-                            &arrays[0],
+                            &conv_state,
                             Some(ArrayTransform::SsmConvState),
                         ),
                     });
@@ -342,7 +343,47 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(data_type, &expected, &arrays[1], None),
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                    });
+                }
+            }
+        }
+
+        // LLM-specific: DeltaNet state validation
+        let delta_net_layers: Vec<usize> = {
+            let cache = state.cache_layers().unwrap().borrow();
+            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
+        };
+
+        for index in delta_net_layers {
+            let conv_state = state.array(ArrayId::DeltaNetConvState(index));
+            let ssm_state = state.array(ArrayId::DeltaNetSsmState(index));
+
+            for path in [
+                format!("updated_state.{}.conv_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(
+                            data_type,
+                            &expected,
+                            &conv_state,
+                            Some(ArrayTransform::SsmConvState),
+                        ),
+                    });
+                }
+            }
+
+            for path in [
+                format!("updated_state.{}.ssm_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
                     });
                 }
             }
@@ -539,21 +580,6 @@ impl<B: Backend> TraceValidator<B> {
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
-
-        // Embedding norm (classifier-specific)
-        if let Some(embedding_norm) = &traces.borrow().embedding_norm {
-            if traces_view.leaf_array("activation_trace.embedding_norm").is_ok() {
-                results.push(TracerValidationResult {
-                    name: "activation_trace.embedding_norm".to_string(),
-                    metrics: Self::validate_array_with_name(
-                        data_type,
-                        traces_view,
-                        "activation_trace.embedding_norm",
-                        embedding_norm,
-                    ),
-                });
-            }
-        }
 
         // Output pooling (classifier-specific)
         if let Some(output_pooling) = &traces.borrow().output_pooling {
@@ -811,13 +837,8 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         let decoder_config = &context.decoder_config;
-        context.scratch_buffers = ScratchBuffers::new(
-            context.context.as_ref(),
-            decoder_config,
-            &context.model_shape,
-            resolved_prefix_length,
-            desired_suffix_length,
-        );
+        context.scratch_buffers =
+            ScratchBuffers::new(context.context.as_ref(), decoder_config, &context.model_shape, desired_suffix_length);
 
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.context.as_ref(),

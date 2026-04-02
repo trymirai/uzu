@@ -41,18 +41,18 @@ PUBLIC KERNEL(TopP) (
         logit_value > -INFINITY
     );
   }
-  float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
-      local_max,
-      shared_reduce_buffer,
-      thread_idx,
-      thread_context
-  );
-  float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
-      local_min,
-      shared_reduce_buffer,
-      thread_idx,
-      thread_context
-  );
+  float max_logit =
+      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(
+          local_max,
+          shared_reduce_buffer,
+          thread_context
+      );
+  float min_logit =
+      threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
+          local_min,
+          shared_reduce_buffer,
+          thread_context
+      );
 
   // Find denominator for softmax
   float local_sum = 0.0f;
@@ -65,12 +65,12 @@ PUBLIC KERNEL(TopP) (
         logit_value > -INFINITY
     );
   }
-  float total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      local_sum,
-      shared_reduce_buffer,
-      thread_idx,
-      thread_context
-  );
+  float total_sum =
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(
+          local_sum,
+          shared_reduce_buffer,
+          thread_context
+      );
 
   // Do the binary search on the threshold
   float target_mass = top_p * total_sum;
@@ -94,18 +94,18 @@ PUBLIC KERNEL(TopP) (
           select(INFINITY, logit_mass, logit_value >= threshold)
       );
     }
-    float sum_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-        local_sum_above_threshold,
-        shared_reduce_buffer,
-        thread_idx,
-        thread_context
-    );
-    float min_above_threshold = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
-        local_min_above_threshold,
-        shared_reduce_buffer,
-        thread_idx,
-        thread_context
-    );
+    float sum_above_threshold =
+        threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(
+            local_sum_above_threshold,
+            shared_reduce_buffer,
+            thread_context
+        );
+    float min_above_threshold =
+        threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
+            local_min_above_threshold,
+            shared_reduce_buffer,
+            thread_context
+        );
 
     // Early exit
     if (sum_above_threshold >= target_mass &&

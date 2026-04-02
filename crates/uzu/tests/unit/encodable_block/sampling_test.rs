@@ -70,6 +70,11 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         .new_buffer_with_data(bytemuck::cast_slice(&test_logits), MTLResourceOptions::STORAGE_MODE_SHARED)
         .expect("Failed to create buffer");
 
+    let seeds_buffer = context
+        .device
+        .new_buffer_with_data(&vec![0; 16], MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
+
     let mut output_buffer = context
         .device
         .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
@@ -79,7 +84,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     kernel
         .encode(
             &mut logits_buffer,
-            None,
+            &seeds_buffer,
             0,
             None,
             0,
@@ -170,7 +175,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     kernel
         .encode(
             &mut logits_buf,
-            Some(&seeds_buf),
+            &seeds_buf,
             0,
             None,
             0,
@@ -282,7 +287,7 @@ fn test_categorical_sampling() {
         kernel
             .encode(
                 &mut logits_buffer,
-                Some(&seeds_buffer),
+                &seeds_buffer,
                 0,
                 None,
                 0,
@@ -419,7 +424,7 @@ fn test_categorical_sampling_statistical() {
         kernel
             .encode(
                 &mut logits_buffer,
-                Some(&seeds_buffer),
+                &seeds_buffer,
                 0,
                 None,
                 0,
@@ -521,7 +526,7 @@ fn perf_categorical_128k_vocab() {
     kernel
         .encode(
             &mut logits_buf,
-            Some(&seeds_buf),
+            &seeds_buf,
             0,
             None,
             0,
@@ -746,7 +751,7 @@ fn test_minp_sampling_exact_match(
         kernel
             .encode(
                 &mut logits_buf,
-                Some(&seeds_buf),
+                &seeds_buf,
                 0,
                 None,
                 0,

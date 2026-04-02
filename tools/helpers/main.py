@@ -53,12 +53,17 @@ def get_uzu_version() -> str:
 
 
 def load_registry() -> Registry:
+    types = ["language_model", "classifier_model", "tts_model"]
     url = f"https://sdk.trymirai.com/api/v1/models/list/uzu/{get_uzu_version()}?includeTraces=true"
-    response = requests.get(url)
-    response.raise_for_status()
-    data = response.json()
-    registry = Registry.from_dict(data)
-    return registry
+    models: [Model] = []
+    for type in types:
+        url = f"https://sdk.trymirai.com/api/v1/models/list/uzu/{get_uzu_version()}?includeTraces=true&type={type}"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        registry = Registry.from_dict(data)
+        models.extend(registry.models)
+    return Registry(models=models)
 
 
 @app.command(help="List models")

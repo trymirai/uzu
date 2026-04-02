@@ -94,5 +94,5 @@ impl HazardTracker {
 }
 
 #[cfg(test)]
-#[path = "../../../tests_unit/hazard_tracker_test.rs"]
-mod hazard_tracker_test;
+#[path = "../../../tests/unit/backends/common/hazard_tracker_test.rs"]
+mod tests;

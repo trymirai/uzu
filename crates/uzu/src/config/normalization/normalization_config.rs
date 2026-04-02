@@ -12,6 +12,8 @@ pub struct NormalizationConfig {
     pub upcast_mode: UpcastMode,
     #[serde(default)]
     pub subtract_mean: bool,
+    #[serde(default)]
+    pub use_bias: bool,
 }
 
 #[cfg(test)]

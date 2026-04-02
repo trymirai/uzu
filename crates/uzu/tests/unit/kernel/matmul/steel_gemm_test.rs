@@ -10,7 +10,10 @@ use uzu::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
+            kernel::{
+                ManualKernels,
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            },
         },
         cpu::Cpu,
     },
@@ -49,9 +52,9 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let m = input.m as i32;
-    let k = input.k as i32;
-    let n = input.n as i32;
+    let m = input.m as u32;
+    let k = input.k as u32;
+    let n = input.n as u32;
 
     let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
     let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
@@ -64,7 +67,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let d_buf = d_array.buffer();
     let mut d_ref = d_buf.borrow_mut();
 
-    let mut kernel = <B::Kernels as MatmulKernels>::MatmulKernel::new(&context, T::data_type())
+    let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -74,15 +77,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             a: a_ref.deref(),
             a_offset: 0,
             b: b_ref.deref(),
+            ab_scale: 1.0,
+            c: MatmulArgumentC::None,
             d: d_ref.deref_mut(),
-            bias: None,
-            batch: m,
+            batch_dim: m,
             input_dim: k,
             output_dim: n,
-            leading_dimension_a: k,
-            leading_dimension_b: k,
-            leading_dimension_d: n,
-            transpose_b: true,
         },
         &mut encoder,
     );

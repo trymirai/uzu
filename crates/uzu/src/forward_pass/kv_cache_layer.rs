@@ -4,31 +4,20 @@ use crate::{
         Backend, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
-    utils::attention::fill_attention_bias,
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AttentionBiasUpdate {
-    pub key: Option<usize>,
-    pub unmask_col: i32,
-    pub mask_col: i32,
-}
 
 #[derive(Clone)]
 pub enum KVSlice<B: Backend> {
     Full {
         base_prefix_len: usize,
-        base_positions_len: usize,
-        positions: Vec<usize>,
     },
     Window {
         window_length: usize,
         base_ring_offset: usize,
         base_ring_length: usize,
         slots: Vec<usize>,
-        positions: Vec<usize>, // per slot
-        keys: Array<B>,        // [num_groups, slots.len(), head_dim]
-        values: Array<B>,      // [num_groups, slots.len(), head_dim]
+        keys: Array<B>,   // [num_groups, slots.len(), head_dim]
+        values: Array<B>, // [num_groups, slots.len(), head_dim]
     },
 }
 
@@ -43,6 +32,7 @@ pub enum KVCacheLayerState {
         ring_offset: usize,
         /// Current logical length of the window (<= window_length)
         ring_length: usize,
+        /// Maximum length of the window
         window_length: usize,
     },
 }
@@ -56,9 +46,6 @@ pub struct KVCacheLayer<B: Backend> {
     pub keys: Array<B>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
     pub values: Array<B>,
-
-    pub prefix_token_positions: Vec<usize>,
-    pub max_suffix_length: usize,
 }
 
 impl<B: Backend> KVCacheLayer<B> {
@@ -98,64 +85,6 @@ impl<B: Backend> KVCacheLayer<B> {
                 window_length,
                 ..
             } => Some(*window_length),
-        }
-    }
-
-    pub fn fill_attention_bias(
-        &self,
-        dst: &mut Array<B>,
-        suffix_token_positions: &[usize],
-        suffix_length: usize,
-        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-    ) {
-        let prefix_segment_length = self.prefix_segment_length();
-        fill_attention_bias(dst, suffix_length, prefix_segment_length, |row_index, column_index| {
-            if let Some(bias_fn) = external_bias_fn {
-                bias_fn(row_index, column_index)
-            } else {
-                self.bias_should_be_neg_inf(row_index, column_index, suffix_token_positions)
-            }
-        });
-    }
-
-    pub fn bias_should_be_neg_inf(
-        &self,
-        row_index: usize,
-        column_index: usize,
-        suffix_token_positions: &[usize],
-    ) -> bool {
-        let query_position = suffix_token_positions[row_index];
-        if query_position == INVALID_POSITION {
-            return true;
-        }
-
-        let key_position = if column_index >= self.prefix_segment_length() {
-            suffix_token_positions[column_index - self.prefix_segment_length()]
-        } else {
-            match &self.state {
-                KVCacheLayerState::Full {
-                    ..
-                } => column_index,
-                KVCacheLayerState::Windowed {
-                    ..
-                } => self.prefix_token_positions[column_index],
-            }
-        };
-
-        if key_position == INVALID_POSITION {
-            return true;
-        }
-
-        if query_position < key_position {
-            return true;
-        }
-
-        match &self.state {
-            KVCacheLayerState::Windowed {
-                window_length,
-                ..
-            } => query_position >= key_position + window_length,
-            _ => false,
         }
     }
 
@@ -235,64 +164,22 @@ impl<B: Backend> KVCacheLayer<B> {
 
     pub fn register_accepted_tokens(
         &mut self,
-        token_positions: &[usize],
+        number_of_accepted_tokens: usize,
     ) {
         match &mut self.state {
             KVCacheLayerState::Full {
                 prefix_len,
             } => {
-                self.prefix_token_positions.extend_from_slice(token_positions);
-                *prefix_len = self.prefix_token_positions.len();
+                *prefix_len += number_of_accepted_tokens;
             },
             KVCacheLayerState::Windowed {
                 ring_offset,
                 ring_length,
                 window_length,
             } => {
-                for &token_pos in token_positions {
-                    if *ring_length < *window_length {
-                        let dst = (*ring_offset + *ring_length) % *window_length;
-
-                        self.prefix_token_positions[dst] = token_pos;
-                        *ring_length += 1;
-                    } else {
-                        self.prefix_token_positions[*ring_offset] = token_pos;
-
-                        *ring_offset = (*ring_offset + 1) % *window_length;
-                    }
-                }
-            },
-        }
-    }
-
-    pub fn attention_bias_update_after_acceptance(
-        &self,
-        accepted_len: usize,
-    ) -> Option<AttentionBiasUpdate> {
-        if accepted_len != 1 {
-            return None;
-        }
-
-        match self.state {
-            KVCacheLayerState::Full {
-                ..
-            } => None,
-            KVCacheLayerState::Windowed {
-                ring_offset,
-                ring_length,
-                window_length,
-            } => {
-                let newest_slot = (ring_length > 0)
-                    .then_some((ring_offset + ring_length + window_length - 1) % window_length)
-                    .unwrap_or(0);
-                let unmask_col = (ring_length > 0).then_some(newest_slot as i32).unwrap_or(-1);
-                let mask_col = (ring_length == window_length).then_some(ring_offset as i32).unwrap_or(-1);
-
-                Some(AttentionBiasUpdate {
-                    key: Some(window_length),
-                    unmask_col,
-                    mask_col,
-                })
+                let ring_advance = number_of_accepted_tokens.saturating_sub(*window_length - *ring_length);
+                *ring_offset = (*ring_offset + ring_advance) % *window_length;
+                *ring_length = (*ring_length + number_of_accepted_tokens).min(*window_length);
             },
         }
     }
@@ -307,8 +194,6 @@ impl<B: Backend> KVCacheLayer<B> {
                 prefix_len,
             } => Some(KVSlice::Full {
                 base_prefix_len: prefix_len,
-                base_positions_len: self.prefix_token_positions.len(),
-                positions: self.prefix_token_positions.clone(),
             }),
             KVCacheLayerState::Windowed {
                 ring_offset,
@@ -342,8 +227,6 @@ impl<B: Backend> KVCacheLayer<B> {
                     })
                     .collect();
 
-                let positions: Vec<usize> = slots.iter().map(|&s| self.prefix_token_positions[s]).collect();
-
                 for (i, &slot) in slots.iter().enumerate() {
                     slice_keys.copy_slice(&self.keys, 1, slot..slot + 1, i);
                     slice_values.copy_slice(&self.values, 1, slot..slot + 1, i);
@@ -354,7 +237,6 @@ impl<B: Backend> KVCacheLayer<B> {
                     base_ring_offset: ring_offset,
                     base_ring_length: ring_length,
                     slots,
-                    positions,
                     keys: slice_keys,
                     values: slice_values,
                 })
@@ -371,8 +253,6 @@ impl<B: Backend> KVCacheLayer<B> {
             (
                 KVSlice::Full {
                     base_prefix_len,
-                    base_positions_len,
-                    positions,
                 },
                 KVCacheLayerState::Full {
                     prefix_len,
@@ -380,14 +260,9 @@ impl<B: Backend> KVCacheLayer<B> {
             ) => match range {
                 None => {
                     *prefix_len = *base_prefix_len;
-                    self.prefix_token_positions.clone_from(positions);
-                    self.prefix_token_positions.truncate(*base_positions_len);
                 },
                 Some(r) => {
-                    let accepted = r.start;
-                    *prefix_len = base_prefix_len.saturating_add(accepted);
-                    let keep_positions = base_positions_len.saturating_add(accepted);
-                    self.prefix_token_positions.truncate(keep_positions);
+                    *prefix_len = base_prefix_len.saturating_add(r.start);
                 },
             },
             (
@@ -396,7 +271,6 @@ impl<B: Backend> KVCacheLayer<B> {
                     base_ring_offset,
                     base_ring_length,
                     slots,
-                    positions,
                     keys,
                     values,
                 },
@@ -411,10 +285,6 @@ impl<B: Backend> KVCacheLayer<B> {
                     None => {
                         *ring_offset = *base_ring_offset;
                         *ring_length = *base_ring_length;
-
-                        for (i, &slot) in slots.iter().enumerate() {
-                            self.prefix_token_positions[slot] = positions[i];
-                        }
 
                         for (i, &slot) in slots.iter().enumerate() {
                             self.keys.copy_slice(keys, 1, i..i + 1, slot);
@@ -448,7 +318,6 @@ impl<B: Backend> KVCacheLayer<B> {
 
                         for (i, &slot) in slots[r.clone()].iter().enumerate() {
                             let src_i = r.start + i;
-                            self.prefix_token_positions[slot] = positions[src_i];
                             self.keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
                             self.values.copy_slice(values, 1, src_i..src_i + 1, slot);
                         }

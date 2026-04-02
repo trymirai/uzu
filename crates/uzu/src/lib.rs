@@ -1,3 +1,6 @@
+// needed for tests to resolve `uzu::` imports
+extern crate self as uzu;
+
 mod array;
 mod audio;
 mod classifier;

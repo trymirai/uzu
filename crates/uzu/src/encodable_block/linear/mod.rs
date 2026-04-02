@@ -1,7 +1,9 @@
 mod full_precision;
+mod qlora_wrapper;
 mod quantized;
 
 pub use full_precision::{FullPrecisionLinear, FullPrecisionLinearError};
+pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use quantized::{QuantizedLinear, QuantizedLinearError};
 use thiserror::Error;
 
@@ -23,11 +25,11 @@ pub trait Linear<B: Backend> {
 #[derive(Debug, Error)]
 pub enum LinearBlockError<B: Backend> {
     #[error("QuantizedLinear error: {0}")]
-    QuantizedLinearError(#[source] QuantizedLinearError<B>),
+    QuantizedLinearError(#[from] QuantizedLinearError<B>),
     #[error("FullPrecisionLinear error: {0}")]
-    FullPrecisionLinearError(#[source] FullPrecisionLinearError<B>),
-    #[error("QLoRA linear layer not supported")]
-    QLoRaNotSupported,
+    FullPrecisionLinearError(#[from] FullPrecisionLinearError<B>),
+    #[error("QLoRALinearWrapper error: {0}")]
+    QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
 }
 
 impl<B: Backend> dyn Linear<B> {
@@ -52,8 +54,7 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
-                )
-                .map_err(LinearBlockError::QuantizedLinearError)?;
+                )?;
                 Ok(Box::new(block))
             },
             LinearConfig::FullPrecision {
@@ -67,13 +68,27 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
-                )
-                .map_err(LinearBlockError::FullPrecisionLinearError)?;
+                )?;
                 Ok(Box::new(block))
             },
             LinearConfig::QLoRA {
-                ..
-            } => Err(LinearBlockError::QLoRaNotSupported),
+                quantization,
+                lora_rank,
+                lora_scale,
+            } => {
+                let block = QLoRALinearWrapper::new(
+                    context,
+                    quantization,
+                    *lora_rank,
+                    *lora_scale,
+                    input_dimension,
+                    output_dimension_sum,
+                    parameter_tree,
+                    input_array_id,
+                    output_array_id,
+                )?;
+                Ok(Box::new(block))
+            },
         }
     }
 }

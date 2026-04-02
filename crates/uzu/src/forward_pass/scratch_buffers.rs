@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
@@ -11,6 +9,7 @@ use crate::{
 pub struct ScratchBuffers<B: Backend> {
     // 1-D
     pub token_ids: Array<B>,
+    pub token_subtrie_ranges: Array<B>,
     pub token_positions: Array<B>,
     pub token_parents: Array<B>,
     pub token_bitmask: Array<B>,
@@ -18,7 +17,6 @@ pub struct ScratchBuffers<B: Backend> {
     pub sampling_output: Array<B>,
 
     // 2-D
-    pub attention_window_size_to_bias: HashMap<Option<usize>, Array<B>>,
     pub logits: Array<B>,
     pub main: Array<B>,
     pub shortcut: Array<B>,
@@ -27,6 +25,7 @@ pub struct ScratchBuffers<B: Backend> {
     pub attention_output: Array<B>,
     pub mlp_fused_up: Array<B>,
     pub mlp_hidden: Array<B>,
+    pub lora_intermediate: Option<Array<B>>,
     pub ssm_inproj: Option<Array<B>>,
     pub ssm_packed: Option<Array<B>>,
     pub ssm_conv_padded: Option<Array<B>>,
@@ -35,6 +34,10 @@ pub struct ScratchBuffers<B: Backend> {
     pub ssm_c: Option<Array<B>>,
     pub ssm_dt: Option<Array<B>>,
     pub ssm_z: Option<Array<B>>,
+    pub delta_net_prep_q_norm: Option<Array<B>>,
+    pub delta_net_prep_k_norm: Option<Array<B>>,
+    pub delta_net_prep_beta: Option<Array<B>>,
+    pub delta_net_prep_decay: Option<Array<B>>,
 
     // 3-D
     pub rotated_queries: Array<B>,
@@ -72,7 +75,6 @@ impl<B: Backend> ScratchBuffers<B> {
         context: &B::Context,
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        max_prefix_len: usize,
         max_suffix_len: usize,
     ) -> Self {
         // Helper closure for allocation
@@ -97,6 +99,11 @@ impl<B: Backend> ScratchBuffers<B> {
         Self {
             // 1-D
             token_ids: alloc(&[max_suffix_len], DataType::U64, "token_ids"),
+            token_subtrie_ranges: alloc(
+                &model_shape.subtrie_ranges_shape(max_suffix_len),
+                DataType::U32,
+                "token_subtrie_ranges",
+            ),
             token_positions: alloc(&[max_suffix_len], DataType::I32, "token_positions"),
             token_parents: alloc(&[max_suffix_len], DataType::I32, "token_parents"),
             token_bitmask: alloc(&model_shape.bitmask_shape(max_suffix_len), DataType::U32, "token_bitmask"),
@@ -104,23 +111,6 @@ impl<B: Backend> ScratchBuffers<B> {
             sampling_output: alloc(&[max_suffix_len], DataType::U32, "sampling_output"),
 
             // 2-D
-            attention_window_size_to_bias: model_shape
-                .sliding_window_length_per_layer
-                .iter()
-                .copied()
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .map(|window_size| {
-                    let label = match window_size {
-                        Some(ws) => {
-                            format!("attention_bias_for_window_size_{ws}")
-                        },
-                        None => "attention_bias_for_window_size_none".to_string(),
-                    };
-                    let shape = [max_suffix_len, max_suffix_len + max_prefix_len];
-                    (window_size, alloc(&shape, act_ty, &label))
-                })
-                .collect(),
             logits: alloc(&model_shape.logits_shape(max_suffix_len), act_ty, "logits"),
             main: alloc(&model_shape.main_shape(max_suffix_len), act_ty, "main"),
             shortcut: alloc(&model_shape.main_shape(max_suffix_len), act_ty, "shortcut"),
@@ -129,6 +119,9 @@ impl<B: Backend> ScratchBuffers<B> {
             attention_output: alloc(&model_shape.attention_output_shape(max_suffix_len), act_ty, "attention_output"),
             mlp_fused_up: alloc(&model_shape.mlp_fused_up_shape(max_suffix_len), act_ty, "mlp_fused_up"),
             mlp_hidden: alloc(&model_shape.mlp_hidden_shape(max_suffix_len), act_ty, "mlp_hidden"),
+            lora_intermediate: model_shape
+                .lora_intermediate(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty, "lora_intermediate")),
             ssm_inproj: model_shape.ssm_inproj_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_inproj")),
             ssm_packed: model_shape.ssm_packed_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_packed")),
             ssm_conv_padded: model_shape
@@ -139,6 +132,18 @@ impl<B: Backend> ScratchBuffers<B> {
             ssm_c: model_shape.ssm_bc_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_c")),
             ssm_dt: model_shape.ssm_dt_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_dt")),
             ssm_z: model_shape.ssm_z_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ssm_z")),
+            delta_net_prep_q_norm: model_shape
+                .delta_net_prep_qk_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_q_norm")),
+            delta_net_prep_k_norm: model_shape
+                .delta_net_prep_qk_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_k_norm")),
+            delta_net_prep_beta: model_shape
+                .delta_net_prep_beta_decay_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_beta")),
+            delta_net_prep_decay: model_shape
+                .delta_net_prep_beta_decay_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, DataType::F32, "delta_net_prep_decay")),
             // 3-D
             rotated_queries: alloc(&model_shape.rotated_queries_shape(max_suffix_len), act_ty, "rotated_queries"),
             rotated_keys: alloc(&model_shape.rotated_keys_shape(max_suffix_len), act_ty, "rotated_keys"),

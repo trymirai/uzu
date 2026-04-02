@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo, validate_raw_kernel};
+use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
 
 #[derive(Debug)]
 pub enum MetalSdk {
@@ -195,10 +195,6 @@ impl MetalToolchain {
         }
 
         let source_contents = fs::read_to_string(path).context("cannot read source file")?;
-
-        for node in &ast_root.inner {
-            validate_raw_kernel(node).context("validation of legacy (non-dsl) kernel failed")?;
-        }
 
         let kernel_infos = ast_root
             .inner

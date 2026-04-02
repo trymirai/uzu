@@ -24,12 +24,12 @@ impl<B: Backend> PoolingKernel<B> {
         output: &mut B::Buffer,
         seq_len: u32,
         hidden_dim: u32,
-        batch_size: u32,
+        batch_dim: u32,
         encoder: &mut Encoder<B>,
     ) {
         match self {
-            Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
-            Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_size, encoder),
+            Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_dim, encoder),
+            Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_dim, encoder),
         }
     }
 }
@@ -63,19 +63,18 @@ impl<B: Backend> Pooling<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let batch_size = 1;
+        let batch_dim = 1;
         let seq_len = state.aux_buffers_suffix_length();
 
-        let arrays = state.arrays(&[ArrayId::Main, ArrayId::ClassifierPooling]);
-        let main_array = &arrays[0];
-        let pooling_array = &arrays[1];
+        let main_array = state.array(ArrayId::Main);
+        let pooling_array = state.array(ArrayId::ClassifierPooling);
 
         self.pooling_kernel.encode(
             main_array.buffer().borrow().deref(),
             pooling_array.buffer().borrow_mut().deref_mut(),
             seq_len as u32,
             self.model_dim as u32,
-            batch_size,
+            batch_dim,
             encoder,
         );
 
@@ -84,6 +83,8 @@ impl<B: Backend> Pooling<B> {
             let output_pooling_trace = state.traces().borrow().output_pooling().clone();
             state.encode_copy_array(encoder, ArrayId::ClassifierPooling, output_pooling_trace);
         }
+
+        state.set_active_row_count(pooling_array.shape()[0]);
         Ok(())
     }
 }

@@ -33,27 +33,12 @@ struct PointerElementTypeImpl<threadgroup T*> {
 template <typename T>
 using PointerElementType = typename PointerElementTypeImpl<T>::type;
 
-template <typename T>
-struct AccumulatorHelper {
-  typedef float AccumulatorType;
-};
-
 template <typename OutT, typename InT>
 struct TransformNone {
   TransformNone(float = 1.0f, float = 0.0f) {}
 
   static METAL_FUNC OutT apply(InT x) { return static_cast<OutT>(x); }
   METAL_FUNC OutT apply(InT x, OutT) const { return static_cast<OutT>(x); }
-};
-
-template <typename OutT, typename InT>
-struct TransformAdd {
-  TransformAdd(float = 1.0f, float = 1.0f) {}
-
-  static METAL_FUNC OutT apply(InT x) { return static_cast<OutT>(x); }
-  METAL_FUNC OutT apply(InT x, OutT c) const {
-    return static_cast<OutT>(x) + c;
-  }
 };
 
 template <typename OutT, typename InT>
@@ -68,7 +53,8 @@ struct TransformScaleAccumulate {
 
   METAL_FUNC OutT apply(InT x, OutT c) const {
     return static_cast<OutT>(
-        x * static_cast<InT>(alpha) + (static_cast<OutT>(beta) * c)
+        x * static_cast<InT>(alpha) +
+        (beta != 0.0f ? (static_cast<OutT>(beta) * c) : static_cast<OutT>(0.0))
     );
   }
 };

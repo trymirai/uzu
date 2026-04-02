@@ -150,6 +150,8 @@ struct ThreadgroupGemm {
       const device T* b,
       device U* d,
       const constant GemmParams* params,
+      const constant float& ab_scale,
+      const bool is_accumulate,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       uint simd_lane_id [[thread_index_in_simdgroup]],
@@ -199,6 +201,11 @@ struct ThreadgroupGemm {
 
     thread ThreadgroupTileType threadgroup_tile(simd_group_id, simd_lane_id);
 
+    TransformScaleAccumulate<AccumType, AccumType> epilogue(
+        ab_scale,
+        is_accumulate ? 1.0f : 0.0f
+    );
+
     int gemm_k_iterations = params->aligned_inner_iterations;
 
     ///////////////////////////////////////////////////////////////////////////
@@ -237,14 +244,18 @@ struct ThreadgroupGemm {
         threadgroup_tile.multiply_accumulate(a_shared, b_shared);
       }
 
+      threadgroup_tile
+          .apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
       threadgroup_tile.store_result(d, params->leading_dimension_d);
       return;
     }
     ///////////////////////////////////////////////////////////////////////////
     // MN unaligned loop
     else {
-      short threadgroup_block_rows = min(BLOCK_ROWS, params->M - output_row);
-      short threadgroup_block_cols = min(BLOCK_COLS, params->N - output_col);
+      short threadgroup_block_rows =
+          min(BLOCK_ROWS, ((int)params->M) - output_row);
+      short threadgroup_block_cols =
+          min(BLOCK_COLS, ((int)params->N) - output_col);
       short leftover_block_depth =
           params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
 
@@ -262,6 +273,8 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
+        threadgroup_tile
+            .apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
         threadgroup_tile.store_result(d, params->leading_dimension_d);
         return;
 
@@ -278,6 +291,13 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
+        threadgroup_tile.apply_epilogue_safe(
+            d,
+            params->leading_dimension_d,
+            1,
+            short2(threadgroup_block_cols, threadgroup_block_rows),
+            epilogue
+        );
         threadgroup_tile.store_result_safe(
             d,
             params->leading_dimension_d,
@@ -298,6 +318,13 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
+        threadgroup_tile.apply_epilogue_safe(
+            d,
+            params->leading_dimension_d,
+            1,
+            short2(threadgroup_block_cols, threadgroup_block_rows),
+            epilogue
+        );
         threadgroup_tile.store_result_safe(
             d,
             params->leading_dimension_d,
@@ -318,6 +345,13 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
+        threadgroup_tile.apply_epilogue_safe(
+            d,
+            params->leading_dimension_d,
+            1,
+            short2(threadgroup_block_cols, threadgroup_block_rows),
+            epilogue
+        );
         threadgroup_tile.store_result_safe(
             d,
             params->leading_dimension_d,

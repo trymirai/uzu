@@ -7,7 +7,10 @@ use uzu::{
     backends::{
         common::{
             Backend, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulKernel, MatmulKernels},
+            kernel::{
+                ManualKernels,
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            },
         },
         metal::Metal,
     },
@@ -61,8 +64,7 @@ fn fill_buffer_random(
 
 fn encode_and_run(
     context: &Ctx,
-    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
-    dispatch_path: DispatchPath,
+    kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     shape: &TestShape,
     a_buffer: &Buf,
     b_buffer: &Buf,
@@ -70,29 +72,21 @@ fn encode_and_run(
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
-    let arguments = MatmulArguments {
-        a: a_buffer,
-        a_offset: 0,
-        b: b_buffer,
-        d: d_buffer,
-        bias: None,
-        batch: shape.batch as i32,
-        input_dim: shape.input_dim as i32,
-        output_dim: shape.output_dim as i32,
-        leading_dimension_a: shape.input_dim as i32,
-        leading_dimension_b: shape.input_dim as i32,
-        leading_dimension_d: shape.output_dim as i32,
-        transpose_b: true,
-    };
-
-    let encode_result = match dispatch_path {
-        DispatchPath::Gemv => kernel.encode_gemv(context, arguments, &mut encoder),
-        DispatchPath::Gemm => kernel.encode_gemm(context, arguments, &mut encoder),
-        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(context, arguments, &mut encoder),
-        DispatchPath::GemmMppDirect => kernel.encode_gemm_mpp_direct(context, arguments, &mut encoder),
-    };
-
-    encode_result.map_err(|e| BenchError::Kernel(e.to_string()))?;
+    kernel.encode(
+        context,
+        MatmulArguments {
+            a: a_buffer,
+            a_offset: 0,
+            b: b_buffer,
+            ab_scale: 1.0,
+            c: MatmulArgumentC::None,
+            d: d_buffer,
+            batch_dim: shape.batch as u32,
+            input_dim: shape.input_dim as u32,
+            output_dim: shape.output_dim as u32,
+        },
+        &mut encoder,
+    );
 
     let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
@@ -105,7 +99,7 @@ fn run_benchmark(
     dispatch_path: DispatchPath,
     shape: &TestShape,
 ) -> Result<f64, BenchError> {
-    let mut kernel = <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(context, data_type)
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
         .map_err(|e| BenchError::Kernel(e.to_string()))?;
 
     let elem_size = data_type.size_in_bytes();

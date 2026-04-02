@@ -1,11 +1,12 @@
-use std::{cell::Cell, collections::HashMap};
+use std::cell::Cell;
 
 use crate::{
-    array::{Array, ArrayContextExt},
+    array::ArrayContextExt,
     backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
-        kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KVSlice},
+        delta_net_layer::DeltaNetLayer,
+        kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVSlice},
         model_shape::ModelShape,
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
@@ -17,6 +18,7 @@ pub enum CacheLayer<B: Backend> {
     Transformer(KVCacheLayer<B>),
     StateSpace(SSMLayer<B>),
     ShortConv(ShortConvLayer<B>),
+    DeltaNet(DeltaNetLayer<B>),
 }
 
 #[derive(Clone)]
@@ -24,6 +26,7 @@ pub enum CacheLayerSlice<B: Backend> {
     Transformer(KVSlice<B>),
     StateSpace,
     ShortConv,
+    DeltaNet,
 }
 
 const ARRAY_TRANSFORMER_KEYS_LABEL: &str = "cache_layers_transformer_keys";
@@ -32,6 +35,8 @@ const ARRAY_STATE_SPACE_CONV_STATE_LABEL: &str = "cache_layers_state_space_conv_
 const ARRAY_STATE_SPACE_SSM_STATE_LABEL: &str = "cache_layers_state_space_ssm_state";
 const ARRAY_SHORT_CONV_CONV_STATE_LABEL: &str = "cache_layers_short_conv_conv_state";
 const ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL: &str = "cache_layers_short_conv_suffix_state";
+const ARRAY_DELTA_NET_CONV_STATE_LABEL: &str = "cache_layers_delta_net_conv_state";
+const ARRAY_DELTA_NET_SSM_STATE_LABEL: &str = "cache_layers_delta_net_ssm_state";
 
 impl<B: Backend> CacheLayer<B> {
     pub fn as_transformer(&self) -> Option<&KVCacheLayer<B>> {
@@ -72,6 +77,20 @@ impl<B: Backend> CacheLayer<B> {
     pub fn as_short_conv_mut(&mut self) -> Option<&mut ShortConvLayer<B>> {
         match self {
             CacheLayer::ShortConv(layer) => Some(layer),
+            _ => None,
+        }
+    }
+
+    pub fn as_delta_net(&self) -> Option<&DeltaNetLayer<B>> {
+        match self {
+            CacheLayer::DeltaNet(layer) => Some(layer),
+            _ => None,
+        }
+    }
+
+    pub fn as_delta_net_mut(&mut self) -> Option<&mut DeltaNetLayer<B>> {
+        match self {
+            CacheLayer::DeltaNet(layer) => Some(layer),
             _ => None,
         }
     }
@@ -133,16 +152,6 @@ impl<B: Backend> CacheLayers<B> {
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
                         ),
-                        prefix_token_positions: match &state {
-                            KVCacheLayerState::Full {
-                                ..
-                            } => Vec::with_capacity(max_prefix_length),
-                            KVCacheLayerState::Windowed {
-                                window_length,
-                                ..
-                            } => (0..*window_length).map(|_| INVALID_POSITION).collect(),
-                        },
-                        max_suffix_length,
                     })
                 },
                 DecoderLayerType::StateSpace {
@@ -193,6 +202,31 @@ impl<B: Backend> CacheLayers<B> {
                         suffix_state_valid_len: Cell::new(0),
                     })
                 },
+                DecoderLayerType::DeltaNet {
+                    conv_dim,
+                    kernel_size,
+                    num_heads,
+                    head_dim,
+                    value_head_dim,
+                    ..
+                } => {
+                    let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
+                    let ssm_shape = [*num_heads, *value_head_dim, *head_dim];
+                    let dtype = model_shape.activation_data_type();
+
+                    CacheLayer::DeltaNet(DeltaNetLayer {
+                        conv_state: context.create_array_zeros(
+                            &conv_shape,
+                            dtype,
+                            &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
+                        ),
+                        ssm_state: context.create_array_zeros(
+                            &ssm_shape,
+                            dtype,
+                            &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),
+                        ),
+                    })
+                },
             })
             .collect();
 
@@ -211,7 +245,6 @@ impl<B: Backend> CacheLayers<B> {
                         prefix_len,
                     } => {
                         *prefix_len = 0;
-                        layer.prefix_token_positions.clear();
                     },
                     KVCacheLayerState::Windowed {
                         ring_offset,
@@ -220,11 +253,11 @@ impl<B: Backend> CacheLayers<B> {
                     } => {
                         *ring_offset = 0;
                         *ring_length = 0;
-                        layer.prefix_token_positions.fill(INVALID_POSITION);
                     },
                 },
                 CacheLayer::StateSpace(layer) => layer.zero(),
                 CacheLayer::ShortConv(layer) => layer.zero(),
+                CacheLayer::DeltaNet(layer) => layer.zero(),
             }
         }
     }
@@ -235,38 +268,6 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn max_prefix_length(&self) -> usize {
         self.max_prefix_length
-    }
-
-    pub fn fill_attention_bias(
-        &self,
-        dst: &mut HashMap<Option<usize>, Array<B>>,
-        suffix_token_positions: &[usize],
-        suffix_length: usize,
-        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
-    ) {
-        for layer in self.data.iter() {
-            if let CacheLayer::Transformer(layer) = layer {
-                if let Some(array) = dst.get_mut(&layer.window_length()) {
-                    layer.fill_attention_bias(array, suffix_token_positions, suffix_length, external_bias_fn);
-                }
-            }
-        }
-    }
-
-    pub fn fill_attention_bias_scratch(
-        &self,
-        dst: &mut HashMap<Option<usize>, Array<B>>,
-        suffix_token_positions: &[usize],
-        suffix_length: usize,
-        _context: &B::Context,
-    ) {
-        for layer in self.data.iter() {
-            if let CacheLayer::Transformer(layer) = layer {
-                if let Some(array) = dst.get_mut(&layer.window_length()) {
-                    layer.fill_attention_bias(array, suffix_token_positions, suffix_length, None);
-                }
-            }
-        }
     }
 
     pub fn update_after_acceptance(
@@ -288,26 +289,13 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn register_accepted_tokens(
         &mut self,
-        token_positions: &[usize],
+        number_of_accepted_tokens: usize,
     ) {
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.register_accepted_tokens(token_positions);
+                layer.register_accepted_tokens(number_of_accepted_tokens);
             }
         }
-    }
-
-    pub fn attention_bias_updates_after_acceptance(
-        &self,
-        accepted_len: usize,
-    ) -> Vec<AttentionBiasUpdate> {
-        self.data
-            .iter()
-            .filter_map(|layer| match layer {
-                CacheLayer::Transformer(kv) => kv.attention_bias_update_after_acceptance(accepted_len),
-                _ => None,
-            })
-            .collect()
     }
 
     pub fn slice(
@@ -326,6 +314,7 @@ impl<B: Backend> CacheLayers<B> {
                 },
                 CacheLayer::StateSpace(_) => layers.push(CacheLayerSlice::StateSpace),
                 CacheLayer::ShortConv(_) => layers.push(CacheLayerSlice::ShortConv),
+                CacheLayer::DeltaNet(_) => layers.push(CacheLayerSlice::DeltaNet),
             }
         }
 
@@ -394,8 +383,6 @@ impl<B: Backend> CacheLayers<B> {
                         state: layer.state.clone(),
                         keys: new_keys,
                         values: new_values,
-                        prefix_token_positions: layer.prefix_token_positions.clone(),
-                        max_suffix_length: layer.max_suffix_length,
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
@@ -445,6 +432,30 @@ impl<B: Backend> CacheLayers<B> {
                         suffix_state: new_suffix,
                         suffix_state_valid_start: Cell::new(0),
                         suffix_state_valid_len: Cell::new(0),
+                    })
+                },
+                CacheLayer::DeltaNet(layer) => {
+                    let conv_shape = layer.conv_state.shape().to_vec();
+                    let conv_dtype = layer.conv_state.data_type();
+                    let mut new_conv = context.create_array_uninitialized(
+                        &conv_shape,
+                        conv_dtype,
+                        &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
+                    );
+                    new_conv.copy_from_array(&layer.conv_state);
+
+                    let ssm_shape = layer.ssm_state.shape().to_vec();
+                    let ssm_dtype = layer.ssm_state.data_type();
+                    let mut new_ssm = context.create_array_uninitialized(
+                        &ssm_shape,
+                        ssm_dtype,
+                        &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),
+                    );
+                    new_ssm.copy_from_array(&layer.ssm_state);
+
+                    CacheLayer::DeltaNet(DeltaNetLayer {
+                        conv_state: new_conv,
+                        ssm_state: new_ssm,
                     })
                 },
             })

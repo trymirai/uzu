@@ -251,10 +251,10 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let arrays = state.arrays(&[self.input_array_id, self.output_array_id]);
-        let batch_size = state.active_suffix_length();
-        let input_array = &arrays[0];
-        let output_array = &arrays[1];
+        let batch_dim = state.active_row_count();
+
+        let input_array = state.array(self.input_array_id);
+        let output_array = state.array(self.output_array_id);
         let output_buf_rc = output_array.buffer();
         let mut output_buf_borrow = output_buf_rc.borrow_mut();
 
@@ -268,7 +268,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
                     scales_buffer: self.scales_buffer.borrow().deref(),
                     zero_points_or_biases_buffer: self.zero_points_or_biases_buffer.borrow().deref(),
                     output_buffer: output_buf_borrow.deref_mut(),
-                    batch: batch_size,
+                    batch: batch_dim,
                     input_dim: self.input_dim,
                     output_dim: self.output_dim,
                     quantization_type: self.quantization_type,
@@ -277,7 +277,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
             .expect("Failed to encode quantized matmul");
 
         if let (Some(bias_add_kernel), Some(biases_buffer)) = (&self.bias_add_kernel, &self.biases_buffer) {
-            let total_length = batch_size * self.output_dim;
+            let total_length = batch_dim * self.output_dim;
             bias_add_kernel.encode(
                 None::<&B::Buffer>,
                 biases_buffer.borrow().deref(),

@@ -14,7 +14,6 @@
 A high-performance inference engine for AI models on Apple Silicon. Key features:
 
 - Simple, high-level API
-- [Hybrid architecture](https://docs.trymirai.com/overview/uzu#before-we-start), where layers can be computed as GPU kernels or via MPSGraph (a low-level API beneath CoreML)
 - Unified model configurations, making it easy to add support for new models
 - Traceable computations to ensure correctness against the source-of-truth implementation
 - Utilizes unified memory on Apple devices
@@ -25,12 +24,27 @@ For a detailed explanation of the architecture, please refer to the [documentati
 
 ### [Models](https://trymirai.com/models)
 
-`uzu` uses its own model format. To export a specific model, use [lalamo](https://github.com/trymirai/lalamo):
+`uzu` uses its own model format. You can download a test model using the sample script:
+
+```bash
+./scripts/download_test_model.sh
+```
+
+Or you can download any supported model that has already been converted using:
+
+```bash
+cd ./tools/helpers/
+uv run main.py list-models # show the list of supported models
+uv run main.py download-model {REPO_ID} # download a specific model using repo_id
+```
+
+After that, you can find the downloaded model at `./models/{VERSION}/`.
+
+Alternatively, you can export a specific model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
 ```bash
 git clone https://github.com/trymirai/lalamo.git
 cd lalamo
-git checkout v0.6.0
 ```
 
 After that, you can retrieve the list of supported models:
@@ -44,23 +58,6 @@ Then, export the specific one:
 ```bash
 uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 ```
-
-Alternatively, you can download a test model using the sample script:
-
-```bash
-./scripts/download_test_model.sh
-```
-
-Or you can download any supported model that has already been converted using:
-
-```bash
-cd ./tools/helpers/
-uv sync # install dependencies
-uv run main.py list-models # show the list of supported models
-uv run main.py download-model {REPO_ID} # download a specific model using repo_id
-```
-
-After that, you can find the downloaded model at `./models/{VERSION}/`.
 
 ### Bindings
 
