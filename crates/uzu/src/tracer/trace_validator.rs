@@ -349,6 +349,46 @@ impl<B: Backend> TraceValidator<B> {
             }
         }
 
+        // LLM-specific: DeltaNet state validation
+        let delta_net_layers: Vec<usize> = {
+            let cache = state.cache_layers().unwrap().borrow();
+            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
+        };
+
+        for index in delta_net_layers {
+            let conv_state = state.array(ArrayId::DeltaNetConvState(index));
+            let ssm_state = state.array(ArrayId::DeltaNetSsmState(index));
+
+            for path in [
+                format!("updated_state.{}.conv_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(
+                            data_type,
+                            &expected,
+                            &conv_state,
+                            Some(ArrayTransform::SsmConvState),
+                        ),
+                    });
+                }
+            }
+
+            for path in [
+                format!("updated_state.{}.ssm_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                    });
+                }
+            }
+        }
+
         // LLM-specific: Token comparison
         let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
@@ -540,21 +580,6 @@ impl<B: Backend> TraceValidator<B> {
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
-
-        // Embedding norm (classifier-specific)
-        if let Some(embedding_norm) = &traces.borrow().embedding_norm {
-            if traces_view.leaf_array("activation_trace.embedding_norm").is_ok() {
-                results.push(TracerValidationResult {
-                    name: "activation_trace.embedding_norm".to_string(),
-                    metrics: Self::validate_array_with_name(
-                        data_type,
-                        traces_view,
-                        "activation_trace.embedding_norm",
-                        embedding_norm,
-                    ),
-                });
-            }
-        }
 
         // Output pooling (classifier-specific)
         if let Some(output_pooling) = &traces.borrow().output_pooling {

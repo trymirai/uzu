@@ -359,18 +359,18 @@ impl<B: Backend> MambaMixer<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let active_suffix_length = state.active_suffix_length();
-        if active_suffix_length == 0 {
+        let active_row_count = state.active_row_count();
+        if active_row_count == 0 {
             return Ok(());
         }
 
         self.in_projection.encode(state, encoder)?;
-        self.run_split_inproj(state, encoder, active_suffix_length);
-        self.run_conv_scan(state, encoder, active_suffix_length);
-        if active_suffix_length == 1 {
-            self.run_decode_ssm(state, encoder, active_suffix_length);
+        self.run_split_inproj(state, encoder, active_row_count);
+        self.run_conv_scan(state, encoder, active_row_count);
+        if active_row_count == 1 {
+            self.run_decode_ssm(state, encoder, active_row_count);
         } else {
-            self.run_prefill_ssm(state, encoder, active_suffix_length);
+            self.run_prefill_ssm(state, encoder, active_row_count);
         }
         self.out_projection.encode(state, encoder)?;
         Ok(())

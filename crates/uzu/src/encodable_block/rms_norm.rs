@@ -99,7 +99,7 @@ impl<B: Backend> RMSNorm<B> {
         let (batch_start, batch_len) = if self.use_sampling_range {
             (state.sampling_start(), state.sampling_length())
         } else {
-            (0, state.active_suffix_length())
+            (0, state.active_row_count())
         };
 
         let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));

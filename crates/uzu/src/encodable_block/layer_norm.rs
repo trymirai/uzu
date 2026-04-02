@@ -76,7 +76,7 @@ impl<B: Backend> LayerNorm<B> {
         let input_array = state.array(self.input_array_id);
         let output_array = state.array(self.output_array_id);
 
-        let batch_size = input_array.shape()[0] as u32;
+        let batch_dim = input_array.shape()[0] as u32;
         let model_dim = input_array.shape()[1] as u32;
         let full_layer = if self.config.upcast_mode == UpcastMode::FullLayer {
             1u32
@@ -91,7 +91,7 @@ impl<B: Backend> LayerNorm<B> {
             input_buffer_borrow.as_deref(),
             self.scales_buffer.borrow().deref(),
             output_array.buffer().borrow_mut().deref_mut(),
-            batch_size,
+            batch_dim,
             model_dim,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),

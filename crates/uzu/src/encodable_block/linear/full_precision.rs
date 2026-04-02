@@ -134,7 +134,7 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let batch_size = state.active_suffix_length();
+        let batch_dim = state.active_row_count();
         let input_array = state.array(self.input_array_id);
         let output_array = state.array(self.output_array_id);
 
@@ -151,7 +151,7 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
                     None => MatmulArgumentC::None,
                 },
                 d: output_array.buffer().borrow_mut().deref_mut(),
-                batch_dim: batch_size as u32,
+                batch_dim: batch_dim as u32,
                 input_dim: self.input_dim as u32,
                 output_dim: self.output_dim as u32,
             },
