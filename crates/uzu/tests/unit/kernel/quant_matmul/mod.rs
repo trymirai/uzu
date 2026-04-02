@@ -1,5 +1,6 @@
 mod qmm_test;
 mod qmm_transposed_test;
+mod qmm_transposed_wide_test;
 
 use num_traits::Float;
 use uzu::ArrayElement;
