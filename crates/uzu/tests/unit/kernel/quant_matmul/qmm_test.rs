@@ -1,0 +1,678 @@
+use std::fmt::{Debug, Display};
+
+use half::{bf16, f16};
+use num_traits::Float;
+use uzu::{
+    ArrayElement, DataType,
+    backends::{
+        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmKernel},
+        cpu::Cpu,
+    },
+};
+
+use crate::common::helpers::alloc_buffer_with_data;
+
+// Weight layout: [k × n], packed into u32 words
+// 4-bit: 8 values per u32
+// 8-bit: 4 values per u32
+
+fn pack_weights_u32(
+    values: &[u8],
+    bits: i32,
+) -> Vec<u32> {
+    if bits == 4 {
+        values
+            .chunks(8)
+            .map(|chunk| {
+                let mut word = 0u32;
+                for (i, &v) in chunk.iter().enumerate() {
+                    word |= ((v & 0xF) as u32) << (i * 4);
+                }
+                word
+            })
+            .collect()
+    } else {
+        values
+            .chunks(4)
+            .map(|chunk| {
+                let mut word = 0u32;
+                for (i, &v) in chunk.iter().enumerate() {
+                    word |= (v as u32) << (i * 8);
+                }
+                word
+            })
+            .collect()
+    }
+}
+
+fn pack_zero_points(
+    values: &[u8],
+    bits: i32,
+) -> Vec<u8> {
+    if bits == 4 {
+        values
+            .chunks(2)
+            .map(|chunk| {
+                let lo = chunk[0] & 0x0F;
+                let hi = if chunk.len() > 1 {
+                    chunk[1] & 0x0F
+                } else {
+                    0
+                };
+                lo | (hi << 4)
+            })
+            .collect()
+    } else {
+        values.to_vec()
+    }
+}
+
+struct Input<T: ArrayElement + Float> {
+    w_packed: Vec<u32>,
+    scales: Vec<T>,
+    zero_points: Option<Vec<u8>>,
+    biases: Option<Vec<T>>,
+    x: Vec<T>,
+    k: i32,
+    n: i32,
+    m: i32,
+    group_size: i32,
+    bits: i32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+}
+
+fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+    let context = B::Context::new().expect("Failed to create Context");
+    let aligned_k = (input.k % 32) == 0;
+    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmKernel::new(
+        &context,
+        T::data_type(),
+        input.group_size,
+        input.bits,
+        input.use_zero_points,
+        input.use_mlx_quant,
+        aligned_k,
+    )
+    .expect("Failed to create QuantizedMatmulQmmKernel");
+
+    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
+
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
+
+    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
+    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
+    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        &w_buf,
+        &scales_buf,
+        zp_buf.as_ref(),
+        bias_buf.as_ref(),
+        &x_buf,
+        &mut y_buf,
+        input.k,
+        input.n,
+        input.m,
+        &mut encoder,
+    );
+
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+
+    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
+    let y_len = (input.m as usize) * (input.n as usize);
+    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+}
+
+/// Create test data for a basic qmm scenario: m×k * k×n = m×n
+/// Weights are non-transposed [k × n] layout.
+fn get_test_data_basic<T: ArrayElement + Float>(
+    m: usize,
+    k: usize,
+    n: usize,
+    group_size: i32,
+    bits: i32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+) -> (Input<T>, Vec<T>) {
+    let num_groups_n = (n + group_size as usize - 1) / group_size as usize;
+
+    // Generate quantized weights [k × n]
+    let mut weights_raw: Vec<u8> = Vec::with_capacity(k * n);
+    let max_val = if bits == 4 {
+        15u8
+    } else {
+        255u8
+    };
+    for l in 0..k {
+        for j in 0..n {
+            weights_raw.push(((l * 3 + j * 7 + 1) % (max_val as usize + 1)) as u8);
+        }
+    }
+    let w_packed = pack_weights_u32(&weights_raw, bits);
+
+    // Scales: [k × num_groups_n]
+    let mut scales_f32: Vec<f32> = Vec::with_capacity(k * num_groups_n);
+    for l in 0..k {
+        for g in 0..num_groups_n {
+            scales_f32.push(0.5 + 0.1 * ((l + g) % 5) as f32);
+        }
+    }
+    let scales: Vec<T> = scales_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+
+    // Zero points or biases
+    let zp_stride = if bits == 4 {
+        (num_groups_n + 1) / 2
+    } else {
+        num_groups_n
+    };
+
+    let (zero_points, biases) = if use_zero_points {
+        let mut zp_raw: Vec<u8> = Vec::with_capacity(k * num_groups_n);
+        for l in 0..k {
+            for g in 0..num_groups_n {
+                let zp_val = ((l * 2 + g * 3) % (max_val as usize + 1)) as u8;
+                zp_raw.push(zp_val);
+            }
+        }
+        // Pack zero points per row
+        let mut zp_packed: Vec<u8> = Vec::with_capacity(k * zp_stride);
+        for l in 0..k {
+            let row = &zp_raw[l * num_groups_n..(l + 1) * num_groups_n];
+            let packed_row = pack_zero_points(row, bits);
+            let mut padded = packed_row;
+            padded.resize(zp_stride, 0);
+            zp_packed.extend_from_slice(&padded);
+        }
+        (Some(zp_packed), None)
+    } else if use_mlx_quant {
+        let mut biases_f32: Vec<f32> = Vec::with_capacity(k * num_groups_n);
+        for l in 0..k {
+            for g in 0..num_groups_n {
+                biases_f32.push(0.01 * ((l + g * 2) % 7) as f32);
+            }
+        }
+        let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+        (None, Some(biases))
+    } else {
+        unreachable!("Must use either zero_points or mlx_quant");
+    };
+
+    // X: [m × k]
+    let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);
+    for i in 0..m {
+        for l in 0..k {
+            x_f32.push(0.1 * f32::sin((i * k + l) as f32 * 0.05) + 0.5);
+        }
+    }
+    let x: Vec<T> = x_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+
+    let input = Input {
+        w_packed,
+        scales,
+        zero_points,
+        biases,
+        x,
+        k: k as i32,
+        n: n as i32,
+        m: m as i32,
+        group_size,
+        bits,
+        use_zero_points,
+        use_mlx_quant,
+    };
+
+    let expected = get_output::<Cpu, T>(&input);
+    (input, expected)
+}
+
+/// Small edge-case test data with known values
+fn get_test_data_edge<T: ArrayElement + Float>(
+    group_size: i32,
+    bits: i32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+) -> (Input<T>, Vec<T>) {
+    let m = 2usize;
+    let k = 4usize;
+    let n = 4usize;
+    let num_groups_n = (n + group_size as usize - 1) / group_size as usize;
+
+    // Simple weights: all 1s
+    let weights_raw: Vec<u8> = vec![1u8; k * n];
+    let w_packed = pack_weights_u32(&weights_raw, bits);
+
+    // Unit scales
+    let scales: Vec<T> = vec![T::one(); k * num_groups_n];
+
+    let zp_stride = if bits == 4 {
+        (num_groups_n + 1) / 2
+    } else {
+        num_groups_n
+    };
+
+    let (zero_points, biases) = if use_zero_points {
+        // Zero points all 0 → bias = 0
+        let zp_packed = vec![0u8; k * zp_stride];
+        (Some(zp_packed), None)
+    } else if use_mlx_quant {
+        let biases: Vec<T> = vec![T::zero(); k * num_groups_n];
+        (None, Some(biases))
+    } else {
+        unreachable!("Must use either zero_points or mlx_quant");
+    };
+
+    // X: simple increasing values
+    let x_f32: Vec<f32> = (0..m * k).map(|i| (i + 1) as f32 * 0.1).collect();
+    let x: Vec<T> = x_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+
+    let input = Input {
+        w_packed,
+        scales,
+        zero_points,
+        biases,
+        x,
+        k: k as i32,
+        n: n as i32,
+        m: m as i32,
+        group_size,
+        bits,
+        use_zero_points,
+        use_mlx_quant,
+    };
+
+    let expected = get_output::<Cpu, T>(&input);
+    (input, expected)
+}
+
+fn check_tolerance(
+    expected: f32,
+    actual: f32,
+    rel_tol: f64,
+    abs_tol: f64,
+) -> bool {
+    let diff = (expected - actual).abs() as f64;
+    let tol = abs_tol.max(expected.abs() as f64 * rel_tol);
+    diff <= tol
+}
+
+fn test_internal<T: ArrayElement + Float + Debug + Display>(
+    input: &Input<T>,
+    expected: &[T],
+) {
+    // GPU MMA units use different rounding than scalar CPU code.
+    // bf16 has 7-bit mantissa (ULP ~0.8%), f16 has 10-bit (~0.1%).
+    // Tiled accumulation reorders FMA ops, compounding rounding differences.
+    // 8-bit weights (0-255) with ZP bias cause larger accumulated errors.
+    let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
+        DataType::BF16 => (0.05, 0.5),
+        DataType::F16 => (0.02, 0.5),
+        _ => (0.01, 0.1),
+    };
+
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<B, T>(input);
+        assert_eq!(expected.len(), output.len(), "Output length mismatch");
+
+        let mut errors = 0;
+        for (i, (&exp, &got)) in expected.iter().zip(output.iter()).enumerate() {
+            let exp_f32 = exp.to_f32().unwrap();
+            let got_f32 = got.to_f32().unwrap();
+            if !check_tolerance(exp_f32, got_f32, rel_tol, abs_tol) {
+                if errors < 5 {
+                    eprintln!("  idx={} expected={} got={} diff={}", i, exp_f32, got_f32, (exp_f32 - got_f32).abs());
+                }
+                errors += 1;
+            }
+        }
+        assert_eq!(
+            errors,
+            0,
+            "QMM kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+            std::any::type_name::<B>(),
+            input.m,
+            input.k,
+            input.n,
+            input.group_size,
+            input.bits,
+            input.use_zero_points,
+            input.use_mlx_quant,
+            errors,
+        );
+    });
+}
+
+fn get_test_dims(
+    group_size: i32,
+    bits: i32,
+    is_half_precision: bool,
+) -> Vec<(usize, usize, usize)> {
+    let gs = group_size as usize;
+    // N must be >= group_size for the Metal tiled loader's stride calculations.
+    // For half-precision 8-bit, limit k to avoid catastrophic cancellation
+    // from large weight values (0-255) and ZP bias subtraction.
+    if is_half_precision && bits == 8 {
+        // For half-precision 8-bit, k must stay small to avoid
+        // catastrophic cancellation in the ZP bias subtraction.
+        let k = gs.min(64);
+        vec![(2, k, gs), (4, k, gs)]
+    } else {
+        vec![(2, gs * 2, gs), (4, gs * 2, gs * 2), (8, gs, gs * 2)]
+    }
+}
+
+fn test_basic<T: ArrayElement + Float + Debug + Display>(
+    group_size: i32,
+    bits: i32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+) {
+    let is_half = matches!(T::data_type(), DataType::F16 | DataType::BF16);
+    let dims = get_test_dims(group_size, bits, is_half);
+
+    for (m, k, n) in dims {
+        let (input, expected) = get_test_data_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+        test_internal::<T>(&input, &expected);
+    }
+}
+
+fn test_edge<T: ArrayElement + Float + Debug + Display>(
+    group_size: i32,
+    bits: i32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+) {
+    let (input, expected) = get_test_data_edge::<T>(group_size, bits, use_zero_points, use_mlx_quant);
+    test_internal::<T>(&input, &expected);
+}
+
+// ── 4-bit, zero points ─────────────────────────────────────────────────────
+
+#[test]
+fn test_f32_gs32_4bit_zp() {
+    test_basic::<f32>(32, 4, true, false);
+}
+
+#[test]
+fn test_f32_gs64_4bit_zp() {
+    test_basic::<f32>(64, 4, true, false);
+}
+
+#[test]
+fn test_f32_gs128_4bit_zp() {
+    test_basic::<f32>(128, 4, true, false);
+}
+
+#[test]
+fn test_f16_gs32_4bit_zp() {
+    test_basic::<f16>(32, 4, true, false);
+}
+
+#[test]
+fn test_f16_gs64_4bit_zp() {
+    test_basic::<f16>(64, 4, true, false);
+}
+
+#[test]
+fn test_f16_gs128_4bit_zp() {
+    test_basic::<f16>(128, 4, true, false);
+}
+
+#[test]
+fn test_bf16_gs32_4bit_zp() {
+    test_basic::<bf16>(32, 4, true, false);
+}
+
+#[test]
+fn test_bf16_gs64_4bit_zp() {
+    test_basic::<bf16>(64, 4, true, false);
+}
+
+#[test]
+fn test_bf16_gs128_4bit_zp() {
+    test_basic::<bf16>(128, 4, true, false);
+}
+
+// ── 8-bit, zero points ─────────────────────────────────────────────────────
+
+#[test]
+fn test_f32_gs32_8bit_zp() {
+    test_basic::<f32>(32, 8, true, false);
+}
+
+#[test]
+fn test_f32_gs64_8bit_zp() {
+    test_basic::<f32>(64, 8, true, false);
+}
+
+#[test]
+fn test_f32_gs128_8bit_zp() {
+    test_basic::<f32>(128, 8, true, false);
+}
+
+#[test]
+fn test_f16_gs32_8bit_zp() {
+    test_basic::<f16>(32, 8, true, false);
+}
+
+#[test]
+fn test_f16_gs64_8bit_zp() {
+    test_basic::<f16>(64, 8, true, false);
+}
+
+#[test]
+fn test_f16_gs128_8bit_zp() {
+    test_basic::<f16>(128, 8, true, false);
+}
+
+#[test]
+fn test_bf16_gs32_8bit_zp() {
+    test_basic::<bf16>(32, 8, true, false);
+}
+
+#[test]
+fn test_bf16_gs64_8bit_zp() {
+    test_basic::<bf16>(64, 8, true, false);
+}
+
+#[test]
+fn test_bf16_gs128_8bit_zp() {
+    test_basic::<bf16>(128, 8, true, false);
+}
+
+// ── 4-bit, mlx quant ───────────────────────────────────────────────────────
+
+#[test]
+fn test_f32_gs32_4bit_mlx() {
+    test_basic::<f32>(32, 4, false, true);
+}
+
+#[test]
+fn test_f32_gs64_4bit_mlx() {
+    test_basic::<f32>(64, 4, false, true);
+}
+
+#[test]
+fn test_f32_gs128_4bit_mlx() {
+    test_basic::<f32>(128, 4, false, true);
+}
+
+#[test]
+fn test_f16_gs32_4bit_mlx() {
+    test_basic::<f16>(32, 4, false, true);
+}
+
+#[test]
+fn test_f16_gs64_4bit_mlx() {
+    test_basic::<f16>(64, 4, false, true);
+}
+
+#[test]
+fn test_f16_gs128_4bit_mlx() {
+    test_basic::<f16>(128, 4, false, true);
+}
+
+#[test]
+fn test_bf16_gs32_4bit_mlx() {
+    test_basic::<bf16>(32, 4, false, true);
+}
+
+#[test]
+fn test_bf16_gs64_4bit_mlx() {
+    test_basic::<bf16>(64, 4, false, true);
+}
+
+#[test]
+fn test_bf16_gs128_4bit_mlx() {
+    test_basic::<bf16>(128, 4, false, true);
+}
+
+// ── 8-bit, mlx quant ───────────────────────────────────────────────────────
+
+#[test]
+fn test_f32_gs32_8bit_mlx() {
+    test_basic::<f32>(32, 8, false, true);
+}
+
+#[test]
+fn test_f32_gs64_8bit_mlx() {
+    test_basic::<f32>(64, 8, false, true);
+}
+
+#[test]
+fn test_f32_gs128_8bit_mlx() {
+    test_basic::<f32>(128, 8, false, true);
+}
+
+#[test]
+fn test_f16_gs32_8bit_mlx() {
+    test_basic::<f16>(32, 8, false, true);
+}
+
+#[test]
+fn test_f16_gs64_8bit_mlx() {
+    test_basic::<f16>(64, 8, false, true);
+}
+
+#[test]
+fn test_f16_gs128_8bit_mlx() {
+    test_basic::<f16>(128, 8, false, true);
+}
+
+#[test]
+fn test_bf16_gs32_8bit_mlx() {
+    test_basic::<bf16>(32, 8, false, true);
+}
+
+#[test]
+fn test_bf16_gs64_8bit_mlx() {
+    test_basic::<bf16>(64, 8, false, true);
+}
+
+#[test]
+fn test_bf16_gs128_8bit_mlx() {
+    test_basic::<bf16>(128, 8, false, true);
+}
+
+// ── Edge cases ──────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_f32_4bit_zp() {
+    test_edge::<f32>(32, 4, true, false);
+}
+
+#[test]
+fn test_edge_f32_8bit_zp() {
+    test_edge::<f32>(32, 8, true, false);
+}
+
+#[test]
+fn test_edge_f16_4bit_zp() {
+    test_edge::<f16>(32, 4, true, false);
+}
+
+#[test]
+fn test_edge_f32_4bit_mlx() {
+    test_edge::<f32>(32, 4, false, true);
+}
+
+#[test]
+fn test_edge_f32_8bit_mlx() {
+    test_edge::<f32>(32, 8, false, true);
+}
+
+#[test]
+fn test_edge_f16_4bit_mlx() {
+    test_edge::<f16>(32, 4, false, true);
+}
+
+// ── Performance test ────────────────────────────────────────────────────────
+
+#[cfg(metal_backend)]
+#[test]
+#[ignore]
+fn test_perf_qmm() {
+    use uzu::backends::metal::Metal;
+
+    let dims: &[(usize, usize, usize)] = &[(64, 4096, 4096), (128, 4096, 4096)];
+
+    for &(m, k, n) in dims {
+        let (input, _) = get_test_data_basic::<f32>(m, k, n, 64, 4, false, true);
+
+        let context = <Metal as Backend>::Context::new().expect("Failed to create Context");
+        let kernel = <<<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmmKernel>::new(
+            &context,
+            DataType::F32,
+            input.group_size,
+            input.bits,
+            input.use_zero_points,
+            input.use_mlx_quant,
+            true,
+        )
+        .expect("Failed to create kernel");
+
+        let w_buf = alloc_buffer_with_data::<Metal, u32>(&context, &input.w_packed);
+        let scales_buf = alloc_buffer_with_data::<Metal, f32>(&context, &input.scales);
+        let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<Metal, f32>(&context, b));
+        let x_buf = alloc_buffer_with_data::<Metal, f32>(&context, &input.x);
+        let output_size = (m * n) * std::mem::size_of::<f32>();
+        let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+
+        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+        kernel.encode(
+            &w_buf,
+            &scales_buf,
+            None::<&<Metal as Backend>::Buffer>,
+            bias_buf.as_ref(),
+            &x_buf,
+            &mut y_buf,
+            input.k,
+            input.n,
+            input.m,
+            &mut encoder,
+        );
+
+        let instant = std::time::Instant::now();
+        let completed = encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+        let host_ms = instant.elapsed().as_secs_f64() * 1e3;
+
+        match completed.gpu_execution_time() {
+            Some(gpu) => {
+                println!(
+                    "QMM perf (m={}, k={}, n={}): GPU={:.2} ms, Host={:.2} ms",
+                    m,
+                    k,
+                    n,
+                    gpu.as_secs_f64() * 1e3,
+                    host_ms
+                );
+            },
+            None => {
+                println!("QMM perf (m={}, k={}, n={}): Host={:.2} ms", m, k, n, host_ms);
+            },
+        }
+    }
+}

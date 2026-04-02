@@ -871,10 +871,11 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
     );
     println!("{}", "-".repeat(85));
 
+    let iterations = 20;
     for config in &configs {
         for &(batch, output_dim, input_dim) in &shapes {
-            let result = run_kernel_test::<B>(&ctx, batch, output_dim, input_dim, false, config, false, 20);
-            let avg = result.elapsed / 20.0 * 1000.0; // ms
+            let result = run_kernel_test::<B>(&ctx, batch, output_dim, input_dim, false, config, false, iterations);
+            let avg = result.elapsed / (iterations as f64) * 1000.0; // ms
 
             println!(
                 "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:.4} ms",
