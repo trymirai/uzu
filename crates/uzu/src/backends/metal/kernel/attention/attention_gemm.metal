@@ -434,7 +434,9 @@ PUBLIC KERNEL(AttentionGemm)(
     for (short id = 0; id < HEAD_DIM_GRID_COLS; id++) {
       METAL_PRAGMA_UNROLL
       for (short ik = 0; ik < KEY_GRID_COLS; ik++) {
-        IF_CONSTEXPR(BD == 128) { simdgroup_barrier(mem_flags::mem_none); }
+        if constexpr (BD == 128) {
+          simdgroup_barrier(mem_flags::mem_none);
+        }
 
         const short kk = ik * SIMDGROUP_BLOCK_SIZE;
         const short dd = id * SIMDGROUP_BLOCK_SIZE;
@@ -444,7 +446,9 @@ PUBLIC KERNEL(AttentionGemm)(
                 [value_shared_offset + kk * value_leading_dimension + dd]
         );
 
-        IF_CONSTEXPR(BD == 128) { simdgroup_barrier(mem_flags::mem_none); }
+        if constexpr (BD == 128) {
+          simdgroup_barrier(mem_flags::mem_none);
+        }
 
         SimdgroupMultiplyAccumulateType::multiply_accumulate(
             output_fragment.multiply_accumulate_at(0, id),

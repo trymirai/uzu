@@ -40,18 +40,18 @@ PUBLIC KERNEL(TopK)(
         logit_value > -INFINITY
     );
   }
-  float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
-      local_max,
-      shared_reduce_buffer,
-      thread_idx,
-      thread_context
-  );
-  float min_logit = threadgroup_cooperative_reduce_min<BLOCK_SIZE>(
-      local_min,
-      shared_reduce_buffer,
-      thread_idx,
-      thread_context
-  );
+  float max_logit =
+      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(
+          local_max,
+          shared_reduce_buffer,
+          thread_context
+      );
+  float min_logit =
+      threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
+          local_min,
+          shared_reduce_buffer,
+          thread_context
+      );
   // Do the binary search on the threshold
   float low = min_logit;
   float high = max_logit;
@@ -65,12 +65,12 @@ PUBLIC KERNEL(TopK)(
       float logit_value = float(logits[batch_start + i]);
       local_num_above_threshold += select(0, 1, logit_value >= threshold);
     }
-    uint num_above_threshold = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-        local_num_above_threshold,
-        (threadgroup uint*)shared_reduce_buffer,
-        thread_idx,
-        thread_context
-    );
+    uint num_above_threshold =
+        threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(
+            local_num_above_threshold,
+            (threadgroup uint*)shared_reduce_buffer,
+            thread_context
+        );
 
     // Update binary search
     if (num_above_threshold == top_k) {

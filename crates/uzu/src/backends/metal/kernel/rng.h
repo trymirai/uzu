@@ -1,8 +1,6 @@
-#ifndef rng_metal
-#define rng_metal
+#pragma once
 
 #include <metal_stdlib>
-using namespace metal;
 
 /* ───────────── Philox4x32-10 RNG ───────────── */
 
@@ -126,5 +124,3 @@ inline uint philox_next(thread PhiloxState* state) {
 inline float uniform_float(thread PhiloxState* state) {
   return float(philox_next(state)) * (1.0f / 4294967296.0f); /* (0,1) */
 }
-
-#endif /* rng_metal */

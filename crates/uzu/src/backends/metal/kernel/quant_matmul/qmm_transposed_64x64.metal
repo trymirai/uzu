@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
-#include "quant_matmul.metal"
+#include "quant_matmul.h"
 
 template <typename T, int GROUP_SIZE, int BITS>
 VARIANTS(T, bfloat)

@@ -2,6 +2,7 @@
 #include <metal_atomic>
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../common/threadgroup_reduce.h"
 
 #include "argmax.h"
 
@@ -20,59 +21,20 @@ ArgmaxPair argmax_combine(ArgmaxPair a, ArgmaxPair b) {
   return argmax_is_better(a, b) ? a : b;
 }
 
-//------------------------------------------------------------------------------------------------//
-//  Cooperative threadgroup argmax reduction (2-level hierarchical)
-template <ushort BLOCK_SIZE_PARAM>
-static ArgmaxPair threadgroup_cooperative_argmax(
-    ArgmaxPair value,
-    threadgroup ArgmaxPair* shared,
-    const ushort lid,
-    const thread ThreadContext& thread_context
-) {
-  // Reduce within simdgroup using manual shuffle operations
-  ArgmaxPair local_result = value;
-  for (ushort offset = 16; offset > 0; offset /= 2) {
-    ArgmaxPair other = {
-        simd_shuffle_down(local_result.value, offset),
-        simd_shuffle_down(local_result.index, offset)
-    };
-    local_result = argmax_combine(local_result, other);
+struct SimdReduceArgmax {
+  using value_type = ArgmaxPair;
+  static constant constexpr ArgmaxPair identity = ARGMAX_INIT;
+  static ArgmaxPair simd_reduce(ArgmaxPair x) {
+    for (ushort offset = 16; offset > 0; offset /= 2) {
+      ArgmaxPair other = {
+          simd_shuffle_down(x.value, offset),
+          simd_shuffle_down(x.index, offset)
+      };
+      x = argmax_combine(x, other);
+    }
+    return x;
   }
-
-  // First thread in each simdgroup writes to shared memory
-  if (thread_context.simdgroup_index == 0) {
-    shared[thread_context.threadgroup_index] = local_result;
-  }
-
-  // Synchronize across the threadgroup
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-
-  // Reduce across simdgroups
-  const ushort num_simd_groups = (BLOCK_SIZE_PARAM + 31) / 32;
-  ArgmaxPair total_result = ARGMAX_INIT;
-  if (lid < num_simd_groups) {
-    total_result = shared[lid];
-  }
-
-  // Final simdgroup reduction
-  for (ushort offset = 16; offset > 0; offset /= 2) {
-    ArgmaxPair other = {
-        simd_shuffle_down(total_result.value, offset),
-        simd_shuffle_down(total_result.index, offset)
-    };
-    total_result = argmax_combine(total_result, other);
-  }
-
-  // Broadcast the result to all threads
-  if (lid == 0) {
-    shared[0] = total_result;
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-
-  const ArgmaxPair result = shared[0];
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  return result;
-}
+};
 
 template <ushort GRAIN_SIZE_PARAM>
 static inline ArgmaxPair thread_argmax_reduce(
@@ -226,12 +188,12 @@ PUBLIC KERNEL(ArgmaxMain)(
   );
 
   ArgmaxPair thread_result = thread_argmax_reduce<GRAIN_SIZE>(values);
-  ArgmaxPair group_result = threadgroup_cooperative_argmax<BLOCK_SIZE>(
-      thread_result,
-      shared,
-      local_id,
-      thread_context
-  );
+  ArgmaxPair group_result =
+      threadgroup_cooperative_reduce<SimdReduceArgmax, BLOCK_SIZE>(
+          thread_result,
+          shared,
+          thread_context
+      );
 
   if (local_id == 0) {
     uint vocab_groups_per_batch =
@@ -267,12 +229,12 @@ PUBLIC KERNEL(ArgmaxFinal)(
         argmax_combine(thread_result, partial_results[partial_offset + i]);
   }
 
-  ArgmaxPair result = threadgroup_cooperative_argmax<BLOCK_SIZE>(
-      thread_result,
-      shared,
-      local_id,
-      thread_context
-  );
+  ArgmaxPair result =
+      threadgroup_cooperative_reduce<SimdReduceArgmax, BLOCK_SIZE>(
+          thread_result,
+          shared,
+          thread_context
+      );
 
   if (local_id == 0) {
     final_tokens[batch_idx] = result.index;

@@ -33,12 +33,12 @@ PUBLIC KERNEL(MinP) (
     float logit_value = float(logits[batch_start + i]);
     local_max = fmax(local_max, logit_value);
   }
-  float max_logit = threadgroup_cooperative_reduce_max<BLOCK_SIZE>(
-      local_max,
-      shared_reduce_buffer,
-      thread_idx,
-      thread_context
-  );
+  float max_logit =
+      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(
+          local_max,
+          shared_reduce_buffer,
+          thread_context
+      );
 
   // Then the threshold is just max_logit + log(min_p), mask everything strictly
   // below it

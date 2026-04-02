@@ -1,3 +1,5 @@
+#pragma once
+
 #include <metal_stdlib>
 
 template <typename T>

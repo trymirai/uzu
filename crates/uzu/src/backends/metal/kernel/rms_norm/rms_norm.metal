@@ -56,12 +56,12 @@ PUBLIC KERNEL(RMSNorm)(
   }
 
   // Compute total sum across threadgroup
-  AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_sum,
-      shared_sum,
-      thread_in_row,
-      thread_context
-  );
+  AccumT total_sum =
+      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
+          partial_sum,
+          shared_sum,
+          thread_context
+      );
 
   // Compute RMS norm factor
   AccumT mean_square =
