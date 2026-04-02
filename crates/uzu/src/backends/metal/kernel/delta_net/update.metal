@@ -4,7 +4,6 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/threadgroup_reduce.h"
-#include "../ssm/ssm_common.h"
 
 using namespace metal;
 
@@ -97,7 +96,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   float beta_raw = float(in_proj[conv_dim + value_dim + hv_idx]);
   float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
   float a_raw = float(in_proj[conv_dim + value_dim + num_v_heads + hv_idx]);
-  float sp = softplus(a_raw + float(dt_bias[hv_idx]));
+  float sp = activate_softplus(a_raw + float(dt_bias[hv_idx]));
   float decay = fast::exp(-fast::exp(float(a_log[hv_idx])) * sp);
 
   float v_i =

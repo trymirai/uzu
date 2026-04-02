@@ -3,7 +3,6 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/threadgroup_reduce.h"
-#include "../ssm/ssm_common.h"
 
 using namespace metal;
 
