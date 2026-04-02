@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/uzu", "crates/benchmarks", "crates/dsl", "tools/matmul_profile"]
+members = ["crates/cli", "crates/uzu", "crates/benchmarks", "crates/dsl"]
 resolver = "3"
 
 [workspace.package]
