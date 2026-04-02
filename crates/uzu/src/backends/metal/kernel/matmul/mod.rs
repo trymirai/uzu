@@ -17,6 +17,7 @@ use crate::{
         metal::{
             Metal,
             context::MetalContext,
+            metal_extensions::DeviceExt,
             kernel::{
                 MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
             },
@@ -51,7 +52,7 @@ impl MatmulMetalKernel {
         context: &MetalContext,
         arguments: &MatmulArguments<Metal>,
     ) -> bool {
-        context.device_capabilities().supports_mxu
+        context.device.supports_mxu()
             && arguments.ab_scale.to_bits() == 1.0f32.to_bits()
             && !matches!(arguments.c, MatmulArgumentC::Accumulate)
     }
@@ -315,7 +316,7 @@ impl MatmulKernel for MatmulMetalKernel {
         for &config in gemm::GemmSpecialization::precompile_configs(data_type) {
             kernel.get_or_create_gemm(context, config)?;
         }
-        if context.device_capabilities().supports_mxu {
+        if context.device.supports_mxu() {
             for &config in gemm_mpp::GemmMppSpecialization::precompile_configs().iter() {
                 kernel.get_or_create_gemm_mpp(context, config)?;
             }

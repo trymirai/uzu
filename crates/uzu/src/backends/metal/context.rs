@@ -32,10 +32,6 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
-    pub fn device_capabilities(&self) -> &MetalDeviceCapabilities {
-        &self.device_capabilities
-    }
-
     pub fn device_generation(&self) -> DeviceGeneration {
         self.device_capabilities.generation
     }
