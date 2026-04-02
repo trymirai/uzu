@@ -1,5 +1,4 @@
-#ifndef __UZU_ACTIVATIONS_H__
-#define __UZU_ACTIVATIONS_H__
+#pragma once
 
 #include <metal_stdlib>
 #include "activation_type.h"
@@ -67,5 +66,3 @@ inline T activate(T x, ActivationType type) {
     return activate_softplus(x);
   }
 }
-
-#endif // __UZU_ACTIVATIONS_H__

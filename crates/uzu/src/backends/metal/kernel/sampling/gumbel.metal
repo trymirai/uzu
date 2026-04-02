@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
-#include "../rng.metal"
+#include "../rng.h"
 
 #define BLOCK_SIZE 1024
 #define GRAIN_SIZE 64

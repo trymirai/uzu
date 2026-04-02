@@ -41,12 +41,12 @@ PUBLIC KERNEL(DeltaNetNormGate)(
 
   // RMSNorm: cooperative sum of squares
   float o_sq = active ? o_i * o_i : 0.0f;
-  float o_sumsq = threadgroup_cooperative_reduce_sum<HEAD_V_DIM>(
-      o_sq,
-      shared_scratch,
-      tid,
-      thread_context
-  );
+  float o_sumsq =
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, HEAD_V_DIM>(
+          o_sq,
+          shared_scratch,
+          thread_context
+      );
   float inv_rms = rsqrt(o_sumsq / float(head_v_dim) + norm_epsilon);
 
   // Apply norm + SiLU gate (in-place)

@@ -10,7 +10,7 @@ use uzu::{
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
-            kernel::{SSDPrefill64Kernel, SSDPrefillKernel, SSDPrefillSequentialKernel},
+            kernel::{SSDPrefillKernel, SSDPrefillSequentialKernel},
         },
         cpu::Cpu,
     },
@@ -120,30 +120,6 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     match kernel_type {
         KernelType::Prefill => {
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
-                .expect("Failed to create SSDPrefillKernel");
-            kernel.encode(
-                x_array.buffer().borrow().deref(),
-                dt_array.buffer().borrow().deref(),
-                b_array.buffer().borrow().deref(),
-                c_array.buffer().borrow().deref(),
-                d_array.buffer().borrow().deref(),
-                z_array.buffer().borrow().deref(),
-                state_array.buffer().borrow_mut().deref_mut(),
-                y_array.buffer().borrow_mut().deref_mut(),
-                input.suffix_len as u32,
-                input.group_size as u32,
-                input.state_dim as u32,
-                &x_strides,
-                &dt_strides,
-                &cb_strides,
-                &state_strides,
-                input.num_heads as u32,
-                input.head_dim as u32,
-                &mut encoder,
-            );
-        },
-        KernelType::Prefill64 => {
-            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefill64Kernel::new(&context, T::data_type())
                 .expect("Failed to create SSDPrefillKernel");
             kernel.encode(
                 x_array.buffer().borrow().deref(),
