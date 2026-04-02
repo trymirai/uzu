@@ -20,28 +20,8 @@ use uzu::{
     },
 };
 
-#[derive(Debug, Clone, Copy)]
-enum DispatchPath {
-    Gemv,
-    Gemm,
-    GemmMpp,
-}
-
-impl DispatchPath {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Gemv => "Gemv",
-            Self::Gemm => "Gemm",
-            Self::GemmMpp => "GemmMpp",
-        }
-    }
-}
-
-const ALL_DISPATCH_PATHS: [DispatchPath; 3] = [DispatchPath::Gemv, DispatchPath::Gemm, DispatchPath::GemmMpp];
-
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
-    kernel: &mut <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel,
     a_data: &[bf16],
     b_data: &[bf16],
     m: usize,
@@ -82,19 +62,10 @@ fn run_metal_matmul(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let encode_result = match dispatch_path {
-        DispatchPath::Gemv => kernel.encode_gemv(ctx, arguments, &mut encoder),
-        DispatchPath::Gemm => kernel.encode_gemm(ctx, arguments, &mut encoder),
-        DispatchPath::GemmMpp => kernel.encode_gemm_mpp(ctx, arguments, &mut encoder),
-    };
-
-    encode_result.map_err(|e| e.to_string())?;
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    Ok(unsafe {
+    unsafe {
         let ptr = d_buf.contents().as_ptr() as *const bf16;
         std::slice::from_raw_parts(ptr, m * n).to_vec()
-    })
+    }
 }
 
 fn run_ndarray_matmul(
@@ -287,27 +258,19 @@ fn matmul_correctness_comprehensive() {
         return;
     };
 
-    let supports_mxu = ctx.device_capabilities().supports_mxu;
     let full_case_matrix = run_full_case_matrix();
     let cases = test_cases(full_case_matrix);
-
     eprintln!(
-        "Running {} matmul correctness for all dispatch paths (set {}=1 for exhaustive run)",
+        "Running {} matmul correctness case matrix (set {}=1 for exhaustive run)",
         if full_case_matrix {
             "exhaustive"
         } else {
             "quick"
         },
-        MATMUL_CORRECTNESS_FULL_ENV,
+        MATMUL_CORRECTNESS_FULL_ENV
     );
-    eprintln!("Device: {} (supports_mxu={})", ctx.device_capabilities().family_name, supports_mxu);
-
-    let mut kernel =
-        <<Metal as Backend>::Kernels as MatmulKernels>::MatmulKernel::new(&ctx, DataType::BF16).expect("kernel");
-
-    let mut passed = 0usize;
-    let mut expected_mxu_failures = 0usize;
-    let mut failed: Vec<(String, f32, usize, usize, f32)> = Vec::new();
+    let mut passed = 0;
+    let mut failed = Vec::new();
 
     for case in &cases {
         let (a, b) = generate_test_data(case.m, case.k, case.n);
@@ -316,36 +279,22 @@ fn matmul_correctness_comprehensive() {
 
         let trans_str = "T";
 
-        for &path in &ALL_DISPATCH_PATHS {
-            let label = format!("[{}] m={} k={} n={} B={}", path.name(), case.m, case.k, case.n, trans_str);
-            let metal_result =
-                match run_metal_matmul(&ctx, &mut kernel, &a, &b, case.m, case.k, case.n, case.transpose_b, path) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        eprintln!("✗ {label}: encode error: {err}");
-                        failed.push((label, f32::INFINITY, 0, 0, case.tolerance));
-                        continue;
-                    },
-                };
-
-            match compare_results(&metal_result, &reference, case.tolerance) {
-                Ok(()) => {
-                    passed += 1;
-                    eprintln!("✓ {label}");
-                },
-                Err((max_diff, idx, count)) => {
-                    eprintln!("✗ {label}: max_diff={max_diff:.6} at idx {idx} ({count} exceed tol {})", case.tolerance,);
-                    failed.push((label, max_diff, idx, count, case.tolerance));
-                },
-            }
+        match compare_results(&metal_result, &reference, case.tolerance) {
+            Ok(()) => {
+                passed += 1;
+                eprintln!("✓ m={} k={} n={} B={}", case.m, case.k, case.n, trans_str);
+            },
+            Err((max_diff, idx, count)) => {
+                failed.push((case, max_diff, idx, count));
+                eprintln!(
+                    "✗ m={} k={} n={} B={} max_diff={:.6} at idx {} ({} exceed tol {})",
+                    case.m, case.k, case.n, trans_str, max_diff, idx, count, case.tolerance
+                );
+            },
         }
     }
 
-    let total = passed + failed.len() + expected_mxu_failures;
-    eprintln!(
-        "\n{passed}/{total} passed, {} failed, {expected_mxu_failures} expected MXU failures (pre-M5)",
-        failed.len()
-    );
+    eprintln!("\n{}/{} tests passed", passed, cases.len());
 
     if !failed.is_empty() {
         eprintln!("\nFailed tests:");

@@ -1,7 +1,7 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 
-#include "gemm/shaders/gemm.h"
+#include "common/gemm.h"
 
 using namespace uzu::matmul;
 

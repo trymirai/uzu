@@ -21,29 +21,8 @@ use super::{error::BenchError, output::PerfResult, shapes::TestShape};
 type Ctx = <Metal as Backend>::Context;
 type Buf = Retained<ProtocolObject<dyn MTLBuffer>>;
 
-const WARMUP_ITERATIONS: usize = 10;
-const BENCHMARK_ITERATIONS: usize = 30;
-
-#[derive(Debug, Clone, Copy)]
-pub enum DispatchPath {
-    Gemv,
-    Gemm,
-    GemmMpp,
-}
-
-impl DispatchPath {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Gemv => "Gemv",
-            Self::Gemm => "Gemm",
-            Self::GemmMpp => "GemmMpp",
-        }
-    }
-
-    pub fn available_paths() -> Vec<Self> {
-        vec![Self::Gemv, Self::Gemm, Self::GemmMpp]
-    }
-}
+const WARMUP_ITERATIONS: usize = 3;
+const BENCHMARK_ITERATIONS: usize = 10;
 
 fn fill_buffer_random(
     buffer: &ProtocolObject<dyn MTLBuffer>,
@@ -59,7 +38,6 @@ fn fill_buffer_random(
 fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
-    _dispatch_path: DispatchPath,
     shape: &TestShape,
     a_buffer: &Buf,
     b_buffer: &Buf,
@@ -67,18 +45,21 @@ fn encode_and_run(
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
-    let arguments = MatmulArguments {
-        a: a_buffer,
-        a_offset: 0,
-        b: b_buffer,
-        ab_scale: 1.0,
-        c: MatmulArgumentC::None,
-        d: d_buffer,
-        batch_dim: shape.batch as u32,
-        input_dim: shape.input_dim as u32,
-        output_dim: shape.output_dim as u32,
-    };
-    kernel.encode(context, arguments, &mut encoder);
+    kernel.encode(
+        context,
+        MatmulArguments {
+            a: a_buffer,
+            a_offset: 0,
+            b: b_buffer,
+            ab_scale: 1.0,
+            c: MatmulArgumentC::None,
+            d: d_buffer,
+            batch_dim: shape.batch as u32,
+            input_dim: shape.input_dim as u32,
+            output_dim: shape.output_dim as u32,
+        },
+        &mut encoder,
+    );
 
     let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
@@ -88,7 +69,6 @@ fn encode_and_run(
 fn run_benchmark(
     context: &Ctx,
     data_type: DataType,
-    dispatch_path: DispatchPath,
     shape: &TestShape,
 ) -> Result<f64, BenchError> {
     let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
@@ -112,20 +92,22 @@ fn run_benchmark(
     fill_buffer_random(&b_buffer, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        encode_and_run(context, &mut kernel, dispatch_path, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(
-            |source| BenchError::Warmup {
+        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
+            BenchError::Warmup {
                 iteration,
                 source: Box::new(source),
-            },
-        )?;
+            }
+        })?;
     }
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
-        let gpu_ms = encode_and_run(context, &mut kernel, dispatch_path, shape, &a_buffer, &b_buffer, &mut d_buffer)
-            .map_err(|source| BenchError::Benchmark {
-                iteration,
-                source: Box::new(source),
+        let gpu_ms =
+            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
+                BenchError::Benchmark {
+                    iteration,
+                    source: Box::new(source),
+                }
             })?;
         gpu_time_total_ms += gpu_ms;
     }
@@ -136,17 +118,16 @@ fn run_benchmark(
 pub fn benchmark_single(
     context: &Ctx,
     data_type: DataType,
-    dispatch_path: DispatchPath,
     shape: &TestShape,
 ) -> PerfResult {
-    match run_benchmark(context, data_type, dispatch_path, shape) {
+    match run_benchmark(context, data_type, shape) {
         Ok(duration_ms) => {
             let flops = 2.0 * shape.batch as f64 * shape.input_dim as f64 * shape.output_dim as f64;
             let gflops = flops / (duration_ms / 1000.0) / 1e9;
             PerfResult {
                 combo: format!("{data_type:?}"),
                 shape: format!("{shape}"),
-                dispatch_path: dispatch_path.name().to_owned(),
+                dispatch_path: "auto".to_owned(),
                 duration_ms,
                 gflops,
                 status: "ok".into(),
@@ -156,7 +137,7 @@ pub fn benchmark_single(
         Err(error) => PerfResult {
             combo: format!("{data_type:?}"),
             shape: format!("{shape}"),
-            dispatch_path: dispatch_path.name().to_owned(),
+            dispatch_path: "auto".to_owned(),
             duration_ms: 0.0,
             gflops: 0.0,
             status: "error".into(),

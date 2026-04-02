@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../../common/loader.h"
+#include "loader.h"
 #include "threadgroup_tile.h"
-#include "../../../../generated/matmul.h"
+#include "../../../generated/matmul.h"
 
 using namespace metal;
 
