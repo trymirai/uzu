@@ -96,20 +96,20 @@ PUBLIC KERNEL(MoeRouterTopK)(
       }
     }
 
-    float max_val = threadgroup_cooperative_reduce_max<THREADS_PER_TG>(
-        local_best,
-        reduce_tmp,
-        lid,
-        thread_context
-    );
+    float max_val =
+        threadgroup_cooperative_reduce<SimdReduceMax<float>, THREADS_PER_TG>(
+            local_best,
+            reduce_tmp,
+            thread_context
+        );
 
     uint candidate_id = (local_best == max_val) ? local_idx : 0xFFFFFFFFu;
-    uint best_idx = threadgroup_cooperative_reduce_min<THREADS_PER_TG>(
-        candidate_id,
-        reduce_tmp_u,
-        lid,
-        thread_context
-    );
+    uint best_idx =
+        threadgroup_cooperative_reduce<SimdReduceMin<uint>, THREADS_PER_TG>(
+            candidate_id,
+            reduce_tmp_u,
+            thread_context
+        );
 
     if (lid == 0) {
       shared_best_idx[0] = best_idx;

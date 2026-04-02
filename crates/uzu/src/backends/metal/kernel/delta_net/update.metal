@@ -62,21 +62,21 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   float q_partial = (tid < HEAD_K_DIM) ? shared_q[tid] * shared_q[tid] : 0.0f;
-  float q_norm_sq = threadgroup_cooperative_reduce_sum<UPDATE_THREADS>(
-      q_partial,
-      shared_scratch,
-      tid,
-      thread_context
-  );
+  float q_norm_sq =
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, UPDATE_THREADS>(
+          q_partial,
+          shared_scratch,
+          thread_context
+      );
   float q_inv_norm = rsqrt(q_norm_sq + 1e-6f);
 
   float k_partial = (tid < HEAD_K_DIM) ? shared_k[tid] * shared_k[tid] : 0.0f;
-  float k_norm_sq = threadgroup_cooperative_reduce_sum<UPDATE_THREADS>(
-      k_partial,
-      shared_scratch,
-      tid,
-      thread_context
-  );
+  float k_norm_sq =
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, UPDATE_THREADS>(
+          k_partial,
+          shared_scratch,
+          thread_context
+      );
   float k_inv_norm = rsqrt(k_norm_sq + 1e-6f);
 
   float q_scale = rsqrt(float(HEAD_K_DIM));
@@ -87,12 +87,12 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   float kq_p = (tid < HEAD_K_DIM) ? shared_k[tid] * shared_q[tid] : 0.0f;
-  float kq_dot = threadgroup_cooperative_reduce_sum<UPDATE_THREADS>(
-      kq_p,
-      shared_scratch,
-      tid,
-      thread_context
-  );
+  float kq_dot =
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, UPDATE_THREADS>(
+          kq_p,
+          shared_scratch,
+          thread_context
+      );
 
   float beta_raw = float(in_proj[conv_dim + value_dim + hv_idx]);
   float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
@@ -139,12 +139,12 @@ PUBLIC KERNEL(DeltaNetUpdate)(
 
   // RMSNorm + SiLU gate — only ki_part==0 contributes
   float o_sq = (active && ki_part == 0) ? o_i * o_i : 0.0f;
-  float o_sumsq = threadgroup_cooperative_reduce_sum<UPDATE_THREADS>(
-      o_sq,
-      shared_scratch,
-      tid,
-      thread_context
-  );
+  float o_sumsq =
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, UPDATE_THREADS>(
+          o_sq,
+          shared_scratch,
+          thread_context
+      );
   float inv_rms = rsqrt(o_sumsq / float(head_v_dim) + norm_epsilon);
 
   if (active && ki_part == 0) {

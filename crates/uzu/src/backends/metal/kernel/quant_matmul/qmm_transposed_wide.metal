@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
-#include "quant_matmul.metal"
+#include "quant_matmul.h"
 
 // Wide QMM tile: BM=64, BK=32, BN=64.
 // Processes 4x more output elements per threadgroup than the 32x32 variant.
