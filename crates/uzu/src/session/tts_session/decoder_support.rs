@@ -551,13 +551,11 @@ pub(super) fn build_semantic_sampling_mask_row(
     for token_index in semantic_begin..=semantic_end {
         let token = usize::try_from(token_index).map_err(|_| Error::UnableToLoadConfig)?;
         let word = token / 32;
-        let bit = token % 32;
-        mask[word] |= 1_u32 * 2_u32.pow(bit as u32);
+        mask[word] |= 2_u32.pow((token % 32) as u32);
     }
     let im_end_token = usize::try_from(im_end).map_err(|_| Error::UnableToLoadConfig)?;
     let word = im_end_token / 32;
-    let bit = im_end_token % 32;
-    mask[word] |= 1_u32 * 2_u32.pow(bit as u32);
+    mask[word] |= 2_u32.pow((im_end_token % 32) as u32);
     Ok(mask.into_boxed_slice())
 }
 
@@ -570,11 +568,10 @@ pub(super) fn clear_token_in_sampling_mask(
     }
     let token = usize::try_from(token).map_err(|_| Error::UnableToLoadConfig)?;
     let word = token / 32;
-    let bit = token % 32;
     if word >= mask.len() {
         return Err(Error::UnableToLoadConfig);
     }
-    mask[word] &= !(1_u32 * 2_u32.pow(bit as u32));
+    mask[word] &= !2_u32.pow((token % 32) as u32);
     Ok(())
 }
 
