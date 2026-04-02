@@ -1,7 +1,7 @@
-#include "../../../common/dsl.h"
-#include "../../../common/thread_context.h"
+#include "../common/dsl.h"
+#include "../common/thread_context.h"
 
-#include "gemm_mpp_core.h"
+#include "common/gemm_mpp_core.h"
 
 using namespace uzu::matmul;
 
@@ -13,7 +13,7 @@ VARIANTS(BLOCK_ROWS, 32, 64)
 VARIANTS(BLOCK_COLS, 32, 64)
 VARIANTS(SIMDGROUPS_PER_ROW, 2, 4)
 VARIANTS(SIMDGROUPS_PER_COLUMN, 1, 2)
-CONSTRAINT(max(BLOCK_ROWS, BLOCK_COLS) <= 32 * SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN)
+CONSTRAINT(BLOCK_ROWS >= 16 * SIMDGROUPS_PER_ROW && BLOCK_COLS >= 32 * SIMDGROUPS_PER_COLUMN)
 KERNEL(MatmulGemmMpp)(
     const device T* left_matrix,
     const device T* right_matrix,

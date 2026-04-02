@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../../common/defines.h"
-#include "../../common/loader.h"
-#include "../../../../generated/matmul.h"
+#include "defines.h"
+#include "loader.h"
+#include "../../../generated/matmul.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
