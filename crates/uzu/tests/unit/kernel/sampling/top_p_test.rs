@@ -19,6 +19,8 @@ use uzu::{
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
+use crate::uzu_test;
+
 const TEST_SAMPLING_SEED: u64 = 42;
 
 struct Input<T: ArrayElement + Float> {
@@ -142,49 +144,49 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Out-of-place tests (same data as sampling_test::test_topp_gpu_cpu_match)
-#[test]
+#[uzu_test]
 fn test_f32() {
     test_internal::<f32>(4, 1024, 0.9, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test_internal::<f16>(4, 1024, 0.9, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test_internal::<bf16>(4, 1024, 0.9, false);
 }
 
 // In-place tests
-#[test]
+#[uzu_test]
 fn test_in_place_f32() {
     test_internal::<f32>(4, 1024, 0.9, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_f16() {
     test_internal::<f16>(4, 1024, 0.9, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_bf16() {
     test_internal::<bf16>(4, 1024, 0.9, true);
 }
 
 // Edge cases
-#[test]
+#[uzu_test]
 fn test_single_batch_f32() {
     test_internal::<f32>(1, 1024, 0.9, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_top_p_very_small() {
     test_internal::<f32>(4, 1024, 0.01, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_top_p_near_1() {
     test_internal::<f32>(4, 1024, 0.99, false);
 }
@@ -333,21 +335,21 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_topp_sampling_match_small() {
     for_each_non_cpu_backend!(|B| {
         test_topp_sampling_from_prob_exact_match_internal::<B>(8, 10, 1024);
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_topp_sampling_match_large() {
     for_each_non_cpu_backend!(|B| {
         test_topp_sampling_from_prob_exact_match_internal::<B>(32, 50, 4096);
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_topp_sampling_statistical_large() {
     for_each_non_cpu_backend!(|B| {
         const BATCH: usize = 32;
@@ -437,7 +439,7 @@ fn test_topp_sampling_statistical_large() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn perf_topp_128k_vocab() {
     for_each_non_cpu_backend!(|B| {
         const BATCH: usize = 8;
@@ -487,27 +489,15 @@ fn perf_topp_128k_vocab() {
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-        match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
-            Some(gpu_time_ms) => {
-                println!(
-                    "Top-p sampling perf (batch={}, vocab={}, backend={}): GPU={:.2} ms, Host-side={:.2} ms",
-                    BATCH,
-                    VOCAB,
-                    std::any::type_name::<B>(),
-                    gpu_time_ms,
-                    host_elapsed_ms
-                );
-            },
-            None => {
-                println!(
-                    "Top-p sampling perf (batch={}, vocab={}, backend={}): Host-side={:.2} ms (GPU timing unavailable)",
-                    BATCH,
-                    VOCAB,
-                    std::any::type_name::<B>(),
-                    host_elapsed_ms
-                );
-            },
-        }
+        let gpu_time_ms = completed.gpu_execution_time().as_secs_f64() * 1e3;
+        println!(
+            "Top-p sampling perf (batch={}, vocab={}, backend={}): GPU={:.2} ms, Host-side={:.2} ms",
+            BATCH,
+            VOCAB,
+            std::any::type_name::<B>(),
+            gpu_time_ms,
+            host_elapsed_ms
+        );
 
         let sample_ids: &[u32] = output_array.as_slice();
         for &tok in sample_ids {

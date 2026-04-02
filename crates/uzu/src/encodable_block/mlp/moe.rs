@@ -187,11 +187,8 @@ impl<B: Backend> MoeBlock<B> {
             ActivationType::SILU {
                 ..
             } => 2,
-            ActivationType::TANH => {
-                panic!("Tanh activation is not supported for MoE kernels")
-            },
-            ActivationType::IDENTITY => {
-                panic!("Identity activation is not supported for MoE kernels")
+            _ => {
+                panic!("{:?} is not supported for MoE kernels", activation)
             },
         }
     }
@@ -203,7 +200,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let suffix_length = state.active_suffix_length();
+        let suffix_length = state.active_row_count();
 
         let main_buf = state.array(ArrayId::Main).buffer();
         let topk_ids_buf = state.array(ArrayId::MoeTopkIds).buffer();
@@ -453,3 +450,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/encodable_block/moe/mod.rs"]
+mod tests;

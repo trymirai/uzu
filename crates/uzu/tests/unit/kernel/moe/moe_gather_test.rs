@@ -1,108 +1,101 @@
-#![cfg(metal_backend)]
+use std::ops::{Deref, DerefMut};
 
 use half::bf16;
-use metal::MTLBuffer;
+use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
-    DataType,
+    ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Encoder,
+            Backend, Encoder,
             kernel::moe::{MoeGatherArguments, MoeGatherKernels},
         },
-        metal::Metal,
+        cpu::Cpu,
     },
 };
 
-use super::test_utils::{alloc_buffer, alloc_buffer_with_data, assert_bf16_close, create_ctx};
+use crate::{
+    common::{assert::assert_eq_float, helpers::create_context},
+    uzu_test,
+};
 
-/// CPU reference for gather operation: x_perm[i] = x[bucketed_ids[i]]
-///
-/// # Arguments
-/// * `x` - Input tensor [T, d_model]
-/// * `bucketed_ids` - Index mapping [sum_k], values in range [0, T)
-/// * `t` - Number of tokens
-/// * `d_model` - Model dimension
-/// * `sum_k` - Number of output rows
-///
-/// # Returns
-/// Gathered tensor [sum_k, d_model]
-pub fn cpu_gather(
-    x: &[bf16],
-    bucketed_ids: &[i32],
+struct Input<T: ArrayElement + Float> {
+    x: Box<[T]>,
+    bucket_ids: Box<[i32]>,
     t: usize,
-    d_model: usize,
     sum_k: usize,
-) -> Vec<bf16> {
-    let mut x_perm = vec![bf16::from_f32(0.0); sum_k * d_model];
-    for row in 0..sum_k {
-        let token_id = bucketed_ids[row];
-        if token_id >= 0 && (token_id as usize) < t {
-            let src_offset = (token_id as usize) * d_model;
-            let dst_offset = row * d_model;
-            x_perm[dst_offset..dst_offset + d_model].copy_from_slice(&x[src_offset..src_offset + d_model]);
-        }
-    }
-    x_perm
+    d_model: usize,
 }
 
-#[test]
-fn test_gather_correctness() {
-    let ctx = create_ctx();
+fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+    let context = create_context::<B>();
+
+    let x_array = context.create_array_from(&[input.x.len()], &input.x, "");
+    let ids_array = context.create_array_from(&[input.bucket_ids.len()], &input.bucket_ids, "");
+    let sumk_data: [u32; 1] = [input.sum_k as u32];
+    let sumk_array = context.create_array_from(&[1], &sumk_data, "");
+    let x_perm_array = context.create_array_uninitialized(&[input.sum_k * input.d_model], T::data_type(), "");
+
+    let gather = MoeGatherKernels::<B>::new(&context).expect("MoeGatherKernel::new");
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    gather.encode(
+        &mut encoder,
+        T::data_type(),
+        MoeGatherArguments {
+            x_buffer: &x_array.buffer().borrow().deref(),
+            bucketed_ids_buffer: &ids_array.buffer().borrow().deref(),
+            x_perm_buffer: x_perm_array.buffer().borrow_mut().deref_mut(),
+            sumk_buffer: &sumk_array.buffer().borrow().deref(),
+            t: input.t,
+            k: input.sum_k / input.t, // Decompose sum_k into k per token
+            d_model: input.d_model,
+        },
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    x_perm_array.as_slice().to_vec()
+}
+
+fn test_gather_internal(
+    t: usize,
+    sum_k: usize,
+    d_model: usize,
+) {
     let mut rng = StdRng::seed_from_u64(2027);
+    let x: Vec<bf16> = (0..t * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
+    let bucketed_ids: Vec<i32> = (0..sum_k).map(|_| rng.random_range(0..t as i32)).collect();
 
-    // Test multiple shapes: (T, sum_k, d_model)
-    let shapes = vec![
-        (1, 2, 64),     // Single token, K=2
-        (4, 8, 128),    // Small batch
-        (16, 32, 256),  // Medium
-        (64, 128, 512), // Large
-    ];
+    let input = Input::<bf16> {
+        x: x.clone().into_boxed_slice(),
+        bucket_ids: bucketed_ids.clone().into_boxed_slice(),
+        t,
+        sum_k,
+        d_model,
+    };
 
-    for (t, sum_k, d_model) in shapes {
-        eprintln!("[GatherTest] T={}, sum_k={}, d_model={}", t, sum_k, d_model);
+    let cpu_ref_output = get_output::<Cpu, bf16>(&input);
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<B, bf16>(&input);
+        assert_eq_float(&cpu_ref_output, &output, 1e-6, "Moe gather");
+    })
+}
 
-        // Random input
-        let x: Vec<bf16> = (0..t * d_model).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
+#[uzu_test]
+fn test_gather_single_token() {
+    test_gather_internal(1, 2, 64);
+}
 
-        // Random bucketed_ids with valid token indices
-        let bucketed_ids: Vec<i32> = (0..sum_k).map(|_| rng.random_range(0..t as i32)).collect();
+#[uzu_test]
+fn test_gather_small_batch() {
+    test_gather_internal(4, 8, 128);
+}
 
-        let x_cpu = cpu_gather(&x, &bucketed_ids, t, d_model, sum_k);
+#[uzu_test]
+fn test_gather_medium_batch() {
+    test_gather_internal(16, 32, 256)
+}
 
-        // GPU buffers
-        let x_buf = alloc_buffer_with_data(&ctx, &x);
-        let ids_buf = alloc_buffer_with_data(&ctx, &bucketed_ids);
-        let mut x_perm_buf = alloc_buffer::<bf16>(&ctx, sum_k * d_model);
-
-        // Create sumk_buffer for API (kernel reads sumk_buf[0])
-        let sum_k_u32 = vec![sum_k as u32];
-        let sumk_buf = alloc_buffer_with_data(&ctx, &sum_k_u32);
-
-        // Execute gather kernel using kernel struct
-        let gather = MoeGatherKernels::<Metal>::new(&ctx).expect("MoeGatherKernel::new");
-        let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-        gather.encode(
-            &mut encoder,
-            DataType::BF16,
-            MoeGatherArguments {
-                x_buffer: &x_buf,
-                bucketed_ids_buffer: &ids_buf,
-                x_perm_buffer: &mut x_perm_buf,
-                sumk_buffer: &sumk_buf,
-                t: t,
-                k: sum_k / t, // Decompose sum_k into k per token
-                d_model,
-            },
-        );
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-        // Compare
-        let x_gpu =
-            unsafe { std::slice::from_raw_parts(x_perm_buf.contents().as_ptr() as *const bf16, sum_k * d_model) };
-
-        assert_bf16_close(x_gpu, &x_cpu, 1e-6, "gather output");
-
-        eprintln!("[GatherTest] ✓ PASSED");
-    }
+#[uzu_test]
+fn test_gather_large_batch() {
+    test_gather_internal(64, 128, 512)
 }

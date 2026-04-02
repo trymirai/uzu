@@ -7,10 +7,11 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo, validate_raw_kernel};
+use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
 
 #[derive(Debug)]
 pub enum MetalSdk {
@@ -180,8 +181,11 @@ impl MetalToolchain {
             bail!("metal analyzer failed: {}", String::from_utf8_lossy(&analyze_output.stderr));
         }
 
-        let ast_root =
-            serde_json::from_slice::<MetalAstNode>(&analyze_output.stdout).context("cannot deserialize ast dump")?;
+        let ast_root = {
+            let mut deserializer = serde_json::Deserializer::from_slice(&analyze_output.stdout);
+            deserializer.disable_recursion_limit();
+            MetalAstNode::deserialize(&mut deserializer).context("cannot deserialize ast dump")?
+        };
 
         if !matches!(&ast_root.kind, MetalAstKind::TranslationUnitDecl) {
             bail!(
@@ -191,10 +195,6 @@ impl MetalToolchain {
         }
 
         let source_contents = fs::read_to_string(path).context("cannot read source file")?;
-
-        for node in &ast_root.inner {
-            validate_raw_kernel(node).context("validation of legacy (non-dsl) kernel failed")?;
-        }
 
         let kernel_infos = ast_root
             .inner

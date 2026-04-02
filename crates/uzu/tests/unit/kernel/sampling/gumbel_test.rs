@@ -14,6 +14,8 @@ use uzu::{
     gumbel_float, revidx,
 };
 
+use crate::uzu_test;
+
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
     seeds: Box<[u64]>,
@@ -129,32 +131,32 @@ fn test_internal<T: ArrayElement + Float + Display>(
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_determinism_f32() {
     test_determinism::<f32>(4, 128);
 }
 
-#[test]
+#[uzu_test]
 fn test_determinism_f16() {
     test_determinism::<f16>(4, 128);
 }
 
-#[test]
+#[uzu_test]
 fn test_determinism_bf16() {
     test_determinism::<bf16>(4, 128);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32() {
     test_internal::<f32>(7, 16 * 1024 * 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test_internal::<f16>(7, 16 * 1024 * 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test_internal::<bf16>(7, 16 * 1024 * 64);
 }

@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
@@ -219,81 +219,81 @@ fn test_non_aligned<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // Out-of-place basic tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>(false);
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>(false);
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>(false);
 }
 
 // In-place basic tests
-#[test]
+#[uzu_test]
 fn test_in_place_f32() {
     test_basic::<f32>(true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_f16() {
     test_basic::<f16>(true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_bf16() {
     test_basic::<bf16>(true);
 }
 
 // All-allowed tests
-#[test]
+#[uzu_test]
 fn test_all_allowed_f32() {
     test_all_allowed::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_all_allowed_f16() {
     test_all_allowed::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_all_allowed_bf16() {
     test_all_allowed::<bf16>();
 }
 
 // None-allowed tests
-#[test]
+#[uzu_test]
 fn test_none_allowed_f32() {
     test_none_allowed::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_none_allowed_f16() {
     test_none_allowed::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_none_allowed_bf16() {
     test_none_allowed::<bf16>();
 }
 
 // Non-aligned vocab_size tests
-#[test]
+#[uzu_test]
 fn test_non_aligned_f32() {
     test_non_aligned::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_non_aligned_f16() {
     test_non_aligned::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_non_aligned_bf16() {
     test_non_aligned::<bf16>();
 }

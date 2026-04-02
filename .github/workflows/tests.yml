@@ -23,7 +23,7 @@ defaults:
 jobs:
   linters:
     name: linters
-    runs-on: [ self-hosted, macos, x64, mac, m3max ]
+    runs-on: macos-26
 
     steps:
       - uses: actions/checkout@v6
@@ -51,15 +51,14 @@ jobs:
         run: cargo deny check
 
   tests:
-    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }} ${{ matrix.audio && ' (audio-runtime)' || '' }}
-    runs-on: [ self-hosted, macos, x64, mac, m3max, runner1 ]
+    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }}
+    runs-on: [ self-hosted, macos, mac, arm64 ]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
     strategy:
       matrix:
         backend: [ 'cpu', 'metal' ]
         tracing: [ false, true ]
-        audio: [ false, true ]
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
@@ -77,11 +76,28 @@ jobs:
           cargo +stable build --no-default-features \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
-            ${{ matrix.audio && '--features audio-runtime' || '' }}
+
+      - name: Build benches
+        if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
+        run: |
+          cargo +nightly bench --no-run --no-default-features \
+            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.tracing && '--features tracing' || '' }} \
 
       - name: Run tests
-        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.audio }}
+        if: ${{ matrix.backend != 'cpu' && matrix.tracing }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
             ${{ format('--features {0}', matrix.backend) || '' }} \
-            --features tracing --features audio-runtime
+            --features tracing
+
+  completed:
+    name: completed
+    runs-on: ubuntu-latest
+    needs: [linters, tests]
+    if: ${{ always() }}
+
+    steps:
+      - run: |
+          [ "${{ needs.linters.result }}" = success ]
+          [ "${{ needs.tests.result }}" = success ]

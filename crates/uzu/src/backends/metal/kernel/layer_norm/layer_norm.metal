@@ -36,12 +36,12 @@ void layer_norm_core(
   }
 
   // Reduce to get total mean
-  AccumT total_sum = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_sum,
-      shared_mean,
-      thread_in_row,
-      thread_context
-  );
+  AccumT total_sum =
+      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
+          partial_sum,
+          shared_mean,
+          thread_context
+      );
   AccumT mean = total_sum / static_cast<AccumT>(element_count);
 
   // Compute variance: sum of squared deviations
@@ -58,12 +58,12 @@ void layer_norm_core(
   }
 
   // Reduce to get total variance
-  AccumT total_var = threadgroup_cooperative_reduce_sum<BLOCK_SIZE>(
-      partial_var_sum,
-      shared_variance,
-      thread_in_row,
-      thread_context
-  );
+  AccumT total_var =
+      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
+          partial_var_sum,
+          shared_variance,
+          thread_context
+      );
   AccumT variance = total_var / static_cast<AccumT>(element_count);
   AccumT inv_std = rsqrt(variance + static_cast<AccumT>(epsilon));
 

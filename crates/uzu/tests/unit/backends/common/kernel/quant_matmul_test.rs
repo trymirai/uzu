@@ -1,24 +1,20 @@
-#![cfg(metal_backend)]
+#[macro_use]
+#[path = "../../../../common/mod.rs"]
+mod common;
 
 use std::time::Instant;
 
-use bytemuck;
 use half::{bf16, f16};
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     DataType,
-    backends::{
-        common::{
-            Backend, Context, Encoder,
-            gpu_types::QuantizationMode,
-            kernel::quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-                QuantizedMatmulType,
-            },
+    backends::common::{
+        Backend, Buffer, Context, Encoder,
+        gpu_types::QuantizationMode,
+        kernel::quant_matmul::{
+            QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+            QuantizedMatmulType, tests::common::helpers::alloc_buffer_with_data,
         },
-        metal::Metal,
     },
 };
 
@@ -26,9 +22,9 @@ fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity((values.len() + 3) / 4 * 2);
     for chunk in values.chunks(4) {
         let w0 = (*chunk.get(0).unwrap_or(&0) as u16) & 0x0F;
-        let w1 = ((*chunk.get(1).unwrap_or(&0) as u16) & 0x0F) << 4;
-        let w2 = ((*chunk.get(2).unwrap_or(&0) as u16) & 0x0F) << 8;
-        let w3 = ((*chunk.get(3).unwrap_or(&0) as u16) & 0x0F) << 12;
+        let w1 = ((*chunk.get(1).unwrap_or(&0) as u16) & 0x0F) * 16;
+        let w2 = ((*chunk.get(2).unwrap_or(&0) as u16) & 0x0F) * 256;
+        let w3 = ((*chunk.get(3).unwrap_or(&0) as u16) & 0x0F) * 4096;
 
         let word: u16 = w0 | w1 | w2 | w3;
         out.push(word as u8);
@@ -62,34 +58,19 @@ struct ExecutionResult {
 fn create_test_weights(
     output_dim: usize,
     input_dim: usize,
-    weights_transposed: bool,
     bits: usize,
 ) -> Vec<u8> {
     let mut weights_quant: Vec<u8> = Vec::with_capacity(output_dim * input_dim);
 
-    if weights_transposed {
-        // Weights stored as [output_dim × input_dim]
-        for row in 0..output_dim {
-            for _col in 0..input_dim {
-                let v = if bits == 4 {
-                    ((row + 1) & 0x0F) as u8
-                } else {
-                    ((row + 1) & 0xFF) as u8
-                };
-                weights_quant.push(v);
-            }
-        }
-    } else {
-        // Weights stored as [input_dim × output_dim]
-        for _row in 0..input_dim {
-            for col in 0..output_dim {
-                let v = if bits == 4 {
-                    ((col + 1) & 0x0F) as u8
-                } else {
-                    (col & 0xFF) as u8 // Allow 0..255 range
-                };
-                weights_quant.push(v);
-            }
+    // Weights stored as [output_dim × input_dim]
+    for row in 0..output_dim {
+        for _col in 0..input_dim {
+            let v = if bits == 4 {
+                ((row + 1) & 0x0F) as u8
+            } else {
+                ((row + 1) & 0xFF) as u8
+            };
+            weights_quant.push(v);
         }
     }
 
@@ -118,7 +99,7 @@ fn get_4bit_value(
     let byte_idx = word_idx * 2;
 
     let word = if byte_idx + 1 < data.len() {
-        data[byte_idx] as u16 | ((data[byte_idx + 1] as u16) << 8)
+        data[byte_idx] as u16 | ((data[byte_idx + 1] as u16) * 256)
     } else {
         0
     };
@@ -154,7 +135,6 @@ fn cpu_reference(
     b_quant: &[u8],
     scales: &[f32],
     biases: &[f32],
-    weights_transposed: bool,
     group_size: usize,
     dtype: DataType,
     bits: usize,
@@ -162,26 +142,27 @@ fn cpu_reference(
     zero_points: &[u8],
     zero_points_stride: usize,
 ) -> Vec<f32> {
-    let num_groups_k = (input_dim + group_size - 1) / group_size;
-    let num_groups_n = (output_dim + group_size - 1) / group_size;
-    let num_groups = if !weights_transposed {
-        num_groups_n
-    } else {
-        num_groups_k
-    };
+    let num_groups = (input_dim + group_size - 1) / group_size;
 
     let mut y = vec![0.0f32; batch * output_dim];
     for i in 0..batch {
         for j in 0..output_dim {
             let mut acc = 0.0f32;
-            if !weights_transposed {
-                let group_idx = j / group_size;
-                for l in 0..input_dim {
-                    let weight_linear_idx = if weights_transposed {
-                        j * input_dim + l
-                    } else {
-                        l * output_dim + j
-                    };
+            for g in 0..num_groups {
+                let scale = scales[j * num_groups + g];
+                let bias = match quantization_type {
+                    QuantizedMatmulType::ZeroPoint => {
+                        let zp = get_zp_value(zero_points, zero_points_stride, j, g, bits);
+                        -scale * zp
+                    },
+                    QuantizedMatmulType::Mlx => biases[j * num_groups + g],
+                };
+                let l_start = g * group_size;
+                let l_end = (l_start + group_size).min(input_dim);
+                let mut group_acc = 0.0f32;
+                let mut group_sum = 0.0f32;
+                for l in l_start..l_end {
+                    let weight_linear_idx = j * input_dim + l;
 
                     let val_q = if bits == 4 {
                         get_4bit_value(b_quant, weight_linear_idx)
@@ -190,48 +171,10 @@ fn cpu_reference(
                     };
 
                     let val_a = a[i * input_dim + l];
-                    let scale = scales[l * num_groups + group_idx];
-                    let bias = if quantization_type == QuantizedMatmulType::ZeroPoint {
-                        let zp_val_qvm = get_zp_value(zero_points, zero_points_stride, l, group_idx, bits);
-                        -scale * zp_val_qvm
-                    } else {
-                        biases[l * num_groups + group_idx]
-                    };
-                    acc += val_a * (scale * val_q + bias);
+                    group_acc += val_a * val_q;
+                    group_sum += val_a;
                 }
-            } else {
-                for g in 0..num_groups {
-                    let scale = scales[j * num_groups + g];
-                    let bias = match quantization_type {
-                        QuantizedMatmulType::ZeroPoint => {
-                            let zp = get_zp_value(zero_points, zero_points_stride, j, g, bits);
-                            -scale * zp
-                        },
-                        QuantizedMatmulType::Mlx => biases[j * num_groups + g],
-                    };
-                    let l_start = g * group_size;
-                    let l_end = (l_start + group_size).min(input_dim);
-                    let mut group_acc = 0.0f32;
-                    let mut group_sum = 0.0f32;
-                    for l in l_start..l_end {
-                        let weight_linear_idx = if weights_transposed {
-                            j * input_dim + l
-                        } else {
-                            l * output_dim + j
-                        };
-
-                        let val_q = if bits == 4 {
-                            get_4bit_value(b_quant, weight_linear_idx)
-                        } else {
-                            b_quant[weight_linear_idx] as f32
-                        };
-
-                        let val_a = a[i * input_dim + l];
-                        group_acc += val_a * val_q;
-                        group_sum += val_a;
-                    }
-                    acc += scale * group_acc + bias * group_sum;
-                }
+                acc += scale * group_acc + bias * group_sum;
             }
             y[i * output_dim + j] = quantize_value(acc, dtype);
         }
@@ -254,23 +197,11 @@ fn generate_test_quant_params(
     data_type: DataType,
     bits: usize,
     quantization_type: QuantizedMatmulType,
-    weights_transposed: bool,
     randomize_zp: bool,
 ) -> TestQuantParams {
-    let num_groups_k = (input_dim + group_size - 1) / group_size;
-    let num_groups_n = (output_dim + group_size - 1) / group_size;
-    let num_groups = if !weights_transposed {
-        num_groups_n
-    } else {
-        num_groups_k
-    };
-    let primary_dim = if !weights_transposed {
-        input_dim
-    } else {
-        output_dim
-    };
+    let num_groups = (input_dim + group_size - 1) / group_size;
 
-    let len = primary_dim * num_groups;
+    let len = output_dim * num_groups;
     let scales = vec![1.0; len];
     let scales_quant = quantize_slice(&scales, data_type);
     let mut biases = vec![0.0; len];
@@ -280,104 +211,43 @@ fn generate_test_quant_params(
     } else {
         num_groups
     };
-    let zero_points_len = if !weights_transposed {
-        input_dim * zero_points_stride
-    } else {
-        output_dim * zero_points_stride
-    };
-    let mut zero_points = vec![0u8; zero_points_len];
+    let mut zero_points = vec![0u8; output_dim * zero_points_stride];
 
     if quantization_type == QuantizedMatmulType::ZeroPoint && randomize_zp {
-        if !weights_transposed {
-            // GMM/QVM non-transposed: Use [K][N_groups] layout for generation
-            for k in 0..input_dim {
-                for g in 0..num_groups {
-                    let k_eff = k / group_size;
-                    let base_val = ((k_eff * 5 + g * 7) & 0xFF) as u8;
-                    let zp_val_u8 = if bits == 4 {
-                        base_val & 0x0F
+        for j in 0..output_dim {
+            for g in 0..num_groups {
+                let base_val = j + 3 * g;
+                let zp_val: u8 = if bits == 4 {
+                    (base_val as u8) & 0x0F
+                } else {
+                    base_val as u8
+                };
+
+                if bits == 4 {
+                    let byte_index = j * zero_points_stride + (g >> 1);
+                    if (g & 1) == 0 {
+                        zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val & 0x0F);
                     } else {
-                        base_val
-                    };
-                    if bits == 4 {
-                        let byte_index = k * zero_points_stride + (g >> 1);
-                        if (g & 1) == 0 {
-                            zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val_u8 & 0x0F);
-                        } else {
-                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val_u8 & 0x0F) << 4);
-                        }
-                    } else {
-                        zero_points[k * zero_points_stride + g] = zp_val_u8;
+                        zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
                     }
-
-                    // Note: scales are [input_dim][num_groups] in this case?
-                    // No, scales are 1.0.
-                    // Biases logic needs to use same indexing!
-                    // But biases is flat buffer.
-                    // Index: k * num_groups + g.
-                    let s = scales_quant[k * num_groups + g];
-                    let zp_val = if bits == 4 {
-                        (zp_val_u8 & 0x0F) as f32
-                    } else {
-                        zp_val_u8 as f32
-                    };
-                    biases[k * num_groups + g] = quantize_value(-s * zp_val, data_type);
+                } else {
+                    let byte_index = j * zero_points_stride + g;
+                    zero_points[byte_index] = zp_val;
                 }
-            }
-        } else {
-            for j in 0..output_dim {
-                for g in 0..num_groups {
-                    let base_val = if weights_transposed {
-                        j + 3 * g
-                    } else {
-                        3 * g
-                    };
-                    let zp_val: u8 = if bits == 4 {
-                        (base_val as u8) & 0x0F
-                    } else {
-                        base_val as u8
-                    };
 
-                    if bits == 4 {
-                        let byte_index = j * zero_points_stride + (g >> 1);
-                        if (g & 1) == 0 {
-                            zero_points[byte_index] = (zero_points[byte_index] & 0xF0) | (zp_val & 0x0F);
-                        } else {
-                            zero_points[byte_index] = (zero_points[byte_index] & 0x0F) | ((zp_val & 0x0F) << 4);
-                        }
-                    } else {
-                        let byte_index = j * zero_points_stride + g;
-                        zero_points[byte_index] = zp_val;
-                    }
-
-                    let s = scales_quant[j * num_groups + g];
-                    let b = quantize_value(-s * (zp_val as f32), data_type);
-                    biases[j * num_groups + g] = b;
-                }
+                let s = scales_quant[j * num_groups + g];
+                let b = quantize_value(-s * (zp_val as f32), data_type);
+                biases[j * num_groups + g] = b;
             }
         }
     }
 
     if quantization_type == QuantizedMatmulType::Mlx {
-        if !weights_transposed {
-            for k in 0..input_dim {
-                for g in 0..num_groups {
-                    let base_val = g * 3;
-                    let bias_val = (base_val % 19) as f32 * 0.125;
-                    biases[k * num_groups + g] = quantize_value(bias_val, data_type);
-                }
-            }
-        } else {
-            for j in 0..output_dim {
-                for g in 0..num_groups {
-                    let base_val = if weights_transposed {
-                        j * 7 + g * 3
-                    } else {
-                        g * 3
-                    };
-                    let bias_val = (base_val % 19) as f32 * 0.125;
-                    biases[j * num_groups + g] = quantize_value(bias_val, data_type);
-                }
+        for j in 0..output_dim {
+            for g in 0..num_groups {
+                let base_val = j * 7 + g * 3;
+                let bias_val = (base_val % 19) as f32 * 0.125;
+                biases[j * num_groups + g] = quantize_value(bias_val, data_type);
             }
         }
     }
@@ -391,40 +261,32 @@ fn generate_test_quant_params(
     }
 }
 
-fn buffer_from_f32_slice(
-    ctx: &<Metal as Backend>::Context,
+fn buffer_from_f32_slice<B: Backend>(
+    ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+) -> B::Buffer {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            ctx.device
-                .new_buffer_with_data(bytemuck::cast_slice(&data), MTLResourceOptions::STORAGE_MODE_SHARED)
-                .expect("Failed to create buffer")
+            alloc_buffer_with_data::<B, f16>(ctx, data.as_slice())
         },
         DataType::BF16 => {
             let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            ctx.device
-                .new_buffer_with_data(bytemuck::cast_slice(&data), MTLResourceOptions::STORAGE_MODE_SHARED)
-                .expect("Failed to create buffer")
+            alloc_buffer_with_data::<B, bf16>(ctx, data.as_slice())
         },
-        DataType::F32 => ctx
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(values), MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer"),
+        DataType::F32 => alloc_buffer_with_data::<B, f32>(ctx, values),
         other => {
             panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
         },
     }
 }
 
-fn execute_quantized_matmul(
-    ctx: &<Metal as Backend>::Context,
+fn execute_quantized_matmul<B: Backend>(
+    ctx: &B::Context,
     batch: usize,
     input_dim: usize,
     output_dim: usize,
-    weights_transposed: bool,
     iterations: usize,
     validate: bool,
     quantization_type: QuantizedMatmulType,
@@ -433,23 +295,15 @@ fn execute_quantized_matmul(
     data_type: DataType,
     bits: usize,
 ) -> ExecutionResult {
-    let weights_quant = create_test_weights(output_dim, input_dim, weights_transposed, bits);
+    let weights_quant = create_test_weights(output_dim, input_dim, bits);
     let weights_packed = if bits == 4 {
         pack_u4_weights(&weights_quant)
     } else {
         weights_quant.clone()
     };
 
-    let params = generate_test_quant_params(
-        output_dim,
-        input_dim,
-        group_size,
-        data_type,
-        bits,
-        quantization_type,
-        weights_transposed,
-        randomize_zp,
-    );
+    let params =
+        generate_test_quant_params(output_dim, input_dim, group_size, data_type, bits, quantization_type, randomize_zp);
     // X is batch × input_dim
     let x_f32: Vec<f32> = if batch == 1 {
         // Vector case: 1 × input_dim
@@ -465,23 +319,17 @@ fn execute_quantized_matmul(
     };
     let x_quant = quantize_slice(&x_f32, data_type);
 
-    let w_buf = ctx
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&weights_packed), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-    let s_buf = buffer_from_f32_slice(ctx, data_type, &params.scales);
+    let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
+    let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
-        QuantizedMatmulType::ZeroPoint => ctx
-            .device
-            .new_buffer_with_data(&params.zero_points, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer"),
-        QuantizedMatmulType::Mlx => buffer_from_f32_slice(ctx, data_type, &params.biases),
+        QuantizedMatmulType::ZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizedMatmulType::Mlx => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
-    let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
+    let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
 
-    let kernel = QuantizedMatmulKernelEncodable::<Metal>::new(
+    let kernel = QuantizedMatmulKernelEncodable::<B>::new(
         &ctx,
         QuantizedMatmulConfiguration {
             data_type,
@@ -494,7 +342,7 @@ fn execute_quantized_matmul(
                 _ => panic!("Unsupported bits: {}", bits),
             },
             quantization_type,
-            weights_transposed,
+            use_hadamard: false,
         },
     )
     .unwrap();
@@ -508,10 +356,8 @@ fn execute_quantized_matmul(
                 scales_buffer: &s_buf,
                 zero_points_or_biases_buffer: &b_buf,
                 output_buffer: &mut y_buf,
-                batch,
-                input_dim,
-                output_dim,
-                quantization_type,
+                hadamard_factors: None,
+                batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
             kernel.encode(&mut encoder, args).unwrap();
@@ -528,10 +374,8 @@ fn execute_quantized_matmul(
             scales_buffer: &s_buf,
             zero_points_or_biases_buffer: &b_buf,
             output_buffer: &mut y_buf,
-            batch,
-            input_dim,
-            output_dim,
-            quantization_type,
+            hadamard_factors: None,
+            batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
         kernel.encode(&mut encoder, args).unwrap();
@@ -548,7 +392,6 @@ fn execute_quantized_matmul(
             &weights_packed,
             &params.scales_quant,
             &params.biases,
-            weights_transposed,
             group_size,
             data_type,
             bits,
@@ -559,17 +402,17 @@ fn execute_quantized_matmul(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const f16;
+                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f16;
                 let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const bf16;
+                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const bf16;
                 let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const f32;
+                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f32;
                 let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.to_vec()
             },
@@ -629,27 +472,24 @@ struct TestConfig {
 }
 
 const QMV_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
-const QVM_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QMM_DIMS: &[(usize, usize, usize)] = &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
 
-fn run_kernel_test(
-    ctx: &<Metal as Backend>::Context,
+fn run_kernel_test<B: Backend>(
+    ctx: &B::Context,
     batch: usize,
     output_dim: usize,
     input_dim: usize,
-    weights_transposed: bool,
     config: &TestConfig,
     validate: bool,
     iterations: usize,
 ) -> ExecutionResult {
     let randomize_zp = config.quant_type == QuantizedMatmulType::ZeroPoint;
 
-    execute_quantized_matmul(
+    execute_quantized_matmul::<B>(
         ctx,
         batch,
         input_dim,
         output_dim,
-        weights_transposed,
         iterations,
         validate,
         config.quant_type,
@@ -660,12 +500,11 @@ fn run_kernel_test(
     )
 }
 
-#[test]
-fn test_quant_gmv() {
-    let ctx = match <Metal as Backend>::Context::new() {
+fn test_quant_gmv_internal<B: Backend>() {
+    let ctx = match B::Context::new() {
         Ok(c) => c,
         Err(_) => {
-            println!("Metal not available — skipping QMV test");
+            println!("{} backend not available — skipping QMV test", std::any::type_name::<B>());
             return;
         },
     };
@@ -699,61 +538,16 @@ fn test_quant_gmv() {
 
     for config in &configs {
         for &(output_dim, input_dim) in QMV_DIMS {
-            run_kernel_test(&ctx, 1, output_dim, input_dim, true, config, true, 1);
+            run_kernel_test::<B>(&ctx, 1, output_dim, input_dim, config, true, 1);
         }
     }
 }
 
-#[test]
-fn test_quant_qvm() {
-    let ctx = match <Metal as Backend>::Context::new() {
+fn test_quant_gmm_transposed_internal<B: Backend>() {
+    let ctx = match B::Context::new() {
         Ok(c) => c,
         Err(_) => {
-            println!("Metal not available — skipping QVM test");
-            return;
-        },
-    };
-
-    let configs = vec![
-        TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
-            bits: 4,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-        TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
-            bits: 8,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-        TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
-            bits: 4,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-        TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
-            bits: 8,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-    ];
-
-    for config in &configs {
-        for &(output_dim, input_dim) in QVM_DIMS {
-            run_kernel_test(&ctx, 1, output_dim, input_dim, false, config, true, 1);
-        }
-    }
-}
-
-#[test]
-fn test_quant_gmm() {
-    let ctx = match <Metal as Backend>::Context::new() {
-        Ok(c) => c,
-        Err(_) => {
-            println!("Metal not available — skipping QMM test");
+            println!("{} not available — skipping QMM transposed test", std::any::type_name::<B>());
             return;
         },
     };
@@ -787,62 +581,16 @@ fn test_quant_gmm() {
 
     for config in &configs {
         for &(batch, output_dim, input_dim) in QMM_DIMS {
-            run_kernel_test(&ctx, batch, output_dim, input_dim, false, config, true, 1);
+            run_kernel_test::<B>(&ctx, batch, output_dim, input_dim, config, true, 1);
         }
     }
 }
 
-#[test]
-fn test_quant_gmm_transposed() {
-    let ctx = match <Metal as Backend>::Context::new() {
+fn test_quant_matmul_perf_internal<B: Backend>() {
+    let ctx = match B::Context::new() {
         Ok(c) => c,
         Err(_) => {
-            println!("Metal not available — skipping QMM transposed test");
-            return;
-        },
-    };
-
-    let configs = vec![
-        TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
-            bits: 4,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-        TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
-            bits: 8,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-        TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
-            bits: 4,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-        TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
-            bits: 8,
-            data_type: DataType::F32,
-            group_size: 64,
-        },
-    ];
-
-    for config in &configs {
-        for &(batch, output_dim, input_dim) in QMM_DIMS {
-            run_kernel_test(&ctx, batch, output_dim, input_dim, true, config, true, 1);
-        }
-    }
-}
-
-#[test]
-#[ignore]
-fn test_quant_matmul_perf() {
-    let ctx = match <Metal as Backend>::Context::new() {
-        Ok(c) => c,
-        Err(_) => {
-            println!("Metal not available — skipping Perf test");
+            println!("{} backend not available — skipping Perf test", std::any::type_name::<B>());
             return;
         },
     };
@@ -894,10 +642,11 @@ fn test_quant_matmul_perf() {
     );
     println!("{}", "-".repeat(85));
 
+    let iterations = 20;
     for config in &configs {
         for &(batch, output_dim, input_dim) in &shapes {
-            let result = run_kernel_test(&ctx, batch, output_dim, input_dim, false, config, false, 20);
-            let avg = result.elapsed / 20.0 * 1000.0; // ms
+            let result = run_kernel_test::<B>(&ctx, batch, output_dim, input_dim, config, false, iterations);
+            let avg = result.elapsed / (iterations as f64) * 1000.0; // ms
 
             println!(
                 "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:.4} ms",
@@ -910,4 +659,26 @@ fn test_quant_matmul_perf() {
             );
         }
     }
+}
+
+#[test]
+fn test_quant_gmv() {
+    for_each_non_cpu_backend!(|B| {
+        test_quant_gmv_internal::<B>();
+    })
+}
+
+#[test]
+fn test_quant_gmm_transposed() {
+    for_each_non_cpu_backend!(|B| {
+        test_quant_gmm_transposed_internal::<B>();
+    })
+}
+
+#[test]
+#[ignore]
+fn test_quant_matmul_perf() {
+    for_each_non_cpu_backend!(|B| {
+        test_quant_matmul_perf_internal::<B>();
+    })
 }

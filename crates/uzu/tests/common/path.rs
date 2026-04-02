@@ -10,14 +10,15 @@ pub fn get_version() -> &'static str {
 }
 
 pub fn get_test_model_path() -> PathBuf {
+    let model_dir = std::env::var("TEST_MODEL").unwrap_or_else(|_| MODEL_DIR_NAME.to_string());
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("models")
         .join(get_version())
-        .join(MODEL_DIR_NAME);
+        .join(model_dir);
     if !path.exists() {
-        panic!("Test model not found at {:?}. Run `./scripts/download_test_model.sh` to fetch it.", path);
+        panic!("Test model not found at {:?}. Set TEST_MODEL env var or run `./scripts/download_test_model.sh`.", path);
     }
     path
 }

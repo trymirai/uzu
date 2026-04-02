@@ -1,4 +1,4 @@
-#![cfg(all(feature = "audio-runtime", metal_backend))]
+#![cfg(metal_backend)]
 
 use uzu::{
     ArrayContextExt, DataType,
@@ -24,6 +24,7 @@ use super::super::common::audio::{
         conv1d_reference, half_snake_reference,
     },
 };
+use crate::uzu_test;
 
 macro_rules! borrow_array_buffer {
     ($name:ident = $array:expr) => {
@@ -52,7 +53,7 @@ fn run_command_buffer(
     encoder.end_encoding().submit().wait_until_completed().expect("command buffer completed");
 }
 
-#[test]
+#[uzu_test]
 fn audio_conv1d_replicate_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioConv1dKernel::new(&context, DataType::F32)
@@ -149,7 +150,7 @@ fn audio_conv1d_replicate_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_causal_conv1d_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioCausalConv1dKernel::new(&context, DataType::F32)
@@ -235,7 +236,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_causal_conv_transpose1d_matches_reference_f32() {
     let context = create_test_context();
     let kernel =
@@ -334,7 +335,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioCausalConvTranspose1dCausalPadKernel::new(
@@ -453,7 +454,7 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_leaky_relu_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(&context, DataType::F32)
@@ -500,7 +501,7 @@ fn audio_leaky_relu_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_tanh_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::ActivationKernel::new(&context, DataType::F32, false)
@@ -528,7 +529,7 @@ fn audio_tanh_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_add_matches_reference_f32() {
     let context = create_test_context();
     let add_kernel = <<Metal as Backend>::Kernels as Kernels>::AudioAddKernel::new(&context, DataType::F32)
@@ -567,7 +568,7 @@ fn audio_add_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_half_snake_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioHalfSnakeKernel::new(&context, DataType::F32)
@@ -635,7 +636,7 @@ fn audio_half_snake_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_norm_ncs_matches_reference_f32() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioNormNcsKernel::new(&context, DataType::F32)
@@ -744,7 +745,7 @@ fn audio_norm_ncs_matches_reference_f32() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_fsq_decode_matches_reference() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqDecodeKernel::new(&context, DataType::F32)
@@ -801,7 +802,7 @@ fn audio_fsq_decode_matches_reference() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn audio_fsq_encode_matches_reference() {
     let context = create_test_context();
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AudioFsqEncodeKernel::new(&context, DataType::F32)

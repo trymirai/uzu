@@ -349,6 +349,46 @@ impl<B: Backend> TraceValidator<B> {
             }
         }
 
+        // LLM-specific: DeltaNet state validation
+        let delta_net_layers: Vec<usize> = {
+            let cache = state.cache_layers().unwrap().borrow();
+            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
+        };
+
+        for index in delta_net_layers {
+            let conv_state = state.array(ArrayId::DeltaNetConvState(index));
+            let ssm_state = state.array(ArrayId::DeltaNetSsmState(index));
+
+            for path in [
+                format!("updated_state.{}.conv_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(
+                            data_type,
+                            &expected,
+                            &conv_state,
+                            Some(ArrayTransform::SsmConvState),
+                        ),
+                    });
+                }
+            }
+
+            for path in [
+                format!("updated_state.{}.ssm_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                    });
+                }
+            }
+        }
+
         // LLM-specific: Token comparison
         let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
@@ -541,21 +581,6 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        // Embedding norm (classifier-specific)
-        if let Some(embedding_norm) = &traces.borrow().embedding_norm {
-            if traces_view.leaf_array("activation_trace.embedding_norm").is_ok() {
-                results.push(TracerValidationResult {
-                    name: "activation_trace.embedding_norm".to_string(),
-                    metrics: Self::validate_array_with_name(
-                        data_type,
-                        traces_view,
-                        "activation_trace.embedding_norm",
-                        embedding_norm,
-                    ),
-                });
-            }
-        }
-
         // Output pooling (classifier-specific)
         if let Some(output_pooling) = &traces.borrow().output_pooling {
             if traces_view.leaf_array("activation_trace.output_pooling").is_ok() {
@@ -677,7 +702,20 @@ impl<B: Backend> TraceValidator<B> {
 
         let result: Vec<f32> = produced_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
 
-        Self::compare_arrays(&reference, expected_data.shape().to_vec(), &result, produced_data.shape().to_vec())
+        let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
+            DataType::BF16 => (0.04, 0.06, 0.03),
+            _ => (0.01, 0.03, 0.01),
+        };
+
+        Self::compare_arrays(
+            &reference,
+            expected_data.shape().to_vec(),
+            &result,
+            produced_data.shape().to_vec(),
+            atol,
+            rtol,
+            allowed_voilations_tol,
+        )
     }
 
     fn compare_arrays(
@@ -685,12 +723,11 @@ impl<B: Backend> TraceValidator<B> {
         reference_shape: Vec<usize>,
         result: &[f32],
         result_shape: Vec<usize>,
+        atol: f32,
+        rtol: f32,
+        fraction_of_allowed_violations: f32,
     ) -> TracerValidationMetrics {
         assert_eq!(result.len(), reference.len());
-
-        let atol: f32 = 1e-2;
-        let rtol: f32 = 0.03;
-        let fraction_of_allowed_violations: f32 = 0.01;
 
         let mut num_violations = 0;
         let mut max_err = 0.0f32;

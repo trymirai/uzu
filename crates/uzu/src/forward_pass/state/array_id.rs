@@ -32,6 +32,8 @@ pub enum ArrayId {
     SsmZ(usize),
     ShortConvState(usize),
     ShortConvSuffixState(usize),
+    DeltaNetConvState(usize),
+    DeltaNetSsmState(usize),
 
     RotatedQueries,
     RotatedKeys,

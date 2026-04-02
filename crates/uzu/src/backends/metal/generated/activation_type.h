@@ -19,6 +19,7 @@ enum ActivationType : uint32_t {
   GELU,
   TANH,
   IDENTITY,
+  SOFTPLUS,
 };
 
 #ifdef __METAL_VERSION__

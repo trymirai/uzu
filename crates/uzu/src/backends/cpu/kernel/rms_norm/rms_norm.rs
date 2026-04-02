@@ -18,13 +18,22 @@ pub fn rms_norm<
     #[optional(!in_place)] input: Option<*const InputT>,
     scales: *const ScaleT,
     output: *mut OutputT,
+    #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
+    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
     scale_offset: f32,
-    full_layer: bool,
     #[specialize] in_place: bool,
+    #[specialize] full_layer: bool,
+    #[specialize] copy_to_shortcut: bool,
+    #[specialize] residual_add: bool,
+    #[specialize] use_hadamard: bool,
 ) {
+    if use_hadamard {
+        unimplemented!("not supported yet");
+    }
+
     let input = match in_place {
         true => output as *const InputT,
         false => input.unwrap(),
@@ -40,18 +49,31 @@ pub fn rms_norm<
     for batch in 0..(batch_size as usize) {
         let batch_offset = batch * element_count;
 
-        // Compute rms_inv
+        // Compute rms_inv (+ residual add or copy to shortcut)
         let mut sum_sq = AccumT::zero();
         for i in 0..element_count {
-            let input_val = unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() };
-            sum_sq = sum_sq + input_val * input_val;
+            let input_val = unsafe { *input.add(batch_offset + i) };
+            let mut val = input_val;
+            if copy_to_shortcut {
+                let skip_ptr = unsafe { shortcut.unwrap().add(batch_offset + i) };
+                if residual_add {
+                    val = val + unsafe { *skip_ptr };
+                }
+                unsafe { *skip_ptr = val };
+            }
+            let accum_val = AccumT::from(val).unwrap();
+            sum_sq = sum_sq + accum_val * accum_val;
         }
         let mean_sq: AccumT = sum_sq / element_count_accum;
         let rms_inv = AccumT::from((mean_sq + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
 
         // Normalization and scaling
         for i in 0..element_count {
-            let input_val = unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() };
+            let input_val = if residual_add {
+                unsafe { AccumT::from(*shortcut.unwrap().add(batch_offset + i)).unwrap() }
+            } else {
+                unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() }
+            };
             let scale_val = unsafe { AccumT::from(*scales.add(i)).unwrap() };
             let normalized: AccumT = input_val * rms_inv;
             let result: OutputT = if full_layer {

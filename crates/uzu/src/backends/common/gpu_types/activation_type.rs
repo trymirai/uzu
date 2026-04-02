@@ -10,6 +10,7 @@ pub enum ActivationType {
     GELU,
     TANH,
     IDENTITY,
+    SOFTPLUS,
 }
 
 impl ActivationType {
@@ -18,18 +19,28 @@ impl ActivationType {
         x: T,
     ) -> T {
         match self {
-            ActivationType::SILU => silu(x),
+            ActivationType::SILU {
+                ..
+            } => silu(x),
             ActivationType::GELU => gelu(x),
             ActivationType::TANH => tanh_activation(x),
             ActivationType::IDENTITY => x,
+            ActivationType::SOFTPLUS => softplus(x),
         }
     }
 }
 
-fn silu<T: Float>(x: T) -> T {
+pub fn activation_silu_alpha<T: Float>(
+    x: T,
+    alpha: f32,
+) -> T {
     let x_float = x.to_f32().unwrap();
-    let y_float = x_float / (1.0f32 + (-x_float).exp());
+    let y_float = x_float / (1.0f32 + (-alpha * x_float).exp());
     T::from(y_float).unwrap()
+}
+
+fn silu<T: Float>(x: T) -> T {
+    activation_silu_alpha(x, 1.0f32)
 }
 
 fn gelu<T: Float>(x: T) -> T {
@@ -42,4 +53,14 @@ fn gelu<T: Float>(x: T) -> T {
 fn tanh_activation<T: Float>(x: T) -> T {
     let x_float = x.to_f32().unwrap();
     T::from(x_float.tanh()).unwrap()
+}
+
+fn softplus<T: Float>(x: T) -> T {
+    let x_float = x.to_f32().unwrap();
+    if x_float > 20f32 {
+        return x;
+    }
+
+    let result = (1f32 + x_float.exp()).ln();
+    T::from(result).unwrap()
 }

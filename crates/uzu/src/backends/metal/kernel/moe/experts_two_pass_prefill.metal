@@ -1,8 +1,8 @@
 #include <metal_stdlib>
+#include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../quant_matmul/mma.h"
-#include "moe_commons.h"
 
 // ------------------------ helpers ------------------------
 static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
@@ -304,7 +304,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   // layout used above.
   const uint lane_qid = sg_lin >> 2;
   const uint lane_row = (lane_qid & 4u) + ((sg_lin >> 1) & 3u);
-  const uint lane_col_base = ((lane_qid & 2u) << 1) + ((sg_lin & 1u) << 1);
+  const uint lane_col_base = ((lane_qid & 2u) * 2u) + ((sg_lin & 1u) * 2u);
 
   METAL_PRAGMA_UNROLL
   for (uint n_sub = 0; n_sub < SgBn; n_sub += SG_TILE) {
@@ -339,16 +339,17 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
         float out_val;
         if (gating_sel <= 1u) {
-          out_val =
-              (gating_sel == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+          out_val = (gating_sel == 0u) ? activate_gelu(up_v)
+                                       : activate_silu_alpha(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_0 + bias_gate[col0],
               gate_clip_min,
               gate_clip_max
           );
-          const float gate_act = (gating_sel == 2u) ? silu(gate_v, silu_alpha)
-                                                    : gelu_approx(gate_v);
+          const float gate_act = (gating_sel == 2u)
+                                     ? activate_silu_alpha(gate_v, silu_alpha)
+                                     : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col0;
@@ -360,16 +361,17 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
             clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
         float out_val;
         if (gating_sel <= 1u) {
-          out_val =
-              (gating_sel == 0u) ? gelu_approx(up_v) : silu(up_v, silu_alpha);
+          out_val = (gating_sel == 0u) ? activate_gelu(up_v)
+                                       : activate_silu_alpha(up_v, silu_alpha);
         } else {
           float gate_v = clamp(
               gate_frag_1 + bias_gate[col1],
               gate_clip_min,
               gate_clip_max
           );
-          const float gate_act = (gating_sel == 2u) ? silu(gate_v, silu_alpha)
-                                                    : gelu_approx(gate_v);
+          const float gate_act = (gating_sel == 2u)
+                                     ? activate_silu_alpha(gate_v, silu_alpha)
+                                     : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col1;
@@ -565,7 +567,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   const uint lane_row =
       (lane_qid & 4u) + ((thread_context.simdgroup_index >> 1) & 3u);
   const uint lane_col_base =
-      ((lane_qid & 2u) << 1) + ((thread_context.simdgroup_index & 1u) << 1);
+      ((lane_qid & 2u) * 2u) + ((thread_context.simdgroup_index & 1u) * 2u);
 
   const uint local_row = row_sg_off + lane_row;
   if (local_row >= m_rows)

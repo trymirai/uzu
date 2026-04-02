@@ -17,6 +17,10 @@ use common::{compiler::Compiler, envs, traitgen::traitgen_all};
 async fn main() -> anyhow::Result<()> {
     println!("cargo::rerun-if-changed=.");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") && env::var("IPHONEOS_DEPLOYMENT_TARGET").is_err() {
+        println!("cargo::rustc-env=IPHONEOS_DEPLOYMENT_TARGET=26.0");
+    }
+
     if envs::build_always() {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }

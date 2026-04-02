@@ -7,8 +7,10 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::HadamardTransformMulKernel},
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::HadamardTransformKernel},
 };
+
+use crate::uzu_test;
 
 const BLOCK_SIZE: usize = 32;
 
@@ -58,7 +60,7 @@ fn reference_hadamard_transform_mul(
 
 struct TestInput<T: ArrayElement + Float> {
     data: Box<[T]>,
-    factors: Box<[T]>,
+    factors: Box<[i32]>,
     channel_count: usize,
     batch_count: usize,
 }
@@ -71,24 +73,24 @@ fn generate_test_input<T: ArrayElement + Float>(
 
     let data_f64: Vec<f64> = (0..total_elements).map(|index| ((index as f64) * 0.1).sin() * 2.0).collect();
 
-    let factors_f64: Vec<f64> = (0..channel_count)
+    let factors_i32: Vec<i32> = (0..channel_count)
         .map(|index| {
             if index % 3 == 0 {
-                -1.0
+                -1
             } else {
-                1.0
+                1
             }
         })
         .collect();
 
+    let factors_f64: Vec<f64> = factors_i32.iter().map(|&v| v as f64).collect();
     let expected = reference_hadamard_transform_mul(&data_f64, &factors_f64, channel_count);
 
     let data: Vec<T> = data_f64.iter().map(|&value| T::from(value).unwrap()).collect();
-    let factors: Vec<T> = factors_f64.iter().map(|&value| T::from(value).unwrap()).collect();
 
     let input = TestInput {
         data: data.into_boxed_slice(),
-        factors: factors.into_boxed_slice(),
+        factors: factors_i32.into_boxed_slice(),
         channel_count,
         batch_count,
     };
@@ -99,21 +101,19 @@ fn generate_test_input<T: ArrayElement + Float>(
 fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformMulKernel::new(&context, T::data_type())
-        .expect("Failed to create HadamardTransformMulKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(&context, T::data_type())
+        .expect("Failed to create HadamardTransformKernel");
 
     let total_elements = input.batch_count * input.channel_count;
     let data_array = context.create_array_from(&[total_elements], &input.data, "data");
-    let factors_array = context.create_array_from(&[input.channel_count], &input.factors, "factors");
-
-    let total_blocks = (input.batch_count * input.channel_count / BLOCK_SIZE) as u32;
+    let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors, "factors");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         data_array.buffer().borrow_mut().deref_mut(),
         factors_array.buffer().borrow().deref(),
-        total_blocks,
         input.channel_count as u32,
+        input.batch_count as u32,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -146,17 +146,17 @@ fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_f32() {
     test_hadamard_transform::<f32>(1e-4);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test_hadamard_transform::<f16>(0.05);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test_hadamard_transform::<bf16>(0.1);
 }

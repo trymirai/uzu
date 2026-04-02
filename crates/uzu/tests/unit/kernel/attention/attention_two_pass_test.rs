@@ -16,7 +16,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;
 
@@ -329,94 +329,94 @@ fn test_second_pass_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
 
 // --- First pass test entries ---
 
-#[test]
+#[uzu_test]
 fn test_first_pass_basic_f32() {
     test_first_pass_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_basic_f16() {
     test_first_pass_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_basic_bf16() {
     test_first_pass_basic::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_causal_f32() {
     test_first_pass_causal::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_causal_f16() {
     test_first_pass_causal::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_causal_bf16() {
     test_first_pass_causal::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_gqa_f32() {
     test_first_pass_gqa::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_gqa_f16() {
     test_first_pass_gqa::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_gqa_bf16() {
     test_first_pass_gqa::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_head_dim_128_f32() {
     test_first_pass_head_dim_128::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_head_dim_128_f16() {
     test_first_pass_head_dim_128::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_first_pass_head_dim_128_bf16() {
     test_first_pass_head_dim_128::<bf16>();
 }
 
 // --- Second pass test entries ---
 
-#[test]
+#[uzu_test]
 fn test_second_pass_basic_f32() {
     test_second_pass_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_second_pass_basic_f16() {
     test_second_pass_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_second_pass_basic_bf16() {
     test_second_pass_basic::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_second_pass_head_dim_128_f32() {
     test_second_pass_head_dim_128::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_second_pass_head_dim_128_f16() {
     test_second_pass_head_dim_128::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_second_pass_head_dim_128_bf16() {
     test_second_pass_head_dim_128::<bf16>();
 }

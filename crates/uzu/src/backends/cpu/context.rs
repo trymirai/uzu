@@ -80,6 +80,10 @@ impl Context for CpuContext {
         Ok(Box::pin(AtomicU64::new(0)))
     }
 
+    fn peak_memory_usage(&self) -> Option<usize> {
+        None
+    }
+
     fn enable_capture() {}
 
     fn start_capture(

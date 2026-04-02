@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,
@@ -168,49 +168,49 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // basic tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
 // large tests
-#[test]
+#[uzu_test]
 fn test_large_f32() {
     test_large::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_f16() {
     test_large::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_bf16() {
     test_large::<bf16>();
 }
 
 // edge tests
-#[test]
+#[uzu_test]
 fn test_edge_f32() {
     test_edge::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f16() {
     test_edge::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_bf16() {
     test_edge::<bf16>();
 }

@@ -33,7 +33,7 @@ impl<B: Backend> Sampling<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let batch_size = state.sampling_length();
+        let batch_dim = state.sampling_length();
         let sampling_start = state.sampling_start();
         let sampling_method = state.sampling_method().unwrap();
 
@@ -60,7 +60,7 @@ impl<B: Backend> Sampling<B> {
                 bitmask_offset,
                 output.buffer().borrow_mut().deref_mut(),
                 sampling_method,
-                batch_size,
+                batch_dim,
                 vocab_size,
                 encoder,
             )

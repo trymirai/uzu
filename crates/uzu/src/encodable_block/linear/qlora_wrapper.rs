@@ -85,6 +85,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
+        output_quantized_hadamard_factors: Option<B::Buffer>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
@@ -98,6 +99,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             parameter_tree,
             input_array_id,
             output_array_id,
+            output_quantized_hadamard_factors,
         )?;
         let adapter_kernel =
             RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);
@@ -134,7 +136,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         self.base_linear.encode(state, encoder)?;
 
         let mut adapter_kernel = self.adapter_kernel.borrow_mut();
-        let batch_size = state.active_suffix_length();
+        let batch_dim = state.active_row_count();
 
         let intermediate_array = state.common_aux.lora_intermediate.as_ref().unwrap();
         let input_array = state.array(self.input_array_id);
@@ -149,7 +151,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 ab_scale: 1.0,
                 c: MatmulArgumentC::None,
                 d: intermediate_array.buffer().borrow_mut().deref_mut(),
-                batch_dim: batch_size as u32,
+                batch_dim: batch_dim as u32,
                 input_dim: self.input_dim as u32,
                 output_dim: self.lora_rank as u32,
             },
@@ -165,7 +167,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 ab_scale: self.lora_scale,
                 c: MatmulArgumentC::Accumulate,
                 d: output_array.buffer().borrow_mut().deref_mut(),
-                batch_dim: batch_size as u32,
+                batch_dim: batch_dim as u32,
                 input_dim: self.lora_rank as u32,
                 output_dim: self.output_dim as u32,
             },

@@ -146,7 +146,7 @@ impl<B: Backend> ClassifierLayer<B> {
         )
         .expect("Failed to create pre-MLP norm kernel");
 
-        let (mlp, _mlp_hadamard_factors) = <dyn Mlp<B>>::new(
+        let (mlp, mlp_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,
@@ -154,6 +154,8 @@ impl<B: Backend> ClassifierLayer<B> {
             &layer_loader.subtree("mlp").unwrap(),
         )
         .expect("Failed to create mlp block");
+
+        assert!(mlp_hadamard_factors.is_none(), "classifier doesn't support hadamard");
 
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(

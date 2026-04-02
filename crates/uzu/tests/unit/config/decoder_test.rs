@@ -198,6 +198,7 @@ fn test_decoder_config() {
                 has_qkv_biases: false,
                 has_out_biases: false,
                 has_gate: false,
+                gate_projection_config: None,
                 partial_rope_dim: None,
             }),
             mlp_config: MLPConfig::Dense(DenseMLPConfig {

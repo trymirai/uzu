@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::ops::{Deref, DerefMut};
 
 use crate::{
     DataType,
@@ -39,7 +35,7 @@ impl<B: Backend> ShortConvMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> (Self, Option<Rc<RefCell<B::Buffer>>>) {
+    ) -> (Self, Option<B::Buffer>) {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
@@ -138,18 +134,18 @@ impl<B: Backend> ShortConvMixer<B> {
         &self,
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
-        active_suffix_length: usize,
+        active_row_count: usize,
     ) {
         self.clear_suffix_state_valid_range(state);
 
-        if active_suffix_length == 1 {
+        if active_row_count == 1 {
             self.run_decode_conv(state, encoder, 1);
             return;
         }
 
         let sampling_len = state.sampling_length();
         if sampling_len == 0 {
-            self.run_prefill_conv(state, encoder, active_suffix_length);
+            self.run_prefill_conv(state, encoder, active_row_count);
             return;
         }
 
@@ -157,7 +153,7 @@ impl<B: Backend> ShortConvMixer<B> {
         let trie_len = sampling_len;
 
         if trie_len <= 1 {
-            self.run_prefill_conv(state, encoder, active_suffix_length);
+            self.run_prefill_conv(state, encoder, active_row_count);
             return;
         }
 
@@ -316,14 +312,14 @@ impl<B: Backend> ShortConvMixer<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let active_suffix_length = state.active_suffix_length();
-        if active_suffix_length == 0 {
+        let active_row_count = state.active_row_count();
+        if active_row_count == 0 {
             return Ok(());
         }
 
         self.in_projection.encode(state, encoder)?;
 
-        self.run_conv(state, encoder, active_suffix_length);
+        self.run_conv(state, encoder, active_row_count);
 
         self.out_projection.encode(state, encoder)?;
 

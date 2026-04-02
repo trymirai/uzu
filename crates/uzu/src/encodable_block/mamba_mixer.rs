@@ -292,8 +292,8 @@ impl<B: Backend> MambaMixer<B> {
                 state: state_arr.buffer().borrow_mut().deref_mut(),
                 y: out.buffer().borrow_mut().deref_mut(),
                 suffix_len: suffix_length,
-                group_size: (self.config.num_heads / self.config.num_groups) as i32,
-                state_size: self.config.state_dim as i32,
+                group_size: (self.config.num_heads / self.config.num_groups) as u32,
+                state_size: self.config.state_dim as u32,
                 x_strides: [self.config.num_heads * self.config.head_dim, self.config.head_dim, 1],
                 dt_strides: [self.config.num_heads, 1],
                 cb_strides: [self.config.num_groups * self.config.state_dim, self.config.state_dim, 1],
@@ -359,18 +359,18 @@ impl<B: Backend> MambaMixer<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let active_suffix_length = state.active_suffix_length();
-        if active_suffix_length == 0 {
+        let active_row_count = state.active_row_count();
+        if active_row_count == 0 {
             return Ok(());
         }
 
         self.in_projection.encode(state, encoder)?;
-        self.run_split_inproj(state, encoder, active_suffix_length);
-        self.run_conv_scan(state, encoder, active_suffix_length);
-        if active_suffix_length == 1 {
-            self.run_decode_ssm(state, encoder, active_suffix_length);
+        self.run_split_inproj(state, encoder, active_row_count);
+        self.run_conv_scan(state, encoder, active_row_count);
+        if active_row_count == 1 {
+            self.run_decode_ssm(state, encoder, active_row_count);
         } else {
-            self.run_prefill_ssm(state, encoder, active_suffix_length);
+            self.run_prefill_ssm(state, encoder, active_row_count);
         }
         self.out_projection.encode(state, encoder)?;
         Ok(())
