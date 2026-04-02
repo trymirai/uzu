@@ -44,7 +44,6 @@ struct Output<T: ArrayElement + Float> {
 
 enum KernelType {
     Prefill,
-    Prefill64,
     Sequential,
 }
 
