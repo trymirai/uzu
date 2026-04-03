@@ -9,16 +9,10 @@ use objc2::{
 use objc2_foundation::NSString;
 
 /// Check whether the concrete class of `obj` has `sel` in its method table.
-fn class_responds_to<T: Message + ?Sized>(
-    obj: &T,
-    sel: objc2::runtime::Sel,
-) -> bool {
+fn class_responds_to<T: Message + ?Sized>(obj: &T, sel: objc2::runtime::Sel) -> bool {
     let obj_ptr: *const T = obj;
     let any: &AnyObject = unsafe { &*(obj_ptr as *const AnyObject) };
-    let cls = any.class();
-    let result = cls.responds_to(sel);
-    eprintln!("[DeviceExt] class={:?} selector={:?} class_responds_to={}", cls.name(), sel.name(), result);
-    result
+    any.class().responds_to(sel)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
