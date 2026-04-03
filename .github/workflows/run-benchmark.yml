@@ -1,0 +1,79 @@
+name: "Run Benchmark"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pool:
+        description: "Benchmark worker pool"
+        required: true
+        type: choice
+        options:
+          - macos-a18-pro-pool
+          - macos-m1-pool
+          - macos-m2-pool
+          - macos-m2-pro-pool
+          - macos-m4-pool
+          - macos-m4-pro-pool
+      benchmark_args:
+        description: 'JSON array passed after `uv run benchmarks`'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  run-benchmark:
+    name: Trigger benchmark worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    environment: prefect-benchmarks
+
+    env:
+      ARTIFACT_DIR: ${{ runner.temp }}/prefect-benchmark
+      BENCHMARK_ARGS_JSON: ${{ inputs.benchmark_args }}
+      GITHUB_ACTOR_NAME: ${{ github.actor }}
+      GITHUB_TRIGGERING_ACTOR_NAME: ${{ github.triggering_actor }}
+      POOL_NAME: ${{ inputs.pool }}
+      PREFECT_API_URL: ${{ vars.PREFECT_API_URL }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Trigger benchmark and collect Prefect logs
+        env:
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        run: |
+          python3 scripts/prefect_benchmark_run.py \
+            --api-url "$PREFECT_API_URL" \
+            --pool "$POOL_NAME" \
+            --benchmark-args "$BENCHMARK_ARGS_JSON" \
+            --output-dir "$ARTIFACT_DIR" \
+            --actor "$GITHUB_ACTOR_NAME" \
+            --triggering-actor "$GITHUB_TRIGGERING_ACTOR_NAME"
+
+      - name: Upload Prefect benchmark artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: prefect-benchmark-${{ github.run_id }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: warn
+
+      - name: Write workflow summary
+        if: ${{ always() }}
+        run: |
+          SUMMARY_PATH="$ARTIFACT_DIR/summary.md"
+          if [[ -f "$SUMMARY_PATH" ]]; then
+            cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No Prefect benchmark summary was generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
