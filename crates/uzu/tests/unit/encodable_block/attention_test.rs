@@ -968,13 +968,13 @@ fn perf_two_pass_attention() {
         false,
         false,
     )
-    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel");
+    .expect("Failed to create AttentionTwoPass1Kernel");
     let kernel_pass2 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
         &context,
         DataType::F32,
         head_dim as u32,
     )
-    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel");
+    .expect("Failed to create AttentionTwoPass2Kernel");
 
     // ---- Create buffers ----
     // For realistic inference, we only process queries for the suffix (new tokens)
