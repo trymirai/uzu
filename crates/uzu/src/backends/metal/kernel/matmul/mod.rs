@@ -228,8 +228,8 @@ impl MatmulMetalKernel {
     ) -> Result<(), MatmulError<Metal>> {
         let specialization = gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim, arguments.output_dim);
 
-        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
+        let mut threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
+        let mut threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
 
         let params = GemmParams {
             M: arguments.batch_dim,
@@ -243,6 +243,18 @@ impl MatmulMetalKernel {
             swizzle_log: 0,
             aligned_inner_iterations: 0,
         };
+
+        let max_threadgroups_per_dim = threadgroups_per_row.max(threadgroups_per_column);
+        let min_threadgroups_per_dim = threadgroups_per_row.min(threadgroups_per_column);
+        let morton_dim = max_threadgroups_per_dim.next_power_of_two();
+        let morton_threadgroups_per_row = morton_dim.saturating_mul(morton_dim);
+        let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
+        let use_morton =
+            min_threadgroups_per_dim > 1 && morton_threadgroups_per_row <= 4_u32.saturating_mul(actual_total);
+        if use_morton {
+            threadgroups_per_row = morton_threadgroups_per_row;
+            threadgroups_per_column = 1;
+        }
 
         let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
         kernel.encode(

@@ -41,26 +41,20 @@ struct ThreadgroupGemmMpp {
       const bool align_n,
       threadgroup T* left_shared,
       threadgroup T* right_shared,
-      uint simd_group_id,
       uint simd_lane_id,
+      uint simd_group_id,
       uint2 threadgroup_position
   ) {
-    // Morton curve remapping for better L2 cache locality
     int tid_x, tid_y;
-    if (threadgroup_position.y == 0 &&
-        threadgroup_position.x >= uint(params->threadgroups_per_row)) {
+    if (threadgroup_position.y == 0 && params->threadgroups_per_column > 1) {
       uint linear_id = threadgroup_position.x;
       uint mx = linear_id;
       uint my = linear_id >> 1;
-      mx &= 0x55555555u;
-      mx = (mx | (mx >> 1)) & 0x33333333u;
-      mx = (mx | (mx >> 2)) & 0x0F0F0F0Fu;
-      mx = (mx | (mx >> 4)) & 0x00FF00FFu;
+      mx &= 0x55555555u; mx = (mx | (mx >> 1)) & 0x33333333u;
+      mx = (mx | (mx >> 2)) & 0x0F0F0F0Fu; mx = (mx | (mx >> 4)) & 0x00FF00FFu;
       mx = (mx | (mx >> 8)) & 0x0000FFFFu;
-      my &= 0x55555555u;
-      my = (my | (my >> 1)) & 0x33333333u;
-      my = (my | (my >> 2)) & 0x0F0F0F0Fu;
-      my = (my | (my >> 4)) & 0x00FF00FFu;
+      my &= 0x55555555u; my = (my | (my >> 1)) & 0x33333333u;
+      my = (my | (my >> 2)) & 0x0F0F0F0Fu; my = (my | (my >> 4)) & 0x00FF00FFu;
       my = (my | (my >> 8)) & 0x0000FFFFu;
       tid_x = int(mx);
       tid_y = int(my);
@@ -69,12 +63,10 @@ struct ThreadgroupGemmMpp {
       tid_y = int(threadgroup_position.y);
     }
 
-    if (params->threadgroups_per_row <= tid_x ||
-        params->threadgroups_per_column <= tid_y) {
+    if (tid_x >= int(params->threadgroups_per_row) ||
+        tid_y >= int(params->threadgroups_per_column)) {
       return;
     }
-
-    threadgroup_barrier(mem_flags::mem_none);
 
     const int block_row_start = tid_y * BLOCK_ROWS;
     const int block_col_start = tid_x * BLOCK_COLS;
