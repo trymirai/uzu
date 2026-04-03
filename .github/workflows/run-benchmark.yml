@@ -34,7 +34,6 @@ jobs:
     environment: prefect-benchmarks
 
     env:
-      ARTIFACT_DIR: ${{ runner.temp }}/prefect-benchmark
       BENCHMARK_ARGS_JSON: ${{ inputs.benchmark_args }}
       GITHUB_ACTOR_NAME: ${{ github.actor }}
       GITHUB_TRIGGERING_ACTOR_NAME: ${{ github.triggering_actor }}
@@ -52,6 +51,7 @@ jobs:
         env:
           PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
         run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/prefect-benchmark"
           python3 scripts/prefect_benchmark_run.py \
             --api-url "$PREFECT_API_URL" \
             --pool "$POOL_NAME" \
@@ -65,12 +65,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: prefect-benchmark-${{ github.run_id }}
-          path: ${{ env.ARTIFACT_DIR }}
+          path: ${{ runner.temp }}/prefect-benchmark
           if-no-files-found: warn
 
       - name: Write workflow summary
         if: ${{ always() }}
         run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/prefect-benchmark"
           SUMMARY_PATH="$ARTIFACT_DIR/summary.md"
           if [[ -f "$SUMMARY_PATH" ]]; then
             cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
