@@ -297,7 +297,6 @@ impl<B: Backend> Embedding<B> {
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
-                        weights_transposed: true,
                     },
                 )?;
 
@@ -377,7 +376,6 @@ impl<B: Backend> Embedding<B> {
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
-                        weights_transposed: true,
                     },
                 )?;
 
@@ -447,7 +445,6 @@ impl<B: Backend> Embedding<B> {
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
-                        weights_transposed: true,
                     },
                 )?;
 
@@ -654,10 +651,7 @@ impl<B: Backend> Embedding<B> {
                         scales_buffer: scales,
                         zero_points_or_biases_buffer: biases,
                         output_buffer: output,
-                        batch: batch_dim,
-                        input_dim: self.model_dim as usize,
-                        output_dim: self.vocab_size as usize,
-                        quantization_type: QuantizedMatmulType::Mlx,
+                        batch_dim,
                     },
                 )?;
             },
