@@ -7,7 +7,6 @@
 #include "../generated/trie.h"
 #include "mask.h"
 
-#define SEQUENCE_BLOCK_SIZE_2 32
 #define TOTAL_BLOCKS_COUNT 32
 #define SIMDGROUPS_PER_THREADGROUP 8
 
@@ -73,7 +72,7 @@ PUBLIC KERNEL(AttentionTwoPass1)(
                                       : suffix_position + q_seq_idx;
 
   thread U q[elements_per_thread];
-  thread U o[elements_per_thread];
+  thread U o[elements_per_thread] = {0};
 
   queries += q_offset * HEAD_DIM +
              thread_context.simdgroup_index * elements_per_thread;
@@ -89,10 +88,6 @@ PUBLIC KERNEL(AttentionTwoPass1)(
   for (uint i = 0; i < elements_per_thread; i++) {
     q[i] = static_cast<U>(scale) * queries[i];
   }
-  for (uint i = 0; i < elements_per_thread; i++) {
-    o[i] = 0;
-  }
-
   U max_score = -1e9;
   U sum_exp_score = 0;
   if (has_sinks && block_idx == 0) {
@@ -159,7 +154,6 @@ PUBLIC KERNEL(AttentionTwoPass2)(
     device T* out,
     const constant uint& num_heads,
     const constant uint& suffix_length,
-    threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE_2 * METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
@@ -168,49 +162,55 @@ PUBLIC KERNEL(AttentionTwoPass2)(
   constexpr uint elements_per_thread = HEAD_DIM / METAL_SIMD_SIZE;
 
   typedef float U;
-  thread U o[elements_per_thread];
 
-  const uint o_offset = q_seq_idx * num_heads + head_idx; // Our custom layout
+  const uint o_offset = q_seq_idx * num_heads + head_idx;
 
-  partials += o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM +
-              thread_context.threadgroup_index * HEAD_DIM +
-              thread_context.simdgroup_index * elements_per_thread;
   sums += o_offset * TOTAL_BLOCKS_COUNT;
   maxs += o_offset * TOTAL_BLOCKS_COUNT;
-  out +=
-      o_offset * HEAD_DIM + thread_context.threadgroup_index *
-                                elements_per_thread; // Our custom output layout
 
-  // First everybody reads the max and sum_exp
-  U max_score = maxs[thread_context.simdgroup_index];
+  // Find global max across all blocks (each lane handles strided blocks)
+  U max_score = -1e9;
+  for (uint b = thread_context.simdgroup_index; b < TOTAL_BLOCKS_COUNT;
+       b += METAL_SIMD_SIZE) {
+    max_score = max(max_score, maxs[b]);
+  }
   U new_max = simd_max(max_score);
-  U factor = fast::exp(max_score - new_max);
-  U sum_exp_score = simd_sum(sums[thread_context.simdgroup_index] * factor);
 
-  // Now read the block into registers and then use shared memory to transpose
-  // it
-  for (uint i = 0; i < elements_per_thread; i++) {
-    o[i] = partials[i];
+  // Find global sum across all blocks
+  U sum_exp = 0;
+  for (uint b = thread_context.simdgroup_index; b < TOTAL_BLOCKS_COUNT;
+       b += METAL_SIMD_SIZE) {
+    sum_exp += sums[b] * fast::exp(maxs[b] - new_max);
   }
-  for (uint i = 0; i < elements_per_thread; i++) {
-    shared_outputs
-        [thread_context.simdgroup_index * METAL_SIMD_SIZE +
-         thread_context.threadgroup_index] = o[i];
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    o[i] = simd_sum(
-               shared_outputs
-                   [thread_context.threadgroup_index * METAL_SIMD_SIZE +
-                    thread_context.simdgroup_index] *
-               factor
-           ) /
-           sum_exp_score;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-  }
+  U sum_exp_score = simd_sum(sum_exp);
 
-  // And write the output
-  if (thread_context.simdgroup_index == 0) {
+  // Combine partial outputs — each lane reads a different block,
+  // simd_sum reduces across blocks directly (no shared memory needed)
+  thread U o[elements_per_thread] = {0};
+
+  for (uint chunk = 0; chunk < TOTAL_BLOCKS_COUNT; chunk += METAL_SIMD_SIZE) {
+    uint block_idx = chunk + thread_context.simdgroup_index;
+    U factor = (block_idx < TOTAL_BLOCKS_COUNT)
+                   ? fast::exp(maxs[block_idx] - new_max)
+                   : 0;
+
+    const device float* block_partials =
+        partials + o_offset * TOTAL_BLOCKS_COUNT * HEAD_DIM +
+        block_idx * HEAD_DIM +
+        thread_context.threadgroup_index * elements_per_thread;
+
     for (uint i = 0; i < elements_per_thread; i++) {
-      out[i] = static_cast<T>(o[i]);
+      U val = (block_idx < TOTAL_BLOCKS_COUNT) ? block_partials[i] * factor : 0;
+      o[i] += simd_sum(val);
+    }
+  }
+
+  // Write the output
+  if (thread_context.simdgroup_index == 0) {
+    out += o_offset * HEAD_DIM +
+           thread_context.threadgroup_index * elements_per_thread;
+    for (uint i = 0; i < elements_per_thread; i++) {
+      out[i] = static_cast<T>(o[i] / sum_exp_score);
     }
   }
 }
