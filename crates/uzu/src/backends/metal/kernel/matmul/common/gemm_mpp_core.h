@@ -46,7 +46,7 @@ struct ThreadgroupGemmMpp {
       uint2 threadgroup_position
   ) {
     int tid_x, tid_y;
-    if (threadgroup_position.y == 0 && params->threadgroups_per_column > 1) {
+    if (params->use_morton != 0) {
       uint linear_id = threadgroup_position.x;
       uint mx = linear_id;
       uint my = linear_id >> 1;
