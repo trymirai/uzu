@@ -53,7 +53,7 @@ impl MatmulMetalKernel {
         arguments: &MatmulArguments<Metal>,
     ) -> bool {
         context.device.supports_mxu()
-            && arguments.ab_scale.to_bits() == 1.0f32.to_bits()
+            && arguments.ab_scale == 1.0
             && !matches!(arguments.c, MatmulArgumentC::Accumulate)
     }
 
