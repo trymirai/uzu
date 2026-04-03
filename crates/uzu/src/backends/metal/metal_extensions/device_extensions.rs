@@ -1,18 +1,31 @@
+use core::mem::transmute;
+
 use bytesize::ByteSize;
 use metal::MTLDevice;
 use objc2::{
-    Message, msg_send,
+    Message,
+    ffi::objc_msgSend,
+    msg_send,
     rc::Retained,
-    runtime::{AnyObject, ProtocolObject},
+    runtime::{NSObjectProtocol, ProtocolObject, Sel},
     sel,
 };
 use objc2_foundation::NSString;
 
-/// Check whether the concrete class of `obj` has `sel` in its method table.
-fn class_responds_to<T: Message + ?Sized>(obj: &T, sel: objc2::runtime::Sel) -> bool {
-    let obj_ptr: *const T = obj;
-    let any: &AnyObject = unsafe { &*(obj_ptr as *const AnyObject) };
-    any.class().responds_to(sel)
+// Used to bypass objc2's debug-mode class validation for proxy objects like
+// `CaptureMTLDevice` which forward messages at the ObjC runtime level (via
+// `forwardingTargetForSelector:`) but don't have the methods in their own class
+// table — causing `msg_send!`'s debug check to panic even though the message
+// would succeed.
+//
+// The caller must verify with `respondsToSelector:` first.
+unsafe fn raw_msg_send<T: Message + ?Sized, R>(
+    obj: &T,
+    sel: Sel,
+) -> R {
+    let object_pointer: *const T = obj;
+    let send: unsafe extern "C" fn(*const T, Sel) -> R = unsafe { transmute(objc_msgSend as *const ()) };
+    unsafe { send(object_pointer, sel) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,12 +65,12 @@ impl DeviceGeneration {
     }
 }
 
-pub trait DeviceExt: MTLDevice + Message + Sized {
+pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     /// Human-readable chip name, e.g. "M2 Max", "M4 Pro", "A17 Pro".
     fn family_name(&self) -> String {
-        if class_responds_to(self, sel!(familyName)) {
-            let ns: Retained<NSString> = unsafe { msg_send![self, familyName] };
-            ns.to_string()
+        if self.respondsToSelector(sel!(familyName)) {
+            let family_name: Retained<NSString> = unsafe { msg_send![self, familyName] };
+            family_name.to_string()
         } else {
             "Unknown".into()
         }
@@ -65,8 +78,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Number of GPU shader cores.
     fn gpu_core_count(&self) -> u32 {
-        if class_responds_to(self, sel!(gpuCoreCount)) {
-            unsafe { msg_send![self, gpuCoreCount] }
+        if self.respondsToSelector(sel!(gpuCoreCount)) {
+            unsafe { raw_msg_send(self, sel!(gpuCoreCount)) }
         } else {
             8
         }
@@ -74,8 +87,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Total unified (shared) memory.
     fn shared_memory_size(&self) -> ByteSize {
-        if class_responds_to(self, sel!(sharedMemorySize)) {
-            ByteSize(unsafe { msg_send![self, sharedMemorySize] })
+        if self.respondsToSelector(sel!(sharedMemorySize)) {
+            ByteSize(unsafe { raw_msg_send(self, sel!(sharedMemorySize)) })
         } else {
             ByteSize::gib(8)
         }
@@ -83,8 +96,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Whether the GPU supports SIMD group operations.
     fn supports_simd_group(&self) -> bool {
-        if class_responds_to(self, sel!(supportsSIMDGroup)) {
-            unsafe { msg_send![self, supportsSIMDGroup] }
+        if self.respondsToSelector(sel!(supportsSIMDGroup)) {
+            unsafe { raw_msg_send(self, sel!(supportsSIMDGroup)) }
         } else {
             false
         }
@@ -92,8 +105,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Whether the GPU supports `simdgroup_matrix`.
     fn supports_simd_group_matrix(&self) -> bool {
-        if class_responds_to(self, sel!(supportsSIMDGroupMatrix)) {
-            unsafe { msg_send![self, supportsSIMDGroupMatrix] }
+        if self.respondsToSelector(sel!(supportsSIMDGroupMatrix)) {
+            unsafe { raw_msg_send(self, sel!(supportsSIMDGroupMatrix)) }
         } else {
             false
         }
@@ -101,8 +114,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Whether the GPU supports SIMD reduction operations.
     fn supports_simd_reduction(&self) -> bool {
-        if class_responds_to(self, sel!(supportsSIMDReduction)) {
-            unsafe { msg_send![self, supportsSIMDReduction] }
+        if self.respondsToSelector(sel!(supportsSIMDReduction)) {
+            unsafe { raw_msg_send(self, sel!(supportsSIMDReduction)) }
         } else {
             false
         }
@@ -110,8 +123,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Whether the GPU supports SIMD shuffle-and-fill operations.
     fn supports_simd_shuffle_and_fill(&self) -> bool {
-        if class_responds_to(self, sel!(supportsSIMDShuffleAndFill)) {
-            unsafe { msg_send![self, supportsSIMDShuffleAndFill] }
+        if self.respondsToSelector(sel!(supportsSIMDShuffleAndFill)) {
+            unsafe { raw_msg_send(self, sel!(supportsSIMDShuffleAndFill)) }
         } else {
             false
         }
@@ -119,8 +132,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Whether the GPU supports SIMD shuffles and broadcast.
     fn supports_simd_shuffles_and_broadcast(&self) -> bool {
-        if class_responds_to(self, sel!(supportsSIMDShufflesAndBroadcast)) {
-            unsafe { msg_send![self, supportsSIMDShufflesAndBroadcast] }
+        if self.respondsToSelector(sel!(supportsSIMDShufflesAndBroadcast)) {
+            unsafe { raw_msg_send(self, sel!(supportsSIMDShufflesAndBroadcast)) }
         } else {
             false
         }
@@ -129,8 +142,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
     /// Whether the GPU has a Matrix eXtension Unit (neural accelerator for compute).
     /// True on M5+ (Gen18+), false on M1-M4.
     fn supports_mxu(&self) -> bool {
-        if class_responds_to(self, sel!(supportsMXU)) {
-            unsafe { msg_send![self, supportsMXU] }
+        if self.respondsToSelector(sel!(supportsMXU)) {
+            unsafe { raw_msg_send(self, sel!(supportsMXU)) }
         } else {
             false
         }
@@ -138,8 +151,8 @@ pub trait DeviceExt: MTLDevice + Message + Sized {
 
     /// Whether the GPU supports Thread-Local Storage.
     fn supports_tls(&self) -> bool {
-        if class_responds_to(self, sel!(supportsTLS)) {
-            unsafe { msg_send![self, supportsTLS] }
+        if self.respondsToSelector(sel!(supportsTLS)) {
+            unsafe { raw_msg_send(self, sel!(supportsTLS)) }
         } else {
             false
         }
