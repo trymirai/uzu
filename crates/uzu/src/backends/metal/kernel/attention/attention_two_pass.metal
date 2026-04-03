@@ -1,22 +1,23 @@
 #include <metal_stdlib>
 #include <metal_simdgroup>
+#include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 #include "mask.h"
 
-#define HEAD_BLOCK_SIZE 32
 #define SEQUENCE_BLOCK_SIZE_2 32
 #define TOTAL_BLOCKS_COUNT 32
+#define SIMDGROUPS_PER_THREADGROUP 8
 
 using namespace uzu::ring;
 using namespace uzu::trie;
 
 // GQA-aware two-pass attention (pass 1).
-// Each threadgroup handles one KV head. thread_context.threadgroup_index
-// selects the query head within the GQA group, so all simdgroups read the
-// same KV data and benefit from shared cache lines.
+// Fixed 256-thread threadgroups (8 simdgroups) with flat query-head mapping.
+// Each simdgroup independently handles one query head and derives its KV head
+// via integer division. Simdgroups sharing a KV head benefit from L1 cache.
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256)
@@ -36,7 +37,6 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
     const constant float& scale,
     const constant uint& num_heads,
-    const constant uint& num_groups,
     const constant uint& suffix_length,
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
@@ -47,21 +47,22 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     const bool is_trie SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
     const ThreadContext thread_context,
-    const uint kv_head_idx GROUPS(num_groups),
+    const uint head_group_idx GROUPS(num_heads.div_ceil(SIMDGROUPS_PER_THREADGROUP)),
     const uint q_seq_idx GROUPS(suffix_length),
     const uint block_idx GROUPS(TOTAL_BLOCKS_COUNT),
-    const uint tid THREADS(1024)
+    const uint tid THREADS(SIMDGROUPS_PER_THREADGROUP * METAL_SIMD_SIZE)
 ) {
-  if (thread_context.threadgroup_index >= gqa_factor)
-    return;
-
-  constexpr uint elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
+  constexpr uint elements_per_thread = HEAD_DIM / METAL_SIMD_SIZE;
 
   typedef float U;
 
-  // Each simdgroup handles one query head within this KV group
-  const uint head_idx =
-      kv_head_idx * gqa_factor + thread_context.threadgroup_index;
+  // Flat query head mapping — fixed hardware shape, dynamic logical mapping
+  const uint head_idx = head_group_idx * SIMDGROUPS_PER_THREADGROUP +
+                        thread_context.threadgroup_index;
+  if (head_idx >= num_heads)
+    return;
+
+  const uint kv_head_idx = head_idx / gqa_factor;
   const uint o_offset = q_seq_idx * num_heads + head_idx;
   const uint q_offset = head_idx * suffix_length + q_seq_idx;
 
@@ -99,7 +100,7 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     sum_exp_score = 1;
   }
 
-  // For each key position — all simdgroups read the same KV data
+  // For each key position
   for (uint i = block_idx; i < sequence_length; i += TOTAL_BLOCKS_COUNT) {
     if (should_use_key(
             ring_params,
@@ -158,13 +159,13 @@ PUBLIC KERNEL(AttentionTwoPass2)(
     device T* out,
     const constant uint& num_heads,
     const constant uint& suffix_length,
-    threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE_2 * HEAD_BLOCK_SIZE],
+    threadgroup float shared_outputs[SEQUENCE_BLOCK_SIZE_2 * METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint head_idx GROUPS(num_heads),
     const uint q_seq_idx GROUPS(suffix_length),
     const uint tid THREADS(1024)
 ) {
-  constexpr uint elements_per_thread = HEAD_DIM / HEAD_BLOCK_SIZE;
+  constexpr uint elements_per_thread = HEAD_DIM / METAL_SIMD_SIZE;
 
   typedef float U;
   thread U o[elements_per_thread];
@@ -193,12 +194,12 @@ PUBLIC KERNEL(AttentionTwoPass2)(
   }
   for (uint i = 0; i < elements_per_thread; i++) {
     shared_outputs
-        [thread_context.simdgroup_index * HEAD_BLOCK_SIZE +
+        [thread_context.simdgroup_index * METAL_SIMD_SIZE +
          thread_context.threadgroup_index] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     o[i] = simd_sum(
                shared_outputs
-                   [thread_context.threadgroup_index * HEAD_BLOCK_SIZE +
+                   [thread_context.threadgroup_index * METAL_SIMD_SIZE +
                     thread_context.simdgroup_index] *
                factor
            ) /

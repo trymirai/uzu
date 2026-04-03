@@ -410,7 +410,6 @@ impl<B: Backend> Attention<B> {
                     ring_params,
                     scale,
                     num_heads as u32,
-                    num_groups as u32,
                     suffix_length as u32,
                     trie_buffer,
                     self.sliding_window_size.map(|s| s as u32),

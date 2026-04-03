@@ -28,7 +28,6 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[optional(is_kv_cache_ring)] ring_params: Option<crate::backends::common::gpu_types::ring::RingParams>,
     scale: f32,
     num_heads: u32,
-    #[allow(unused)] num_groups: u32,
     suffix_length: u32,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
