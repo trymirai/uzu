@@ -6,6 +6,7 @@ use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array4, s};
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use test_tag::tag;
 
 use crate::{
     DataType,
@@ -931,4 +932,153 @@ fn test_two_pass_attention_gqa() {
     if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Two-pass attention GQA") {
         panic!("{}", e);
     }
+}
+
+#[tag(heavy)]
+#[test]
+fn perf_two_pass_attention() {
+    use std::time::Instant;
+
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
+
+    // ---- Problem sizes requiring two-pass ----
+    let batch_size = 1;
+    let num_heads = 32;
+    let num_kv_heads = 32;
+    let seq_len = 8192; // Large sequence length (prefix + suffix)
+    let suffix_length = 1; // Only processing 1 new token (realistic inference)
+    let head_dim = 128;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let is_causal = false;
+
+    println!(
+        "Creating test data for two-pass performance test (prefix={}, suffix={})...",
+        seq_len - suffix_length,
+        suffix_length
+    );
+    let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
+
+    let kernel_pass1 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass1Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        is_causal,
+        false,
+        false,
+    )
+    .expect("Failed to create AttentionTwoPass1Kernel");
+    let kernel_pass2 = <<Metal as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+    )
+    .expect("Failed to create AttentionTwoPass2Kernel");
+
+    // ---- Create buffers ----
+    // For realistic inference, we only process queries for the suffix (new tokens)
+    let queries_suffix = queries.slice(s![.., .., (seq_len - suffix_length).., ..]).to_owned();
+    let queries_buffer = create_query_buffer(&queries_suffix, &context);
+    let keys_buffer = create_key_cache_buffer(&keys, seq_len, &context);
+    let values_buffer = create_value_cache_buffer(&values, seq_len, &context);
+
+    let total_blocks_count = 32;
+    let partials_size = num_heads * suffix_length * total_blocks_count * head_dim;
+    let sums_maxs_size = num_heads * suffix_length * total_blocks_count;
+
+    let mut partials_buffer = context
+        .device
+        .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
+    let mut sums_buffer = context
+        .device
+        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
+    let mut maxs_buffer = context
+        .device
+        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
+    let mut output_buffer = context
+        .device
+        .new_buffer(
+            num_heads * suffix_length * head_dim * std::mem::size_of::<f32>(),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
+
+    // ---- Launch and time ----
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+
+    let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
+    kernel_pass1.encode(
+        &queries_buffer,
+        &keys_buffer,
+        &values_buffer,
+        &mut partials_buffer,
+        &mut sums_buffer,
+        &mut maxs_buffer,
+        (num_heads / num_kv_heads) as u32,
+        seq_len as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        (seq_len * head_dim) as u32,
+        head_dim as u32,
+        None,
+        scale,
+        num_heads as u32,
+        suffix_length as u32,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None,
+        sinks_buffer.as_ref().map(|b| b),
+        &mut encoder,
+    );
+    kernel_pass2.encode(
+        &partials_buffer,
+        &sums_buffer,
+        &maxs_buffer,
+        &mut output_buffer,
+        num_heads as u32,
+        suffix_length as u32,
+        &mut encoder,
+    );
+    // Time both host-side and GPU execution
+    let host_timer = Instant::now();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
+
+    match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
+        Some(gpu_time_ms) => {
+            println!(
+                "Two-pass attention perf (heads={}, prefix={}, suffix={}, head_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
+                num_heads,
+                seq_len - suffix_length,
+                suffix_length,
+                head_dim,
+                gpu_time_ms,
+                host_elapsed_ms
+            );
+        },
+        None => {
+            println!(
+                "Two-pass attention perf (heads={}, prefix={}, suffix={}, head_dim={}): Host-side={:.2} ms (GPU timing unavailable)",
+                num_heads,
+                seq_len - suffix_length,
+                suffix_length,
+                head_dim,
+                host_elapsed_ms
+            );
+        },
+    }
+
+    // ---- Sanity check ----
+    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * suffix_length * head_dim) };
+
+    // Check for NaN/Inf
+    for &val in output_slice.iter().take(100) {
+        assert!(val.is_finite(), "Output contains non-finite values");
+    }
+
+    println!("✓ Two-pass attention performance test completed");
 }
