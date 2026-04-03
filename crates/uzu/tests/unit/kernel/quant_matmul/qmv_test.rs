@@ -1,11 +1,13 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
+        common::{
+            Backend, Buffer, Context, Encoder, Kernels,
+            kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
+        },
         cpu::Cpu,
     },
 };
@@ -13,17 +15,16 @@ use uzu::{
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::common::helpers::alloc_buffer_with_data;
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+enum KernelType {
+    Default,
+    Fast,
+}
+
+fn get_output<B: Backend, T: ArrayElement + Float>(
+    input: &Input<T>,
+    kernel_type: &KernelType,
+) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
-        &context,
-        T::data_type(),
-        input.group_size,
-        input.bits,
-        input.use_zero_points,
-        input.use_mlx_quant,
-    )
-    .expect("Failed to create QuantizedMatmulQmvKernel");
 
     let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
     let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
@@ -36,18 +37,55 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        &w_buf,
-        &scales_buf,
-        zp_buf.as_ref(),
-        bias_buf.as_ref(),
-        &x_buf,
-        &mut y_buf,
-        input.k,
-        input.n,
-        input.m,
-        &mut encoder,
-    );
+
+    match kernel_type {
+        KernelType::Default => {
+            let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+                &context,
+                T::data_type(),
+                input.group_size,
+                input.bits,
+                input.use_zero_points,
+                input.use_mlx_quant,
+            )
+            .expect("Failed to create QuantizedMatmulQmvKernel");
+            kernel.encode(
+                &w_buf,
+                &scales_buf,
+                zp_buf.as_ref(),
+                bias_buf.as_ref(),
+                &x_buf,
+                &mut y_buf,
+                input.k,
+                input.n,
+                input.m,
+                &mut encoder,
+            );
+        },
+        KernelType::Fast => {
+            let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                &context,
+                T::data_type(),
+                input.group_size,
+                input.bits,
+                input.use_zero_points,
+                input.use_mlx_quant,
+            )
+            .expect("Failed to create QuantizedMatmulQmvKernel");
+            kernel.encode(
+                &w_buf,
+                &scales_buf,
+                zp_buf.as_ref(),
+                bias_buf.as_ref(),
+                &x_buf,
+                &mut y_buf,
+                input.k,
+                input.n,
+                input.m,
+                &mut encoder,
+            );
+        },
+    }
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
@@ -156,7 +194,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         use_mlx_quant,
     };
 
-    let expected = get_output::<Cpu, T>(&input);
+    let expected = get_output::<Cpu, T>(&input, &KernelType::Default);
     (input, expected)
 }
 
@@ -215,13 +253,14 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         use_mlx_quant,
     };
 
-    let expected = get_output::<Cpu, T>(&input);
+    let expected = get_output::<Cpu, T>(&input, &KernelType::Default);
     (input, expected)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
     input: &Input<T>,
     expected: &[T],
+    kernel_type: &KernelType,
 ) {
     let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
         DataType::BF16 => (0.05, 0.5),
@@ -230,7 +269,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, T>(input);
+        let output = get_output::<B, T>(input, kernel_type);
         assert_eq!(expected.len(), output.len(), "Output length mismatch");
 
         let mut errors = 0;
@@ -283,13 +322,14 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
     bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
+    kernel_type: &KernelType,
 ) {
     let is_half = matches!(T::data_type(), DataType::F16 | DataType::BF16);
     let dims = get_test_dims(group_size, bits, is_half);
 
     for (m, k, n) in dims {
         let (input, expected) = get_test_data_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
-        test_internal::<T>(&input, &expected);
+        test_internal::<T>(&input, &expected, kernel_type);
     }
 }
 
@@ -298,227 +338,251 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
     bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
+    kernel_type: &KernelType,
 ) {
     let (input, expected) = get_test_data_edge::<T>(group_size, bits, use_zero_points, use_mlx_quant);
-    test_internal::<T>(&input, &expected);
+    test_internal::<T>(&input, &expected, kernel_type);
 }
 
 // ── 4-bit, zero points ─────────────────────────────────────────────────────
-
 #[test]
-fn test_f32_gs32_4bit_zp() {
-    test_basic::<f32>(32, 4, true, false);
+fn test_gs32_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 4, true, false, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs64_4bit_zp() {
-    test_basic::<f32>(64, 4, true, false);
+fn test_gs64_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 4, true, false, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs128_4bit_zp() {
-    test_basic::<f32>(128, 4, true, false);
-}
-
-#[test]
-fn test_f16_gs32_4bit_zp() {
-    test_basic::<f16>(32, 4, true, false);
-}
-
-#[test]
-fn test_f16_gs64_4bit_zp() {
-    test_basic::<f16>(64, 4, true, false);
-}
-
-#[test]
-fn test_f16_gs128_4bit_zp() {
-    test_basic::<f16>(128, 4, true, false);
-}
-
-#[test]
-fn test_bf16_gs32_4bit_zp() {
-    test_basic::<bf16>(32, 4, true, false);
-}
-
-#[test]
-fn test_bf16_gs64_4bit_zp() {
-    test_basic::<bf16>(64, 4, true, false);
-}
-
-#[test]
-fn test_bf16_gs128_4bit_zp() {
-    test_basic::<bf16>(128, 4, true, false);
+fn test_gs128_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 4, true, false, &KernelType::Default);
+    })
 }
 
 // ── 8-bit, zero points ─────────────────────────────────────────────────────
 
 #[test]
-fn test_f32_gs32_8bit_zp() {
-    test_basic::<f32>(32, 8, true, false);
+fn test_gs32_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 8, true, false, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs64_8bit_zp() {
-    test_basic::<f32>(64, 8, true, false);
+fn test_gs64_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 8, true, false, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs128_8bit_zp() {
-    test_basic::<f32>(128, 8, true, false);
-}
-
-#[test]
-fn test_f16_gs32_8bit_zp() {
-    test_basic::<f16>(32, 8, true, false);
-}
-
-#[test]
-fn test_f16_gs64_8bit_zp() {
-    test_basic::<f16>(64, 8, true, false);
-}
-
-#[test]
-fn test_f16_gs128_8bit_zp() {
-    test_basic::<f16>(128, 8, true, false);
-}
-
-#[test]
-fn test_bf16_gs32_8bit_zp() {
-    test_basic::<bf16>(32, 8, true, false);
-}
-
-#[test]
-fn test_bf16_gs64_8bit_zp() {
-    test_basic::<bf16>(64, 8, true, false);
-}
-
-#[test]
-fn test_bf16_gs128_8bit_zp() {
-    test_basic::<bf16>(128, 8, true, false);
+fn test_gs128_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 8, true, false, &KernelType::Default);
+    })
 }
 
 // ── 4-bit, mlx quant ───────────────────────────────────────────────────────
 
 #[test]
-fn test_f32_gs32_4bit_mlx() {
-    test_basic::<f32>(32, 4, false, true);
+fn test_gs32_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 4, false, true, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs64_4bit_mlx() {
-    test_basic::<f32>(64, 4, false, true);
+fn test_gs64_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 4, false, true, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs128_4bit_mlx() {
-    test_basic::<f32>(128, 4, false, true);
-}
-
-#[test]
-fn test_f16_gs32_4bit_mlx() {
-    test_basic::<f16>(32, 4, false, true);
-}
-
-#[test]
-fn test_f16_gs64_4bit_mlx() {
-    test_basic::<f16>(64, 4, false, true);
-}
-
-#[test]
-fn test_f16_gs128_4bit_mlx() {
-    test_basic::<f16>(128, 4, false, true);
-}
-
-#[test]
-fn test_bf16_gs32_4bit_mlx() {
-    test_basic::<bf16>(32, 4, false, true);
-}
-
-#[test]
-fn test_bf16_gs64_4bit_mlx() {
-    test_basic::<bf16>(64, 4, false, true);
-}
-
-#[test]
-fn test_bf16_gs128_4bit_mlx() {
-    test_basic::<bf16>(128, 4, false, true);
+fn test_gs128_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 4, false, true, &KernelType::Default);
+    })
 }
 
 // ── 8-bit, mlx quant ───────────────────────────────────────────────────────
 
 #[test]
-fn test_f32_gs32_8bit_mlx() {
-    test_basic::<f32>(32, 8, false, true);
+fn test_gs32_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 8, false, true, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs64_8bit_mlx() {
-    test_basic::<f32>(64, 8, false, true);
+fn test_gs64_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 8, false, true, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_f32_gs128_8bit_mlx() {
-    test_basic::<f32>(128, 8, false, true);
-}
-
-#[test]
-fn test_f16_gs32_8bit_mlx() {
-    test_basic::<f16>(32, 8, false, true);
-}
-
-#[test]
-fn test_f16_gs64_8bit_mlx() {
-    test_basic::<f16>(64, 8, false, true);
-}
-
-#[test]
-fn test_f16_gs128_8bit_mlx() {
-    test_basic::<f16>(128, 8, false, true);
-}
-
-#[test]
-fn test_bf16_gs32_8bit_mlx() {
-    test_basic::<bf16>(32, 8, false, true);
-}
-
-#[test]
-fn test_bf16_gs64_8bit_mlx() {
-    test_basic::<bf16>(64, 8, false, true);
-}
-
-#[test]
-fn test_bf16_gs128_8bit_mlx() {
-    test_basic::<bf16>(128, 8, false, true);
+fn test_gs128_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 8, false, true, &KernelType::Default);
+    })
 }
 
 // ── Edge cases ──────────────────────────────────────────────────────────────
 
 #[test]
-fn test_edge_f32_4bit_zp() {
-    test_edge::<f32>(32, 4, true, false);
+fn test_edge_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 4, true, false, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_edge_f32_8bit_zp() {
-    test_edge::<f32>(32, 8, true, false);
+fn test_edge_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 8, true, false, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_edge_f16_4bit_zp() {
-    test_edge::<f16>(32, 4, true, false);
+fn test_edge_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 4, false, true, &KernelType::Default);
+    })
 }
 
 #[test]
-fn test_edge_f32_4bit_mlx() {
-    test_edge::<f32>(32, 4, false, true);
+fn test_edge_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 8, false, true, &KernelType::Default);
+    })
+}
+
+// ── Fast kernel: 4-bit, zero points ────────────────────────────────────────
+
+#[test]
+fn test_fast_gs32_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 4, true, false, &KernelType::Fast);
+    })
 }
 
 #[test]
-fn test_edge_f32_8bit_mlx() {
-    test_edge::<f32>(32, 8, false, true);
+fn test_fast_gs64_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 4, true, false, &KernelType::Fast);
+    })
 }
 
 #[test]
-fn test_edge_f16_4bit_mlx() {
-    test_edge::<f16>(32, 4, false, true);
+fn test_fast_gs128_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 4, true, false, &KernelType::Fast);
+    })
+}
+
+// ── Fast kernel: 8-bit, zero points ────────────────────────────────────────
+
+#[test]
+fn test_fast_gs32_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 8, true, false, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_gs64_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 8, true, false, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_gs128_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 8, true, false, &KernelType::Fast);
+    })
+}
+
+// ── Fast kernel: 4-bit, mlx quant ─────────────────────────────────────────
+
+#[test]
+fn test_fast_gs32_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 4, false, true, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_gs64_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 4, false, true, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_gs128_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 4, false, true, &KernelType::Fast);
+    })
+}
+
+// ── Fast kernel: 8-bit, mlx quant ─────────────────────────────────────────
+
+#[test]
+fn test_fast_gs32_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(32, 8, false, true, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_gs64_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(64, 8, false, true, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_gs128_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_basic::<F>(128, 8, false, true, &KernelType::Fast);
+    })
+}
+
+// ── Fast kernel: edge cases ───────────────────────────────────────────────
+
+#[test]
+fn test_fast_edge_4bit_zp() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 4, true, false, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_edge_8bit_zp() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 8, true, false, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_edge_4bit_mlx() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 4, false, true, &KernelType::Fast);
+    })
+}
+
+#[test]
+fn test_fast_edge_8bit_mlx() {
+    for_each_float_type!(|F| {
+        test_edge::<F>(32, 8, false, true, &KernelType::Fast);
+    })
 }
