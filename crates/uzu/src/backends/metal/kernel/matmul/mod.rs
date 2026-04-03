@@ -237,8 +237,7 @@ impl MatmulMetalKernel {
         let morton_dim = max_threadgroups_per_dim.next_power_of_two();
         let morton_total = morton_dim.saturating_mul(morton_dim);
         let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
-        let use_morton =
-            min_threadgroups_per_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
+        let use_morton = min_threadgroups_per_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
 
         let params = GemmParams {
             M: arguments.batch_dim,
@@ -251,7 +250,11 @@ impl MatmulMetalKernel {
             threadgroups_per_column,
             swizzle_log: 0,
             aligned_inner_iterations: 0,
-            use_morton: if use_morton { 1 } else { 0 },
+            use_morton: if use_morton {
+                1
+            } else {
+                0
+            },
         };
 
         let (group_count_x, group_count_y) = if use_morton {
