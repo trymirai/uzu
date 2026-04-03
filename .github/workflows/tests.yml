@@ -85,3 +85,14 @@ jobs:
           cargo +stable nextest run --profile=ci --no-default-features \
             ${{ format('--features {0}', matrix.backend) || '' }} \
             --features tracing --features audio-runtime
+
+  completed:
+    name: completed
+    runs-on: ubuntu-latest
+    needs: [linters, tests]
+    if: ${{ always() }}
+
+    steps:
+      - run: |
+          [ "${{ needs.linters.result }}" = success ]
+          [ "${{ needs.tests.result }}" = success ]
