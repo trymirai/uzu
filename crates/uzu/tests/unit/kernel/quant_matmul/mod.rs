@@ -1,4 +1,3 @@
-mod qmm_test;
 mod qmm_transposed_64x64_test;
 mod qmm_transposed_test;
 mod qmm_transposed_wide_test;
@@ -13,18 +12,18 @@ pub(super) struct Input<T: ArrayElement + Float> {
     pub zero_points: Option<Vec<u8>>,
     pub biases: Option<Vec<T>>,
     pub x: Vec<T>,
-    pub k: i32,
-    pub n: i32,
-    pub m: i32,
-    pub group_size: i32,
-    pub bits: i32,
+    pub k: u32,
+    pub n: u32,
+    pub m: u32,
+    pub group_size: u32,
+    pub bits: u32,
     pub use_zero_points: bool,
     pub use_mlx_quant: bool,
 }
 
 pub(super) fn pack_weights_u32(
     values: &[u8],
-    bits: i32,
+    bits: u32,
 ) -> Vec<u32> {
     if bits == 4 {
         values
@@ -53,7 +52,7 @@ pub(super) fn pack_weights_u32(
 
 pub(super) fn pack_zero_points(
     values: &[u8],
-    bits: i32,
+    bits: u32,
 ) -> Vec<u8> {
     if bits == 4 {
         values

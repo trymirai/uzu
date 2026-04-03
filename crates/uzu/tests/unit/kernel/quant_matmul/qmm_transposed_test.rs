@@ -64,8 +64,8 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     m: usize,
     k: usize,
     n: usize,
-    group_size: i32,
-    bits: i32,
+    group_size: u32,
+    bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
 ) -> (Input<T>, Vec<T>) {
@@ -147,9 +147,9 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         zero_points,
         biases,
         x,
-        k: k as i32,
-        n: n as i32,
-        m: m as i32,
+        k: k as u32,
+        n: n as u32,
+        m: m as u32,
         group_size,
         bits,
         use_zero_points,
@@ -162,8 +162,8 @@ fn get_test_data_basic<T: ArrayElement + Float>(
 
 /// Small edge-case test data with known values
 fn get_test_data_edge<T: ArrayElement + Float>(
-    group_size: i32,
-    bits: i32,
+    group_size: u32,
+    bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
 ) -> (Input<T>, Vec<T>) {
@@ -206,9 +206,9 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         zero_points,
         biases,
         x,
-        k: k as i32,
-        n: n as i32,
-        m: m as i32,
+        k: k as u32,
+        n: n as u32,
+        m: m as u32,
         group_size,
         bits,
         use_zero_points,
@@ -266,8 +266,8 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn get_test_dims(
-    group_size: i32,
-    bits: i32,
+    group_size: u32,
+    bits: u32,
     is_half_precision: bool,
 ) -> Vec<(usize, usize, usize)> {
     let gs = group_size as usize;
@@ -283,8 +283,8 @@ fn get_test_dims(
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>(
-    group_size: i32,
-    bits: i32,
+    group_size: u32,
+    bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
 ) {
@@ -298,8 +298,8 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn test_edge<T: ArrayElement + Float + Debug + Display>(
-    group_size: i32,
-    bits: i32,
+    group_size: u32,
+    bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
 ) {
