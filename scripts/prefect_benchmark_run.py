@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 
+type LogSink = Callable[[str], None]
+
+
 class PoolName(str, Enum):
     MACOS_A18_PRO = "macos-a18-pro-pool"
     MACOS_M1 = "macos-m1-pool"
@@ -62,6 +65,8 @@ POOL_DEPLOYMENTS: dict[PoolName, str] = {
     PoolName.MACOS_M4: "run-benchmark-worker-flow/run-benchmark-m4",
     PoolName.MACOS_M4_PRO: "run-benchmark-worker-flow/run-benchmark-m4-pro",
 }
+
+PREFECT_LOG_PAGE_SIZE = 200
 
 
 @dataclass(frozen=True)
@@ -273,6 +278,7 @@ def execute_benchmark_run(
     sleep: Callable[[float], None] = time.sleep,
     actor: str | None = None,
     triggering_actor: str | None = None,
+    log_sink: LogSink | None = None,
 ) -> BenchmarkRunResult:
     deployment_name = deployment_name_for_pool(pool)
     deployment_id = client.read_deployment_id(deployment_name)
@@ -283,6 +289,7 @@ def execute_benchmark_run(
         poll_interval_seconds=poll_interval_seconds,
         timeout_seconds=timeout_seconds,
         sleep=sleep,
+        log_sink=log_sink,
     )
     logs = read_all_logs(client, created_run.id)
     failure_reason = None
@@ -317,26 +324,78 @@ def wait_for_terminal_flow_run(
     poll_interval_seconds: int,
     timeout_seconds: int,
     sleep: Callable[[float], None],
+    log_sink: LogSink | None = None,
 ) -> FlowRun:
     current_run = initial_run
+    next_log_offset = stream_new_logs(
+        client=client,
+        flow_run=current_run,
+        next_log_offset=0,
+        log_sink=log_sink,
+    )
     deadline = time.monotonic() + timeout_seconds
     while not current_run.state_type.is_terminal and time.monotonic() < deadline:
         if poll_interval_seconds > 0:
             sleep(poll_interval_seconds)
         current_run = client.read_flow_run(current_run.id)
+        next_log_offset = stream_new_logs(
+            client=client,
+            flow_run=current_run,
+            next_log_offset=next_log_offset,
+            log_sink=log_sink,
+        )
+    stream_new_logs(
+        client=client,
+        flow_run=current_run,
+        next_log_offset=next_log_offset,
+        log_sink=log_sink,
+    )
     return current_run
+
+
+def stream_new_logs(
+    client: PrefectClientProtocol,
+    flow_run: FlowRun,
+    next_log_offset: int,
+    log_sink: LogSink | None,
+) -> int:
+    if log_sink is None:
+        return next_log_offset
+
+    new_logs, updated_log_offset = read_logs_since_offset(
+        client=client,
+        flow_run_id=flow_run.id,
+        offset=next_log_offset,
+    )
+    for log in new_logs:
+        log_sink(format_log_line(flow_run, log))
+    return updated_log_offset
+
+
+def read_logs_since_offset(
+    client: PrefectClientProtocol,
+    flow_run_id: str,
+    offset: int,
+) -> tuple[tuple[PrefectLog, ...], int]:
+    next_log_offset = offset
+    new_logs: list[PrefectLog] = []
+    while True:
+        page = client.read_logs_page(flow_run_id, limit=PREFECT_LOG_PAGE_SIZE, offset=next_log_offset)
+        new_logs.extend(page)
+        next_log_offset += len(page)
+        if len(page) < PREFECT_LOG_PAGE_SIZE:
+            return tuple(new_logs), next_log_offset
 
 
 def read_all_logs(client: PrefectClientProtocol, flow_run_id: str) -> tuple[PrefectLog, ...]:
     offset = 0
-    page_size = 200
     all_logs: list[PrefectLog] = []
     while True:
-        page = client.read_logs_page(flow_run_id, limit=page_size, offset=offset)
+        page = client.read_logs_page(flow_run_id, limit=PREFECT_LOG_PAGE_SIZE, offset=offset)
         all_logs.extend(page)
-        if len(page) < page_size:
+        if len(page) < PREFECT_LOG_PAGE_SIZE:
             return tuple(all_logs)
-        offset += page_size
+        offset += PREFECT_LOG_PAGE_SIZE
 
 
 def write_run_artifacts(output_dir: Path | str, result: BenchmarkRunResult) -> None:
@@ -383,12 +442,17 @@ def build_summary_markdown(result: BenchmarkRunResult) -> str:
     return "\n".join(lines) + "\n"
 
 
+def format_log_line(flow_run: FlowRun, log: PrefectLog) -> str:
+    return f"{log.timestamp} | {logging.getLevelName(log.level):7s} | Flow run {flow_run.name!r} - {log.message}"
+
+
 def format_logs(flow_run: FlowRun, logs: tuple[PrefectLog, ...]) -> str:
-    lines = [
-        f"{log.timestamp} | {logging.getLevelName(log.level):7s} | Flow run {flow_run.name!r} - {log.message}"
-        for log in logs
-    ]
+    lines = [format_log_line(flow_run, log) for log in logs]
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def print_live_log_line(line: str) -> None:
+    print(line, flush=True)
 
 
 def parse_cli_args(argv: list[str] | None = None) -> CliConfig:
@@ -453,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout_seconds=config.timeout_seconds,
         actor=config.actor,
         triggering_actor=config.triggering_actor,
+        log_sink=print_live_log_line,
     )
     write_run_artifacts(config.output_dir, result)
     print(build_summary_markdown(result))
