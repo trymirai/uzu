@@ -26,6 +26,7 @@ pub fn alloc_buffer_with_data<B: Backend, T: bytemuck::NoUninit>(
     buffer
 }
 
+#[allow(dead_code)]
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
     B::Context::new().expect(format!("Failed to create context for {}", std::any::type_name::<B>()).as_str())
 }

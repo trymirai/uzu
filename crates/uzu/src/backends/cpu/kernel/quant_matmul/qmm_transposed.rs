@@ -40,11 +40,11 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                     let val_q = if bits == 4 {
                         let u32_idx = weight_linear_idx / 8;
                         let bit_offset = (weight_linear_idx % 8) * 4;
-                        ((*weights.add(u32_idx) >> bit_offset) & 0xF) as f32
+                        ((weights.add(u32_idx).read_unaligned() >> bit_offset) & 0xF) as f32
                     } else {
                         let u32_idx = weight_linear_idx / 4;
                         let byte_offset = (weight_linear_idx % 4) * 8;
-                        ((*weights.add(u32_idx) >> byte_offset) & 0xFF) as f32
+                        ((weights.add(u32_idx).read_unaligned() >> byte_offset) & 0xFF) as f32
                     };
 
                     let val_a = (*input.add(i * in_vec_size + l)).to_f32().unwrap();
