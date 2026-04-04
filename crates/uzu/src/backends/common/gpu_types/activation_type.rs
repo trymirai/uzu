@@ -56,8 +56,11 @@ fn tanh_activation<T: Float>(x: T) -> T {
 }
 
 fn softplus<T: Float>(x: T) -> T {
-    if x > T::from(20.0).unwrap() {
+    let x_float = x.to_f32().unwrap();
+    if x_float > 20f32 {
         return x;
     }
-    (T::one() + x.exp()).ln()
+
+    let result = (1f32 + x_float.exp()).ln();
+    T::from(result).unwrap()
 }

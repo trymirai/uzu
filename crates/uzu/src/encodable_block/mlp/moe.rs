@@ -183,7 +183,7 @@ impl<B: Backend> MoeBlock<B> {
                 ..
             } => 2,
             _ => {
-                panic!("{}", format!("{:?} is not supported for MoE kernels", activation))
+                panic!("{:?} is not supported for MoE kernels", activation)
             },
         }
     }

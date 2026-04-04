@@ -1,5 +1,3 @@
-use std::thread::current;
-
 use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;

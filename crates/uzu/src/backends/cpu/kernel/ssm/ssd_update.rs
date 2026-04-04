@@ -1,6 +1,5 @@
 use dsl::kernel;
 use half::{bf16, f16};
-use libc::stat;
 use num_traits::Float;
 
 use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
@@ -57,13 +56,12 @@ pub fn ssd_update<T: ArrayElement + Float>(
                     let this_decay = T::from((-this_dt.to_f32().unwrap()).exp()).unwrap();
                     let this_d = *d.add(h_idx);
                     let this_z = ActivationType::SILU.activate(*z.add(x_idx));
-                    let dt_scaled_input = this_x;
 
                     let mut temp = T::zero();
                     for i in 0..state_size {
                         let cb_idx = cb_start_idx + i;
                         let state_idx = state_start_idx + i;
-                        let this_new_state = *state.add(state_idx) * this_decay + *b.add(cb_idx) * dt_scaled_input;
+                        let this_new_state = *state.add(state_idx) * this_decay + *b.add(cb_idx) * this_x;
                         *next_state.add(state_idx) = this_new_state;
                         temp = temp + this_new_state * *c.add(cb_idx);
                     }
