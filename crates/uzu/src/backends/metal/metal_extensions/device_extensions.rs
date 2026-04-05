@@ -3,10 +3,22 @@ use metal::MTLDevice;
 use objc2::{
     Message, msg_send,
     rc::Retained,
-    runtime::{NSObjectProtocol, ProtocolObject},
+    runtime::{AnyClass, NSObjectProtocol, ProtocolObject},
     sel,
 };
 use objc2_foundation::NSString;
+
+/// When Metal capture is enabled (METAL_CAPTURE_ENABLED=1), the device is
+/// wrapped in a `CaptureMTLDevice` proxy that forwards the public `MTLDevice`
+/// protocol but does not implement Apple-private selectors such as
+/// `gpuCoreCount`, `sharedMemorySize`, and `familyName`. The proxy's
+/// `respondsToSelector:` can still return YES for these via generic NSObject
+/// behaviour, so call sites must additionally check whether we're running
+/// against the proxy and fall back to conservative defaults.
+fn is_capture_device_proxy<T: Message>(obj: &T) -> bool {
+    let cls: &AnyClass = unsafe { msg_send![obj, class] };
+    cls.name().to_string_lossy().contains("Capture")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceGeneration {
@@ -48,6 +60,9 @@ impl DeviceGeneration {
 pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     /// Human-readable chip name, e.g. "M2 Max", "M4 Pro", "A17 Pro".
     fn family_name(&self) -> String {
+        if is_capture_device_proxy(self) {
+            return "Unknown".into();
+        }
         if self.respondsToSelector(sel!(familyName)) {
             let ns: Retained<NSString> = unsafe { msg_send![self, familyName] };
             ns.to_string()
@@ -58,6 +73,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Number of GPU shader cores.
     fn gpu_core_count(&self) -> u32 {
+        if is_capture_device_proxy(self) {
+            return 8;
+        }
         if self.respondsToSelector(sel!(gpuCoreCount)) {
             unsafe { msg_send![self, gpuCoreCount] }
         } else {
@@ -67,6 +85,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Total unified (shared) memory.
     fn shared_memory_size(&self) -> ByteSize {
+        if is_capture_device_proxy(self) {
+            return ByteSize::gib(8);
+        }
         if self.respondsToSelector(sel!(sharedMemorySize)) {
             ByteSize(unsafe { msg_send![self, sharedMemorySize] })
         } else {
@@ -76,6 +97,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Whether the GPU supports SIMD group operations.
     fn supports_simd_group(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return true;
+        }
         if self.respondsToSelector(sel!(supportsSIMDGroup)) {
             unsafe { msg_send![self, supportsSIMDGroup] }
         } else {
@@ -85,6 +109,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Whether the GPU supports `simdgroup_matrix`.
     fn supports_simd_group_matrix(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return true;
+        }
         if self.respondsToSelector(sel!(supportsSIMDGroupMatrix)) {
             unsafe { msg_send![self, supportsSIMDGroupMatrix] }
         } else {
@@ -94,6 +121,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Whether the GPU supports SIMD reduction operations.
     fn supports_simd_reduction(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return true;
+        }
         if self.respondsToSelector(sel!(supportsSIMDReduction)) {
             unsafe { msg_send![self, supportsSIMDReduction] }
         } else {
@@ -103,6 +133,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Whether the GPU supports SIMD shuffle-and-fill operations.
     fn supports_simd_shuffle_and_fill(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return true;
+        }
         if self.respondsToSelector(sel!(supportsSIMDShuffleAndFill)) {
             unsafe { msg_send![self, supportsSIMDShuffleAndFill] }
         } else {
@@ -112,6 +145,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Whether the GPU supports SIMD shuffles and broadcast.
     fn supports_simd_shuffles_and_broadcast(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return true;
+        }
         if self.respondsToSelector(sel!(supportsSIMDShufflesAndBroadcast)) {
             unsafe { msg_send![self, supportsSIMDShufflesAndBroadcast] }
         } else {
@@ -122,6 +158,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
     /// Whether the GPU has a Matrix eXtension Unit (neural accelerator for compute).
     /// True on M5+ (Gen18+), false on M1-M4.
     fn supports_mxu(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return false;
+        }
         if self.respondsToSelector(sel!(supportsMXU)) {
             unsafe { msg_send![self, supportsMXU] }
         } else {
@@ -131,6 +170,9 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
 
     /// Whether the GPU supports Thread-Local Storage.
     fn supports_tls(&self) -> bool {
+        if is_capture_device_proxy(self) {
+            return false;
+        }
         if self.respondsToSelector(sel!(supportsTLS)) {
             unsafe { msg_send![self, supportsTLS] }
         } else {

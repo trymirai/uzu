@@ -7,8 +7,9 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::{
             QuantizedMatmulQmmKernel, QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
-            QuantizedMatmulQmmTransposedWideKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-            QuantizedMatmulQvmKernel,
+            QuantizedMatmulQmmTransposedSmallKernel, QuantizedMatmulQmmTransposedSmallSplitKPartialKernel,
+            QuantizedMatmulQmmTransposedSmallSplitKReduceKernel, QuantizedMatmulQmmTransposedWideKernel,
+            QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, QuantizedMatmulQvmKernel,
         },
     },
 };
@@ -43,6 +44,16 @@ pub enum QuantizedMatmulType {
     Mlx,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ForceKernel {
+    #[default]
+    Auto,
+    QmvFast,
+    QmmTransposedSmall,
+    QmmTransposedSmallSplitK,
+    QmmTransposed64x64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulConfiguration {
     pub data_type: DataType,
@@ -52,6 +63,7 @@ pub struct QuantizedMatmulConfiguration {
     pub mode: QuantizationMode,
     pub quantization_type: QuantizedMatmulType,
     pub weights_transposed: bool,
+    pub force_kernel: ForceKernel,
 }
 
 pub struct QuantizedMatmulArguments<'a, B: Backend> {
@@ -72,7 +84,9 @@ pub struct QuantizedMatmulKernelEncodable<B: Backend> {
     matrix_vector_key: KernelKey,
     matrix_matrix_key: KernelKey,
     output_dim: usize,
+    group_size: usize,
     quantization_type: QuantizedMatmulType,
+    force_kernel: ForceKernel,
 }
 
 enum EncodableVariant<B: Backend> {
@@ -82,6 +96,11 @@ enum EncodableVariant<B: Backend> {
     Qmm(<B::Kernels as Kernels>::QuantizedMatmulQmmKernel),
     QmmTransposed(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel),
     QmmTransposed64x64(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel),
+    QmmTransposedSmall(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedSmallKernel),
+    QmmTransposedSmallSplitK {
+        partial: <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedSmallSplitKPartialKernel,
+        reduce: <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedSmallSplitKReduceKernel,
+    },
     QmmTransposedWide(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel),
 }
 
@@ -105,6 +124,8 @@ enum MatrixMatrixFamily {
     QmmTransposedAlignedN,
     QmmTransposedUnalignedN,
     QmmTransposed64x64,
+    QmmTransposedSmall,
+    QmmTransposedSmallSplitK,
     QmmTransposedWide,
 }
 
@@ -124,41 +145,85 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         let bits = quant_bits(configuration.mode)?;
         let use_mlx_quant = matches!(configuration.quantization_type, QuantizedMatmulType::Mlx);
 
-        let matrix_vector_family = select_matrix_vector_family(&configuration);
-        let matrix_matrix_family = select_matrix_matrix_family(&configuration, bits);
+        let force_kernel = configuration.force_kernel;
+
+        let matrix_vector_family = match force_kernel {
+            ForceKernel::QmvFast => MatrixVectorFamily::QmvFast,
+            _ => select_matrix_vector_family(&configuration),
+        };
+        let matrix_matrix_family = match force_kernel {
+            ForceKernel::QmmTransposedSmall => MatrixMatrixFamily::QmmTransposedSmall,
+            ForceKernel::QmmTransposedSmallSplitK => MatrixMatrixFamily::QmmTransposedSmallSplitK,
+            ForceKernel::QmmTransposed64x64 => MatrixMatrixFamily::QmmTransposed64x64,
+            _ => select_matrix_matrix_family(&configuration, bits),
+        };
         let matrix_vector_key = KernelKey::MatrixVector(matrix_vector_family);
         let matrix_matrix_key = KernelKey::MatrixMatrix(matrix_matrix_family);
 
         let mut kernels = HashMap::new();
-        kernels.insert(
-            matrix_vector_key,
-            create_matrix_vector_kernel(
-                context,
-                configuration.data_type,
-                configuration.group_size,
-                bits,
-                use_mlx_quant,
-                matrix_vector_family,
-            )?,
-        );
-        kernels.insert(
-            matrix_matrix_key,
-            create_matrix_matrix_kernel(
-                context,
-                configuration.data_type,
-                configuration.group_size,
-                bits,
-                use_mlx_quant,
-                matrix_matrix_family,
-            )?,
-        );
+        match force_kernel {
+            ForceKernel::QmvFast => {
+                kernels.insert(
+                    matrix_vector_key,
+                    create_matrix_vector_kernel(
+                        context,
+                        configuration.data_type,
+                        configuration.group_size,
+                        bits,
+                        use_mlx_quant,
+                        matrix_vector_family,
+                    )?,
+                );
+            },
+            ForceKernel::QmmTransposedSmall
+            | ForceKernel::QmmTransposedSmallSplitK
+            | ForceKernel::QmmTransposed64x64 => {
+                kernels.insert(
+                    matrix_matrix_key,
+                    create_matrix_matrix_kernel(
+                        context,
+                        configuration.data_type,
+                        configuration.group_size,
+                        bits,
+                        use_mlx_quant,
+                        matrix_matrix_family,
+                    )?,
+                );
+            },
+            ForceKernel::Auto => {
+                kernels.insert(
+                    matrix_vector_key,
+                    create_matrix_vector_kernel(
+                        context,
+                        configuration.data_type,
+                        configuration.group_size,
+                        bits,
+                        use_mlx_quant,
+                        matrix_vector_family,
+                    )?,
+                );
+                kernels.insert(
+                    matrix_matrix_key,
+                    create_matrix_matrix_kernel(
+                        context,
+                        configuration.data_type,
+                        configuration.group_size,
+                        bits,
+                        use_mlx_quant,
+                        matrix_matrix_family,
+                    )?,
+                );
+            },
+        }
 
         Ok(Self {
             kernels,
             matrix_vector_key,
             matrix_matrix_key,
             output_dim: configuration.output_dim,
+            group_size: configuration.group_size,
             quantization_type: configuration.quantization_type,
+            force_kernel,
         })
     }
 
@@ -183,6 +248,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         let k = to_i32("input_dim", arguments.input_dim)?;
         let n = to_i32("output_dim", arguments.output_dim)?;
         let m = to_i32("batch", arguments.batch)?;
+        let group_size = self.group_size;
         let (zero_points, biases) = quant_buffers::<B>(arguments.zero_points_or_biases_buffer, self.quantization_type);
         let a_with_offset = (arguments.a_buffer, arguments.a_offset);
 
@@ -271,6 +337,59 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     encoder,
                 );
             },
+            EncodableVariant::QmmTransposedSmall(kernel) => {
+                kernel.encode(
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    arguments.output_buffer,
+                    k,
+                    n,
+                    m,
+                    encoder,
+                );
+            },
+            EncodableVariant::QmmTransposedSmallSplitK {
+                partial: partial_kernel,
+                reduce: reduce_kernel,
+            } => {
+                // MLX heuristic for split_k
+                let current_tgs = ((n + 31) / 32) * ((m + 7) / 8);
+                let split_k_raw = std::cmp::max(1i32, 512 / std::cmp::max(current_tgs, 1));
+                let k_per_group = to_i32("group_size", group_size)?;
+                // Can't split finer than group_size
+                let max_split_k = k / k_per_group;
+                let mut split_k = std::cmp::min(split_k_raw, max_split_k);
+                // Adjust until k % (split_k * group_size) == 0
+                while split_k > 1 && k % (split_k * k_per_group) != 0 {
+                    split_k -= 1;
+                }
+                let split_k = std::cmp::max(1, split_k);
+
+                // Allocate temporary buffer: split_k * m * n elements of T (bfloat = 2 bytes)
+                let elem_size = 2usize; // bfloat16
+                let partial_size = (split_k as usize) * (m as usize) * (n as usize) * elem_size;
+                let mut partial_buf =
+                    encoder.allocate_scratch(partial_size).map_err(QuantizedMatmulError::BackendError)?;
+
+                partial_kernel.encode(
+                    arguments.b_buffer,
+                    arguments.scales_buffer,
+                    zero_points,
+                    biases,
+                    a_with_offset,
+                    &mut partial_buf,
+                    k,
+                    n,
+                    m,
+                    split_k,
+                    encoder,
+                );
+
+                reduce_kernel.encode(&partial_buf, arguments.output_buffer, n, m, split_k, encoder);
+            },
             EncodableVariant::QmmTransposedWide(kernel) => {
                 kernel.encode(
                     arguments.b_buffer,
@@ -294,10 +413,18 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         &self,
         batch: usize,
     ) -> RuntimeVariant {
-        if batch < 32 || self.output_dim == 1 {
-            RuntimeVariant::MatrixVector
-        } else {
-            RuntimeVariant::MatrixMatrix
+        match self.force_kernel {
+            ForceKernel::QmvFast => RuntimeVariant::MatrixVector,
+            ForceKernel::QmmTransposedSmall
+            | ForceKernel::QmmTransposedSmallSplitK
+            | ForceKernel::QmmTransposed64x64 => RuntimeVariant::MatrixMatrix,
+            ForceKernel::Auto => {
+                if batch < 4 || self.output_dim == 1 {
+                    RuntimeVariant::MatrixVector
+                } else {
+                    RuntimeVariant::MatrixMatrix
+                }
+            },
         }
     }
 }
@@ -414,6 +541,35 @@ fn create_matrix_matrix_kernel<B: Backend>(
             )
             .map_err(QuantizedMatmulError::BackendError)?,
         ),
+        MatrixMatrixFamily::QmmTransposedSmall => EncodableVariant::QmmTransposedSmall(
+            <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedSmallKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?,
+        ),
+        MatrixMatrixFamily::QmmTransposedSmallSplitK => {
+            let partial = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedSmallSplitKPartialKernel::new(
+                context,
+                data_type,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?;
+            let reduce =
+                <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedSmallSplitKReduceKernel::new(context, data_type)
+                    .map_err(QuantizedMatmulError::BackendError)?;
+            EncodableVariant::QmmTransposedSmallSplitK {
+                partial,
+                reduce,
+            }
+        },
         MatrixMatrixFamily::QmmTransposed64x64 => EncodableVariant::QmmTransposed64x64(
             <B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel::new(
                 context,
@@ -475,12 +631,15 @@ fn select_matrix_matrix_family(
     if configuration.weights_transposed {
         let aligned_n = configuration.output_dim % 32 == 0;
         let aligned_n_64 = configuration.output_dim % 64 == 0;
+        let use_small = aligned_n && configuration.data_type == DataType::BF16 && matches!(bits, 4 | 8);
         let use_64x64 = aligned_n_64
             && configuration.data_type == DataType::BF16
             && matches!(configuration.group_size, 64 | 128)
             && matches!(bits, 4 | 8);
         let use_wide = aligned_n_64 && configuration.data_type == DataType::BF16 && matches!(bits, 4 | 8) && !use_64x64;
-        if use_64x64 {
+        if use_small {
+            MatrixMatrixFamily::QmmTransposedSmall
+        } else if use_64x64 {
             MatrixMatrixFamily::QmmTransposed64x64
         } else if use_wide {
             MatrixMatrixFamily::QmmTransposedWide
@@ -538,6 +697,10 @@ fn kernel_key_name(key: KernelKey) -> &'static str {
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedAlignedN) => "matrix_matrix_qmm_transposed_aligned_n",
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedUnalignedN) => {
             "matrix_matrix_qmm_transposed_unaligned_n"
+        },
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedSmall) => "matrix_matrix_qmm_transposed_small",
+        KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedSmallSplitK) => {
+            "matrix_matrix_qmm_transposed_small_splitk"
         },
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposed64x64) => "matrix_matrix_qmm_transposed_64x64",
         KernelKey::MatrixMatrix(MatrixMatrixFamily::QmmTransposedWide) => "matrix_matrix_qmm_transposed_wide",

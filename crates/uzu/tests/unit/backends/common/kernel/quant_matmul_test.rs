@@ -14,7 +14,7 @@ use crate::{
             Backend, Context, Encoder,
             gpu_types::QuantizationMode,
             kernel::quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+                ForceKernel, QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
                 QuantizedMatmulType,
             },
         },
@@ -100,10 +100,24 @@ fn check_tolerance(
     exp: f32,
     got: f32,
 ) -> bool {
+    check_tolerance_dtype(exp, got, DataType::F32)
+}
+
+fn check_tolerance_dtype(
+    exp: f32,
+    got: f32,
+    dtype: DataType,
+) -> bool {
     let diff = (exp - got).abs() as f64;
-    // For F16 at boundaries (like 65504), machine epsilon is 32 (approx 0.05% relative error)
-    // We use a conservative relative tolerance of 0.2%
-    let rel_tol = 0.002;
+    // Relative tolerance depends on the output dtype's precision.
+    // bf16 has 8-bit mantissa → 1 ULP ≈ 0.4% → use 1% to leave headroom for accumulation order.
+    // f16 has 11-bit mantissa → 1 ULP ≈ 0.05% → 0.2% as before.
+    // f32 has 24-bit mantissa → 0.2% covers any reasonable error.
+    let rel_tol = match dtype {
+        DataType::BF16 => 0.01,
+        DataType::F16 => 0.002,
+        _ => 0.002,
+    };
     let abs_tol = 0.1f64;
     let tol = abs_tol.max(exp.abs() as f64 * rel_tol);
     diff > tol
@@ -433,6 +447,38 @@ fn execute_quantized_matmul(
     data_type: DataType,
     bits: usize,
 ) -> ExecutionResult {
+    execute_quantized_matmul_forced(
+        ctx,
+        batch,
+        input_dim,
+        output_dim,
+        weights_transposed,
+        iterations,
+        validate,
+        quantization_type,
+        randomize_zp,
+        group_size,
+        data_type,
+        bits,
+        ForceKernel::Auto,
+    )
+}
+
+fn execute_quantized_matmul_forced(
+    ctx: &<Metal as Backend>::Context,
+    batch: usize,
+    input_dim: usize,
+    output_dim: usize,
+    weights_transposed: bool,
+    iterations: usize,
+    validate: bool,
+    quantization_type: QuantizedMatmulType,
+    randomize_zp: bool,
+    group_size: usize,
+    data_type: DataType,
+    bits: usize,
+    force_kernel: ForceKernel,
+) -> ExecutionResult {
     let weights_quant = create_test_weights(output_dim, input_dim, weights_transposed, bits);
     let weights_packed = if bits == 4 {
         pack_u4_weights(&weights_quant)
@@ -495,6 +541,7 @@ fn execute_quantized_matmul(
             },
             quantization_type,
             weights_transposed,
+            force_kernel,
         },
     )
     .unwrap();
@@ -581,7 +628,7 @@ fn execute_quantized_matmul(
         for (i, (&exp, &got)) in y_expected.iter().zip(y_out_f32.iter()).enumerate() {
             let diff = (exp - got).abs();
 
-            if check_tolerance(exp, got) {
+            if check_tolerance_dtype(exp, got, data_type) {
                 if debug_prints < 16 {
                     println!("\n  detail idx {} diff {} exp {} got {}", i, diff, exp, got);
                 }
@@ -594,14 +641,14 @@ fn execute_quantized_matmul(
                 .iter()
                 .zip(y_out_f32.iter())
                 .enumerate()
-                .find(|&(_, (&e, &g))| check_tolerance(e, g))
+                .find(|&(_, (&e, &g))| check_tolerance_dtype(e, g, data_type))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             let last_error = y_expected
                 .iter()
                 .zip(y_out_f32.iter())
                 .enumerate()
-                .filter(|&(_, (&e, &g))| check_tolerance(e, g))
+                .filter(|&(_, (&e, &g))| check_tolerance_dtype(e, g, data_type))
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
@@ -832,6 +879,98 @@ fn test_quant_gmm_transposed() {
     for config in &configs {
         for &(batch, output_dim, input_dim) in QMM_DIMS {
             run_kernel_test(&ctx, batch, output_dim, input_dim, true, config, true, 1);
+        }
+    }
+}
+
+#[test]
+fn test_quant_gmm_transposed_small_bf16() {
+    // Targets QmmTransposedSmall specifically: BF16 + aligned N + BM=8 tile.
+    // With new BN=128 config, N must be divisible by 128.
+    let ctx = match <Metal as Backend>::Context::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping QmmTransposedSmall test");
+            return;
+        },
+    };
+
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizedMatmulType::Mlx,
+            bits: 4,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+        TestConfig {
+            quant_type: QuantizedMatmulType::Mlx,
+            bits: 8,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+    ];
+
+    // (batch M, output_dim N, input_dim K) — N % 32 == 0, K % 32 == 0.
+    let dims: &[(usize, usize, usize)] =
+        &[(1, 32, 128), (2, 64, 256), (4, 96, 512), (8, 32, 1024), (8, 160, 1024), (16, 224, 512)];
+
+    for config in &configs {
+        for &(batch, output_dim, input_dim) in dims {
+            println!("Testing M={} N={} K={} bits={}", batch, output_dim, input_dim, config.bits);
+            run_kernel_test(&ctx, batch, output_dim, input_dim, true, config, true, 1);
+        }
+    }
+}
+
+#[test]
+fn test_quant_gmm_transposed_small_splitk_bf16() {
+    // Validates QmmTransposedSmallSplitK: split-K variant of QmmTransposedSmall.
+    // N must be divisible by 32, K must be divisible by group_size.
+    let ctx = match <Metal as Backend>::Context::new() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Metal not available — skipping QmmTransposedSmallSplitK test");
+            return;
+        },
+    };
+
+    let configs = vec![
+        TestConfig {
+            quant_type: QuantizedMatmulType::Mlx,
+            bits: 4,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+        TestConfig {
+            quant_type: QuantizedMatmulType::Mlx,
+            bits: 8,
+            data_type: DataType::BF16,
+            group_size: 128,
+        },
+    ];
+
+    // (batch M, output_dim N, input_dim K) — N % 32 == 0, K % group_size == 0
+    let dims: &[(usize, usize, usize)] =
+        &[(1, 32, 128), (2, 64, 256), (4, 96, 512), (8, 32, 1024), (1, 32, 4096), (4, 32, 4096), (8, 160, 1024)];
+
+    for config in &configs {
+        for &(batch, output_dim, input_dim) in dims {
+            println!("Testing SplitK M={} N={} K={} bits={}", batch, output_dim, input_dim, config.bits);
+            execute_quantized_matmul_forced(
+                &ctx,
+                batch,
+                input_dim,
+                output_dim,
+                true,
+                1,
+                true,
+                config.quant_type,
+                false,
+                config.group_size,
+                config.data_type,
+                config.bits,
+                ForceKernel::QmmTransposedSmallSplitK,
+            );
         }
     }
 }

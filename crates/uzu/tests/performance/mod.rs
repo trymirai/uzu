@@ -8,3 +8,5 @@ mod encodable_block;
 #[cfg(metal_backend)]
 mod matmul;
 mod model_loading_perf_test;
+#[cfg(metal_backend)]
+mod quant_matmul;

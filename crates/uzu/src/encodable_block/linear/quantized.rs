@@ -14,7 +14,7 @@ use crate::{
         kernel::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+                ForceKernel, QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable, QuantizedMatmulType,
             },
         },
@@ -225,6 +225,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 mode: config.weight_quantization_mode,
                 quantization_type,
                 weights_transposed,
+                force_kernel: ForceKernel::Auto,
             },
         )
         .map_err(QuantizedLinearError::QuantizedMatmulError)?;

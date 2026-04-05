@@ -13,7 +13,7 @@ use crate::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
             quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+                ForceKernel, QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable, QuantizedMatmulType,
             },
         },
@@ -298,6 +298,7 @@ impl<B: Backend> Embedding<B> {
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
                         weights_transposed: true,
+                        force_kernel: ForceKernel::Auto,
                     },
                 )?;
 
@@ -378,6 +379,7 @@ impl<B: Backend> Embedding<B> {
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
                         weights_transposed: true,
+                        force_kernel: ForceKernel::Auto,
                     },
                 )?;
 
@@ -448,6 +450,7 @@ impl<B: Backend> Embedding<B> {
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
                         weights_transposed: true,
+                        force_kernel: ForceKernel::Auto,
                     },
                 )?;
 

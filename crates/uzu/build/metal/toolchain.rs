@@ -110,8 +110,12 @@ impl MetalToolchain {
                 ]
                 .into()
             },
-            "1" => [OsString::from("-O1")].into(),
-            _ => [OsString::from("-O2")].into(), // treat levels 2,3,s,z as O2 for metal
+            "1" => {
+                [OsString::from("-O1"), OsString::from("-gline-tables-only"), OsString::from("-frecord-sources")].into()
+            },
+            _ => {
+                [OsString::from("-O2"), OsString::from("-gline-tables-only"), OsString::from("-frecord-sources")].into()
+            }, // treat levels 2,3,s,z as O2 for metal
         };
 
         let extra_options = Box::new([
