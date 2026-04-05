@@ -57,7 +57,7 @@ walkdir.workspace = true
 depfile.workspace = true
 tempfile.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 futures.workspace = true
 tokio.workspace = true
 blake3.workspace = true
