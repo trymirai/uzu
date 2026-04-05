@@ -3,7 +3,6 @@
 #include "../activation/activations.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "ssm_common.h"
 
 using namespace metal;
 
@@ -21,8 +20,8 @@ PUBLIC KERNEL(SSDPrefill64)(
     device T* state,        // (h, dh, n)
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
-    constant const int& group_size,
-    constant const int& state_size,
+    constant const uint& group_size,
+    constant const uint& state_size,
     constant const uint* x_strides,
     constant const uint* dt_strides,
     constant const uint* cb_strides,
@@ -35,7 +34,7 @@ PUBLIC KERNEL(SSDPrefill64)(
 ) {
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
-  const uint safe_group = uint(max(group_size, 1));
+  const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
 
   const uint x_token_stride = x_strides[0];
@@ -59,27 +58,21 @@ PUBLIC KERNEL(SSDPrefill64)(
   const uint idx0 = lane_idx;
   const uint idx1 = lane_idx + thread_context.simdgroup_size;
 
-  float state0 = 0.0f;
-  float state1 = 0.0f;
-  uint state_idx0 = 0;
-  uint state_idx1 = 0;
-  state_idx0 = state_base + idx0 * state_inner_stride;
-  state0 = float(state[state_idx0]);
+  const uint state_idx0 = state_base + idx0 * state_inner_stride;
+  const uint state_idx1 = state_base + idx1 * state_inner_stride;
+  float state0 = float(state[state_idx0]);
+  float state1 = float(state[state_idx1]);
 
-  state_idx1 = state_base + idx1 * state_inner_stride;
-  state1 = float(state[state_idx1]);
-
-  uint cb_idx0 = 0;
-  uint cb_idx1 = 0;
-  cb_idx0 = cb_group_base + idx0 * cb_state_stride;
-  cb_idx1 = cb_group_base + idx1 * cb_state_stride;
+  uint cb_idx0 = cb_group_base + idx0 * cb_state_stride;
+  uint cb_idx1 = cb_group_base + idx1 * cb_state_stride;
 
   for (uint token = 0; token < suffix_len; ++token) {
     const uint x_idx = token * x_token_stride + x_base;
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
+    const float decay_val =
+        fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -119,8 +112,8 @@ PUBLIC KERNEL(SSDPrefill)(
     device T* state,        // (h, dh, n)
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
-    constant const int& group_size,
-    constant const int& state_size,
+    constant const uint& group_size,
+    constant const uint& state_size,
     constant const uint* x_strides,
     constant const uint* dt_strides,
     constant const uint* cb_strides,
@@ -134,7 +127,7 @@ PUBLIC KERNEL(SSDPrefill)(
   const int state_dim = state_size;
   const uint h_idx = pair_idx / head_dim;
   const uint dh_idx = pair_idx % head_dim;
-  const uint safe_group = uint(max(group_size, 1));
+  const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
 
   const uint x_token_stride = x_strides[0];
@@ -167,8 +160,12 @@ PUBLIC KERNEL(SSDPrefill)(
 #pragma unroll
   for (int chunk = 0; chunk < chunk_count; ++chunk) {
     const int idx = chunk * int(thread_context.simdgroup_size) + int(lane_idx);
-    const uint state_idx = state_base + idx * state_inner_stride;
-    lane_states[chunk] = float(state[state_idx]);
+    if (idx < state_dim) {
+      const uint state_idx = state_base + idx * state_inner_stride;
+      lane_states[chunk] = float(state[state_idx]);
+    } else {
+      lane_states[chunk] = 0.0f;
+    }
   }
 
   for (uint token = 0; token < suffix_len; ++token) {
@@ -176,7 +173,8 @@ PUBLIC KERNEL(SSDPrefill)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val = fast::exp(-float(softplus(float(dt_raw[dt_idx]))));
+    const float decay_val =
+        fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -186,12 +184,14 @@ PUBLIC KERNEL(SSDPrefill)(
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
       const int idx =
           chunk * int(thread_context.simdgroup_size) + int(lane_idx);
-      const uint cb_idx =
-          cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
-      const float new_state =
-          decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
-      lane_states[chunk] = new_state;
-      contrib_sum += new_state * float(c[cb_idx]);
+      if (idx < state_dim) {
+        const uint cb_idx = cb_group_base + uint(idx) * cb_state_stride +
+                            token * cb_token_stride;
+        const float new_state =
+            decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
+        lane_states[chunk] = new_state;
+        contrib_sum += new_state * float(c[cb_idx]);
+      }
     }
 
     float dot = simd_sum(contrib_sum);
@@ -203,8 +203,10 @@ PUBLIC KERNEL(SSDPrefill)(
 #pragma unroll
   for (int chunk = 0; chunk < chunk_count; ++chunk) {
     const int idx = chunk * int(thread_context.simdgroup_size) + int(lane_idx);
-    const uint state_idx = state_base + uint(idx) * state_inner_stride;
-    state[state_idx] = static_cast<T>(lane_states[chunk]);
+    if (idx < state_dim) {
+      const uint state_idx = state_base + uint(idx) * state_inner_stride;
+      state[state_idx] = static_cast<T>(lane_states[chunk]);
+    }
   }
 }
 
@@ -220,8 +222,8 @@ PUBLIC KERNEL(SSDPrefillSequential)(
     device T* state,        // (h, dh, n)
     device T* y,            // (suffix, h, dh)
     constant const uint& suffix_len,
-    constant const int& group_size,
-    constant const int& state_size,
+    constant const uint& group_size,
+    constant const uint& state_size,
     constant const uint* x_strides,
     constant const uint* dt_strides,
     constant const uint* cb_strides,
@@ -231,7 +233,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
     const uint h_idx AXIS(channels, 32),
     const uint dh_idx AXIS(head_dim, 32)
 ) {
-  const uint safe_group = uint(max(group_size, 1));
+  const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
   device T* state_row = state + size_t(h_idx) * state_strides[0] +
                         size_t(dh_idx) * state_strides[1];
@@ -244,7 +246,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
 
     const T this_x = x[x_idx];
     const T dt_raw_val = dt_raw[dt_idx];
-    const T this_dt = softplus(dt_raw_val);
+    const T this_dt = activate_softplus(dt_raw_val);
     const T this_decay = static_cast<T>(fast::exp(-float(this_dt)));
     const T this_D = d[h_idx];
     const T this_z = activate_silu(z[x_idx]);
