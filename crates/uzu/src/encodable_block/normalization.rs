@@ -54,6 +54,7 @@ impl<B: Backend> Normalization<B> {
                 output_array_id,
                 parameter_tree,
                 None,
+                false,
             )?))
         }
     }
