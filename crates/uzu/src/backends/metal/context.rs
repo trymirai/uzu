@@ -26,6 +26,7 @@ pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     allocator: Rc<Allocator<Metal>>,
+    peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
@@ -74,6 +75,7 @@ impl Context for MetalContext {
             device,
             command_queue,
             allocator: Allocator::new(weak_self.clone()),
+            peak_memory_usage: RefCell::new(0),
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
@@ -109,7 +111,11 @@ impl Context for MetalContext {
         &self,
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer)
+        let buffer =
+            self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer);
+        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
+        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        buffer
     }
 
     fn create_allocation(
@@ -135,6 +141,10 @@ impl Context for MetalContext {
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
         self.device.new_event().ok_or(MetalError::CannotCreateEvent)
+    }
+
+    fn peak_memory_usage(&self) -> Option<usize> {
+        Some(*self.peak_memory_usage.borrow())
     }
 
     fn enable_capture() {

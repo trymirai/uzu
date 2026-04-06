@@ -103,6 +103,7 @@ pub trait LanguageModelGeneratorTrait {
 
     fn clear_cache(&mut self);
     fn reset_state(&mut self);
+    fn peak_memory_usage(&self) -> Option<usize>;
 
     fn tokens_len(&self) -> usize;
     fn tokens_push(
@@ -608,6 +609,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let seed = self.decoding_config.sampling_seed.resolve();
         self.context.seed = PRng::new(seed);
         self.context.async_buffers.reset_counter();
+    }
+
+    fn peak_memory_usage(&self) -> Option<usize> {
+        self.context.context.peak_memory_usage()
     }
 
     fn tokens_len(&self) -> usize {
