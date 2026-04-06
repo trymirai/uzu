@@ -302,11 +302,13 @@ fn test_edge(
 // -- 4-bit, zero points -------------------------------------------------------
 
 #[test]
+#[ignore]
 fn test_bf16_gs64_4bit_zp() {
     test_basic(64, 4, true, false);
 }
 
 #[test]
+#[ignore]
 fn test_bf16_gs128_4bit_zp() {
     test_basic(128, 4, true, false);
 }

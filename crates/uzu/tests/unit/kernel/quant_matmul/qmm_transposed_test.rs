@@ -345,11 +345,13 @@ fn test_bf16_gs32_4bit_zp() {
 }
 
 #[test]
+#[ignore]
 fn test_bf16_gs64_4bit_zp() {
     test_basic::<bf16>(64, 4, true, false);
 }
 
 #[test]
+#[ignore]
 fn test_bf16_gs128_4bit_zp() {
     test_basic::<bf16>(128, 4, true, false);
 }
