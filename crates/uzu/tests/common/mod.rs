@@ -39,3 +39,21 @@ macro_rules! for_each_non_cpu_backend {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! for_each_float_type {
+    (|$F:ident| $body:expr) => {{
+        {
+            type $F = f32;
+            $body
+        }
+        {
+            type $F = half::f16;
+            $body
+        }
+        {
+            type $F = half::bf16;
+            $body
+        }
+    }};
+}

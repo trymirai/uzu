@@ -1,25 +1,21 @@
-#![cfg(metal_backend)]
-
 use std::time::Instant;
 
-use bytemuck;
+#[path = "../../../../common/helpers.rs"]
+mod helpers;
+
 use half::{bf16, f16};
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     DataType,
-    backends::{
-        common::{
-            Backend, Context, Encoder,
-            gpu_types::QuantizationMode,
-            kernel::quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-                QuantizedMatmulType,
-            },
+    backends::common::{
+        Backend, Buffer, Context, Encoder,
+        gpu_types::QuantizationMode,
+        kernel::quant_matmul::{
+            QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+            QuantizedMatmulType, tests::helpers::alloc_buffer_with_data,
         },
-        metal::Metal,
     },
+    for_each_non_cpu_backend,
 };
 
 fn pack_u4_weights(values: &[u8]) -> Vec<u8> {
@@ -265,36 +261,29 @@ fn generate_test_quant_params(
     }
 }
 
-fn buffer_from_f32_slice(
-    ctx: &<Metal as Backend>::Context,
+fn buffer_from_f32_slice<B: Backend>(
+    ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+) -> B::Buffer {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            ctx.device
-                .new_buffer_with_data(bytemuck::cast_slice(&data), MTLResourceOptions::STORAGE_MODE_SHARED)
-                .expect("Failed to create buffer")
+            alloc_buffer_with_data::<B, f16>(ctx, data.as_slice())
         },
         DataType::BF16 => {
             let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            ctx.device
-                .new_buffer_with_data(bytemuck::cast_slice(&data), MTLResourceOptions::STORAGE_MODE_SHARED)
-                .expect("Failed to create buffer")
+            alloc_buffer_with_data::<B, bf16>(ctx, data.as_slice())
         },
-        DataType::F32 => ctx
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(values), MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer"),
+        DataType::F32 => alloc_buffer_with_data::<B, f32>(ctx, values),
         other => {
             panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
         },
     }
 }
 
-fn execute_quantized_matmul(
-    ctx: &<Metal as Backend>::Context,
+fn execute_quantized_matmul<B: Backend>(
+    ctx: &B::Context,
     batch: usize,
     input_dim: usize,
     output_dim: usize,
@@ -330,23 +319,17 @@ fn execute_quantized_matmul(
     };
     let x_quant = quantize_slice(&x_f32, data_type);
 
-    let w_buf = ctx
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&weights_packed), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-    let s_buf = buffer_from_f32_slice(ctx, data_type, &params.scales);
+    let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
+    let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
-        QuantizedMatmulType::ZeroPoint => ctx
-            .device
-            .new_buffer_with_data(&params.zero_points, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer"),
-        QuantizedMatmulType::Mlx => buffer_from_f32_slice(ctx, data_type, &params.biases),
+        QuantizedMatmulType::ZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizedMatmulType::Mlx => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
-    let x_buf = buffer_from_f32_slice(ctx, data_type, &x_f32);
+    let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
 
-    let kernel = QuantizedMatmulKernelEncodable::<Metal>::new(
+    let kernel = QuantizedMatmulKernelEncodable::<B>::new(
         &ctx,
         QuantizedMatmulConfiguration {
             data_type,
@@ -416,17 +399,17 @@ fn execute_quantized_matmul(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const f16;
+                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f16;
                 let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const bf16;
+                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const bf16;
                 let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
-                let y_ptr = y_buf.contents().as_ptr() as *const f32;
+                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f32;
                 let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
                 y_out.to_vec()
             },
@@ -488,8 +471,8 @@ struct TestConfig {
 const QMV_DIMS: &[(usize, usize)] = &[(128, 512), (512, 1024), (1024, 4096)];
 const QMM_DIMS: &[(usize, usize, usize)] = &[(64, 64, 64), (512, 512, 1024), (128, 128, 256)];
 
-fn run_kernel_test(
-    ctx: &<Metal as Backend>::Context,
+fn run_kernel_test<B: Backend>(
+    ctx: &B::Context,
     batch: usize,
     output_dim: usize,
     input_dim: usize,
@@ -499,7 +482,7 @@ fn run_kernel_test(
 ) -> ExecutionResult {
     let randomize_zp = config.quant_type == QuantizedMatmulType::ZeroPoint;
 
-    execute_quantized_matmul(
+    execute_quantized_matmul::<B>(
         ctx,
         batch,
         input_dim,
@@ -514,12 +497,11 @@ fn run_kernel_test(
     )
 }
 
-#[test]
-fn test_quant_gmv() {
-    let ctx = match <Metal as Backend>::Context::new() {
+fn test_quant_gmv_internal<B: Backend>() {
+    let ctx = match B::Context::new() {
         Ok(c) => c,
         Err(_) => {
-            println!("Metal not available — skipping QMV test");
+            println!("{} backend not available — skipping QMV test", std::any::type_name::<B>());
             return;
         },
     };
@@ -553,17 +535,16 @@ fn test_quant_gmv() {
 
     for config in &configs {
         for &(output_dim, input_dim) in QMV_DIMS {
-            run_kernel_test(&ctx, 1, output_dim, input_dim, config, true, 1);
+            run_kernel_test::<B>(&ctx, 1, output_dim, input_dim, config, true, 1);
         }
     }
 }
 
-#[test]
-fn test_quant_gmm_transposed() {
-    let ctx = match <Metal as Backend>::Context::new() {
+fn test_quant_gmm_transposed_internal<B: Backend>() {
+    let ctx = match B::Context::new() {
         Ok(c) => c,
         Err(_) => {
-            println!("Metal not available — skipping QMM transposed test");
+            println!("{} not available — skipping QMM transposed test", std::any::type_name::<B>());
             return;
         },
     };
@@ -597,18 +578,16 @@ fn test_quant_gmm_transposed() {
 
     for config in &configs {
         for &(batch, output_dim, input_dim) in QMM_DIMS {
-            run_kernel_test(&ctx, batch, output_dim, input_dim, config, true, 1);
+            run_kernel_test::<B>(&ctx, batch, output_dim, input_dim, config, true, 1);
         }
     }
 }
 
-#[test]
-#[ignore]
-fn test_quant_matmul_perf() {
-    let ctx = match <Metal as Backend>::Context::new() {
+fn test_quant_matmul_perf_internal<B: Backend>() {
+    let ctx = match B::Context::new() {
         Ok(c) => c,
         Err(_) => {
-            println!("Metal not available — skipping Perf test");
+            println!("{} backend not available — skipping Perf test", std::any::type_name::<B>());
             return;
         },
     };
@@ -660,10 +639,11 @@ fn test_quant_matmul_perf() {
     );
     println!("{}", "-".repeat(85));
 
+    let iterations = 20;
     for config in &configs {
         for &(batch, output_dim, input_dim) in &shapes {
-            let result = run_kernel_test(&ctx, batch, output_dim, input_dim, config, false, 20);
-            let avg = result.elapsed / 20.0 * 1000.0; // ms
+            let result = run_kernel_test::<B>(&ctx, batch, output_dim, input_dim, config, false, iterations);
+            let avg = result.elapsed / (iterations as f64) * 1000.0; // ms
 
             println!(
                 "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:.4} ms",
@@ -676,4 +656,26 @@ fn test_quant_matmul_perf() {
             );
         }
     }
+}
+
+#[test]
+fn test_quant_gmv() {
+    for_each_non_cpu_backend!(|B| {
+        test_quant_gmv_internal::<B>();
+    })
+}
+
+#[test]
+fn test_quant_gmm_transposed() {
+    for_each_non_cpu_backend!(|B| {
+        test_quant_gmm_transposed_internal::<B>();
+    })
+}
+
+#[test]
+#[ignore]
+fn test_quant_matmul_perf() {
+    for_each_non_cpu_backend!(|B| {
+        test_quant_matmul_perf_internal::<B>();
+    })
 }
