@@ -1,0 +1,88 @@
+name: "Run Uzu Cargo Command"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pool:
+        description: "Cargo-command worker pool"
+        required: true
+        type: choice
+        options:
+          - macos-a18-pro-pool
+          - macos-m1-pool
+          - macos-m2-pool
+          - macos-m2-pro-pool
+          - macos-m4-pool
+          - macos-m4-pro-pool
+      cargo_args:
+        description: 'JSON array passed after `cargo`'
+        required: true
+        type: string
+      git_ref:
+        description: "Optional branch, tag, or commit SHA. Blank uses the selected workflow ref."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  run-uzu-cargo-command:
+    name: Trigger uzu cargo-command worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    environment: prefect-benchmarks
+
+    env:
+      CARGO_ARGS_JSON: ${{ inputs.cargo_args }}
+      GITHUB_ACTOR_NAME: ${{ github.actor }}
+      GITHUB_TRIGGERING_ACTOR_NAME: ${{ github.triggering_actor }}
+      INPUT_GIT_REF: ${{ inputs.git_ref }}
+      POOL_NAME: ${{ inputs.pool }}
+      PREFECT_API_URL: ${{ vars.PREFECT_API_URL }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Trigger cargo command and collect Prefect logs
+        env:
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/prefect-uzu-cargo"
+          RESOLVED_GIT_REF="${INPUT_GIT_REF:-$GITHUB_SHA}"
+          python3 scripts/prefect_uzu_cargo_run.py \
+            --api-url "$PREFECT_API_URL" \
+            --pool "$POOL_NAME" \
+            --git-ref "$RESOLVED_GIT_REF" \
+            --timeout-seconds 21300 \
+            --cargo-args "$CARGO_ARGS_JSON" \
+            --output-dir "$ARTIFACT_DIR" \
+            --actor "$GITHUB_ACTOR_NAME" \
+            --triggering-actor "$GITHUB_TRIGGERING_ACTOR_NAME"
+
+      - name: Upload Prefect cargo artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: prefect-uzu-cargo-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prefect-uzu-cargo
+          if-no-files-found: warn
+
+      - name: Write workflow summary
+        if: ${{ always() }}
+        run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/prefect-uzu-cargo"
+          SUMMARY_PATH="$ARTIFACT_DIR/summary.md"
+          if [[ -f "$SUMMARY_PATH" ]]; then
+            cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No Prefect uzu cargo summary was generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
