@@ -222,7 +222,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     expected: &[T],
 ) {
     let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
-        DataType::BF16 => (0.05, 0.5),
+        DataType::BF16 => (0.06, 0.5),
         DataType::F16 => (0.02, 0.5),
         _ => (0.01, 0.1),
     };

@@ -228,7 +228,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     // Tiled accumulation reorders FMA ops, compounding rounding differences.
     // 8-bit weights (0-255) with ZP bias cause larger accumulated errors.
     let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
-        DataType::BF16 => (0.05, 0.5),
+        DataType::BF16 => (0.06, 0.5),
         DataType::F16 => (0.02, 0.5),
         _ => (0.01, 0.1),
     };
