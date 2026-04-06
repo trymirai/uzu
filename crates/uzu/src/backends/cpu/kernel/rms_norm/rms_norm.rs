@@ -26,6 +26,7 @@ pub fn rms_norm<
     full_layer: bool,
     #[specialize] in_place: bool,
     #[specialize] copy_to_shortcut: bool,
+    #[specialize] residual_add: bool,
 ) {
     let input = match in_place {
         true => output as *const InputT,
@@ -42,22 +43,31 @@ pub fn rms_norm<
     for batch in 0..(batch_size as usize) {
         let batch_offset = batch * element_count;
 
-        // Compute rms_inv
+        // Compute rms_inv (+ residual add or copy to shortcut)
         let mut sum_sq = AccumT::zero();
         for i in 0..element_count {
             let input_val = unsafe { *input.add(batch_offset + i) };
-            let accum_val = AccumT::from(input_val).unwrap();
-            sum_sq = sum_sq + accum_val * accum_val;
+            let mut val = input_val;
             if copy_to_shortcut {
-                unsafe { *shortcut_buffer.unwrap().add(batch_offset + i) = input_val };
+                let skip_ptr = unsafe { shortcut_buffer.unwrap().add(batch_offset + i) };
+                if residual_add {
+                    val = val + unsafe { *skip_ptr };
+                }
+                unsafe { *skip_ptr = val };
             }
+            let accum_val = AccumT::from(val).unwrap();
+            sum_sq = sum_sq + accum_val * accum_val;
         }
         let mean_sq: AccumT = sum_sq / element_count_accum;
         let rms_inv = AccumT::from((mean_sq + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
 
         // Normalization and scaling
         for i in 0..element_count {
-            let input_val = unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() };
+            let input_val = if residual_add {
+                unsafe { AccumT::from(*shortcut_buffer.unwrap().add(batch_offset + i)).unwrap() }
+            } else {
+                unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() }
+            };
             let scale_val = unsafe { AccumT::from(*scales.add(i)).unwrap() };
             let normalized: AccumT = input_val * rms_inv;
             let result: OutputT = if full_layer {

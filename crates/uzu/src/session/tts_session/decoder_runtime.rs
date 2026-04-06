@@ -743,10 +743,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 .encode(&mut state, &encoding_parameters, encoder)
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         }
+        self.ctx.executables.norm.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         if capture_hidden {
+            // After output norm with residual_add, Shortcut holds the un-normalized full residual
             self.encode_capture_last_hidden_into_single_buffer_on(encoder, &state, token_count)?;
         }
-        self.ctx.executables.norm.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         self.ctx
             .executables
             .embed
@@ -923,8 +924,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;
-        let main = state.array(ArrayId::Main);
-        let bytes_per_element = main.data_type().size_in_bytes();
+        let shortcut = state.array(ArrayId::Shortcut);
+        let bytes_per_element = shortcut.data_type().size_in_bytes();
         let row_offset = (token_count - 1)
             .checked_mul(model_dim)
             .and_then(|value| value.checked_mul(bytes_per_element))
@@ -933,23 +934,23 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 model_dim,
             })?;
         let src_offset =
-            main.offset().checked_add(row_offset).ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
+            shortcut.offset().checked_add(row_offset).ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
         let capture = &self.single_hidden_capture;
-        if capture.shape() != [1, model_dim] || capture.data_type() != main.data_type() {
+        if capture.shape() != [1, model_dim] || capture.data_type() != shortcut.data_type() {
             return Err(TtsModelConfigError::HiddenCaptureTensorMismatch {
                 expected_shape: [1, model_dim].into(),
-                expected_data_type: main.data_type(),
+                expected_data_type: shortcut.data_type(),
                 actual_shape: capture.shape().into(),
                 actual_data_type: capture.data_type(),
             }
             .into());
         }
 
-        let main_buffer = main.buffer();
-        let main_buffer = main_buffer.borrow();
+        let shortcut_buffer = shortcut.buffer();
+        let shortcut_buffer = shortcut_buffer.borrow();
         let capture_buffer = capture.buffer();
         let mut capture_buffer = capture_buffer.borrow_mut();
-        self.tensor_copy.encode((&*main_buffer, src_offset), &mut *capture_buffer, model_dim_u32, encoder);
+        self.tensor_copy.encode((&*shortcut_buffer, src_offset), &mut *capture_buffer, model_dim_u32, encoder);
         Ok(())
     }
 
