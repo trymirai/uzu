@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, process::Command};
 
 use uzu::session::{
     ChatSession,
@@ -6,6 +6,8 @@ use uzu::session::{
     parameter::{ContextLength, SamplingMethod, SamplingPolicy},
     types::{Input, Message, Output},
 };
+
+const DEFAULT_REPO_ID: &str = "google/gemma-3-1b-it";
 
 #[cfg(target_os = "macos")]
 fn get_rss_bytes() -> u64 {
@@ -58,19 +60,52 @@ fn make_input() -> Input {
     )])
 }
 
+/// Download a model via `uv run tools/helpers/main.py download-model <repo_id>`.
+/// Returns the local model path: `<workspace>/models/<version>/<model_name>`.
+fn download_model(repo_id: &str) -> PathBuf {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let helpers_dir = workspace_root.join("tools/helpers");
+
+    println!("Downloading model {repo_id} via uv ...");
+    let status = Command::new("uv")
+        .args(["run", "--project", helpers_dir.to_str().unwrap(), "python3", helpers_dir.join("main.py").to_str().unwrap(), "download-model", repo_id])
+        .current_dir(&workspace_root)
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .expect("Failed to run uv — is it installed?");
+    assert!(status.success(), "Model download failed");
+
+    // Model name is the last part of repo_id (e.g. "gemma-3-1b-it")
+    let model_name = repo_id.split('/').last().unwrap().to_lowercase();
+    let version = uzu::VERSION;
+    let model_path = workspace_root.join("models").join(version).join(&model_name);
+    assert!(
+        model_path.exists(),
+        "Expected model path does not exist: {model_path:?}"
+    );
+    println!("Model path: {model_path:?}");
+    model_path
+}
+
 fn main() {
-    let model_path = env::args()
-        .nth(1)
-        .expect("Usage: memory_diagnostic <model_path>");
+    let repo_id = env::args().nth(1).unwrap_or_else(|| DEFAULT_REPO_ID.to_string());
     let num_iterations: usize = env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
 
     println!("=== Memory Diagnostic ===");
-    println!("Model: {model_path}");
+    println!("Repo: {repo_id}");
     println!("Iterations: {num_iterations}");
     println!();
+
+    let model_path = download_model(&repo_id);
 
     let rss_baseline = print_rss("baseline (before anything)");
 
@@ -79,9 +114,10 @@ fn main() {
 
         let rss_before_load = print_rss("before model load");
 
-        let decoding_config = DecodingConfig::default().with_context_length(ContextLength::Custom(2048));
-        let mut session =
-            ChatSession::new(PathBuf::from(&model_path), decoding_config).expect("Failed to create session");
+        let decoding_config =
+            DecodingConfig::default().with_context_length(ContextLength::Custom(2048));
+        let mut session = ChatSession::new(model_path.clone(), decoding_config)
+            .expect("Failed to create session");
 
         let rss_after_load = print_rss("after model load");
 
@@ -119,11 +155,31 @@ fn main() {
 
         println!("\n  Summary (iteration {}):", iteration + 1);
         println!("    Baseline:      {:.1} MB", mb(rss_baseline));
-        println!("    Before load:   {:.1} MB (+{:.1} MB from baseline)", mb(rss_before_load), mb(rss_before_load - rss_baseline));
-        println!("    After load:    {:.1} MB (+{:.1} MB from before load)", mb(rss_after_load), mb(rss_after_load.saturating_sub(rss_before_load)));
-        println!("    After warmup:  {:.1} MB (+{:.1} MB from after load)", mb(rss_after_warmup), mb(rss_after_warmup.saturating_sub(rss_after_load)));
-        println!("    Final:         {:.1} MB (+{:.1} MB from after warmup)", mb(rss_final), mb(rss_final.saturating_sub(rss_after_warmup)));
-        println!("    After drop:    {:.1} MB ({:.1} MB freed)", mb(rss_after_drop), mb(rss_final.saturating_sub(rss_after_drop)));
+        println!(
+            "    Before load:   {:.1} MB (+{:.1} MB from baseline)",
+            mb(rss_before_load),
+            mb(rss_before_load - rss_baseline)
+        );
+        println!(
+            "    After load:    {:.1} MB (+{:.1} MB from before load)",
+            mb(rss_after_load),
+            mb(rss_after_load.saturating_sub(rss_before_load))
+        );
+        println!(
+            "    After warmup:  {:.1} MB (+{:.1} MB from after load)",
+            mb(rss_after_warmup),
+            mb(rss_after_warmup.saturating_sub(rss_after_load))
+        );
+        println!(
+            "    Final:         {:.1} MB (+{:.1} MB from after warmup)",
+            mb(rss_final),
+            mb(rss_final.saturating_sub(rss_after_warmup))
+        );
+        println!(
+            "    After drop:    {:.1} MB ({:.1} MB freed)",
+            mb(rss_after_drop),
+            mb(rss_final.saturating_sub(rss_after_drop))
+        );
     }
 
     println!("\n=== Done ===");
