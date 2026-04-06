@@ -317,6 +317,8 @@ name = "benchmarks"
 version = "0.1.8"
 dependencies = [
  "mach2",
+ "mtl-rs",
+ "objc2",
  "serde",
  "sysinfo",
  "uzu",

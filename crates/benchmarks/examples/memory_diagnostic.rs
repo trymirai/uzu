@@ -7,6 +7,93 @@ use uzu::session::{
     types::{Input, Message, Output},
 };
 
+#[cfg(target_os = "macos")]
+fn print_metal_device_info() {
+    use core::mem::transmute;
+    use metal::{MTLDevice, MTLDeviceExt};
+    use objc2::{ffi::objc_msgSend, runtime::{NSObjectProtocol, Sel}, sel};
+
+    let device = <dyn MTLDevice>::system_default().expect("No Metal device");
+
+    let name = device.name();
+    println!("[Metal] Device name: {name}");
+
+    unsafe fn query_bool(
+        device: &objc2::runtime::ProtocolObject<dyn MTLDevice>,
+        selector: Sel,
+    ) -> Option<bool> {
+        if device.respondsToSelector(selector) {
+            let send: unsafe extern "C" fn(*const objc2::runtime::AnyObject, Sel) -> bool =
+                unsafe { transmute(objc_msgSend as *const ()) };
+            Some(unsafe {
+                send(
+                    device as *const _ as *const objc2::runtime::AnyObject,
+                    selector,
+                )
+            })
+        } else {
+            None
+        }
+    }
+
+    unsafe fn query_u32(
+        device: &objc2::runtime::ProtocolObject<dyn MTLDevice>,
+        selector: Sel,
+    ) -> Option<u32> {
+        if device.respondsToSelector(selector) {
+            let send: unsafe extern "C" fn(*const objc2::runtime::AnyObject, Sel) -> u32 =
+                unsafe { transmute(objc_msgSend as *const ()) };
+            Some(unsafe {
+                send(
+                    device as *const _ as *const objc2::runtime::AnyObject,
+                    selector,
+                )
+            })
+        } else {
+            None
+        }
+    }
+
+    unsafe fn query_u64(
+        device: &objc2::runtime::ProtocolObject<dyn MTLDevice>,
+        selector: Sel,
+    ) -> Option<u64> {
+        if device.respondsToSelector(selector) {
+            let send: unsafe extern "C" fn(*const objc2::runtime::AnyObject, Sel) -> u64 =
+                unsafe { transmute(objc_msgSend as *const ()) };
+            Some(unsafe {
+                send(
+                    device as *const _ as *const objc2::runtime::AnyObject,
+                    selector,
+                )
+            })
+        } else {
+            None
+        }
+    }
+
+    unsafe {
+        if let Some(cores) = query_u32(&device, sel!(gpuCoreCount)) {
+            println!("[Metal] GPU cores: {cores}");
+        }
+        if let Some(mem) = query_u64(&device, sel!(sharedMemorySize)) {
+            println!("[Metal] Shared memory: {:.1} GB", mem as f64 / 1024.0 / 1024.0 / 1024.0);
+        }
+        match query_bool(&device, sel!(supportsMXU)) {
+            Some(v) => println!("[Metal] Supports MXU: {v}"),
+            None => println!("[Metal] Supports MXU: N/A (selector not found)"),
+        }
+        match query_bool(&device, sel!(supportsSIMDGroupMatrix)) {
+            Some(v) => println!("[Metal] Supports SIMD Group Matrix: {v}"),
+            None => println!("[Metal] Supports SIMD Group Matrix: N/A"),
+        }
+        match query_bool(&device, sel!(supportsSIMDGroup)) {
+            Some(v) => println!("[Metal] Supports SIMD Group: {v}"),
+            None => println!("[Metal] Supports SIMD Group: N/A"),
+        }
+    }
+}
+
 const DEFAULT_REPO_ID: &str = "google/gemma-3-1b-it";
 
 #[cfg(target_os = "macos")]
@@ -103,6 +190,9 @@ fn main() {
     println!("=== Memory Diagnostic ===");
     println!("Repo: {repo_id}");
     println!("Iterations: {num_iterations}");
+    println!();
+
+    print_metal_device_info();
     println!();
 
     let model_path = download_model(&repo_id);

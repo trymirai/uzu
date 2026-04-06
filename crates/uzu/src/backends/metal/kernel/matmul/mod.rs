@@ -25,6 +25,7 @@ use crate::{
     },
 };
 
+pub mod benchmark;
 mod gemm;
 mod gemm_mpp;
 mod gemv;
