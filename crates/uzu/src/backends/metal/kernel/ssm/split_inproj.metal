@@ -17,16 +17,16 @@ PUBLIC KERNEL(SplitInProj)(
     const uint row AXIS(suffix_length, 16),
     const uint col AXIS(total_dim, 16)
 ) {
-  const int input_idx = row * total_dim + col;
+  const uint input_idx = row * total_dim + col;
   if (col < conv_dim) {
-    const int dst = row * conv_dim + col;
+    const uint dst = row * conv_dim + col;
     conv_out[dst] = input[input_idx];
   } else if (col < conv_dim + inner_dim) {
-    const int dst = row * inner_dim + (col - conv_dim);
-    const int bias_idx = col - conv_dim;
+    const uint dst = row * inner_dim + (col - conv_dim);
+    const uint bias_idx = col - conv_dim;
     z_out[dst] = input[input_idx] + z_bias[bias_idx];
   } else if (col < conv_dim + inner_dim + num_heads) {
-    const int dst = row * num_heads + (col - conv_dim - inner_dim);
+    const uint dst = row * num_heads + (col - conv_dim - inner_dim);
     dt_out[dst] = input[input_idx];
   }
 }

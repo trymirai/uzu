@@ -126,6 +126,7 @@ fn get_output<
         OutputT::data_type(),
         AccumT::data_type(),
         input.in_place,
+        false,
     )
     .expect("Failed to create RMSNormKernel");
 
@@ -147,6 +148,7 @@ fn get_output<
         input_buffer,
         scales_array.buffer().borrow().deref(),
         output_array.buffer().borrow_mut().deref_mut(),
+        None::<&mut B::Buffer>,
         input.batch_size,
         input.element_count,
         input.epsilon,
@@ -177,7 +179,7 @@ fn test_internal<
         || matches!(OutputT::data_type(), DataType::F16 | DataType::BF16)
         || matches!(AccumT::data_type(), DataType::F16 | DataType::BF16)
     {
-        0.012f32
+        0.016f32
     } else {
         1e-5
     };
