@@ -48,9 +48,13 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                     };
 
                     let val_a = (*input.add(i * in_vec_size + l)).to_f32().unwrap();
-                    let scale = (*scales.add(j * num_groups_k + group_idx)).to_f32().unwrap();
+                    let scale_t = *scales.add(j * num_groups_k + group_idx);
 
-                    let bias = if use_zero_points {
+                    // Dequantize in f32 to serve as a precision-neutral reference.
+                    // Metal dequantizes in bf16/f16 which rounds differently across
+                    // GPU hardware; computing in f32 avoids biasing toward any
+                    // particular rounding pattern.
+                    let w_dequant_f32 = if use_zero_points {
                         let zp = zero_points.unwrap();
                         let zp_val = if bits == 4 {
                             let byte_index = j * zp_stride + (group_idx >> 1);
@@ -63,14 +67,15 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                         } else {
                             *zp.add(j * zp_stride + group_idx) as f32
                         };
-                        -scale * zp_val
+                        scale_t.to_f32().unwrap() * (val_q - zp_val)
                     } else if use_mlx_quant {
-                        (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
+                        let bias_t = *biases.unwrap().add(j * num_groups_k + group_idx);
+                        scale_t.to_f32().unwrap() * val_q + bias_t.to_f32().unwrap()
                     } else {
                         0.0f32
                     };
 
-                    acc += val_a * (scale * val_q + bias);
+                    acc += val_a * w_dequant_f32;
                 }
 
                 *output.add(i * out_vec_size + j) = T::from(acc).unwrap();
