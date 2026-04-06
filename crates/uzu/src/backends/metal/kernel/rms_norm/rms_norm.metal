@@ -26,6 +26,7 @@ PUBLIC KERNEL(RMSNorm)(
     constant bool& full_layer,
     const bool in_place SPECIALIZE,
     const bool copy_to_shortcut SPECIALIZE,
+    const bool residual_add SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -42,7 +43,7 @@ PUBLIC KERNEL(RMSNorm)(
 
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
-  // Compute thread local partial sum (+ copy to shortcut if enabled)
+  // Compute thread local partial sum (+ residual add or copy to shortcut)
   for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
        base_i += BLOCK_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
@@ -51,10 +52,13 @@ PUBLIC KERNEL(RMSNorm)(
       uint i = base_i + j;
       if (i < element_count) {
         InputT val = input_data[i];
-        vals[j] = static_cast<AccumT>(val);
         if (copy_to_shortcut) {
+          if (residual_add) {
+            val = val + shortcut_buffer[input_offset + i];
+          }
           shortcut_buffer[input_offset + i] = val;
         }
+        vals[j] = static_cast<AccumT>(val);
       } else {
         vals[j] = 0.0f;
       }
@@ -84,10 +88,18 @@ PUBLIC KERNEL(RMSNorm)(
     AccumT vals[GRAIN_SIZE];
     AccumT scaled_vals[GRAIN_SIZE];
 
-    // Load GRAIN_SIZE input elements
+    // Load GRAIN_SIZE input elements (from shortcut if residual_add, since it
+    // has the sum)
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+      if (residual_add) {
+        vals[j] = (i < element_count)
+                      ? static_cast<AccumT>(shortcut_buffer[input_offset + i])
+                      : 0.0f;
+      } else {
+        vals[j] =
+            (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+      }
     }
 
     // Process GRAIN_SIZE elements: normalize and scale

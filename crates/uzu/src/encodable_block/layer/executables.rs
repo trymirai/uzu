@@ -1,15 +1,18 @@
 //! Layer executables - a single decoder layer with mixer, norms, and MLP.
 
+#[cfg(feature = "tracing")]
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use super::MixerExecutables;
+#[cfg(feature = "tracing")]
+use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
 use crate::{
     DataType,
     backends::common::{Backend, Encoder},
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer,
-        TensorAddSwap,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -19,10 +22,11 @@ use crate::{
 pub struct LayerExecutables<B: Backend> {
     #[cfg(feature = "tracing")]
     pub layer_index: usize,
+    #[cfg(feature = "tracing")]
+    pub tensor_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     pub pre_attention_norm: RMSNorm<B>,
     pub(crate) mixer: MixerExecutables<B>,
     pub post_attention_norm: Option<RMSNorm<B>>,
-    pub main_shortcut_add_swap: TensorAddSwap<B>,
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
@@ -50,11 +54,11 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
             MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
-        let shortcut_copy = if layer_index == 0 {
-            Some(ArrayId::Shortcut)
-        } else {
-            None
-        };
+
+        #[cfg(feature = "tracing")]
+        let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
+            .expect("Failed to create TensorAddBiasKernel kernel"); // TODO: this function return Result
+
         let pre_attention_norm = RMSNorm::new(
             context,
             intermediate_data_type,
@@ -62,7 +66,8 @@ impl<B: Backend> LayerExecutables<B> {
             ArrayId::Main,
             ArrayId::Main,
             &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
-            shortcut_copy,
+            Some(ArrayId::Shortcut),
+            layer_index > 0,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -215,15 +220,13 @@ impl<B: Backend> LayerExecutables<B> {
                     ArrayId::Main,
                     &decoder_layer_loader.subtree("post_mixer_norm").unwrap(),
                     None,
+                    false,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
         } else {
             None
         };
-
-        let main_shortcut_add_swap =
-            TensorAddSwap::<B>::new(context, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
 
         let pre_mlp_norm = RMSNorm::new(
             context,
@@ -232,7 +235,8 @@ impl<B: Backend> LayerExecutables<B> {
             ArrayId::Main,
             ArrayId::Main,
             &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-            None,
+            Some(ArrayId::Shortcut),
+            true,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -255,6 +259,7 @@ impl<B: Backend> LayerExecutables<B> {
                     ArrayId::Main,
                     &decoder_layer_loader.subtree("post_mlp_norm").unwrap(),
                     None,
+                    false,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
@@ -265,10 +270,11 @@ impl<B: Backend> LayerExecutables<B> {
         Self {
             #[cfg(feature = "tracing")]
             layer_index,
+            #[cfg(feature = "tracing")]
+            tensor_add,
             pre_attention_norm,
             mixer,
             post_attention_norm,
-            main_shortcut_add_swap,
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
@@ -284,14 +290,10 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
 
-        #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().inputs.clone());
-        }
-
         self.pre_attention_norm.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(encoder, ArrayId::Shortcut, layer_traces.borrow().inputs.clone());
             state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
         }
 
@@ -355,19 +357,13 @@ impl<B: Backend> LayerExecutables<B> {
                 state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_attention_norm.clone());
             }
         }
-        //main = attention_result
-
-        self.main_shortcut_add_swap.encode(state, encoder)?;
-        // shortcut = input + attention_result
-        // main = input + attention_result
-        #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
-        }
+        // main = attention_result
 
         self.pre_mlp_norm.encode(state, encoder)?;
+        // shortcut = attention_result + shortcut; main = normalized(shortcut)
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(encoder, ArrayId::Shortcut, layer_traces.borrow().mlp_inputs.clone());
             state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
@@ -385,13 +381,22 @@ impl<B: Backend> LayerExecutables<B> {
             }
         }
         // main = mlp_result
+        // next layer's pre_attention_norm (or output_norm) fuses the residual add
 
-        self.main_shortcut_add_swap.encode(state, encoder)?;
-        // shortcut = input + attention_result + mlp_result
-        // main = input + attention_result + mlp_result
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().outputs.clone());
+            let size = state.array(ArrayId::Main).shape().into_iter().copied().product::<usize>() as u32;
+            let input_a = state.array(ArrayId::Main).buffer();
+            let input_b = state.array(ArrayId::Shortcut).buffer();
+            let output = layer_traces.borrow().outputs.buffer();
+            self.tensor_add.encode(
+                Some(input_a.borrow().deref()),
+                input_b.borrow().deref(),
+                output.borrow_mut().deref_mut(),
+                size,
+                size,
+                encoder,
+            );
         }
 
         Ok(())
