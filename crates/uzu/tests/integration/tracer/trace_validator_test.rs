@@ -1,33 +1,31 @@
-#![cfg(all(metal_backend, feature = "tracing"))]
+#![cfg(all(feature = "tracing"))]
 
-use uzu::{TraceValidator, backends::metal::Metal};
+use uzu::{TraceValidator, backends::common::Backend};
 
-use crate::common::path::{get_test_model_path, get_traces_path};
+use crate::{
+    common::path::{get_test_model_path, get_traces_path},
+    for_each_non_cpu_backend,
+};
 
-#[test]
-fn test_tracer() {
-    let model_path = get_test_model_path();
-    // Ensure traces file present, otherwise skip
-    let traces_path = get_traces_path();
-    if !traces_path.exists() {
-        println!("Skipping tracer test: traces file missing at {:?}", traces_path);
-        return;
+fn get_colored_text(
+    text: &str,
+    valid: bool,
+) -> String {
+    if valid {
+        format!("\x1b[32m{}\x1b[0m", text)
+    } else {
+        format!("\x1b[31m{}\x1b[0m", text)
     }
+}
 
-    let mut tracer = match TraceValidator::<Metal>::new(&model_path) {
+fn test_tracer_internal<B: Backend>() {
+    let model_path = get_test_model_path();
+    let mut tracer = match TraceValidator::<B>::new(&model_path) {
         Ok(t) => t,
         Err(e) => {
             println!("Failed to create TraceValidator: {:?}", e);
             return;
         },
-    };
-
-    let colored_text = |text: &str, valid: bool| {
-        if valid {
-            format!("\x1b[32m{}\x1b[0m", text)
-        } else {
-            format!("\x1b[31m{}\x1b[0m", text)
-        }
     };
 
     let results = match tracer.run() {
@@ -40,7 +38,7 @@ fn test_tracer() {
 
     for result in results.results.iter() {
         let valid = result.metrics.is_valid();
-        let text = colored_text(
+        let text = get_colored_text(
             if valid {
                 "ok"
             } else {
@@ -50,17 +48,31 @@ fn test_tracer() {
         );
         println!("{}: {}", result.name, text);
         if !valid {
-            println!("{}", colored_text(result.metrics.message().as_str(), false));
+            println!("{}", get_colored_text(result.metrics.message().as_str(), false));
         }
     }
     println!("-------------------------");
     println!(
         "number_of_tokens_violations: {}",
-        colored_text(
+        get_colored_text(
             format!("{} / {}", results.number_of_tokens_violations(), results.number_of_allowed_tokens_violations())
                 .as_str(),
             results.is_valid(),
         )
     );
     println!("tokens_violation_indices: {:?}", results.tokens_violation_indices);
+}
+
+#[test]
+fn test_tracer() {
+    // Ensure traces file present, otherwise skip
+    let traces_path = get_traces_path();
+    if !traces_path.exists() {
+        println!("Skipping tracer test: traces file missing at {:?}", traces_path);
+        return;
+    }
+
+    for_each_non_cpu_backend!(|B| {
+        test_tracer_internal::<B>();
+    })
 }
