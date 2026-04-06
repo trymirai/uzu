@@ -18,12 +18,14 @@ PUBLIC KERNEL(RMSNorm)(
     const device InputT* input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* output,
+    device InputT* shortcut_buffer OPTIONAL(copy_to_shortcut),
     constant uint& batch_size,
     constant uint& element_count,
     constant float& epsilon,
     constant float& scale_offset,
     constant bool& full_layer,
     const bool in_place SPECIALIZE,
+    const bool copy_to_shortcut SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -40,14 +42,22 @@ PUBLIC KERNEL(RMSNorm)(
 
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
-  // Compute thread local partial sum
+  // Compute thread local partial sum (+ copy to shortcut if enabled)
   for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
        base_i += BLOCK_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
 
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      vals[j] = (i < element_count) ? static_cast<AccumT>(input_data[i]) : 0.0f;
+      if (i < element_count) {
+        InputT val = input_data[i];
+        vals[j] = static_cast<AccumT>(val);
+        if (copy_to_shortcut) {
+          shortcut_buffer[input_offset + i] = val;
+        }
+      } else {
+        vals[j] = 0.0f;
+      }
     }
 
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
