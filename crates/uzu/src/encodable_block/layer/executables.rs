@@ -9,7 +9,7 @@ use crate::{
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer,
-        TensorAddSwap, TensorCopy,
+        TensorAddSwap,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -19,7 +19,6 @@ use crate::{
 pub struct LayerExecutables<B: Backend> {
     #[cfg(feature = "tracing")]
     pub layer_index: usize,
-    pub copy_main_to_shortcut: TensorCopy<B>,
     pub pre_attention_norm: RMSNorm<B>,
     pub(crate) mixer: MixerExecutables<B>,
     pub post_attention_norm: Option<RMSNorm<B>>,
@@ -51,9 +50,11 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
             MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
-        let copy_main_to_shortcut =
-            TensorCopy::<B>::new(context, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
-
+        let shortcut_copy = if layer_index == 0 {
+            Some(ArrayId::Shortcut)
+        } else {
+            None
+        };
         let pre_attention_norm = RMSNorm::new(
             context,
             intermediate_data_type,
@@ -61,6 +62,7 @@ impl<B: Backend> LayerExecutables<B> {
             ArrayId::Main,
             ArrayId::Main,
             &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
+            shortcut_copy,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -212,6 +214,7 @@ impl<B: Backend> LayerExecutables<B> {
                     ArrayId::Main,
                     ArrayId::Main,
                     &decoder_layer_loader.subtree("post_mixer_norm").unwrap(),
+                    None,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
@@ -229,6 +232,7 @@ impl<B: Backend> LayerExecutables<B> {
             ArrayId::Main,
             ArrayId::Main,
             &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
+            None,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -250,6 +254,7 @@ impl<B: Backend> LayerExecutables<B> {
                     ArrayId::Main,
                     ArrayId::Main,
                     &decoder_layer_loader.subtree("post_mlp_norm").unwrap(),
+                    None,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
@@ -260,7 +265,6 @@ impl<B: Backend> LayerExecutables<B> {
         Self {
             #[cfg(feature = "tracing")]
             layer_index,
-            copy_main_to_shortcut,
             pre_attention_norm,
             mixer,
             post_attention_norm,
@@ -284,9 +288,6 @@ impl<B: Backend> LayerExecutables<B> {
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().inputs.clone());
         }
-
-        self.copy_main_to_shortcut.encode(state, encoder)?;
-        // shortcut = input
 
         self.pre_attention_norm.encode(state, encoder)?;
         #[cfg(feature = "tracing")]

@@ -18,12 +18,14 @@ pub fn rms_norm<
     #[optional(!in_place)] input: Option<*const InputT>,
     scales: *const ScaleT,
     output: *mut OutputT,
+    #[optional(copy_to_shortcut)] shortcut_buffer: Option<*mut InputT>,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
     scale_offset: f32,
     full_layer: bool,
     #[specialize] in_place: bool,
+    #[specialize] copy_to_shortcut: bool,
 ) {
     let input = match in_place {
         true => output as *const InputT,
@@ -43,8 +45,12 @@ pub fn rms_norm<
         // Compute rms_inv
         let mut sum_sq = AccumT::zero();
         for i in 0..element_count {
-            let input_val = unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() };
-            sum_sq = sum_sq + input_val * input_val;
+            let input_val = unsafe { *input.add(batch_offset + i) };
+            let accum_val = AccumT::from(input_val).unwrap();
+            sum_sq = sum_sq + accum_val * accum_val;
+            if copy_to_shortcut {
+                unsafe { *shortcut_buffer.unwrap().add(batch_offset + i) = input_val };
+            }
         }
         let mean_sq: AccumT = sum_sq / element_count_accum;
         let rms_inv = AccumT::from((mean_sq + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
