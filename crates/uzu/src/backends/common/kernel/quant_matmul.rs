@@ -448,6 +448,7 @@ fn select_matrix_matrix_family(
         let aligned_n = configuration.output_dim % 32 == 0;
         let use_64x64 = aligned_n
             && configuration.data_type == DataType::BF16
+            && configuration.quantization_type == QuantizedMatmulType::ZeroPoint
             && matches!(configuration.group_size, 64 | 128)
             && matches!(bits, 4 | 8);
         if use_64x64 {
