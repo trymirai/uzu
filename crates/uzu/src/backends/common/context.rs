@@ -50,4 +50,15 @@ pub trait Context: Sized {
     fn tf32_enabled() -> bool {
         env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
     }
+
+    /// Push a backend-specific resource pool scope.
+    ///
+    /// On Metal this pushes an ObjC autorelease pool. On CPU this is a no-op.
+    /// Every `push_resource_pool` must be paired with a `drain_resource_pool`
+    /// in LIFO order.
+    fn push_resource_pool(&self) {}
+
+    /// Drain the most recently pushed resource pool, releasing any temporary
+    /// backend resources accumulated since the matching `push_resource_pool`.
+    fn drain_resource_pool(&self) {}
 }

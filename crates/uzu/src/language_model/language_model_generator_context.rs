@@ -139,6 +139,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         model_metadata: &ModelMetadata,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
+        context.push_resource_pool();
 
         // Extract language model config
         let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
@@ -192,6 +193,8 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let async_buffers = AsyncBuffers::new(context.as_ref(), max_prefix_length, async_batch_size);
 
         let seed = PRng::new(decoding_config.sampling_seed.resolve());
+
+        context.drain_resource_pool();
 
         let context = Self {
             context,

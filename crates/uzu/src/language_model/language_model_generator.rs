@@ -457,6 +457,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         on_complete: Box<dyn FnOnce(u64) + Send>,
     ) -> Result<(), Error> {
         assert_eq!(self.decoding_config.generate_suffix_length(), 1, "async_generate only supports suffix_length=1");
+        self.context.context.push_resource_pool();
 
         // Extract values from async_buffers before mutable borrow
         let current_counter = self.context.async_buffers.counter.get();
@@ -591,6 +592,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
+        self.context.context.drain_resource_pool();
         Ok(())
     }
 
@@ -706,6 +708,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         allow_pre_encode: bool,
         sampling_method: SamplingMethod,
     ) -> Result<(ForwardPassState<B>, f64), Error> {
+        self.context.context.push_resource_pool();
         let run_start = Instant::now();
 
         let mut state = ForwardPassState::new_llm(
@@ -784,6 +787,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
+        self.context.context.drain_resource_pool();
         Ok((state, run_time))
     }
 

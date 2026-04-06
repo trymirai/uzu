@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ffi::c_void, path::Path, rc::Rc};
 
 use metal::{
     MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
@@ -29,6 +29,7 @@ pub struct MetalContext {
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    autorelease_pool_stack: RefCell<Vec<*mut c_void>>,
 }
 
 impl MetalContext {
@@ -77,6 +78,7 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            autorelease_pool_stack: RefCell::new(Vec::new()),
         }))
     }
 
@@ -166,5 +168,16 @@ impl Context for MetalContext {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())
+    }
+
+    fn push_resource_pool(&self) {
+        let handle = unsafe { objc2::ffi::objc_autoreleasePoolPush() };
+        self.autorelease_pool_stack.borrow_mut().push(handle);
+    }
+
+    fn drain_resource_pool(&self) {
+        if let Some(handle) = self.autorelease_pool_stack.borrow_mut().pop() {
+            unsafe { objc2::ffi::objc_autoreleasePoolPop(handle) };
+        }
     }
 }
