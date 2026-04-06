@@ -1,7 +1,7 @@
 #include <metal_stdlib>
+#include "../activation/activations.h"
 #include "../common/defines.h"
 #include "../common/dsl.h"
-#include "../ssm/ssm_common.h"
 
 using namespace metal;
 
@@ -88,7 +88,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
 
     float a_raw =
         float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
-    float sp = softplus(a_raw + float(dt_bias[hv]));
+    float sp = activate_softplus(a_raw + float(dt_bias[hv]));
     float decay = fast::exp(-fast::exp(float(a_log[hv])) * sp);
 
     beta_out[token_idx * num_v_heads + hv] = beta;

@@ -1,64 +1,46 @@
-#![cfg(metal_backend)]
-
-use std::mem::size_of;
-
-use bytemuck;
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::runtime::ProtocolObject;
-
-use crate::{
-    DataType,
-    backends::{
-        common::{
-            Backend, Context, Encoder, Kernels,
-            gpu_types::ActivationType,
-            kernel::{
-                Conv1dScanKernel,
-                ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
-            },
-        },
-        metal::Metal,
-    },
+use std::{
+    mem::size_of,
+    ops::{Deref, DerefMut},
 };
 
-const STORAGE_MODE: MTLResourceOptions = MTLResourceOptions::STORAGE_MODE_SHARED;
+use uzu::backends::common::Buffer;
 
-fn silu_scalar(x: f32) -> f32 {
-    let y = 1.0 / (1.0 + (-x).exp());
-    x * y
-}
+use crate::{
+    ArrayContextExt, DataType,
+    backends::common::{
+        Backend, Context, Encoder, Kernels,
+        gpu_types::ActivationType,
+        kernel::{
+            Conv1dScanKernel,
+            ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
+        },
+    },
+    for_each_non_cpu_backend,
+};
 
-fn softplus_f32(x: f32) -> f32 {
-    if x > 20.0 {
-        x
-    } else {
-        (1.0 + x.exp()).ln()
-    }
-}
-
-fn write_buffer(
-    buf: &ProtocolObject<dyn MTLBuffer>,
+fn write_buffer<B: Backend>(
+    buf: &B::Buffer,
     data: &[f32],
 ) {
     unsafe {
-        std::ptr::copy_nonoverlapping(data.as_ptr(), buf.contents().as_ptr() as *mut f32, data.len());
+        std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cpu_ptr().as_ptr() as *mut f32, data.len());
     }
 }
 
-fn read_buffer(
-    buf: &ProtocolObject<dyn MTLBuffer>,
+fn read_buffer<B: Backend>(
+    buf: &B::Buffer,
     len: usize,
 ) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
     unsafe {
-        std::ptr::copy_nonoverlapping(buf.contents().as_ptr() as *const f32, out.as_mut_ptr(), len);
+        std::ptr::copy_nonoverlapping(buf.cpu_ptr().as_ptr() as *const f32, out.as_mut_ptr(), len);
     }
     out
 }
 
-fn zero_buffer(buf: &ProtocolObject<dyn MTLBuffer>) {
+fn zero_buffer<B: Backend>(buf: &B::Buffer) {
     unsafe {
-        std::ptr::write_bytes(buf.contents().as_ptr(), 0, buf.length() as usize);
+        std::ptr::write_bytes(buf.cpu_ptr().as_ptr(), 0, buf.length());
     }
 }
 
@@ -96,10 +78,10 @@ fn ssd_prefill_cpu_reference(
 
                 let x_val = x_data[x_idx];
                 let dt_raw = dt_raw_data[dt_idx];
-                let dt_val = softplus_f32(dt_raw);
+                let dt_val = ActivationType::SOFTPLUS.activate(dt_raw);
                 let decay_val = (-dt_val).exp();
                 let dt_scaled_input = x_val;
-                let gate = silu_scalar(z_data[x_idx]);
+                let gate = ActivationType::SILU.activate(z_data[x_idx]);
                 let mut acc = d_data[h] * x_val;
 
                 for s in 0..state_dim {
@@ -196,49 +178,65 @@ impl SSDPrefillFixture {
     }
 }
 
-fn run_prefill_kernel_mode(
-    ctx: &<Metal as Backend>::Context,
-    kernel: &SSDPrefillKernels<Metal>,
+fn run_prefill_kernel_mode<B: Backend>(
+    ctx: &B::Context,
+    kernel: &SSDPrefillKernels<B>,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
-    let device = &ctx.device;
-    let x_buf = device
-        .new_buffer_with_data(bytemuck::cast_slice(&fixture.x_data), STORAGE_MODE)
-        .expect("Failed to create buffer");
-    let dt_buf = device
-        .new_buffer_with_data(bytemuck::cast_slice(&fixture.dt_data), STORAGE_MODE)
-        .expect("Failed to create buffer");
-    let b_buf = device
-        .new_buffer_with_data(bytemuck::cast_slice(&fixture.b_data), STORAGE_MODE)
-        .expect("Failed to create buffer");
-    let c_buf = device
-        .new_buffer_with_data(bytemuck::cast_slice(&fixture.c_data), STORAGE_MODE)
-        .expect("Failed to create buffer");
-    let d_buf = device
-        .new_buffer_with_data(bytemuck::cast_slice(&fixture.d_data), STORAGE_MODE)
-        .expect("Failed to create buffer");
-    let z_buf = device
-        .new_buffer_with_data(bytemuck::cast_slice(&fixture.z_data), STORAGE_MODE)
-        .expect("Failed to create buffer");
-    let mut state_buf = device.new_buffer(fixture.total_state * 4, STORAGE_MODE).expect("Failed to create buffer");
-    let mut y_buf = device.new_buffer(fixture.total_x * 4, STORAGE_MODE).expect("Failed to create buffer");
+    let x_array = ctx.create_array_from(&[fixture.x_data.len()], &fixture.x_data, "");
+    let x_array_buf = x_array.buffer();
+    let x_array_buf_borrow = x_array_buf.borrow();
+    let x_buf = x_array_buf_borrow.deref();
 
-    write_buffer(&state_buf, &fixture.state_init);
-    zero_buffer(&y_buf);
+    let dt_array = ctx.create_array_from(&[fixture.dt_data.len()], &fixture.dt_data, "");
+    let dt_array_buf = dt_array.buffer();
+    let dt_array_buf_borrow = dt_array_buf.borrow();
+    let dt_buf = dt_array_buf_borrow.deref();
 
-    let args = SSDPrefillArguments::<Metal> {
-        x: &x_buf,
-        dt: &dt_buf,
-        b: &b_buf,
-        c: &c_buf,
-        d: &d_buf,
-        z: &z_buf,
-        state: &mut state_buf,
-        y: &mut y_buf,
+    let b_array = ctx.create_array_from(&[fixture.b_data.len()], &fixture.b_data, "");
+    let b_array_buf = b_array.buffer();
+    let b_array_buf_borrow = b_array_buf.borrow();
+    let b_buf = b_array_buf_borrow.deref();
+
+    let c_array = ctx.create_array_from(&[fixture.c_data.len()], &fixture.c_data, "");
+    let c_array_buf = c_array.buffer();
+    let c_array_buf_borrow = c_array_buf.borrow();
+    let c_buf = c_array_buf_borrow.deref();
+
+    let d_array = ctx.create_array_from(&[fixture.d_data.len()], &fixture.d_data, "");
+    let d_array_buf = d_array.buffer();
+    let d_array_buf_borrow = d_array_buf.borrow();
+    let d_buf = d_array_buf_borrow.deref();
+
+    let z_array = ctx.create_array_from(&[fixture.z_data.len()], &fixture.z_data, "");
+    let z_array_buf = z_array.buffer();
+    let z_array_buf_borrow = z_array_buf.borrow();
+    let z_buf = z_array_buf_borrow.deref();
+
+    let state_array = ctx.create_array_from(&[fixture.state_init.len()], &fixture.state_init, "");
+    let state_array_buf = state_array.buffer();
+    let mut state_array_buf_borrow = state_array_buf.borrow_mut();
+    let state_buf = state_array_buf_borrow.deref_mut();
+
+    let y = vec![0f32; fixture.total_x];
+    let y_array = ctx.create_array_from(&[y.len()], &y, "");
+    let y_array_buf = y_array.buffer();
+    let mut y_array_buf_borrow = y_array_buf.borrow_mut();
+    let y_buf = y_array_buf_borrow.deref_mut();
+
+    let args = SSDPrefillArguments::<B> {
+        x: x_buf,
+        dt: dt_buf,
+        b: b_buf,
+        c: c_buf,
+        d: d_buf,
+        z: z_buf,
+        state: state_buf,
+        y: y_buf,
         suffix_len: fixture.suffix_len,
-        group_size: fixture.group_size,
-        state_size: fixture.state_dim as i32,
+        group_size: fixture.group_size as u32,
+        state_size: fixture.state_dim as u32,
         x_strides: fixture.x_strides,
         dt_strides: fixture.dt_strides,
         cb_strides: fixture.cb_strides,
@@ -251,14 +249,14 @@ fn run_prefill_kernel_mode(
     kernel.encode(&mut encoder, args, mode);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = read_buffer(&y_buf, fixture.total_x);
-    let state_vec = read_buffer(&state_buf, fixture.total_state);
+    let y_vec = read_buffer::<B>(y_buf, fixture.total_x);
+    let state_vec = read_buffer::<B>(state_buf, fixture.total_state);
     (y_vec, state_vec, None)
 }
 
-fn run_conv_scan_once(
-    ctx: &<Metal as Backend>::Context,
-    kernel: &<<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel,
+fn run_conv_scan_once<B: Backend>(
+    ctx: &<B as Backend>::Context,
+    kernel: &<<B as Backend>::Kernels as Kernels>::Conv1dScanKernel,
     suffix_len: usize,
     channels: usize,
     kernel_size: i32,
@@ -270,39 +268,40 @@ fn run_conv_scan_once(
     use_scratch: bool,
     alias_io: bool,
 ) -> (Vec<f32>, Vec<f32>) {
-    let device = &ctx.device;
     let total_x = suffix_len * channels;
     let _total_w = channels * kernel_size as usize;
     let total_state = channels * tap_count;
 
-    let mut y_buf = if alias_io {
-        device.new_buffer_with_data(bytemuck::cast_slice(x_data), STORAGE_MODE).expect("Failed to create buffer")
+    let y_array = if alias_io {
+        ctx.create_array_from(&[x_data.len()], x_data, "")
     } else {
-        let buf = device.new_buffer(total_x * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer");
-        zero_buffer(&buf);
-        buf
+        ctx.create_array_zeros(&[total_x], DataType::F32, "")
     };
-    let w_buf =
-        device.new_buffer_with_data(bytemuck::cast_slice(w_data), STORAGE_MODE).expect("Failed to create buffer");
-    let b_buf =
-        device.new_buffer_with_data(bytemuck::cast_slice(b_data), STORAGE_MODE).expect("Failed to create buffer");
-    let mut state_buf =
-        device.new_buffer(total_state * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer");
-    let scratch_buf = if use_scratch && tap_count > 0 {
-        Some(device.new_buffer(total_state * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer"))
-    } else {
-        None
-    };
+    let b_out_array = ctx.create_array_zeros(&[total_x], DataType::F32, "");
+    let c_out_array = ctx.create_array_zeros(&[total_x], DataType::F32, "");
 
-    write_buffer(&state_buf, state_init);
-    if let Some(ref scratch) = scratch_buf {
-        zero_buffer(scratch);
+    let w_array = ctx.create_array_from(&[w_data.len()], w_data, "");
+    let b_array = ctx.create_array_from(&[b_data.len()], b_data, "");
+
+    let state_array = ctx.create_array_uninitialized(&[total_state], DataType::F32, "");
+    let scratch_array = ctx.create_array_uninitialized(&[total_state], DataType::F32, "");
+
+    {
+        let state_buf = state_array.buffer();
+        let state_borrow = state_buf.borrow();
+        write_buffer::<B>(state_borrow.deref(), state_init);
+        if use_scratch && tap_count > 0 {
+            let scratch_buf = scratch_array.buffer();
+            let scratch_borrow = scratch_buf.borrow();
+            zero_buffer::<B>(scratch_borrow.deref());
+        }
     }
 
     let padded_len = tap_count + suffix_len;
-    let padded_buf =
-        device.new_buffer(padded_len * channels * size_of::<f32>(), STORAGE_MODE).expect("Failed to create buffer");
+    let padded_array = ctx.create_array_uninitialized(&[padded_len * channels], DataType::F32, "");
     {
+        let padded_buf = padded_array.buffer();
+        let padded_borrow = padded_buf.borrow();
         let mut host = vec![0.0f32; padded_len * channels];
         for tap in 0..tap_count {
             for ch in 0..channels {
@@ -314,67 +313,89 @@ fn run_conv_scan_once(
                 host[(tap_count + token) * channels + ch] = x_data[token * channels + ch];
             }
         }
-        write_buffer(&padded_buf, &host);
+        write_buffer::<B>(padded_borrow.deref(), &host);
     }
 
     let mut encoder = Encoder::new(ctx).unwrap();
-    let mut b_out = y_buf.clone();
-    let mut c_out = y_buf.clone();
-    let mut state_out = scratch_buf.as_ref().unwrap_or(&state_buf).clone();
-    kernel.encode(
-        &padded_buf,
-        &w_buf,
-        Some(&b_buf),
-        &mut y_buf,
-        &mut b_out,
-        &mut c_out,
-        &mut state_out,
-        suffix_len as u32,
-        kernel_size as u32,
-        channels as u32,
-        tap_count as u32,
-        channels as u32,
-        channels as u32,
-        0u32,
-        ActivationType::SILU,
-        &mut encoder,
-    );
+    {
+        let padded_buf = padded_array.buffer();
+        let padded_borrow = padded_buf.borrow();
+        let w_buf = w_array.buffer();
+        let w_borrow = w_buf.borrow();
+        let b_buf = b_array.buffer();
+        let b_borrow = b_buf.borrow();
+        let y_buf = y_array.buffer();
+        let mut y_borrow = y_buf.borrow_mut();
+        let b_out_buf = b_out_array.buffer();
+        let mut b_out_borrow = b_out_buf.borrow_mut();
+        let c_out_buf = c_out_array.buffer();
+        let mut c_out_borrow = c_out_buf.borrow_mut();
+        let state_buf = state_array.buffer();
+        let mut state_borrow = state_buf.borrow_mut();
 
-    if let Some(ref scratch) = scratch_buf {
+        kernel.encode(
+            padded_borrow.deref(),
+            w_borrow.deref(),
+            Some(b_borrow.deref()),
+            y_borrow.deref_mut(),
+            b_out_borrow.deref_mut(),
+            c_out_borrow.deref_mut(),
+            state_borrow.deref_mut(),
+            suffix_len as u32,
+            kernel_size as u32,
+            channels as u32,
+            tap_count as u32,
+            channels as u32,
+            channels as u32,
+            0u32,
+            ActivationType::SILU,
+            &mut encoder,
+        );
+    }
+
+    if use_scratch && tap_count > 0 {
         let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            encoder.encode_copy(scratch, 0..bytes, &mut state_buf, 0..bytes);
+            let scratch_buf = scratch_array.buffer();
+            let scratch_borrow = scratch_buf.borrow();
+            let state_buf = state_array.buffer();
+            let mut state_borrow = state_buf.borrow_mut();
+            encoder.encode_copy(scratch_borrow.deref(), 0..bytes, state_borrow.deref_mut(), 0..bytes);
         }
     }
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = read_buffer(&y_buf, total_x);
-    let state_vec = read_buffer(&state_buf, total_state);
+    let y_buf = y_array.buffer();
+    let y_borrow = y_buf.borrow();
+    let state_buf = state_array.buffer();
+    let state_borrow = state_buf.borrow();
+    let y_vec = read_buffer::<B>(y_borrow.deref(), total_x);
+    let state_vec = read_buffer::<B>(state_borrow.deref(), total_state);
     (y_vec, state_vec)
 }
 
-fn assert_deterministic_for_mode(mode: SSDPrefillMode) {
-    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
+fn assert_deterministic_for_mode<B: Backend>(mode: SSDPrefillMode) {
+    let Some(ctx) = <B as Backend>::Context::new().ok() else {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::<Metal>::new(&ctx, DataType::F32).unwrap();
+    let kernel = SSDPrefillKernels::<B>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
-    let (y_a, state_a, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
-    let (y_b, state_b, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+    let (y_a, state_a, _) = run_prefill_kernel_mode::<B>(&ctx, &kernel, &fixture, mode);
+    let (y_b, state_b, _) = run_prefill_kernel_mode::<B>(&ctx, &kernel, &fixture, mode);
 
     assert_eq!(y_a, y_b, "Prefill outputs differ in {:?} mode", mode);
     assert_eq!(state_a, state_b, "Prefill states differ in {:?} mode", mode);
 }
 
-fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
-    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
+fn assert_matches_cpu_reference<B: Backend>(mode: SSDPrefillMode) {
+    let Some(ctx) = <B as Backend>::Context::new().ok() else {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::<Metal>::new(&ctx, DataType::F32).unwrap();
+    let kernel = SSDPrefillKernels::<B>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(
@@ -396,7 +417,7 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
         fixture.state_strides,
     );
 
-    let (y_gpu, state_gpu, _) = run_prefill_kernel_mode(&ctx, &kernel, &fixture, mode);
+    let (y_gpu, state_gpu, _) = run_prefill_kernel_mode::<B>(&ctx, &kernel, &fixture, mode);
 
     let tolerance = 5e-5f32;
     let mut max_y_diff = 0.0f32;
@@ -434,33 +455,12 @@ fn assert_matches_cpu_reference(mode: SSDPrefillMode) {
     );
 }
 
-#[test]
-fn ssd_prefill_sequential_is_deterministic() {
-    assert_deterministic_for_mode(SSDPrefillMode::Sequential);
-}
-
-#[test]
-fn ssd_prefill_single_pass_is_deterministic() {
-    assert_deterministic_for_mode(SSDPrefillMode::SinglePass);
-}
-
-#[test]
-fn ssd_prefill_sequential_matches_cpu_reference() {
-    assert_matches_cpu_reference(SSDPrefillMode::Sequential);
-}
-
-#[test]
-fn ssd_prefill_single_pass_matches_cpu_reference() {
-    assert_matches_cpu_reference(SSDPrefillMode::SinglePass);
-}
-
-#[test]
-fn conv1d_scan_is_deterministic() {
-    let Some(ctx) = <Metal as Backend>::Context::new().ok() else {
+fn conv1d_scan_deterministic_internal<B: Backend>() {
+    let Some(ctx) = <B as Backend>::Context::new().ok() else {
         eprintln!("Skipping conv1d scan determinism test: no Metal device");
         return;
     };
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::Conv1dScanKernel::new(&ctx, DataType::F32, true).unwrap();
+    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dScanKernel::new(&ctx, DataType::F32, true).unwrap();
 
     let suffix_len = 192usize;
     let channels = 8usize;
@@ -478,7 +478,7 @@ fn conv1d_scan_is_deterministic() {
     let use_scratch = tap_count > 0 && suffix_len > 1;
 
     for &alias_io in &[false, true] {
-        let first = run_conv_scan_once(
+        let first = run_conv_scan_once::<B>(
             &ctx,
             &kernel,
             suffix_len,
@@ -492,7 +492,7 @@ fn conv1d_scan_is_deterministic() {
             use_scratch,
             alias_io,
         );
-        let second = run_conv_scan_once(
+        let second = run_conv_scan_once::<B>(
             &ctx,
             &kernel,
             suffix_len,
@@ -510,4 +510,39 @@ fn conv1d_scan_is_deterministic() {
         assert_eq!(first.0, second.0, "Conv outputs differ (alias_io={alias_io})");
         assert_eq!(first.1, second.1, "Conv states differ (alias_io={alias_io})");
     }
+}
+
+#[test]
+fn ssd_prefill_sequential_is_deterministic() {
+    for_each_non_cpu_backend!(|B| {
+        assert_deterministic_for_mode::<B>(SSDPrefillMode::Sequential);
+    });
+}
+
+#[test]
+fn ssd_prefill_single_pass_is_deterministic() {
+    for_each_non_cpu_backend!(|B| {
+        assert_deterministic_for_mode::<B>(SSDPrefillMode::SinglePass);
+    });
+}
+
+#[test]
+fn ssd_prefill_sequential_matches_cpu_reference() {
+    for_each_non_cpu_backend!(|B| {
+        assert_matches_cpu_reference::<B>(SSDPrefillMode::Sequential);
+    });
+}
+
+#[test]
+fn ssd_prefill_single_pass_matches_cpu_reference() {
+    for_each_non_cpu_backend!(|B| {
+        assert_matches_cpu_reference::<B>(SSDPrefillMode::SinglePass);
+    });
+}
+
+#[test]
+fn conv1d_scan_is_deterministic() {
+    for_each_non_cpu_backend!(|B| {
+        conv1d_scan_deterministic_internal::<B>();
+    });
 }

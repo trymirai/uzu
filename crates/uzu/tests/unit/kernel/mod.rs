@@ -19,6 +19,7 @@ mod rms_norm_test;
 mod rope_test;
 mod sampling;
 mod short_conv;
+mod ssm;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
 mod tensor_add_swap_test;
