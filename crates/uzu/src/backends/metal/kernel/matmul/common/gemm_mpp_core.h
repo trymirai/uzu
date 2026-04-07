@@ -36,6 +36,69 @@ struct ThreadgroupGemmMpp {
   METAL_CONST short TILES_N = SIMDGROUP_BLOCK_N / SUBTILE_COLS;
   METAL_CONST short INNER_K_STEPS = PREFETCH_K / MATMUL_K_STEP;
 
+  using AccumulatorType = float;
+
+  template <
+      typename MatmulOperation,
+      typename LeftTensor,
+      typename RightTensor,
+      typename AccumulatorTensor>
+  static METAL_FUNC void accumulate_tiles(
+      const short k_steps,
+      const ushort tile_row_offset,
+      const ushort tile_col_offset,
+      threadgroup T* left_shared,
+      threadgroup T* right_shared,
+      thread MatmulOperation& matmul_operation,
+      thread LeftTensor& left_tensor,
+      thread RightTensor& right_tensor,
+      thread AccumulatorTensor& accumulator_tensor,
+      thread AccumulatorType
+          accumulator_storage[TILES_M * TILES_N][ACCUMULATOR_CAPACITY]
+  ) {
+    METAL_PRAGMA_UNROLL
+    for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
+      METAL_PRAGMA_UNROLL
+      for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
+        const short subtile_index = tile_m * TILES_N + tile_n;
+        const short left_row_base = tile_row_offset + tile_m * SUBTILE_ROWS;
+        const short right_col_base = tile_col_offset + tile_n * SUBTILE_COLS;
+
+        METAL_PRAGMA_UNROLL
+        for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
+          accumulator_tensor[i] = accumulator_storage[subtile_index][i];
+        }
+
+        for (short k_step = 0; k_step < k_steps; k_step++) {
+          const short k_offset = k_step * MATMUL_K_STEP;
+
+          METAL_PRAGMA_UNROLL
+          for (short i = 0; i < left_tensor.get_capacity(); i++) {
+            auto coord = left_tensor.get_multidimensional_index(i);
+            left_tensor[i] = left_shared
+                [(left_row_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                 k_offset];
+          }
+
+          METAL_PRAGMA_UNROLL
+          for (short i = 0; i < right_tensor.get_capacity(); i++) {
+            auto coord = right_tensor.get_multidimensional_index(i);
+            right_tensor[i] = right_shared
+                [(right_col_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                 k_offset];
+          }
+
+          matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
+        }
+
+        METAL_PRAGMA_UNROLL
+        for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
+          accumulator_storage[subtile_index][i] = accumulator_tensor[i];
+        }
+      }
+    }
+  }
+
   static METAL_FUNC void run(
       const device T* left_matrix,
       const device T* right_matrix,
@@ -116,9 +179,6 @@ struct ThreadgroupGemmMpp {
             ushort(simd_group_id),
             ushort(simd_lane_id)
         );
-
-    // Setup MPP matmul operation
-    using AccumulatorType = float;
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
@@ -204,48 +264,18 @@ struct ThreadgroupGemmMpp {
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
-      METAL_PRAGMA_UNROLL
-      for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
-        METAL_PRAGMA_UNROLL
-        for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
-          const short subtile_index = tile_m * TILES_N + tile_n;
-          const short left_row_base = tile_row_offset + tile_m * SUBTILE_ROWS;
-          const short right_col_base = tile_col_offset + tile_n * SUBTILE_COLS;
-
-          METAL_PRAGMA_UNROLL
-          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
-            accumulator_tensor[i] = accumulator_storage[subtile_index][i];
-          }
-
-          METAL_PRAGMA_UNROLL
-          for (short k_step = 0; k_step < INNER_K_STEPS; k_step++) {
-            const short k_offset = k_step * MATMUL_K_STEP;
-
-            METAL_PRAGMA_UNROLL
-            for (short i = 0; i < left_tensor.get_capacity(); i++) {
-              auto coord = left_tensor.get_multidimensional_index(i);
-              left_tensor[i] = left_shared
-                  [(left_row_base + coord[1]) * THREADGROUP_LD + coord[0] +
-                   k_offset];
-            }
-
-            METAL_PRAGMA_UNROLL
-            for (short i = 0; i < right_tensor.get_capacity(); i++) {
-              auto coord = right_tensor.get_multidimensional_index(i);
-              right_tensor[i] = right_shared
-                  [(right_col_base + coord[1]) * THREADGROUP_LD + coord[0] +
-                   k_offset];
-            }
-
-            matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
-          }
-
-          METAL_PRAGMA_UNROLL
-          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
-            accumulator_storage[subtile_index][i] = accumulator_tensor[i];
-          }
-        }
-      }
+      accumulate_tiles(
+          INNER_K_STEPS,
+          tile_row_offset,
+          tile_col_offset,
+          left_shared,
+          right_shared,
+          matmul_operation,
+          left_tensor,
+          right_tensor,
+          accumulator_tensor,
+          accumulator_storage
+      );
 
       left_loader.next();
       right_loader.next();
@@ -261,47 +291,18 @@ struct ThreadgroupGemmMpp {
       const short remainder_steps =
           short((k_remainder + MATMUL_K_STEP - 1) / MATMUL_K_STEP);
 
-      METAL_PRAGMA_UNROLL
-      for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
-        METAL_PRAGMA_UNROLL
-        for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
-          const short subtile_index = tile_m * TILES_N + tile_n;
-          const short left_row_base = tile_row_offset + tile_m * SUBTILE_ROWS;
-          const short right_col_base = tile_col_offset + tile_n * SUBTILE_COLS;
-
-          METAL_PRAGMA_UNROLL
-          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
-            accumulator_tensor[i] = accumulator_storage[subtile_index][i];
-          }
-
-          for (short k_step = 0; k_step < remainder_steps; k_step++) {
-            const short k_offset = k_step * MATMUL_K_STEP;
-
-            METAL_PRAGMA_UNROLL
-            for (short i = 0; i < left_tensor.get_capacity(); i++) {
-              auto coord = left_tensor.get_multidimensional_index(i);
-              left_tensor[i] = left_shared
-                  [(left_row_base + coord[1]) * THREADGROUP_LD + coord[0] +
-                   k_offset];
-            }
-
-            METAL_PRAGMA_UNROLL
-            for (short i = 0; i < right_tensor.get_capacity(); i++) {
-              auto coord = right_tensor.get_multidimensional_index(i);
-              right_tensor[i] = right_shared
-                  [(right_col_base + coord[1]) * THREADGROUP_LD + coord[0] +
-                   k_offset];
-            }
-
-            matmul_operation.run(left_tensor, right_tensor, accumulator_tensor);
-          }
-
-          METAL_PRAGMA_UNROLL
-          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
-            accumulator_storage[subtile_index][i] = accumulator_tensor[i];
-          }
-        }
-      }
+      accumulate_tiles(
+          remainder_steps,
+          tile_row_offset,
+          tile_col_offset,
+          left_shared,
+          right_shared,
+          matmul_operation,
+          left_tensor,
+          right_tensor,
+          accumulator_tensor,
+          accumulator_storage
+      );
     }
 
     // Store results
