@@ -48,7 +48,10 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 impl MatmulMetalKernel {
-    fn is_mpp_eligible(&self, context: &MetalContext) -> bool {
+    fn is_mpp_eligible(
+        &self,
+        context: &MetalContext,
+    ) -> bool {
         context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
     }
 
