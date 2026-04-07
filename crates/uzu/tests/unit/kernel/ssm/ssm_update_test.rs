@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     x: Box<[T]>,
@@ -252,74 +252,74 @@ fn test_group_per_head<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // f32
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_multi_batch_f32() {
     test_multi_batch::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_state_in_place_f32() {
     test_state_in_place::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_f32() {
     test_large::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_minimal_f32() {
     test_minimal::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_group_per_head_f32() {
     test_group_per_head::<f32>();
 }
 
 // f16
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_multi_batch_f16() {
     test_multi_batch::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_state_in_place_f16() {
     test_state_in_place::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_f16() {
     test_large::<f16>();
 }
 
 // bf16
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_multi_batch_bf16() {
     test_multi_batch::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_state_in_place_bf16() {
     test_state_in_place::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_bf16() {
     test_large::<bf16>();
 }

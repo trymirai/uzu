@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
@@ -101,54 +101,54 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Out-of-place tests
-#[test]
+#[uzu_test]
 fn test_f32() {
     test_internal::<f32>(4, 128, 0.7, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test_internal::<f16>(4, 128, 0.7, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test_internal::<bf16>(4, 128, 0.7, false);
 }
 
 // In-place tests
-#[test]
+#[uzu_test]
 fn test_in_place_f32() {
     test_internal::<f32>(4, 128, 0.7, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_f16() {
     test_internal::<f16>(4, 128, 0.7, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_bf16() {
     test_internal::<bf16>(4, 128, 0.7, true);
 }
 
 // Edge cases
-#[test]
+#[uzu_test]
 fn test_temperature_1_f32() {
     test_internal::<f32>(2, 64, 1.0, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_high_temperature_f32() {
     test_internal::<f32>(2, 64, 100.0, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_low_temperature_f32() {
     test_internal::<f32>(2, 64, 0.1, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_batch_f32() {
     test_internal::<f32>(1, 256, 0.7, false);
 }

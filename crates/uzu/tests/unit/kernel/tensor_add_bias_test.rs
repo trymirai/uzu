@@ -10,6 +10,8 @@ use uzu::{
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
 };
 
+use crate::uzu_test;
+
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,
     bias: Box<[T]>,
@@ -96,32 +98,32 @@ fn test<T: ArrayElement + Float + Debug>(in_place: bool) {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_f32() {
     test::<f32>(false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_in_place() {
     test::<f32>(true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test::<f16>(false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_in_place() {
     test::<f16>(true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test::<bf16>(false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_in_place() {
     test::<bf16>(true);
 }

@@ -15,8 +15,11 @@ use crate::{
             ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
     },
-    for_each_non_cpu_backend,
 };
+
+#[macro_use]
+#[path = "../../../../common/mod.rs"]
+mod common;
 
 fn write_buffer<B: Backend>(
     buf: &B::Buffer,

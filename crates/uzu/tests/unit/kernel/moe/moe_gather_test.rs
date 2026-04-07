@@ -14,7 +14,10 @@ use uzu::{
     },
 };
 
-use crate::common::{assert::assert_eq_float, helpers::create_context};
+use crate::{
+    common::{assert::assert_eq_float, helpers::create_context},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     x: Box<[T]>,
@@ -77,22 +80,22 @@ fn test_gather_internal(
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gather_single_token() {
     test_gather_internal(1, 2, 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_gather_small_batch() {
     test_gather_internal(4, 8, 128);
 }
 
-#[test]
+#[uzu_test]
 fn test_gather_medium_batch() {
     test_gather_internal(16, 32, 256)
 }
 
-#[test]
+#[uzu_test]
 fn test_gather_large_batch() {
     test_gather_internal(64, 128, 512)
 }

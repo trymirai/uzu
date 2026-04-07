@@ -42,6 +42,8 @@ metal = { workspace = true, optional = true }
 [dev-dependencies]
 test-tag.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+criterion-macro.workspace = true
 rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
@@ -93,7 +95,11 @@ path = "tests/integration/mod.rs"
 
 [[test]]
 name = "kernel"
-path = "tests/unit/kernel/mod.rs"
+path = "tests/unit/kernel/test_entry.rs"
+
+[[bench]]
+name = "kernel"
+path = "tests/unit/kernel/bench_entry.rs"
 
 [[test]]
 name = "performance"

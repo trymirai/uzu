@@ -14,6 +14,8 @@ use uzu::{
     },
 };
 
+use crate::uzu_test;
+
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
     batch_size: u32,
@@ -140,49 +142,49 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Out-of-place tests (same data as sampling_test::test_topk_gpu_cpu_match)
-#[test]
+#[uzu_test]
 fn test_f32() {
     test_internal::<f32>(4, 1024, 16, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test_internal::<f16>(4, 1024, 16, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test_internal::<bf16>(4, 1024, 16, false);
 }
 
 // In-place tests
-#[test]
+#[uzu_test]
 fn test_in_place_f32() {
     test_internal::<f32>(4, 1024, 16, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_f16() {
     test_internal::<f16>(4, 1024, 16, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_bf16() {
     test_internal::<bf16>(4, 1024, 16, true);
 }
 
 // Edge cases
-#[test]
+#[uzu_test]
 fn test_single_batch_f32() {
     test_internal::<f32>(1, 1024, 16, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_top_k_1_f32() {
     test_internal::<f32>(4, 1024, 1, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_top_k_equals_vocab_f32() {
     test_internal::<f32>(4, 1024, 1024, false);
 }
