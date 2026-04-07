@@ -10,6 +10,8 @@ use uzu::{
     },
 };
 
+use crate::uzu_test;
+
 struct Config {
     num_heads: u32,
     head_dim: u32,
@@ -81,7 +83,7 @@ fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_sigmoid_gate_f32() {
     run_test::<f32>(&Config {
         num_heads: 8,
@@ -100,7 +102,7 @@ fn test_sigmoid_gate_f32() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_sigmoid_gate_f16() {
     run_test::<f16>(&Config {
         num_heads: 8,
@@ -114,7 +116,7 @@ fn test_sigmoid_gate_f16() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_sigmoid_gate_bf16() {
     run_test::<bf16>(&Config {
         num_heads: 8,

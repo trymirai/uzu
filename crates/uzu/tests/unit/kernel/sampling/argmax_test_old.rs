@@ -15,6 +15,8 @@ use uzu::{
     },
 };
 
+use crate::uzu_test;
+
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
     batch_size: u32,
@@ -149,56 +151,56 @@ fn test_two_pass<T: ArrayElement + Float + Display>(
 }
 
 // Single-pass tests
-#[test]
+#[uzu_test]
 fn test_single_pass_f32() {
     test_single_pass::<f32>(4, 1024);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_pass_f16() {
     test_single_pass::<f16>(4, 1024);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_pass_bf16() {
     test_single_pass::<bf16>(4, 1024);
 }
 
 // Two-pass tests
-#[test]
+#[uzu_test]
 fn test_two_pass_f32() {
     test_two_pass::<f32>(4, 1024);
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_f16() {
     test_two_pass::<f16>(4, 1024);
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_bf16() {
     test_two_pass::<bf16>(4, 1024);
 }
 
 // Large vocab tests (exercises multi-group reduction)
-#[test]
+#[uzu_test]
 fn test_single_pass_large_vocab_f32() {
     test_single_pass::<f32>(4, 128 * 1024);
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_large_vocab_f32() {
     test_two_pass::<f32>(4, 128 * 1024);
 }
 
 // Edge cases
-#[test]
+#[uzu_test]
 fn test_single_batch_f32() {
     test_single_pass::<f32>(1, 1024);
     test_two_pass::<f32>(1, 1024);
 }
 
-#[test]
+#[uzu_test]
 fn test_small_vocab_f32() {
     test_single_pass::<f32>(4, 4);
     test_two_pass::<f32>(4, 4);

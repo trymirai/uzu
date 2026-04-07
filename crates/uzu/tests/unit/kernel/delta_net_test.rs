@@ -17,6 +17,8 @@ use uzu::{
     },
 };
 
+use crate::uzu_test;
+
 fn run_conv_update<B: Backend>(
     in_proj: &[f32],
     w: &[f32],
@@ -118,7 +120,7 @@ fn assert_close(
 
 // DeltaNetConvUpdate
 
-#[test]
+#[uzu_test]
 fn test_delta_net_conv_update_small() {
     let conv_dim = 32;
     let kernel_size = 4;
@@ -140,7 +142,7 @@ fn test_delta_net_conv_update_small() {
 
 // DeltaNetConvScan
 
-#[test]
+#[uzu_test]
 fn test_delta_net_conv_scan() {
     let conv_dim = 32;
     let kernel_size: usize = 4;
@@ -280,7 +282,7 @@ fn test_delta_net_update_impl(
     assert_close(&cpu_state, &gpu_state, 1e-4, 1e-3, &format!("{label} state"));
 }
 
-#[test]
+#[uzu_test]
 fn test_delta_net_update_qwen35_shapes() {
     test_delta_net_update_impl(48, 16, 128, 128, "DeltaNetUpdate Qwen3.5");
 }
@@ -443,12 +445,12 @@ fn test_prefill_norm_gate_impl(
     assert_close(&ref_state, &gpu_state, 1e-3, 1e-2, &format!("{label} state"));
 }
 
-#[test]
+#[uzu_test]
 fn test_delta_net_prefill_qwen35_shapes() {
     test_prefill_norm_gate_impl(48, 16, 128, 128, 32, "Prefill+NormGate Qwen3.5");
 }
 
-#[test]
+#[uzu_test]
 fn test_delta_net_prefill_prep() {
     let num_v_heads = 48usize;
     let num_k_heads = 16usize;
@@ -551,7 +553,7 @@ fn test_delta_net_prefill_prep() {
     assert_close(gpu_decay, &ref_decay, 1e-4, 1e-3, "prep decay");
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn bench_delta_net_prefill() {
     use crate::common::perf::run_perf_with_warmup;

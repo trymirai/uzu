@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
@@ -96,77 +96,77 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Out-of-place tests
-#[test]
+#[uzu_test]
 fn test_f32() {
     test_internal::<f32>(4, 128, 0.1, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test_internal::<f16>(4, 128, 0.1, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test_internal::<bf16>(4, 128, 0.1, false);
 }
 
 // In-place tests
-#[test]
+#[uzu_test]
 fn test_in_place_f32() {
     test_internal::<f32>(4, 128, 0.1, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_f16() {
     test_internal::<f16>(4, 128, 0.1, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_in_place_bf16() {
     test_internal::<bf16>(4, 128, 0.1, true);
 }
 
 // High min_p — filters most tokens
-#[test]
+#[uzu_test]
 fn test_high_min_p_f32() {
     test_internal::<f32>(2, 128, 0.9, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_high_min_p_f16() {
     test_internal::<f16>(2, 128, 0.9, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_high_min_p_bf16() {
     test_internal::<bf16>(2, 128, 0.9, false);
 }
 
 // Low min_p — keeps most tokens
-#[test]
+#[uzu_test]
 fn test_low_min_p_f32() {
     test_internal::<f32>(2, 128, 0.01, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_low_min_p_f16() {
     test_internal::<f16>(2, 128, 0.01, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_low_min_p_bf16() {
     test_internal::<bf16>(2, 128, 0.01, false);
 }
 
 // Single batch
-#[test]
+#[uzu_test]
 fn test_single_batch_f32() {
     test_internal::<f32>(1, 256, 0.1, false);
 }
 
 // Large vocab
-#[test]
+#[uzu_test]
 fn test_large_vocab_f32() {
     test_internal::<f32>(2, 2048, 0.1, false);
 }

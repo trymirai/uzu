@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     queries: Box<[T]>,
@@ -191,65 +191,65 @@ fn test_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // Basic tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
 // Causal tests
-#[test]
+#[uzu_test]
 fn test_causal_f32() {
     test_causal::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_causal_f16() {
     test_causal::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_causal_bf16() {
     test_causal::<bf16>();
 }
 
 // GQA tests
-#[test]
+#[uzu_test]
 fn test_gqa_f32() {
     test_gqa::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_gqa_f16() {
     test_gqa::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_gqa_bf16() {
     test_gqa::<bf16>();
 }
 
 // Head dim 128
-#[test]
+#[uzu_test]
 fn test_head_dim_128_f32() {
     test_head_dim_128::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_head_dim_128_f16() {
     test_head_dim_128::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_head_dim_128_bf16() {
     test_head_dim_128::<bf16>();
 }

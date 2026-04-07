@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT: ArrayElement + Float> {
     qkv: Box<[OutputT]>,
@@ -254,64 +254,64 @@ fn test_addressing<
 }
 
 // Q norm tests
-#[test]
+#[uzu_test]
 fn test_q_norm_f32_f32_f32_f32() {
     test_q_norm::<f32, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_q_norm_f16_f16_f16_f32() {
     test_q_norm::<f16, f16, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_q_norm_f16_f16_f16_f16() {
     test_q_norm::<f16, f16, f16, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_q_norm_bf16_bf16_bf16_f32() {
     test_q_norm::<bf16, bf16, bf16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_q_norm_f32_f16_f32_f32() {
     test_q_norm::<f32, f16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_q_norm_f16_f32_f16_f32() {
     test_q_norm::<f16, f32, f16, f32>();
 }
 
 // K norm tests
-#[test]
+#[uzu_test]
 fn test_k_norm_f32_f32_f32_f32() {
     test_k_norm::<f32, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_k_norm_f16_f16_f16_f32() {
     test_k_norm::<f16, f16, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_k_norm_f16_f16_f16_f16() {
     test_k_norm::<f16, f16, f16, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_k_norm_bf16_bf16_bf16_f32() {
     test_k_norm::<bf16, bf16, bf16, f32>();
 }
 
 // Addressing tests (Q norm should not touch K/V)
-#[test]
+#[uzu_test]
 fn test_addressing_f32_f32_f32_f32() {
     test_addressing::<f32, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_addressing_f16_f16_f16_f32() {
     test_addressing::<f16, f16, f16, f32>();
 }

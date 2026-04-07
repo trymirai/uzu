@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     in_proj: Box<[T]>,
@@ -295,65 +295,65 @@ fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // basic tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
 // large tests
-#[test]
+#[uzu_test]
 fn test_large_f32() {
     test_large::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_f16() {
     test_large::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_bf16() {
     test_large::<bf16>();
 }
 
 // edge: small dimensions
-#[test]
+#[uzu_test]
 fn test_edge_small_f32() {
     test_edge_small::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_small_f16() {
     test_edge_small::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
 }
 
 // edge: kernel_size=1 (no state taps)
-#[test]
+#[uzu_test]
 fn test_edge_kernel_f32() {
     test_edge_kernel::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_kernel_f16() {
     test_edge_kernel::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_kernel_bf16() {
     test_edge_kernel::<bf16>();
 }

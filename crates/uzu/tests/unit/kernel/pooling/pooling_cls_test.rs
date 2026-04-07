@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,
@@ -87,71 +87,71 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Basic tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_internal::<f32>(2, 16, 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_internal::<f16>(2, 16, 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_internal::<bf16>(2, 16, 64);
 }
 
 // Single batch
-#[test]
+#[uzu_test]
 fn test_single_batch_f32() {
     test_internal::<f32>(1, 32, 128);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_batch_f16() {
     test_internal::<f16>(1, 32, 128);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_batch_bf16() {
     test_internal::<bf16>(1, 32, 128);
 }
 
 // Single token sequence
-#[test]
+#[uzu_test]
 fn test_single_token_f32() {
     test_internal::<f32>(2, 1, 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_f16() {
     test_internal::<f16>(2, 1, 64);
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_bf16() {
     test_internal::<bf16>(2, 1, 64);
 }
 
 // Large hidden dim
-#[test]
+#[uzu_test]
 fn test_large_hidden_dim_f32() {
     test_internal::<f32>(2, 8, 512);
 }
 
 // Non-aligned hidden dim
-#[test]
+#[uzu_test]
 fn test_non_aligned_f32() {
     test_internal::<f32>(3, 10, 100);
 }
 
-#[test]
+#[uzu_test]
 fn test_non_aligned_f16() {
     test_internal::<f16>(3, 10, 100);
 }
 
-#[test]
+#[uzu_test]
 fn test_non_aligned_bf16() {
     test_internal::<bf16>(3, 10, 100);
 }
