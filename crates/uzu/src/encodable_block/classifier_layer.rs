@@ -89,6 +89,7 @@ impl<B: Backend> ClassifierLayer<B> {
                 intermediate_data_type,
                 attention_config.query_norm_config.clone(),
                 attention_config.key_norm_config.clone(),
+                attention_config.value_norm_config.clone(),
                 ArrayId::QKV,
                 &layer_loader.subtree("mixer").unwrap(),
                 num_heads,
@@ -239,7 +240,7 @@ impl<B: Backend> ClassifierLayer<B> {
             qk_norm.encode(state, encoder)?;
         }
         self.rope.encode(state, encoder)?;
-        self.attention.encode(state, parameters, encoder)?;
+        self.attention.encode(state, parameters, encoder, false)?;
         self.out_projection.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {

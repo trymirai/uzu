@@ -71,7 +71,9 @@ impl<B: Backend> Attention<B> {
         let mut two_pass_1_kernels = HashMap::new();
         let mut two_pass_2_kernels = HashMap::new();
 
-        for (head_dim, is_trie, is_kv_cache_ring) in iproduct!([64u32, 128u32, 256u32], [false, true], [false, true]) {
+        for (head_dim, is_trie, is_kv_cache_ring) in
+            iproduct!([64u32, 128u32, 256u32, 512u32], [false, true], [false, true])
+        {
             let key = KernelKey {
                 head_dim,
                 is_trie,
@@ -167,6 +169,7 @@ impl<B: Backend> Attention<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
+        skip_kv_update: bool,
     ) -> Result<(), B::Error> {
         let qkv_array = state.array(ArrayId::QKV);
         let queries_array = state.array(ArrayId::RotatedQueries);
@@ -297,8 +300,10 @@ impl<B: Backend> Attention<B> {
         let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
         let sinks_buffer: Option<&B::Buffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
 
-        // Only update KV cache for LLM mode (not for classifiers)
-        if has_kv_cache {
+        // Only update KV cache for LLM mode (not for classifiers).
+        // Skip for KV-shared layers — their cache buffer is aliased to the source layer's
+        // cache, which was already populated. Writing here would overwrite the source layer's data.
+        if has_kv_cache && !skip_kv_update {
             self.update_kv_cache_kernel.encode(
                 Some(rotated_keys_buf_borrow.deref()),
                 qkv_buf_borrow.deref(),

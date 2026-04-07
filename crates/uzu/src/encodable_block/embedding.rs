@@ -93,6 +93,9 @@ enum EmbeddingTying<B: Backend> {
         input_ty: UntiedEmbeddingLookupType<B>,
         output_ty: UntiedEmbeddingReadoutType<B>,
     },
+    LookupOnly {
+        input_ty: UntiedEmbeddingLookupType<B>,
+    },
 }
 
 pub struct Embedding<B: Backend> {
@@ -483,10 +486,76 @@ impl<B: Backend> Embedding<B> {
         })
     }
 
+    /// Creates a lookup-only embedding (no readout weights).
+    /// Used for PLE embed_tokens_per_layer which only needs index-based lookup.
+    pub fn new_lookup_only(
+        context: &B::Context,
+        vocab_size: u32,
+        embedding_dim: u32,
+        config: &EmbeddingConfig,
+        parameter_tree: &ParameterTree<B::Context>,
+    ) -> Result<Self, EmbeddingError<B>> {
+        let common = config.common();
+
+        let tying = match config {
+            EmbeddingConfig::Tied {
+                common: _,
+                precision,
+            }
+            | EmbeddingConfig::Untied {
+                common: _,
+                precision,
+            } => {
+                let data_type = (*precision).into();
+
+                let weights_leaf = parameter_tree.leaf("weights")?;
+                validate_tensor(&weights_leaf, [vocab_size as usize, embedding_dim as usize], data_type)?;
+                let weights = weights_leaf.read_buffer()?;
+
+                let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+
+                EmbeddingTying::LookupOnly {
+                    input_ty: UntiedEmbeddingLookupType::FullPrecision {
+                        weights,
+                        lookup,
+                    },
+                }
+            },
+            _ => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "new_lookup_only only supports Tied/Untied full-precision configs".to_string(),
+                ));
+            },
+        };
+
+        let input_scale = common.input_scale.unwrap_or(1.0);
+
+        if let Some(logit_soft_cap) = common.logit_soft_cap {
+            return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));
+        }
+
+        Ok(Self {
+            tying,
+            input_scale,
+            vocab_size,
+            model_dim: embedding_dim,
+        })
+    }
+
     pub fn encode_lookup(
         &self,
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
+    ) -> Result<(), EmbeddingError<B>> {
+        self.encode_lookup_to(state, encoder, ArrayId::Main)
+    }
+
+    pub fn encode_lookup_to(
+        &self,
+        state: &mut ForwardPassState<B>,
+        encoder: &mut Encoder<B>,
+        output_array_id: ArrayId,
     ) -> Result<(), EmbeddingError<B>> {
         let batch_dim = state.active_row_count() as u32;
 
@@ -495,7 +564,7 @@ impl<B: Backend> Embedding<B> {
         let token_ids_buffer_borrow = token_ids_buffer_rc.borrow();
         let token_ids = token_ids_buffer_borrow.deref();
 
-        let output_array = state.array(ArrayId::Main);
+        let output_array = state.array(output_array_id);
         let output_buffer_rc = output_array.buffer();
         let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
         let output = output_buffer_borrow.deref_mut();
@@ -516,6 +585,13 @@ impl<B: Backend> Embedding<B> {
                         lookup,
                     },
                 output_ty: _,
+            }
+            | EmbeddingTying::LookupOnly {
+                input_ty:
+                    UntiedEmbeddingLookupType::FullPrecision {
+                        weights,
+                        lookup,
+                    },
             } => lookup.encode(
                 token_ids,
                 weights,
@@ -545,6 +621,15 @@ impl<B: Backend> Embedding<B> {
                         lookup,
                     },
                 output_ty: _,
+            }
+            | EmbeddingTying::LookupOnly {
+                input_ty:
+                    UntiedEmbeddingLookupType::Quantized {
+                        weights,
+                        scales,
+                        biases,
+                        lookup,
+                    },
             } => {
                 lookup.encode(
                     token_ids,
@@ -654,6 +739,13 @@ impl<B: Backend> Embedding<B> {
                         batch_dim,
                     },
                 )?;
+            },
+            EmbeddingTying::LookupOnly {
+                ..
+            } => {
+                return Err(EmbeddingError::UnsupportedConfiguration(
+                    "encode_readout called on a LookupOnly embedding (no readout weights loaded)".to_string(),
+                ));
             },
         };
 
