@@ -14,7 +14,7 @@ use uzu::{
     },
 };
 
-use crate::common::helpers::create_context;
+use crate::{common::helpers::create_context, uzu_test};
 
 fn get_output<B: Backend, T: ArrayElement + Float>(
     input: &[T],
@@ -107,7 +107,7 @@ fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_router_topk_fused_matches_reference() {
     let configs =
         [(1usize, 64usize, 32usize, 4usize), (2, 128, 64, 8), (4, 256, 128, 16), (8, 256, 256, 32), (1, 512, 512, 64)];

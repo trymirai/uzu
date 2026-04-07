@@ -37,7 +37,6 @@ pub struct TestResults<T> {
     pub metal: T,
 }
 
-#[macro_export]
 macro_rules! for_each_context {
     ($CONTEXTES:ident, |$CONTEXT_NAME:ident: $CONTEXT_TYPE:ident| $body:expr) => {
         crate::common::proptest::TestResults {
@@ -55,6 +54,7 @@ macro_rules! for_each_context {
         }
     };
 }
+pub(crate) use for_each_context;
 
 pub trait ComparableTestResults {
     fn compare(
@@ -73,7 +73,6 @@ impl<T: ComparableTestResults> TestResults<T> {
     }
 }
 
-#[macro_export]
 macro_rules! dispatch_dtype {
     (|()| $body:expr) => { $body };
     (|($T:ident : $dt:expr $(, $rest_T:ident : $rest_dt:expr)*)| $body:expr) => {
@@ -85,3 +84,4 @@ macro_rules! dispatch_dtype {
         }
     };
 }
+pub(crate) use dispatch_dtype;

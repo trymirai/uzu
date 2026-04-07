@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     padded: Box<[T]>,
@@ -238,94 +238,94 @@ fn test_tanh_activation<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // f32
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_small_kernel_f32() {
     test_small_kernel::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_f32() {
     test_single_token::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_many_tokens_f32() {
     test_many_tokens::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_f32() {
     test_large::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_identity_activation_f32() {
     test_identity_activation::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_activation_f32() {
     test_gelu_activation::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_tanh_activation_f32() {
     test_tanh_activation::<f32>();
 }
 
 // f16
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_small_kernel_f16() {
     test_small_kernel::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_f16() {
     test_single_token::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_many_tokens_f16() {
     test_many_tokens::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_f16() {
     test_large::<f16>();
 }
 
 // bf16
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_small_kernel_bf16() {
     test_small_kernel::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_bf16() {
     test_single_token::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_many_tokens_bf16() {
     test_many_tokens::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_large_bf16() {
     test_large::<bf16>();
 }
