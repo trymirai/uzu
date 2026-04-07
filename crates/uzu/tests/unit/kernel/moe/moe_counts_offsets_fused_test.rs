@@ -9,6 +9,8 @@ use uzu::{
     },
 };
 
+use crate::uzu_test;
+
 fn gen_random_topk_ids(
     t: usize,
     e: usize,
@@ -67,7 +69,7 @@ fn get_output<B: Backend>(
     (offsets, sum_k, partials)
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_parity_random() {
     let shapes = vec![(1usize, 4usize), (7, 16), (64, 64), (1024, 128)];
     let ks = vec![1usize, 2usize, 4usize];
@@ -91,7 +93,7 @@ fn test_counts_offsets_fused_parity_random() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_all_tokens_one_expert() {
     let (t, e, k) = (16usize, 8usize, 2usize);
     let topk_ids: Vec<i32> = vec![3i32; t * k];
@@ -107,7 +109,7 @@ fn test_counts_offsets_fused_all_tokens_one_expert() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_zero_tokens() {
     let (t, e, k) = (0usize, 8usize, 2usize);
     let topk_ids: Vec<i32> = vec![];
@@ -120,7 +122,7 @@ fn test_counts_offsets_fused_zero_tokens() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_negative_ids_ignored() {
     let (t, e, k) = (8usize, 4usize, 2usize);
     // Mix of valid IDs and -1 (invalid/padding)
@@ -143,7 +145,7 @@ fn test_counts_offsets_fused_negative_ids_ignored() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_single_token() {
     let (t, e, k) = (1usize, 16usize, 1usize);
     let topk_ids = vec![7i32];
@@ -160,7 +162,7 @@ fn test_counts_offsets_fused_single_token() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_uniform_distribution() {
     // Each expert gets exactly 1 token
     let e = 8usize;
@@ -177,7 +179,7 @@ fn test_counts_offsets_fused_uniform_distribution() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_large_t() {
     // Stress test with many tokens
     let (t, e, k) = (2048usize, 128usize, 4usize);
@@ -193,7 +195,7 @@ fn test_counts_offsets_fused_large_t() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_counts_offsets_fused_offsets_monotonic() {
     // Verify offsets are monotonically non-decreasing for various shapes
     let shapes = vec![(10, 8, 2), (100, 32, 4), (5, 128, 1)];

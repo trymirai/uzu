@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     fused_up: Box<[T]>,
@@ -84,32 +84,32 @@ fn test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_f32() {
     test::<f32>(ActivationType::SILU);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_f16() {
     test::<f16>(ActivationType::SILU);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_bf16() {
     test::<bf16>(ActivationType::SILU);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_f32() {
     test::<f32>(ActivationType::GELU);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_f16() {
     test::<f16>(ActivationType::GELU);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_bf16() {
     test::<bf16>(ActivationType::GELU);
 }

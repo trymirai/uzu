@@ -2,9 +2,9 @@
 
 use uzu::{TraceValidator, backends::common::Backend};
 
-use crate::{
-    common::path::{get_test_model_path, get_traces_path},
+use crate::common::{
     for_each_non_cpu_backend,
+    path::{get_test_model_path, get_traces_path},
 };
 
 fn test_tracer_internal<B: Backend>() {

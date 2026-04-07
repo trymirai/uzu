@@ -8,6 +8,8 @@ use uzu::{
     },
 };
 
+use crate::uzu_test;
+
 fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
     let context = B::Context::new().expect("Failed to create Context");
 
@@ -42,7 +44,7 @@ fn test_token_copy_to_results_impl<B: Backend>(src_value: u32) {
     assert_eq!(output[0], src_value, "TokenCopyToResults failed for backend {}", std::any::type_name::<B>());
 }
 
-#[test]
+#[uzu_test]
 fn test_token_copy_sampled() {
     for_each_backend!(|B| {
         test_token_copy_sampled_impl::<B>(0);
@@ -51,7 +53,7 @@ fn test_token_copy_sampled() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_token_copy_to_results() {
     for_each_backend!(|B| {
         test_token_copy_to_results_impl::<B>(0);

@@ -19,7 +19,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -105,47 +105,47 @@ fn test<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_aligned() {
     test::<f32>(64, 64, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_aligned() {
     test::<f16>(64, 64, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_aligned() {
     test::<bf16>(64, 64, 64, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_unaligned() {
     test::<f32>(7, 33, 11, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_unaligned() {
     test::<f16>(7, 33, 11, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_unaligned() {
     test::<bf16>(7, 33, 11, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_large() {
     test::<f32>(16, 128, 256, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_large() {
     test::<f16>(16, 128, 256, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_large() {
     test::<bf16>(16, 128, 256, 0.1);
 }

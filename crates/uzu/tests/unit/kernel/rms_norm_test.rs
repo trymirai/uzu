@@ -16,7 +16,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 static BOOL_ALL: &[bool] = &[true, false];
 static BOOL_FALSE: &[bool] = &[false];
@@ -307,145 +307,145 @@ fn test_performance<B: Backend>(
 }
 
 // AccumT f32
-#[test]
+#[uzu_test]
 fn test_f32_f32_f32_f32() {
     test_basic::<f32, f32, f32, f32>();
 }
 
 // AccumT f32 + f16
-#[test]
+#[uzu_test]
 fn test_f16_f32_f32_f32() {
     test_basic::<f16, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f16_f32_f32() {
     test_basic::<f32, f16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f32_f16_f32() {
     test_basic::<f32, f32, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f16_f32_f32() {
     test_basic::<f16, f16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f32_f16_f32() {
     test_basic::<f16, f32, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f16_f16_f32() {
     test_basic::<f32, f16, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f16_f16_f32() {
     test_basic::<f16, f16, f16, f32>();
 }
 
 // AccumT f32 + bf16
-#[test]
+#[uzu_test]
 fn test_bf16_f32_f32_f32() {
     test_basic::<bf16, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_bf16_f32_f32() {
     test_basic::<f32, bf16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f32_bf16_f32() {
     test_basic::<f32, f32, bf16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_bf16_f32_f32() {
     test_basic::<bf16, bf16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_f32_bf16_f32() {
     test_basic::<bf16, f32, bf16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_bf16_bf16_f32() {
     test_basic::<bf16, bf16, bf16, f32>();
 }
 
 // AccumT f16
-#[test]
+#[uzu_test]
 fn test_f32_f32_f32_f16() {
     test_basic::<f32, f32, f32, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f32_f32_f16() {
     test_basic::<f16, f32, f32, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f16_f32_f16() {
     test_basic::<f32, f16, f32, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f32_f16_f16() {
     test_basic::<f32, f32, f16, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f16_f32_f16() {
     test_basic::<f16, f16, f32, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f32_f16_f16() {
     test_basic::<f16, f32, f16, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f16_f16_f16() {
     test_basic::<f32, f16, f16, f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f16_f16_f16() {
     test_basic::<f16, f16, f16, f16>();
 }
 
 // edge cases
-#[test]
+#[uzu_test]
 fn test_edge_f32_f32_f32_f32() {
     test_edge::<f32, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f32_f16_f16_f32() {
     test_edge::<f32, f16, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f16_f16_f16_f16() {
     test_edge::<f16, f16, f16, f16>();
 }
 
 // performance tests
 #[cfg(metal_backend)]
-#[test]
+#[uzu_test]
 fn test_perf_8k() {
     use uzu::backends::metal::Metal;
     test_performance::<Metal>(8, 8192); // Large model like LLaMA-70B
 }
 
 #[cfg(metal_backend)]
-#[test]
+#[uzu_test]
 fn test_perf_16k() {
     use uzu::backends::metal::Metal;
     test_performance::<Metal>(16, 16384); // Huge model dimension

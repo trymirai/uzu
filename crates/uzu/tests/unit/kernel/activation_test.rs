@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     data: Box<[T]>,
@@ -153,108 +153,108 @@ fn test_activation_large<T: ArrayElement + Float + Debug + Display>(
 }
 
 // SILU out-of-place tests
-#[test]
+#[uzu_test]
 fn test_silu_f32() {
     test_activation::<f32>(ActivationType::SILU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_f16() {
     test_activation::<f16>(ActivationType::SILU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_bf16() {
     test_activation::<bf16>(ActivationType::SILU, false);
 }
 
 // SILU in-place tests
-#[test]
+#[uzu_test]
 fn test_silu_in_place_f32() {
     test_activation::<f32>(ActivationType::SILU, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_in_place_f16() {
     test_activation::<f16>(ActivationType::SILU, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_in_place_bf16() {
     test_activation::<bf16>(ActivationType::SILU, true);
 }
 
 // GELU out-of-place tests
-#[test]
+#[uzu_test]
 fn test_gelu_f32() {
     test_activation::<f32>(ActivationType::GELU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_f16() {
     test_activation::<f16>(ActivationType::GELU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_bf16() {
     test_activation::<bf16>(ActivationType::GELU, false);
 }
 
 // GELU in-place tests
-#[test]
+#[uzu_test]
 fn test_gelu_in_place_f32() {
     test_activation::<f32>(ActivationType::GELU, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_in_place_f16() {
     test_activation::<f16>(ActivationType::GELU, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_in_place_bf16() {
     test_activation::<bf16>(ActivationType::GELU, true);
 }
 
 // Large SILU tests
-#[test]
+#[uzu_test]
 fn test_silu_large_f32() {
     test_activation_large::<f32>(ActivationType::SILU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_large_f16() {
     test_activation_large::<f16>(ActivationType::SILU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_silu_large_bf16() {
     test_activation_large::<bf16>(ActivationType::SILU, false);
 }
 
 // Large GELU tests
-#[test]
+#[uzu_test]
 fn test_gelu_large_f32() {
     test_activation_large::<f32>(ActivationType::GELU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_large_f16() {
     test_activation_large::<f16>(ActivationType::GELU, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_large_bf16() {
     test_activation_large::<bf16>(ActivationType::GELU, false);
 }
 
 // Large in-place tests
-#[test]
+#[uzu_test]
 fn test_silu_in_place_large_f32() {
     test_activation_large::<f32>(ActivationType::SILU, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_gelu_in_place_large_f32() {
     test_activation_large::<f32>(ActivationType::GELU, true);
 }

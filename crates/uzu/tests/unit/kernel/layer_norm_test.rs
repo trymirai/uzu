@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 static BOOL_ALL: &[bool] = &[true, false];
 static BOOL_FALSE: &[bool] = &[false];
@@ -226,89 +226,89 @@ fn test_edge<
 }
 
 // basic tests - AccumT f32
-#[test]
+#[uzu_test]
 fn test_f32_f32_f32_f32() {
     test_basic::<f32, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f32_f32_f32() {
     test_basic::<f16, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f16_f32_f32() {
     test_basic::<f32, f16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f32_f16_f32() {
     test_basic::<f32, f32, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f16_f32_f32() {
     test_basic::<f16, f16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f32_f16_f32() {
     test_basic::<f16, f32, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f16_f16_f32() {
     test_basic::<f32, f16, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_f16_f16_f32() {
     test_basic::<f16, f16, f16, f32>();
 }
 
 // basic tests - AccumT f32 + bf16
-#[test]
+#[uzu_test]
 fn test_bf16_f32_f32_f32() {
     test_basic::<bf16, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_bf16_f32_f32() {
     test_basic::<f32, bf16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_f32_bf16_f32() {
     test_basic::<f32, f32, bf16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_bf16_f32_f32() {
     test_basic::<bf16, bf16, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_f32_bf16_f32() {
     test_basic::<bf16, f32, bf16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_bf16_bf16_f32() {
     test_basic::<bf16, bf16, bf16, f32>();
 }
 
 // edge tests
-#[test]
+#[uzu_test]
 fn test_edge_f32_f32_f32_f32() {
     test_edge::<f32, f32, f32, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f32_f16_f16_f32() {
     test_edge::<f32, f16, f16, f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f16_f16_f16_f32() {
     test_edge::<f16, f16, f16, f32>();
 }
