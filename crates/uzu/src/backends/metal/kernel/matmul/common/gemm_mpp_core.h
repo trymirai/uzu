@@ -131,17 +131,19 @@ struct ThreadgroupGemmMpp {
         tile_col_offset;
 
     const short simdgroup_limit_m =
-        align_m ? SIMDGROUP_BLOCK_M
-                : short(
-                      min(int(SIMDGROUP_BLOCK_M),
-                          int(params->M) - int(block_row_start + tile_row_offset))
-                  );
+        align_m
+            ? SIMDGROUP_BLOCK_M
+            : short(
+                  min(int(SIMDGROUP_BLOCK_M),
+                      int(params->M) - int(block_row_start + tile_row_offset))
+              );
     const short simdgroup_limit_n =
-        align_n ? SIMDGROUP_BLOCK_N
-                : short(
-                      min(int(SIMDGROUP_BLOCK_N),
-                          int(params->N) - int(block_col_start + tile_col_offset))
-                  );
+        align_n
+            ? SIMDGROUP_BLOCK_N
+            : short(
+                  min(int(SIMDGROUP_BLOCK_N),
+                      int(params->N) - int(block_col_start + tile_col_offset))
+              );
 
     constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
         SUBTILE_ROWS,
@@ -174,7 +176,8 @@ struct ThreadgroupGemmMpp {
 
     const uint leading_dimension_d = params->leading_dimension_d;
 
-    AccumulatorType accumulator_storage[TILES_M * TILES_N][ACCUMULATOR_CAPACITY] = {{0}};
+    AccumulatorType accumulator_storage[TILES_M * TILES_N]
+                                       [ACCUMULATOR_CAPACITY] = {{0}};
 
     const uint full_prefetch_iterations = params->K / PREFETCH_K;
     const uint k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
@@ -314,26 +317,35 @@ struct ThreadgroupGemmMpp {
         if (m_limit <= 0 || n_limit <= 0)
           continue;
 
-        device T* output_tile_ptr = output_ptr + row_offset * leading_dimension_d + col_offset;
+        device T* output_tile_ptr =
+            output_ptr + row_offset * leading_dimension_d + col_offset;
 
         METAL_PRAGMA_UNROLL
         for (short i = 0; i < short(ACCUMULATOR_CAPACITY); i++) {
           auto coord = accumulator_tensor.get_multidimensional_index(i);
           const bool is_valid_element = accumulator_tensor.is_valid_element(i);
-          AccumulatorType accumulated_value = accumulator_storage[tile_m * TILES_N + tile_n][i] * AccumulatorType(ab_scale);
+          AccumulatorType accumulated_value =
+              accumulator_storage[tile_m * TILES_N + tile_n][i] *
+              AccumulatorType(ab_scale);
           if (align_m && align_n) {
             if (is_valid_element) {
               if (is_accumulate) {
-                accumulated_value += AccumulatorType(output_tile_ptr[coord[1] * leading_dimension_d + coord[0]]);
+                accumulated_value += AccumulatorType(
+                    output_tile_ptr[coord[1] * leading_dimension_d + coord[0]]
+                );
               }
-              output_tile_ptr[coord[1] * leading_dimension_d + coord[0]] = T(accumulated_value);
+              output_tile_ptr[coord[1] * leading_dimension_d + coord[0]] =
+                  T(accumulated_value);
             }
           } else {
             if (is_valid_element && coord[1] < m_limit && coord[0] < n_limit) {
               if (is_accumulate) {
-                accumulated_value += AccumulatorType(output_tile_ptr[coord[1] * leading_dimension_d + coord[0]]);
+                accumulated_value += AccumulatorType(
+                    output_tile_ptr[coord[1] * leading_dimension_d + coord[0]]
+                );
               }
-              output_tile_ptr[coord[1] * leading_dimension_d + coord[0]] = T(accumulated_value);
+              output_tile_ptr[coord[1] * leading_dimension_d + coord[0]] =
+                  T(accumulated_value);
             }
           }
         }
