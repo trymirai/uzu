@@ -7,70 +7,30 @@ use crate::{
     for_each_non_cpu_backend,
 };
 
-fn get_colored_text(
-    text: &str,
-    valid: bool,
-) -> String {
-    if valid {
-        format!("\x1b[32m{}\x1b[0m", text)
-    } else {
-        format!("\x1b[31m{}\x1b[0m", text)
-    }
-}
-
 fn test_tracer_internal<B: Backend>() {
     let model_path = get_test_model_path();
-    let mut tracer = match TraceValidator::<B>::new(&model_path) {
-        Ok(t) => t,
-        Err(e) => {
-            println!("Failed to create TraceValidator: {:?}", e);
-            return;
-        },
-    };
-
-    let results = match tracer.run() {
-        Ok(r) => r,
-        Err(e) => {
-            println!("Tracer run failed: {:?}", e);
-            return;
-        },
-    };
-
+    let mut tracer = TraceValidator::<B>::new(&model_path).expect("Failed to create TraceValidator: {:?}");
+    let results = tracer.run().expect("Failed to run tracer");
     for result in results.results.iter() {
         let valid = result.metrics.is_valid();
-        let text = get_colored_text(
-            if valid {
-                "ok"
-            } else {
-                "error"
-            },
-            valid,
-        );
-        println!("{}: {}", result.name, text);
-        if !valid {
-            println!("{}", get_colored_text(result.metrics.message().as_str(), false));
-        }
+        assert!(valid, "{} error:\n{}", result.name, result.metrics.message().as_str());
     }
-    println!("-------------------------");
-    println!(
-        "number_of_tokens_violations: {}",
-        get_colored_text(
-            format!("{} / {}", results.number_of_tokens_violations(), results.number_of_allowed_tokens_violations())
-                .as_str(),
-            results.is_valid(),
-        )
+
+    let total_token_violations = results.number_of_tokens_violations();
+    let allowed_token_violations = results.number_of_allowed_tokens_violations();
+    assert!(
+        total_token_violations < allowed_token_violations,
+        "Too much token violations: {} / {}. Indices: {:?}",
+        total_token_violations,
+        allowed_token_violations,
+        results.tokens_violation_indices
     );
-    println!("tokens_violation_indices: {:?}", results.tokens_violation_indices);
 }
 
 #[test]
 fn test_tracer() {
-    // Ensure traces file present, otherwise skip
     let traces_path = get_traces_path();
-    if !traces_path.exists() {
-        println!("Skipping tracer test: traces file missing at {:?}", traces_path);
-        return;
-    }
+    assert!(traces_path.exists(), "Traces file missing at {:?}", traces_path);
 
     for_each_non_cpu_backend!(|B| {
         test_tracer_internal::<B>();
