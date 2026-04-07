@@ -1,7 +1,6 @@
 //! Correctness tests comparing Metal matmul kernels against ndarray
 
 #![cfg(metal_backend)]
-
 use bytemuck;
 use half::bf16;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
@@ -19,6 +18,8 @@ use uzu::{
         metal::Metal,
     },
 };
+
+use crate::uzu_test;
 
 fn run_metal_matmul(
     ctx: &<Metal as Backend>::Context,
@@ -250,7 +251,7 @@ fn compare_results(
     }
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn matmul_correctness_comprehensive() {
     let Some(ctx) = <Metal as Backend>::Context::new().ok() else {

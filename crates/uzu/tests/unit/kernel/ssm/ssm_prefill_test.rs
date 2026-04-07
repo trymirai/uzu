@@ -16,7 +16,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     x: Box<[T]>,
@@ -238,53 +238,53 @@ fn test_shape(
 }
 
 // --- Sequential ---
-#[test]
+#[uzu_test]
 fn test_sequential_basic() {
     test_shape(&KernelType::Sequential, 512, 32, 64, 64, 1, "sequential_basic");
 }
 
-#[test]
+#[uzu_test]
 fn test_sequential_small() {
     test_shape(&KernelType::Sequential, 4, 4, 4, 8, 1, "sequential_small");
 }
 
-#[test]
+#[uzu_test]
 fn test_sequential_minimal() {
     test_shape(&KernelType::Sequential, 1, 1, 1, 1, 1, "sequential_minimal");
 }
 
-#[test]
+#[uzu_test]
 fn test_sequential_multi_group() {
     test_shape(&KernelType::Sequential, 8, 8, 4, 16, 4, "sequential_multi_group");
 }
 
-#[test]
+#[uzu_test]
 fn test_sequential_group_per_head() {
     test_shape(&KernelType::Sequential, 8, 4, 4, 8, 1, "sequential_group_per_head");
 }
 
 // --- Prefill ---
-#[test]
+#[uzu_test]
 fn test_prefill_basic() {
     test_shape(&KernelType::Prefill, 512, 32, 64, 64, 1, "prefill_basic");
 }
 
-#[test]
+#[uzu_test]
 fn test_prefill_small() {
     test_shape(&KernelType::Prefill, 4, 4, 4, 8, 1, "prefill_small");
 }
 
-#[test]
+#[uzu_test]
 fn test_prefill_minimal() {
     test_shape(&KernelType::Prefill, 1, 1, 1, 1, 1, "prefill_minimal");
 }
 
-#[test]
+#[uzu_test]
 fn test_prefill_multi_group() {
     test_shape(&KernelType::Prefill, 8, 8, 4, 16, 4, "prefill_multi_group");
 }
 
-#[test]
+#[uzu_test]
 fn test_prefill_group_per_head() {
     test_shape(&KernelType::Prefill, 8, 4, 4, 8, 1, "prefill_group_per_head");
 }

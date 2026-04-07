@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     rotated_keys: Option<Box<[T]>>,
@@ -259,49 +259,49 @@ fn test_prefix_zero<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // Basic tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
 // Single token tests (typical decode step)
-#[test]
+#[uzu_test]
 fn test_single_token_f32() {
     test_single_token::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_f16() {
     test_single_token::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_bf16() {
     test_single_token::<bf16>();
 }
 
 // Prefix zero (first fill of empty cache)
-#[test]
+#[uzu_test]
 fn test_prefix_zero_f32() {
     test_prefix_zero::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_prefix_zero_f16() {
     test_prefix_zero::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_prefix_zero_bf16() {
     test_prefix_zero::<bf16>();
 }

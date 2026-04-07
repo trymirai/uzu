@@ -15,7 +15,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     token_ids: Box<[u64]>,
@@ -182,65 +182,65 @@ fn test_oob<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // UINT4 tests
-#[test]
+#[uzu_test]
 fn test_uint4_f32() {
     test_quant_mode::<f32>(QuantizationMode::UINT4);
 }
 
-#[test]
+#[uzu_test]
 fn test_uint4_f16() {
     test_quant_mode::<f16>(QuantizationMode::UINT4);
 }
 
-#[test]
+#[uzu_test]
 fn test_uint4_bf16() {
     test_quant_mode::<bf16>(QuantizationMode::UINT4);
 }
 
 // INT8 tests
-#[test]
+#[uzu_test]
 fn test_int8_f32() {
     test_quant_mode::<f32>(QuantizationMode::INT8);
 }
 
-#[test]
+#[uzu_test]
 fn test_int8_f16() {
     test_quant_mode::<f16>(QuantizationMode::INT8);
 }
 
-#[test]
+#[uzu_test]
 fn test_int8_bf16() {
     test_quant_mode::<bf16>(QuantizationMode::INT8);
 }
 
 // UINT8 tests
-#[test]
+#[uzu_test]
 fn test_uint8_f32() {
     test_quant_mode::<f32>(QuantizationMode::UINT8);
 }
 
-#[test]
+#[uzu_test]
 fn test_uint8_f16() {
     test_quant_mode::<f16>(QuantizationMode::UINT8);
 }
 
-#[test]
+#[uzu_test]
 fn test_uint8_bf16() {
     test_quant_mode::<bf16>(QuantizationMode::UINT8);
 }
 
 // OOB tests
-#[test]
+#[uzu_test]
 fn test_oob_f32() {
     test_oob::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_oob_f16() {
     test_oob::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_oob_bf16() {
     test_oob::<bf16>();
 }

@@ -10,6 +10,8 @@ use uzu::{
     backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
 };
 
+use crate::uzu_test;
+
 struct Input<T: ArrayElement + Float> {
     token_ids: Box<[u64]>,
     weights: Box<[T]>,
@@ -83,17 +85,17 @@ fn test<T: ArrayElement + Float + Debug>() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_f32() {
     test::<f32>()
 }
 
-#[test]
+#[uzu_test]
 fn test_f16() {
     test::<f16>()
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16() {
     test::<bf16>()
 }

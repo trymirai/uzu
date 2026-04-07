@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     qkv: Box<[T]>,
@@ -171,79 +171,79 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // f32 tests
-#[test]
+#[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_mha_f32() {
     test_mha::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_f32() {
     test_single_token::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_small_f32() {
     test_small::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_nonzero_positions_f32() {
     test_nonzero_positions::<f32>();
 }
 
 // f16 tests
-#[test]
+#[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_mha_f16() {
     test_mha::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_f16() {
     test_single_token::<f16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_small_f16() {
     test_small::<f16>();
 }
 
 // bf16 tests
-#[test]
+#[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_mha_bf16() {
     test_mha::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_single_token_bf16() {
     test_single_token::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_small_bf16() {
     test_small::<bf16>();
 }
 
-#[test]
+#[uzu_test]
 fn test_partial_rope_basic_f32() {
     test_partial_rope_basic::<f32>();
 }
 
-#[test]
+#[uzu_test]
 fn test_partial_rope_small_f32() {
     test_partial_rope_small::<f32>();
 }

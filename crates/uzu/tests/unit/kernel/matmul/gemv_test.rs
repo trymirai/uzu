@@ -19,7 +19,7 @@ use uzu::{
     },
 };
 
-use crate::common::assert::assert_eq_float;
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -105,107 +105,107 @@ fn test<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_m1() {
     test::<f32>(1, 128, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_m1() {
     test::<f16>(1, 128, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_m1() {
     test::<bf16>(1, 128, 64, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_batched() {
     test::<f32>(4, 128, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_batched() {
     test::<f16>(4, 128, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_batched() {
     test::<bf16>(4, 128, 64, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_max_batch() {
     test::<f32>(8, 128, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_max_batch() {
     test::<f16>(8, 128, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_max_batch() {
     test::<bf16>(8, 128, 64, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_unaligned_k() {
     test::<f32>(1, 33, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_unaligned_k() {
     test::<f16>(1, 33, 64, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_unaligned_k() {
     test::<bf16>(1, 33, 64, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_unaligned_n() {
     test::<f32>(1, 128, 11, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_unaligned_n() {
     test::<f16>(1, 128, 11, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_unaligned_n() {
     test::<bf16>(1, 128, 11, 0.1);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_large() {
     test::<f32>(1, 4096, 2048, 0.05);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_large() {
     test::<f16>(1, 4096, 2048, 0.5);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_large() {
     test::<bf16>(1, 4096, 2048, 1.0);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_small_n() {
     test::<f32>(1, 128, 3, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_small_n() {
     test::<f16>(1, 128, 3, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_small_n() {
     test::<bf16>(1, 128, 3, 0.1);
 }

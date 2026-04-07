@@ -11,7 +11,10 @@ use uzu::{
     },
 };
 
-use crate::common::{assert::assert_eq_float, helpers::create_context};
+use crate::{
+    common::{assert::assert_eq_float, helpers::create_context},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     tok2row: Box<[i32]>,
@@ -94,22 +97,22 @@ fn test_finalize_internal(
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_finalize_single_token() {
     test_finalize_internal(1, 2, 64, 2)
 }
 
-#[test]
+#[uzu_test]
 fn test_finalize_small_batch() {
     test_finalize_internal(4, 2, 128, 8)
 }
 
-#[test]
+#[uzu_test]
 fn test_finalize_medium() {
     test_finalize_internal(8, 4, 256, 32)
 }
 
-#[test]
+#[uzu_test]
 fn test_finalize_large() {
     test_finalize_internal(16, 2, 512, 32)
 }
