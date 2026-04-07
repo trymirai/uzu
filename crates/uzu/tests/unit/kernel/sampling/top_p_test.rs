@@ -489,27 +489,15 @@ fn perf_topp_128k_vocab() {
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-        match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
-            Some(gpu_time_ms) => {
-                println!(
-                    "Top-p sampling perf (batch={}, vocab={}, backend={}): GPU={:.2} ms, Host-side={:.2} ms",
-                    BATCH,
-                    VOCAB,
-                    std::any::type_name::<B>(),
-                    gpu_time_ms,
-                    host_elapsed_ms
-                );
-            },
-            None => {
-                println!(
-                    "Top-p sampling perf (batch={}, vocab={}, backend={}): Host-side={:.2} ms (GPU timing unavailable)",
-                    BATCH,
-                    VOCAB,
-                    std::any::type_name::<B>(),
-                    host_elapsed_ms
-                );
-            },
-        }
+        let gpu_time_ms = completed.gpu_execution_time().as_secs_f64() * 1e3;
+        println!(
+            "Top-p sampling perf (batch={}, vocab={}, backend={}): GPU={:.2} ms, Host-side={:.2} ms",
+            BATCH,
+            VOCAB,
+            std::any::type_name::<B>(),
+            gpu_time_ms,
+            host_elapsed_ms
+        );
 
         let sample_ids: &[u32] = output_array.as_slice();
         for &tok in sample_ids {

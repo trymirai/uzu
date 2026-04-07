@@ -4,8 +4,6 @@ use thiserror::Error;
 pub enum BenchError {
     #[error("failed to create command buffer")]
     CommandBuffer,
-    #[error("GPU timestamps unavailable")]
-    GpuTimestamps,
     #[error("kernel creation failed: {0}")]
     Kernel(String),
     #[error("buffer allocation failed")]
