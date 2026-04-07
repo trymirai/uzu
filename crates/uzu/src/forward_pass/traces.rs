@@ -29,6 +29,8 @@ fn create_layer_results<B: Backend>(
 pub struct LayerActivationTrace<B: Backend> {
     pub inputs: Array<B>,
     pub pre_attention_norm: Array<B>,
+    pub qkv_projection: Array<B>,
+    pub qk_norm: Array<B>,
     pub attention: Array<B>,
     pub post_attention_norm: Array<B>,
     pub mlp_inputs: Array<B>,
@@ -45,12 +47,15 @@ impl<B: Backend> LayerActivationTrace<B> {
         suffix_length: usize,
     ) -> Self {
         let main_shape = model_shape.main_shape(suffix_length);
+        let qkv_shape = model_shape.qkv_shape(suffix_length);
         let activation_data_type = model_shape.activation_data_type();
         let main = |label| create_trace_array(context, &main_shape, activation_data_type, label);
 
         Self {
             inputs: main("layer_activation_trace_inputs"),
             pre_attention_norm: main("layer_activation_trace_pre_attention_norm"),
+            qkv_projection: create_trace_array(context, &qkv_shape, activation_data_type, "layer_trace_qkv_projection"),
+            qk_norm: create_trace_array(context, &qkv_shape, activation_data_type, "layer_trace_qk_norm"),
             attention: main("layer_activation_trace_attention"),
             post_attention_norm: main("layer_activation_trace_post_attention_norm"),
             mlp_inputs: main("layer_activation_trace_mlp_inputs"),

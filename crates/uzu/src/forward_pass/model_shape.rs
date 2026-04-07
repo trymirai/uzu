@@ -16,6 +16,10 @@ pub struct ModelShape {
     num_heads: usize,
     num_groups: usize,
     head_dim: usize,
+    max_num_heads: usize,
+    max_num_groups: usize,
+    max_head_dim: usize,
+    max_attention_dim: usize,
     pub num_layers: usize,
     pub sliding_window_length_per_layer: Box<[Option<usize>]>,
     pub layer_types: Box<[DecoderLayerType]>,
@@ -26,12 +30,19 @@ pub struct ModelShape {
     max_mamba_state_dim: usize,
     max_mamba_kernel_size: usize,
     max_rope_dim: usize,
+    global_rope_dim: usize,
+    local_rope_dim: usize,
     max_lora_intermediate: Option<usize>,
     has_gate: bool,
     max_delta_net_kernel_size: usize,
     max_delta_net_key_dim: usize,
     max_delta_net_num_heads: usize,
     max_qkv_dim: usize,
+    ple_dim: Option<usize>,
+    ple_total_dim: Option<usize>,
+    pub kv_shared_layer_sources: Option<Box<[Option<usize>]>>,
+    /// Per-layer (num_groups, head_dim) for KV cache. None means use uniform values.
+    kv_cache_per_layer_shapes: Option<Box<[(usize, usize)]>>,
 }
 
 impl ModelShape {
@@ -99,6 +110,8 @@ impl ModelShape {
         }
 
         let mut max_rope_dim = 0usize;
+        let mut global_rope_dim = 0usize;
+        let mut local_rope_dim = 0usize;
         let mut max_lora_intermediate = None;
         let mut has_gate = false;
 
@@ -109,15 +122,34 @@ impl ModelShape {
             .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
 
         let mut max_qkv_dim = 0usize;
+        let mut max_num_heads = decoder_config.num_heads;
+        let mut max_num_groups = decoder_config.num_groups;
+        let mut max_head_dim = decoder_config.head_dim;
+        let mut max_attention_dim = decoder_config.num_heads * decoder_config.head_dim;
         for layer_config in &all_layer_configs {
             let mut linear_configs = Vec::new();
 
             match &layer_config.mixer_config {
                 MixerConfig::Attention(attn) => {
                     let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
-                    max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
+                    let nh = attn.num_heads.unwrap_or(decoder_config.num_heads);
+                    let ng = attn.num_groups.unwrap_or(decoder_config.num_groups);
+                    let rope_dim = hd;
+                    max_rope_dim = max_rope_dim.max(rope_dim);
+                    if attn.sliding_window_size.is_some() {
+                        local_rope_dim = local_rope_dim.max(rope_dim);
+                    } else {
+                        global_rope_dim = global_rope_dim.max(rope_dim);
+                    }
                     has_gate = has_gate || attn.has_gate || attn.gate_projection_config.is_some();
                     linear_configs.extend([&attn.qkv_projection_config, &attn.out_projection_config]);
+
+                    // Track max attention dimensions across all layers for buffer sizing.
+                    max_num_heads = max_num_heads.max(nh);
+                    max_num_groups = max_num_groups.max(ng);
+                    max_head_dim = max_head_dim.max(hd);
+                    max_attention_dim = max_attention_dim.max(nh * hd);
+                    max_qkv_dim = max_qkv_dim.max((nh + 2 * ng) * hd);
                 },
                 MixerConfig::Mamba(mamba) => {
                     linear_configs.extend([&mamba.in_projection_config, &mamba.out_projection_config]);
@@ -158,17 +190,47 @@ impl ModelShape {
         if max_rope_dim == 0 {
             max_rope_dim = decoder_config.head_dim;
         }
+        if global_rope_dim == 0 {
+            global_rope_dim = decoder_config.head_dim;
+        }
+        if local_rope_dim == 0 {
+            local_rope_dim = decoder_config.head_dim;
+        }
+
+        let kv_cache_per_layer_shapes = decoder_config.layer_configs.as_ref().map(|configs| {
+            configs
+                .iter()
+                .map(|layer_config| match &layer_config.mixer_config {
+                    MixerConfig::Attention(attn) => {
+                        let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
+                        let ng = attn.num_groups.unwrap_or(decoder_config.num_groups);
+                        (ng, hd)
+                    },
+                    // Non-attention layers don't have KV cache, but we still need entries
+                    _ => (decoder_config.num_groups, decoder_config.head_dim),
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+        });
 
         Self {
             activation_type,
             kv_cache_type: activation_type,
             vocabulary_size: decoder_config.vocab_size,
             model_dim: decoder_config.model_dim,
-            hidden_dim: decoder_config.hidden_dim,
+            hidden_dim: decoder_config
+                .hidden_dims
+                .as_ref()
+                .and_then(|dims| dims.iter().copied().max())
+                .unwrap_or(decoder_config.hidden_dim),
             context_length: decoder_config.context_length,
             num_heads: decoder_config.num_heads,
             num_groups: decoder_config.num_groups,
             head_dim: decoder_config.head_dim,
+            max_num_heads,
+            max_num_groups,
+            max_head_dim,
+            max_attention_dim,
             num_layers: num_layers,
             sliding_window_length_per_layer: decoder_config
                 .sliding_window_sizes
@@ -182,12 +244,18 @@ impl ModelShape {
             max_mamba_state_dim,
             max_mamba_kernel_size,
             max_rope_dim,
+            global_rope_dim,
+            local_rope_dim,
             max_lora_intermediate,
             has_gate,
             max_delta_net_kernel_size,
             max_delta_net_key_dim,
             max_delta_net_num_heads,
             max_qkv_dim,
+            ple_dim: decoder_config.ple_dim,
+            ple_total_dim: decoder_config.ple_dim.map(|dim| num_layers * dim),
+            kv_shared_layer_sources: decoder_config.kv_shared_layer_sources.clone(),
+            kv_cache_per_layer_shapes,
         }
     }
 
@@ -209,6 +277,14 @@ impl ModelShape {
 
     pub fn rope_dim(&self) -> usize {
         self.max_rope_dim
+    }
+
+    pub fn global_rope_dim(&self) -> usize {
+        self.global_rope_dim
+    }
+
+    pub fn local_rope_dim(&self) -> usize {
+        self.local_rope_dim
     }
 
     pub fn num_groups(&self) -> usize {
@@ -284,7 +360,7 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 2] {
-        let attention_dim = self.num_heads * self.head_dim;
+        let attention_dim = self.max_attention_dim;
         let delta_net_dim = self
             .layer_types
             .iter()
@@ -305,21 +381,21 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
-        self.has_gate.then(|| [suffix_length, self.num_heads * self.head_dim])
+        self.has_gate.then(|| [suffix_length, self.max_attention_dim])
     }
 
     pub fn rotated_queries_shape(
         &self,
         suffix_length: usize,
     ) -> [usize; 3] {
-        [self.num_heads, suffix_length, self.head_dim]
+        [self.max_num_heads, suffix_length, self.max_head_dim]
     }
 
     pub fn rotated_keys_shape(
         &self,
         suffix_length: usize,
     ) -> [usize; 3] {
-        [self.num_groups, suffix_length, self.head_dim]
+        [self.max_num_groups, suffix_length, self.max_head_dim]
     }
 
     pub fn extracted_values_shape(
@@ -327,17 +403,23 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 3] {
         // Values share the same grouping as keys (grouped by num_groups)
-        [self.num_groups, suffix_length, self.head_dim]
+        [self.max_num_groups, suffix_length, self.max_head_dim]
     }
 
     pub fn kv_cache_layer_shapes(
         &self,
         max_prefix_length: usize,
         max_suffix_length: usize,
-    ) -> impl Iterator<Item = [usize; 3]> {
-        self.sliding_window_length_per_layer.iter().map(move |length| {
+    ) -> impl Iterator<Item = [usize; 3]> + '_ {
+        let default_groups = self.num_groups;
+        let default_head_dim = self.head_dim;
+        let per_layer = self.kv_cache_per_layer_shapes.as_ref();
+
+        self.sliding_window_length_per_layer.iter().enumerate().map(move |(i, length)| {
             let length = length.unwrap_or(max_prefix_length);
-            [self.num_groups, length + max_suffix_length, self.head_dim]
+            let (groups, hd) =
+                per_layer.and_then(|shapes| shapes.get(i)).copied().unwrap_or((default_groups, default_head_dim));
+            [groups, length + max_suffix_length, hd]
         })
     }
 
@@ -350,7 +432,7 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 1] {
         const TOTAL_BLOCKS_COUNT: usize = 32;
-        [self.num_heads * suffix_length * TOTAL_BLOCKS_COUNT * self.head_dim]
+        [self.max_num_heads * suffix_length * TOTAL_BLOCKS_COUNT * self.max_head_dim]
     }
 
     pub fn attention_sums_shape(
@@ -358,7 +440,7 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 1] {
         const TOTAL_BLOCKS_COUNT: usize = 32;
-        [self.num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
+        [self.max_num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
     }
 
     pub fn attention_maxs_shape(
@@ -366,7 +448,7 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 1] {
         const TOTAL_BLOCKS_COUNT: usize = 32;
-        [self.num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
+        [self.max_num_heads * suffix_length * TOTAL_BLOCKS_COUNT]
     }
 
     pub fn moe_topk_ids_shape(
@@ -657,6 +739,42 @@ impl ModelShape {
         suffix_length: usize,
     ) -> Option<[usize; 2]> {
         self.max_lora_intermediate.map(|max_lora_intermediate| [suffix_length, max_lora_intermediate])
+    }
+
+    pub fn ple_dim(&self) -> Option<usize> {
+        self.ple_dim
+    }
+
+    pub fn ple_total_dim(&self) -> Option<usize> {
+        self.ple_total_dim
+    }
+
+    pub fn ple_embeddings_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ple_total_dim.map(|total_dim| [suffix_length, total_dim])
+    }
+
+    pub fn ple_projection_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ple_total_dim.map(|total_dim| [suffix_length, total_dim])
+    }
+
+    pub fn ple_combined_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ple_total_dim.map(|total_dim| [suffix_length, total_dim])
+    }
+
+    pub fn ple_gate_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ple_dim.map(|dim| [suffix_length, dim])
     }
 
     fn max_mamba_inproj_dim_internal(&self) -> Option<usize> {

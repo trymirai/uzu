@@ -100,6 +100,7 @@ pub struct CacheLayers<B: Backend> {
     max_suffix_length: usize,
     max_prefix_length: usize,
     pub data: Box<[CacheLayer<B>]>,
+    kv_shared_layer_sources: Option<Box<[Option<usize>]>>,
 }
 
 #[derive(Clone)]
@@ -118,7 +119,7 @@ impl<B: Backend> CacheLayers<B> {
         let kv_shapes: Vec<[usize; 3]> =
             model_shape.kv_cache_layer_shapes(max_prefix_length, max_suffix_length).collect();
 
-        let data: Box<[CacheLayer<B>]> = model_shape
+        let mut layers: Vec<CacheLayer<B>> = model_shape
             .layer_types()
             .iter()
             .enumerate()
@@ -230,10 +231,43 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
+        // Share KV cache buffers for shared layers (e.g. Gemma 4 E2B layers 15-34).
+        // Array<B> uses Rc<RefCell<B::Buffer>>, so .clone() creates a shared reference
+        // to the same underlying GPU buffer — both source and shared layers will read
+        // from identical K/V data without extra allocations.
+        if let Some(sources) = &model_shape.kv_shared_layer_sources {
+            // First pass: collect cloned arrays from source layers to avoid simultaneous
+            // mutable + immutable borrows on the layers Vec.
+            let shared_refs: Vec<Option<(crate::array::Array<B>, crate::array::Array<B>)>> = sources
+                .iter()
+                .enumerate()
+                .map(|(_i, source)| {
+                    source.map(|src| {
+                        let src_layer =
+                            layers[src].as_transformer().expect("KV shared source must be a Transformer layer");
+                        (src_layer.keys.clone(), src_layer.values.clone())
+                    })
+                })
+                .collect();
+
+            // Second pass: replace shared layers' keys/values with the cloned references.
+            for (layer_idx, refs) in shared_refs.into_iter().enumerate() {
+                if let Some((keys, values)) = refs {
+                    if let CacheLayer::Transformer(ref mut cache) = layers[layer_idx] {
+                        cache.keys = keys;
+                        cache.values = values;
+                    }
+                }
+            }
+        }
+
+        let data: Box<[CacheLayer<B>]> = layers.into_boxed_slice();
+
         Self {
             max_suffix_length,
             max_prefix_length,
             data,
+            kv_shared_layer_sources: model_shape.kv_shared_layer_sources.clone(),
         }
     }
 
@@ -461,10 +495,41 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
+        // Re-establish KV sharing after creating all layers.
+        // Array<B> uses Rc<RefCell<B::Buffer>>, so .clone() creates a shared
+        // reference to the same underlying buffer.
+        let mut layers: Vec<CacheLayer<B>> = data.into_vec();
+
+        if let Some(sources) = &self.kv_shared_layer_sources {
+            let shared_refs: Vec<Option<(crate::array::Array<B>, crate::array::Array<B>)>> = sources
+                .iter()
+                .enumerate()
+                .map(|(_i, source)| {
+                    source.map(|src| {
+                        let src_layer =
+                            layers[src].as_transformer().expect("KV shared source must be a Transformer layer");
+                        (src_layer.keys.clone(), src_layer.values.clone())
+                    })
+                })
+                .collect();
+
+            for (layer_idx, refs) in shared_refs.into_iter().enumerate() {
+                if let Some((keys, values)) = refs {
+                    if let CacheLayer::Transformer(ref mut cache) = layers[layer_idx] {
+                        cache.keys = keys;
+                        cache.values = values;
+                    }
+                }
+            }
+        }
+
+        let data: Box<[CacheLayer<B>]> = layers.into_boxed_slice();
+
         Self {
             max_suffix_length: self.max_suffix_length,
             max_prefix_length: max_prefix_capacity_across_layers,
             data,
+            kv_shared_layer_sources: self.kv_shared_layer_sources.clone(),
         }
     }
 }

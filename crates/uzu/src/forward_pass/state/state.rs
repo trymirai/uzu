@@ -563,6 +563,20 @@ impl<B: Backend> ForwardPassState<B> {
                 .and_then(|aux| aux.moe_block_alloc.clone())
                 .expect("MoE block_alloc not initialized"),
 
+            // PLE arrays
+            ArrayId::PleEmbeddings => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_embeddings.clone()).expect("PLE embeddings not allocated")
+            },
+            ArrayId::PleProjection => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_projection.clone()).expect("PLE projection not allocated")
+            },
+            ArrayId::PlePerLayerInputs => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_combined.clone()).expect("PLE combined not allocated")
+            },
+            ArrayId::PleGate => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_gate.clone()).expect("PLE gate not allocated")
+            },
+
             // Classifier-specific arrays
             ArrayId::ClassifierPooling => self.classifier_state().pooling.clone(),
             ArrayId::ClassifierPredictionHeadDense => self.classifier_state().dense.clone(),

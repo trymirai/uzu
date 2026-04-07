@@ -49,6 +49,12 @@ pub struct ScratchBuffers<B: Backend> {
     pub attention_sums: Array<B>,     // [num_heads * max_suffix_len * total_blocks_count]
     pub attention_maxs: Array<B>,     // [num_heads * max_suffix_len * total_blocks_count]
 
+    // PLE buffers
+    pub ple_embeddings: Option<Array<B>>,
+    pub ple_projection: Option<Array<B>>,
+    pub ple_combined: Option<Array<B>>,
+    pub ple_gate: Option<Array<B>>,
+
     pub moe_topk_ids: Option<Array<B>>,
     pub moe_topk_probs: Option<Array<B>>,
     pub moe_offsets: Option<Array<B>>,
@@ -156,6 +162,17 @@ impl<B: Backend> ScratchBuffers<B> {
             ),
             attention_sums: alloc(&sums_maxs_shape, act_ty, "attention_sums"),
             attention_maxs: alloc(&sums_maxs_shape, act_ty, "attention_maxs"),
+
+            ple_embeddings: model_shape
+                .ple_embeddings_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty, "ple_embeddings")),
+            ple_projection: model_shape
+                .ple_projection_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty, "ple_projection")),
+            ple_combined: model_shape
+                .ple_combined_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty, "ple_combined")),
+            ple_gate: model_shape.ple_gate_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ple_gate")),
 
             moe_topk_ids: moe.map(|moe| {
                 alloc(

@@ -16,8 +16,8 @@ impl<B: Backend> RopeBuffers<B> {
     pub fn new(
         context: &B::Context,
         model_shape: &ModelShape,
+        rope_dim: usize,
     ) -> Self {
-        let rope_dim = model_shape.rope_dim();
         let rope_max_sequence_length = model_shape.context_length();
 
         Self {

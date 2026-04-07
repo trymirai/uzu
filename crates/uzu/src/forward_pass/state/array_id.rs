@@ -68,6 +68,16 @@ pub enum ArrayId {
     MoeScatterBlockBases,
     MoeBlockAlloc,
 
+    // Per-Layer Embedding (PLE) buffers
+    /// PLE per-layer embedding lookup output [batch, seq, num_layers * ple_dim]
+    PleEmbeddings,
+    /// PLE projection output (main embeddings projected into PLE space) [batch, seq, num_layers * ple_dim]
+    PleProjection,
+    /// PLE combined per-layer inputs [batch, seq, num_layers, ple_dim]
+    PlePerLayerInputs,
+    /// PLE gate output within a layer [batch, seq, ple_dim]
+    PleGate,
+
     // Classifier prediction head buffers
     ClassifierPooling,
     ClassifierPredictionHeadDense,
