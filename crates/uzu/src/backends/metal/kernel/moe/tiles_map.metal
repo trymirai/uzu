@@ -35,7 +35,7 @@ PUBLIC KERNEL(MoeTileScan)(
 
   // Inclusive scan in-place over scratch
   // Simple O(log E) scan; E is small
-  for (uint offset = 1u; offset < e; offset <<= 1u) {
+  for (uint offset = 1u; offset < e; offset *= 2u) {
     uint val = 0u;
     if (tid < e) {
       val = scratch[tid];
