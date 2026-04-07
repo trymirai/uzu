@@ -192,11 +192,14 @@ struct ThreadgroupGemmMpp {
     // Main loop
     for (uint outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      if (align_m && align_n) {
+      if (align_m) {
         left_loader.load_unsafe();
-        right_loader.load_unsafe();
       } else {
         left_loader.load_safe(short2(PREFETCH_K, actual_block_rows));
+      }
+      if (align_n) {
+        right_loader.load_unsafe();
+      } else {
         right_loader.load_safe(short2(PREFETCH_K, actual_block_cols));
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
