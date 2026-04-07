@@ -65,6 +65,7 @@ impl<B: Backend> RMSNorm<B> {
             output_type,
             accumulation_data_type,
             input_array_id == output_array_id,
+            config.upcast_mode == UpcastMode::FullLayer,
             shortcut_array_id.is_some(),
             residual_add,
         )
@@ -134,7 +135,6 @@ impl<B: Backend> RMSNorm<B> {
             element_count as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
-            self.config.upcast_mode == UpcastMode::FullLayer,
             encoder,
         );
         Ok(())
