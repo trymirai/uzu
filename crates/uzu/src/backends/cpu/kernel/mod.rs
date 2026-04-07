@@ -3,6 +3,7 @@ mod activation;
 mod attention;
 mod audio;
 mod delta_net;
+mod element_mul;
 mod embedding;
 mod kv_cache_update;
 mod layer_norm;
