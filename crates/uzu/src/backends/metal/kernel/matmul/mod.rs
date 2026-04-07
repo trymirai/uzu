@@ -50,11 +50,9 @@ fn max_gemv_batch_threshold() -> u32 {
 impl MatmulMetalKernel {
     fn is_mpp_eligible(
         context: &MetalContext,
-        arguments: &MatmulArguments<Metal>,
+        _arguments: &MatmulArguments<Metal>,
     ) -> bool {
         context.device.supports_mxu()
-            && arguments.ab_scale == 1.0
-            && !matches!(arguments.c, MatmulArgumentC::Accumulate)
     }
 
     fn get_or_create_gemv(
@@ -126,6 +124,7 @@ impl MatmulMetalKernel {
                     specialization.simdgroups_per_column,
                     specialization.align_m,
                     specialization.align_n,
+                    specialization.is_accumulate,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -191,7 +190,7 @@ impl MatmulMetalKernel {
             threadgroups_per_column,
             swizzle_log: 0,
             aligned_inner_iterations: arguments.input_dim / specialization.block_depth,
-            use_morton: 0,
+            use_morton: false,
         };
 
         let kernel = self.get_or_create_gemm(context, specialization)?;
@@ -227,7 +226,9 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let specialization = gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim, arguments.output_dim);
+        let is_accumulate = matches!(arguments.c, MatmulArgumentC::Accumulate);
+        let specialization =
+            gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim, arguments.output_dim, is_accumulate);
 
         let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
         let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
@@ -237,6 +238,8 @@ impl MatmulMetalKernel {
         let morton_dim = max_threadgroups_per_dim.next_power_of_two();
         let morton_total = morton_dim.saturating_mul(morton_dim);
         let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
+        // Morton ordering improves cache locality but requires padding to a square power-of-two grid.
+        // Allow up to 4x overhead (idle threadgroups) before the padding cost outweighs the benefit.
         let use_morton = min_threadgroups_per_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
 
         let params = GemmParams {
@@ -250,11 +253,7 @@ impl MatmulMetalKernel {
             threadgroups_per_column,
             swizzle_log: 0,
             aligned_inner_iterations: 0,
-            use_morton: if use_morton {
-                1
-            } else {
-                0
-            },
+            use_morton,
         };
 
         let (group_count_x, group_count_y) = if use_morton {
@@ -271,6 +270,7 @@ impl MatmulMetalKernel {
             std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
+            arguments.ab_scale,
             encoder,
         );
 

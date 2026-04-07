@@ -13,5 +13,5 @@ pub struct GemmParams {
     pub threadgroups_per_row: u32,
     pub swizzle_log: u32,
     pub aligned_inner_iterations: u32,
-    pub use_morton: u32,
+    pub use_morton: bool,
 }

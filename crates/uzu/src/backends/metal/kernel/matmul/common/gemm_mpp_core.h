@@ -19,7 +19,11 @@ template <
     short SIMDGROUPS_PER_COLUMN,
     short SUBTILE_ROWS = 16,
     short SUBTILE_COLS = 32,
-    short MATMUL_K_STEP = 16>
+    short MATMUL_K_STEP = 16,
+    // Number of cooperative tensor elements owned by each thread.
+    // Determined by the MPP compiler intrinsic get_capacity().
+    // Empirically: SUBTILE_ROWS * SUBTILE_COLS / SIMD_SIZE = 16 * 32 / 32 = 16.
+    short ACCUMULATOR_CAPACITY = 16>
 struct ThreadgroupGemmMpp {
   METAL_CONST short PREFETCH_K = 32;
   METAL_CONST short THREADGROUP_PADDING = short(16 / sizeof(T));
@@ -39,41 +43,43 @@ struct ThreadgroupGemmMpp {
       const constant GemmParams* params,
       const bool align_m,
       const bool align_n,
+      const bool is_accumulate,
+      const float ab_scale,
       threadgroup T* left_shared,
       threadgroup T* right_shared,
       uint simd_lane_id,
       uint simd_group_id,
       uint2 threadgroup_position
   ) {
-    int tid_x, tid_y;
-    if (params->use_morton != 0) {
+    uint tile_id_x, tile_id_y;
+    if (params->use_morton) {
       uint linear_id = threadgroup_position.x;
-      uint mx = linear_id;
-      uint my = linear_id >> 1;
-      mx &= 0x55555555u;
-      mx = (mx | (mx >> 1)) & 0x33333333u;
-      mx = (mx | (mx >> 2)) & 0x0F0F0F0Fu;
-      mx = (mx | (mx >> 4)) & 0x00FF00FFu;
-      mx = (mx | (mx >> 8)) & 0x0000FFFFu;
-      my &= 0x55555555u;
-      my = (my | (my >> 1)) & 0x33333333u;
-      my = (my | (my >> 2)) & 0x0F0F0F0Fu;
-      my = (my | (my >> 4)) & 0x00FF00FFu;
-      my = (my | (my >> 8)) & 0x0000FFFFu;
-      tid_x = int(mx);
-      tid_y = int(my);
+      uint morton_x = linear_id;
+      uint morton_y = linear_id >> 1;
+      morton_x &= 0x55555555u;
+      morton_x = (morton_x | (morton_x >> 1)) & 0x33333333u;
+      morton_x = (morton_x | (morton_x >> 2)) & 0x0F0F0F0Fu;
+      morton_x = (morton_x | (morton_x >> 4)) & 0x00FF00FFu;
+      morton_x = (morton_x | (morton_x >> 8)) & 0x0000FFFFu;
+      morton_y &= 0x55555555u;
+      morton_y = (morton_y | (morton_y >> 1)) & 0x33333333u;
+      morton_y = (morton_y | (morton_y >> 2)) & 0x0F0F0F0Fu;
+      morton_y = (morton_y | (morton_y >> 4)) & 0x00FF00FFu;
+      morton_y = (morton_y | (morton_y >> 8)) & 0x0000FFFFu;
+      tile_id_x = morton_x;
+      tile_id_y = morton_y;
     } else {
-      tid_x = int(threadgroup_position.x);
-      tid_y = int(threadgroup_position.y);
+      tile_id_x = threadgroup_position.x;
+      tile_id_y = threadgroup_position.y;
     }
 
-    if (tid_x >= int(params->threadgroups_per_row) ||
-        tid_y >= int(params->threadgroups_per_column)) {
+    if (tile_id_x >= params->threadgroups_per_row ||
+        tile_id_y >= params->threadgroups_per_column) {
       return;
     }
 
-    const int block_row_start = tid_y * BLOCK_ROWS;
-    const int block_col_start = tid_x * BLOCK_COLS;
+    const uint block_row_start = tile_id_y * BLOCK_ROWS;
+    const uint block_col_start = tile_id_x * BLOCK_COLS;
     const size_t block_row_start_long = size_t(block_row_start);
     const size_t block_col_start_long = size_t(block_col_start);
 
@@ -89,7 +95,7 @@ struct ThreadgroupGemmMpp {
         THREADGROUP_LD,
         1,
         THREADGROUP_SIZE>
-        loader_a(
+        left_loader(
             left_block_ptr,
             params->leading_dimension_a,
             left_shared,
@@ -103,7 +109,7 @@ struct ThreadgroupGemmMpp {
         THREADGROUP_LD,
         1,
         THREADGROUP_SIZE>
-        loader_b(
+        right_loader(
             right_block_ptr,
             params->leading_dimension_b,
             right_shared,
@@ -114,9 +120,9 @@ struct ThreadgroupGemmMpp {
     // Setup MPP matmul operation
     using AccumulatorType = float;
 
-    const short tile_row_offset =
+    const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
-    const short tile_col_offset =
+    const ushort tile_col_offset =
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* output_ptr =
@@ -128,13 +134,13 @@ struct ThreadgroupGemmMpp {
         align_m ? SIMDGROUP_BLOCK_M
                 : short(
                       min(int(SIMDGROUP_BLOCK_M),
-                          int(params->M) - (block_row_start + tile_row_offset))
+                          int(params->M) - int(block_row_start + tile_row_offset))
                   );
     const short simdgroup_limit_n =
         align_n ? SIMDGROUP_BLOCK_N
                 : short(
                       min(int(SIMDGROUP_BLOCK_N),
-                          int(params->N) - (block_col_start + tile_col_offset))
+                          int(params->N) - int(block_col_start + tile_col_offset))
                   );
 
     constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
@@ -166,36 +172,29 @@ struct ThreadgroupGemmMpp {
             decltype(right_tensor),
             AccumulatorType>();
 
-    const short accumulator_capacity = accumulator_tensor.get_capacity();
+    const uint leading_dimension_d = params->leading_dimension_d;
 
-    AccumulatorType accum_storage[TILES_M * TILES_N][16];
-    METAL_PRAGMA_UNROLL
-    for (short t = 0; t < TILES_M * TILES_N; t++) {
-      METAL_PRAGMA_UNROLL
-      for (short i = 0; i < 16; i++) {
-        accum_storage[t][i] = AccumulatorType(0);
-      }
-    }
+    AccumulatorType accumulator_storage[TILES_M * TILES_N][ACCUMULATOR_CAPACITY] = {{0}};
 
-    const int full_prefetch_iterations = params->K / PREFETCH_K;
-    const int k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
+    const uint full_prefetch_iterations = params->K / PREFETCH_K;
+    const uint k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
 
-    const short actual_bm =
+    const ushort actual_block_rows =
         align_m ? BLOCK_ROWS
-                : short(min(int(BLOCK_ROWS), int(params->M) - block_row_start));
-    const short actual_bn =
+                : ushort(min(uint(BLOCK_ROWS), params->M - block_row_start));
+    const ushort actual_block_cols =
         align_n ? BLOCK_COLS
-                : short(min(int(BLOCK_COLS), int(params->N) - block_col_start));
+                : ushort(min(uint(BLOCK_COLS), params->N - block_col_start));
 
     // Main loop
-    for (int outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {
+    for (uint outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
       if (align_m && align_n) {
-        loader_a.load_unsafe();
-        loader_b.load_unsafe();
+        left_loader.load_unsafe();
+        right_loader.load_unsafe();
       } else {
-        loader_a.load_safe(short2(PREFETCH_K, actual_bm));
-        loader_b.load_safe(short2(PREFETCH_K, actual_bn));
+        left_loader.load_safe(short2(PREFETCH_K, actual_block_rows));
+        right_loader.load_safe(short2(PREFETCH_K, actual_block_cols));
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -204,12 +203,12 @@ struct ThreadgroupGemmMpp {
         METAL_PRAGMA_UNROLL
         for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
           const short subtile_index = tile_m * TILES_N + tile_n;
-          const short a_m_base = tile_row_offset + tile_m * SUBTILE_ROWS;
-          const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
+          const short left_row_base = tile_row_offset + tile_m * SUBTILE_ROWS;
+          const short right_col_base = tile_col_offset + tile_n * SUBTILE_COLS;
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < accumulator_capacity; i++) {
-            accumulator_tensor[i] = accum_storage[subtile_index][i];
+          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
+            accumulator_tensor[i] = accumulator_storage[subtile_index][i];
           }
 
           METAL_PRAGMA_UNROLL
@@ -220,7 +219,7 @@ struct ThreadgroupGemmMpp {
             for (short i = 0; i < left_tensor.get_capacity(); i++) {
               auto coord = left_tensor.get_multidimensional_index(i);
               left_tensor[i] = left_shared
-                  [(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                  [(left_row_base + coord[1]) * THREADGROUP_LD + coord[0] +
                    k_offset];
             }
 
@@ -228,7 +227,7 @@ struct ThreadgroupGemmMpp {
             for (short i = 0; i < right_tensor.get_capacity(); i++) {
               auto coord = right_tensor.get_multidimensional_index(i);
               right_tensor[i] = right_shared
-                  [(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                  [(right_col_base + coord[1]) * THREADGROUP_LD + coord[0] +
                    k_offset];
             }
 
@@ -236,21 +235,21 @@ struct ThreadgroupGemmMpp {
           }
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < accumulator_capacity; i++) {
-            accum_storage[subtile_index][i] = accumulator_tensor[i];
+          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
+            accumulator_storage[subtile_index][i] = accumulator_tensor[i];
           }
         }
       }
 
-      loader_a.next();
-      loader_b.next();
+      left_loader.next();
+      right_loader.next();
     }
 
     // Remainder loop
     if (k_remainder > 0) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      loader_a.load_safe(short2(k_remainder, actual_bm));
-      loader_b.load_safe(short2(k_remainder, actual_bn));
+      left_loader.load_safe(short2(k_remainder, actual_block_rows));
+      right_loader.load_safe(short2(k_remainder, actual_block_cols));
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       const short remainder_steps =
@@ -261,12 +260,12 @@ struct ThreadgroupGemmMpp {
         METAL_PRAGMA_UNROLL
         for (short tile_n = 0; tile_n < TILES_N; tile_n++) {
           const short subtile_index = tile_m * TILES_N + tile_n;
-          const short a_m_base = tile_row_offset + tile_m * SUBTILE_ROWS;
-          const short b_n_base = tile_col_offset + tile_n * SUBTILE_COLS;
+          const short left_row_base = tile_row_offset + tile_m * SUBTILE_ROWS;
+          const short right_col_base = tile_col_offset + tile_n * SUBTILE_COLS;
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < accumulator_capacity; i++) {
-            accumulator_tensor[i] = accum_storage[subtile_index][i];
+          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
+            accumulator_tensor[i] = accumulator_storage[subtile_index][i];
           }
 
           for (short k_step = 0; k_step < remainder_steps; k_step++) {
@@ -276,7 +275,7 @@ struct ThreadgroupGemmMpp {
             for (short i = 0; i < left_tensor.get_capacity(); i++) {
               auto coord = left_tensor.get_multidimensional_index(i);
               left_tensor[i] = left_shared
-                  [(a_m_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                  [(left_row_base + coord[1]) * THREADGROUP_LD + coord[0] +
                    k_offset];
             }
 
@@ -284,7 +283,7 @@ struct ThreadgroupGemmMpp {
             for (short i = 0; i < right_tensor.get_capacity(); i++) {
               auto coord = right_tensor.get_multidimensional_index(i);
               right_tensor[i] = right_shared
-                  [(b_n_base + coord[1]) * THREADGROUP_LD + coord[0] +
+                  [(right_col_base + coord[1]) * THREADGROUP_LD + coord[0] +
                    k_offset];
             }
 
@@ -292,16 +291,14 @@ struct ThreadgroupGemmMpp {
           }
 
           METAL_PRAGMA_UNROLL
-          for (short i = 0; i < accumulator_capacity; i++) {
-            accum_storage[subtile_index][i] = accumulator_tensor[i];
+          for (short i = 0; i < ACCUMULATOR_CAPACITY; i++) {
+            accumulator_storage[subtile_index][i] = accumulator_tensor[i];
           }
         }
       }
     }
 
     // Store results
-    const int ld_d = params->leading_dimension_d;
-
     METAL_PRAGMA_UNROLL
     for (short tile_m = 0; tile_m < TILES_M; tile_m++) {
       METAL_PRAGMA_UNROLL
@@ -317,20 +314,26 @@ struct ThreadgroupGemmMpp {
         if (m_limit <= 0 || n_limit <= 0)
           continue;
 
-        device T* out_ptr = output_ptr + row_offset * ld_d + col_offset;
+        device T* output_tile_ptr = output_ptr + row_offset * leading_dimension_d + col_offset;
 
         METAL_PRAGMA_UNROLL
-        for (short i = 0; i < accumulator_capacity; i++) {
+        for (short i = 0; i < short(ACCUMULATOR_CAPACITY); i++) {
           auto coord = accumulator_tensor.get_multidimensional_index(i);
-          const bool valid = accumulator_tensor.is_valid_element(i);
-          AccumulatorType val = accum_storage[tile_m * TILES_N + tile_n][i];
+          const bool is_valid_element = accumulator_tensor.is_valid_element(i);
+          AccumulatorType accumulated_value = accumulator_storage[tile_m * TILES_N + tile_n][i] * AccumulatorType(ab_scale);
           if (align_m && align_n) {
-            if (valid) {
-              out_ptr[coord[1] * ld_d + coord[0]] = T(val);
+            if (is_valid_element) {
+              if (is_accumulate) {
+                accumulated_value += AccumulatorType(output_tile_ptr[coord[1] * leading_dimension_d + coord[0]]);
+              }
+              output_tile_ptr[coord[1] * leading_dimension_d + coord[0]] = T(accumulated_value);
             }
           } else {
-            if (valid && coord[1] < m_limit && coord[0] < n_limit) {
-              out_ptr[coord[1] * ld_d + coord[0]] = T(val);
+            if (is_valid_element && coord[1] < m_limit && coord[0] < n_limit) {
+              if (is_accumulate) {
+                accumulated_value += AccumulatorType(output_tile_ptr[coord[1] * leading_dimension_d + coord[0]]);
+              }
+              output_tile_ptr[coord[1] * leading_dimension_d + coord[0]] = T(accumulated_value);
             }
           }
         }

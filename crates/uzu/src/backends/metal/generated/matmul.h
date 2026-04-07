@@ -25,7 +25,7 @@ typedef struct {
   uint32_t threadgroups_per_row;
   uint32_t swizzle_log;
   uint32_t aligned_inner_iterations;
-  uint32_t use_morton;
+  bool use_morton;
 } GemmParams;
 
 #ifdef __METAL_VERSION__
