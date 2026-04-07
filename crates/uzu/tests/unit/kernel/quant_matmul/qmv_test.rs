@@ -10,7 +10,7 @@ use uzu::{
 };
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
-use crate::common::helpers::alloc_buffer_with_data;
+use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
@@ -304,21 +304,21 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
 }
 
 // ── 4-bit, zero points ─────────────────────────────────────────────────────
-#[test]
+#[uzu_test]
 fn test_gs32_4bit_zp() {
     for_each_float_type!(|F| {
         test_basic::<F>(32, 4, true, false);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs64_4bit_zp() {
     for_each_float_type!(|F| {
         test_basic::<F>(64, 4, true, false);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs128_4bit_zp() {
     for_each_float_type!(|F| {
         test_basic::<F>(128, 4, true, false);
@@ -327,21 +327,21 @@ fn test_gs128_4bit_zp() {
 
 // ── 8-bit, zero points ─────────────────────────────────────────────────────
 
-#[test]
+#[uzu_test]
 fn test_gs32_8bit_zp() {
     for_each_float_type!(|F| {
         test_basic::<F>(32, 8, true, false);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs64_8bit_zp() {
     for_each_float_type!(|F| {
         test_basic::<F>(64, 8, true, false);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs128_8bit_zp() {
     for_each_float_type!(|F| {
         test_basic::<F>(128, 8, true, false);
@@ -350,21 +350,21 @@ fn test_gs128_8bit_zp() {
 
 // ── 4-bit, mlx quant ───────────────────────────────────────────────────────
 
-#[test]
+#[uzu_test]
 fn test_gs32_4bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(32, 4, false, true);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs64_4bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(64, 4, false, true);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs128_4bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(128, 4, false, true);
@@ -373,21 +373,21 @@ fn test_gs128_4bit_mlx() {
 
 // ── 8-bit, mlx quant ───────────────────────────────────────────────────────
 
-#[test]
+#[uzu_test]
 fn test_gs32_8bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(32, 8, false, true);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs64_8bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(64, 8, false, true);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_gs128_8bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(128, 8, false, true);
@@ -396,28 +396,28 @@ fn test_gs128_8bit_mlx() {
 
 // ── Edge cases ──────────────────────────────────────────────────────────────
 
-#[test]
+#[uzu_test]
 fn test_edge_4bit_zp() {
     for_each_float_type!(|F| {
         test_edge::<F>(32, 4, true, false);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_8bit_zp() {
     for_each_float_type!(|F| {
         test_edge::<F>(32, 8, true, false);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_4bit_mlx() {
     for_each_float_type!(|F| {
         test_edge::<F>(32, 4, false, true);
     })
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_8bit_mlx() {
     for_each_float_type!(|F| {
         test_edge::<F>(32, 8, false, true);

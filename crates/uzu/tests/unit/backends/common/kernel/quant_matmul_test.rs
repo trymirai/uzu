@@ -1,7 +1,8 @@
-use std::time::Instant;
+#[macro_use]
+#[path = "../../../../common/mod.rs"]
+mod common;
 
-#[path = "../../../../common/helpers.rs"]
-mod helpers;
+use std::time::Instant;
 
 use half::{bf16, f16};
 
@@ -12,10 +13,9 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            QuantizedMatmulType, tests::helpers::alloc_buffer_with_data,
+            QuantizedMatmulType, tests::common::helpers::alloc_buffer_with_data,
         },
     },
-    for_each_non_cpu_backend,
 };
 
 fn pack_u4_weights(values: &[u8]) -> Vec<u8> {

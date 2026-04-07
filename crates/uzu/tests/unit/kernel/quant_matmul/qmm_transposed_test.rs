@@ -11,7 +11,7 @@ use uzu::{
 };
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
-use crate::common::helpers::alloc_buffer_with_data;
+use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
@@ -309,48 +309,48 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
 
 // -- 4-bit, zero points -------------------------------------------------------
 
-#[test]
+#[uzu_test]
 fn test_f32_gs32_4bit_zp() {
     test_basic::<f32>(32, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs64_4bit_zp() {
     test_basic::<f32>(64, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs128_4bit_zp() {
     test_basic::<f32>(128, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs32_4bit_zp() {
     test_basic::<f16>(32, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs64_4bit_zp() {
     test_basic::<f16>(64, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs128_4bit_zp() {
     test_basic::<f16>(128, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs32_4bit_zp() {
     test_basic::<bf16>(32, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_bf16_gs64_4bit_zp() {
     test_basic::<bf16>(64, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_bf16_gs128_4bit_zp() {
     test_basic::<bf16>(128, 4, true, false);
@@ -358,173 +358,173 @@ fn test_bf16_gs128_4bit_zp() {
 
 // -- 8-bit, zero points -------------------------------------------------------
 
-#[test]
+#[uzu_test]
 fn test_f32_gs32_8bit_zp() {
     test_basic::<f32>(32, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs64_8bit_zp() {
     test_basic::<f32>(64, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs128_8bit_zp() {
     test_basic::<f32>(128, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs32_8bit_zp() {
     test_basic::<f16>(32, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs64_8bit_zp() {
     test_basic::<f16>(64, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs128_8bit_zp() {
     test_basic::<f16>(128, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs32_8bit_zp() {
     test_basic::<bf16>(32, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs64_8bit_zp() {
     test_basic::<bf16>(64, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs128_8bit_zp() {
     test_basic::<bf16>(128, 8, true, false);
 }
 
 // -- 4-bit, mlx quant ----------------------------------------------------------
 
-#[test]
+#[uzu_test]
 fn test_f32_gs32_4bit_mlx() {
     test_basic::<f32>(32, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs64_4bit_mlx() {
     test_basic::<f32>(64, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs128_4bit_mlx() {
     test_basic::<f32>(128, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs32_4bit_mlx() {
     test_basic::<f16>(32, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs64_4bit_mlx() {
     test_basic::<f16>(64, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs128_4bit_mlx() {
     test_basic::<f16>(128, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs32_4bit_mlx() {
     test_basic::<bf16>(32, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs64_4bit_mlx() {
     test_basic::<bf16>(64, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs128_4bit_mlx() {
     test_basic::<bf16>(128, 4, false, true);
 }
 
 // -- 8-bit, mlx quant ----------------------------------------------------------
 
-#[test]
+#[uzu_test]
 fn test_f32_gs32_8bit_mlx() {
     test_basic::<f32>(32, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs64_8bit_mlx() {
     test_basic::<f32>(64, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f32_gs128_8bit_mlx() {
     test_basic::<f32>(128, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs32_8bit_mlx() {
     test_basic::<f16>(32, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs64_8bit_mlx() {
     test_basic::<f16>(64, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_f16_gs128_8bit_mlx() {
     test_basic::<f16>(128, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs32_8bit_mlx() {
     test_basic::<bf16>(32, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs64_8bit_mlx() {
     test_basic::<bf16>(64, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_bf16_gs128_8bit_mlx() {
     test_basic::<bf16>(128, 8, false, true);
 }
 
 // -- Edge cases ----------------------------------------------------------------
 
-#[test]
+#[uzu_test]
 fn test_edge_f32_4bit_zp() {
     test_edge::<f32>(32, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f32_8bit_zp() {
     test_edge::<f32>(32, 8, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f16_4bit_zp() {
     test_edge::<f16>(32, 4, true, false);
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f32_4bit_mlx() {
     test_edge::<f32>(32, 4, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f32_8bit_mlx() {
     test_edge::<f32>(32, 8, false, true);
 }
 
-#[test]
+#[uzu_test]
 fn test_edge_f16_4bit_mlx() {
     test_edge::<f16>(32, 4, false, true);
 }

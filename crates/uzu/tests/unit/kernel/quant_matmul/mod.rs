@@ -1,3 +1,7 @@
+#[macro_use]
+#[path = "../../../common/mod.rs"]
+mod common;
+
 mod qmm_transposed_64x64_test;
 mod qmm_transposed_test;
 mod qmm_transposed_wide_test;
