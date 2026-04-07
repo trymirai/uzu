@@ -190,6 +190,12 @@ fn test_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
+fn test_head_dim_512<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_input::<T>(1, 1, 8, 2, 512, true);
+    let expected = get_output::<T, Cpu>(&input);
+    test_internal(&input, &expected);
+}
+
 // Basic tests
 #[test]
 fn test_basic_f32() {
@@ -252,4 +258,20 @@ fn test_head_dim_128_f16() {
 #[test]
 fn test_head_dim_128_bf16() {
     test_head_dim_128::<bf16>();
+}
+
+// Head dim 512
+#[test]
+fn test_head_dim_512_f32() {
+    test_head_dim_512::<f32>();
+}
+
+#[test]
+fn test_head_dim_512_f16() {
+    test_head_dim_512::<f16>();
+}
+
+#[test]
+fn test_head_dim_512_bf16() {
+    test_head_dim_512::<bf16>();
 }

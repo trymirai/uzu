@@ -9,7 +9,7 @@ use super::MixerExecutables;
 use crate::backends::common::kernel::TensorAddBiasKernel;
 use crate::{
     DataType,
-    array::{Array, ArrayContextExt},
+    array::ArrayContextExt,
     backends::common::{
         ActivationConfig, Backend, Encoder, Kernels,
         kernel::{ElementWiseMulStridedKernel, TensorAddScaleKernel},
@@ -22,6 +22,17 @@ use crate::{
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
+
+struct PleLayerComponents<B: Backend> {
+    gate: Box<dyn Linear<B>>,
+    projection: Box<dyn Linear<B>>,
+    post_norm: RMSNorm<B>,
+    activation: Activation<B>,
+    mul_strided_kernel: <B::Kernels as Kernels>::ElementWiseMulStridedKernel,
+    add_swap: TensorAddSwap<B>,
+    dim: usize,
+    total_dim: usize,
+}
 
 /// A single decoder layer with all its components.
 pub struct LayerExecutables<B: Backend> {
@@ -39,18 +50,11 @@ pub struct LayerExecutables<B: Backend> {
     /// residual sum (input + attn + mlp), so the normally-deferred MLP residual add is
     /// performed here instead of in the next layer's pre_attention_norm.
     mlp_residual_add: Option<TensorAddSwap<B>>,
-    pub ple_gate: Option<Box<dyn Linear<B>>>,
-    pub ple_projection: Option<Box<dyn Linear<B>>>,
-    pub post_ple_norm: Option<RMSNorm<B>>,
-    ple_activation: Option<Activation<B>>,
-    ple_mul_strided_kernel: Option<<B::Kernels as Kernels>::ElementWiseMulStridedKernel>,
-    ple_add_swap: Option<TensorAddSwap<B>>,
-    ple_dim: usize,
-    ple_total_dim: usize,
+    ple: Option<PleLayerComponents<B>>,
     layer_scalar: f32,
     layer_scalar_kernel: Option<<B::Kernels as Kernels>::TensorAddScaleKernel>,
     /// Zero-bias buffer for scalar-only multiply via TensorAddScale: (input + 0) * scale
-    layer_scalar_zero_bias: Option<Array<B>>,
+    layer_scalar_zero_bias: Option<B::Buffer>,
     model_dim: usize,
     /// Per-layer attention dimensions for buffer reshaping. May differ from the max
     /// dimensions used for buffer allocation.
@@ -315,16 +319,7 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
-        let (
-            ple_gate,
-            ple_projection,
-            post_ple_norm,
-            ple_activation,
-            ple_mul_strided_kernel,
-            ple_add_swap,
-            ple_dim_val,
-            ple_total_dim_val,
-        ) = match (ple_dim, ple_linear_config, ple_norm_config) {
+        let ple = match (ple_dim, ple_linear_config, ple_norm_config) {
             (Some(ple_dim), Some(linear_config), Some(norm_config)) if ple_dim > 0 => {
                 let ple_data_type: DataType = linear_config.activation_precision().into();
 
@@ -352,7 +347,7 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create PLE projection");
 
-                let norm = RMSNorm::new(
+                let post_norm = RMSNorm::new(
                     context,
                     ple_data_type,
                     norm_config.clone(),
@@ -377,21 +372,21 @@ impl<B: Backend> LayerExecutables<B> {
                 let add_swap = TensorAddSwap::new(context, ple_data_type, ArrayId::Shortcut, ArrayId::Main)
                     .expect("Failed to create PLE add-swap");
 
-                (
-                    Some(gate),
-                    Some(projection),
-                    Some(norm),
-                    Some(activation),
-                    Some(mul_strided_kernel),
-                    Some(add_swap),
-                    ple_dim,
-                    ple_total_dim,
-                )
+                Some(PleLayerComponents {
+                    gate,
+                    projection,
+                    post_norm,
+                    activation,
+                    mul_strided_kernel,
+                    add_swap,
+                    dim: ple_dim,
+                    total_dim: ple_total_dim,
+                })
             },
-            _ => (None, None, None, None, None, None, 0, 0),
+            _ => None,
         };
 
-        let has_ple = ple_gate.is_some();
+        let has_ple = ple.is_some();
         let mlp_residual_add = if has_ple || layer_config.has_layer_scalar {
             Some(
                 TensorAddSwap::new(context, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main)
@@ -419,14 +414,17 @@ impl<B: Backend> LayerExecutables<B> {
                     let bytes = scalar_array.as_bytes();
                     f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
                 },
-                dt => panic!("Unsupported data type {:?} for layer_scalar", dt),
+                dt => panic!("Failed to decode layer_scalar weight: unsupported data type {dt:?}"),
             };
 
             if (scalar_value - 1.0).abs() > f32::EPSILON {
                 let kernel = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, intermediate_data_type)
                     .expect("Failed to create TensorAddScale kernel for layer_scalar");
-                let zero_bias =
+                let zero_bias_arr =
                     context.create_array_zeros(&[model_dim], intermediate_data_type, "layer_scalar_zero_bias");
+                let zero_bias_rc = zero_bias_arr.buffer();
+                drop(zero_bias_arr);
+                let zero_bias = Rc::try_unwrap(zero_bias_rc).expect("unique owner").into_inner();
                 (scalar_value, Some(kernel), Some(zero_bias))
             } else {
                 (scalar_value, None, None)
@@ -446,14 +444,7 @@ impl<B: Backend> LayerExecutables<B> {
             mlp,
             post_mlp_norm,
             mlp_residual_add,
-            ple_gate,
-            ple_projection,
-            post_ple_norm,
-            ple_activation,
-            ple_mul_strided_kernel,
-            ple_add_swap,
-            ple_dim: ple_dim_val,
-            ple_total_dim: ple_total_dim_val,
+            ple,
             layer_scalar,
             layer_scalar_kernel,
             layer_scalar_zero_bias,
@@ -484,25 +475,28 @@ impl<B: Backend> LayerExecutables<B> {
         // Buffers are allocated with max dims; each layer views the subset it needs.
         if matches!(&self.mixer, MixerExecutables::Attention { .. }) {
             let suffix_length = state.active_row_count();
-            let nh = self.attention_num_heads;
-            let ng = self.attention_num_groups;
-            let hd = self.attention_head_dim;
+            let num_heads = self.attention_num_heads;
+            let num_groups = self.attention_num_groups;
+            let head_dim = self.attention_head_dim;
 
-            state.common_aux.rotated_queries = state.common_aux.rotated_queries.view(&[nh, suffix_length, hd]);
-            state.common_aux.rotated_keys = state.common_aux.rotated_keys.view(&[ng, suffix_length, hd]);
-            state.common_aux.extracted_values = state.common_aux.extracted_values.view(&[ng, suffix_length, hd]);
-            state.common_aux.attention_output = state.common_aux.attention_output.view(&[suffix_length, nh * hd]);
+            state.common_aux.rotated_queries =
+                state.common_aux.rotated_queries.view(&[num_heads, suffix_length, head_dim]);
+            state.common_aux.rotated_keys = state.common_aux.rotated_keys.view(&[num_groups, suffix_length, head_dim]);
+            state.common_aux.extracted_values =
+                state.common_aux.extracted_values.view(&[num_groups, suffix_length, head_dim]);
+            state.common_aux.attention_output =
+                state.common_aux.attention_output.view(&[suffix_length, num_heads * head_dim]);
 
             const TOTAL_BLOCKS_COUNT: usize = 32;
             state.common_aux.attention_partials =
-                state.common_aux.attention_partials.view(&[nh * suffix_length * TOTAL_BLOCKS_COUNT * hd]);
+                state.common_aux.attention_partials.view(&[num_heads * suffix_length * TOTAL_BLOCKS_COUNT * head_dim]);
             state.common_aux.attention_sums =
-                state.common_aux.attention_sums.view(&[nh * suffix_length * TOTAL_BLOCKS_COUNT]);
+                state.common_aux.attention_sums.view(&[num_heads * suffix_length * TOTAL_BLOCKS_COUNT]);
             state.common_aux.attention_maxs =
-                state.common_aux.attention_maxs.view(&[nh * suffix_length * TOTAL_BLOCKS_COUNT]);
+                state.common_aux.attention_maxs.view(&[num_heads * suffix_length * TOTAL_BLOCKS_COUNT]);
 
             if let Some(ref gate) = state.common_aux.gate {
-                state.common_aux.gate = Some(gate.view(&[suffix_length, nh * hd]));
+                state.common_aux.gate = Some(gate.view(&[suffix_length, num_heads * head_dim]));
             }
         }
 
@@ -598,22 +592,15 @@ impl<B: Backend> LayerExecutables<B> {
             residual_add.encode(state, encoder)?;
         }
 
-        if let (Some(ple_gate), Some(ple_projection), Some(post_ple_norm), Some(ple_activation), Some(ple_mul_kernel)) = (
-            &self.ple_gate,
-            &self.ple_projection,
-            &self.post_ple_norm,
-            &self.ple_activation,
-            &self.ple_mul_strided_kernel,
-        ) {
-            ple_gate.encode(state, encoder)?;
-            ple_activation.encode(state, encoder)?;
+        if let Some(ref ple) = self.ple {
+            ple.gate.encode(state, encoder)?;
+            ple.activation.encode(state, encoder)?;
 
             // Element-wise multiply PleGate * PlePerLayerInputs[layer_i] (strided)
             {
                 let ple_gate_arr = state.array(ArrayId::PleGate);
                 let ple_inputs = state.array(ArrayId::PlePerLayerInputs);
                 let rows = ple_gate_arr.shape()[0] as u32; // suffix_length
-                let kernel = ple_mul_kernel;
 
                 // PleGate is both input_a and output (in-place mul).
                 // This is safe because ElementWiseMulStrided reads input_a[row * ple_dim + col]
@@ -622,21 +609,21 @@ impl<B: Backend> LayerExecutables<B> {
                 let mut ple_gate_buffer = ple_gate_buffer_rc.borrow_mut();
                 let ple_gate_input: &B::Buffer = unsafe { &*(&*ple_gate_buffer as *const B::Buffer) };
 
-                kernel.encode(
+                ple.mul_strided_kernel.encode(
                     ple_gate_input,
                     &*ple_inputs.buffer().borrow(),
                     &mut *ple_gate_buffer,
-                    self.ple_dim as u32,
-                    self.ple_total_dim as u32,
-                    (self.layer_index * self.ple_dim) as u32,
+                    ple.dim as u32,
+                    ple.total_dim as u32,
+                    (self.layer_index * ple.dim) as u32,
                     rows,
                     encoder,
                 );
             }
 
-            ple_projection.encode(state, encoder)?;
-            post_ple_norm.encode(state, encoder)?;
-            self.ple_add_swap.as_ref().unwrap().encode(state, encoder)?;
+            ple.projection.encode(state, encoder)?;
+            ple.post_norm.encode(state, encoder)?;
+            ple.add_swap.encode(state, encoder)?;
         }
 
         if let (Some(kernel), Some(zero_bias)) = (&self.layer_scalar_kernel, &self.layer_scalar_zero_bias) {
@@ -651,7 +638,7 @@ impl<B: Backend> LayerExecutables<B> {
             let num_cols = self.model_dim as u32;
             kernel.encode(
                 (main_input, main.offset()),
-                &*zero_bias.buffer().borrow(),
+                zero_bias,
                 (&mut *main_buffer, main.offset()),
                 num_cols,
                 length as u32,

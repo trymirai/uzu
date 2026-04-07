@@ -34,7 +34,7 @@ pub struct AttentionConfig {
     /// lalamo PR #197 uses a bool flag instead of full NormalizationConfig.
     /// Consumed during config conversion to populate value_norm_config; not re-serialized.
     #[serde(default, skip_serializing)]
-    pub normalize_values: bool,
+    pub(crate) normalize_values: bool,
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ pub enum QKNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError<B>),
+    ParameterError(#[source] ParameterLoaderError<B>),
 }
 
 pub struct QKNorm<B: Backend> {

@@ -286,6 +286,12 @@ fn test_first_pass_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
     test_first_pass_internal(&input, &expected);
 }
 
+fn test_first_pass_head_dim_512<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_first_pass_input::<T>(1, 1, 8, 2, 512, true);
+    let expected = get_first_pass_output::<T, Cpu>(&input);
+    test_first_pass_internal(&input, &expected);
+}
+
 // --- Second pass tests ---
 
 fn test_second_pass_internal<T: ArrayElement + Float + Debug + Display>(
@@ -323,6 +329,12 @@ fn test_second_pass_basic<T: ArrayElement + Float + Debug + Display>() {
 
 fn test_second_pass_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
     let input = get_second_pass_input(4, 2, 128);
+    let expected = get_second_pass_output::<T, Cpu>(&input);
+    test_second_pass_internal::<T>(&input, &expected);
+}
+
+fn test_second_pass_head_dim_512<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_second_pass_input(1, 2, 512);
     let expected = get_second_pass_output::<T, Cpu>(&input);
     test_second_pass_internal::<T>(&input, &expected);
 }
@@ -389,6 +401,21 @@ fn test_first_pass_head_dim_128_bf16() {
     test_first_pass_head_dim_128::<bf16>();
 }
 
+#[test]
+fn test_first_pass_head_dim_512_f32() {
+    test_first_pass_head_dim_512::<f32>();
+}
+
+#[test]
+fn test_first_pass_head_dim_512_f16() {
+    test_first_pass_head_dim_512::<f16>();
+}
+
+#[test]
+fn test_first_pass_head_dim_512_bf16() {
+    test_first_pass_head_dim_512::<bf16>();
+}
+
 // --- Second pass test entries ---
 
 #[test]
@@ -419,4 +446,19 @@ fn test_second_pass_head_dim_128_f16() {
 #[test]
 fn test_second_pass_head_dim_128_bf16() {
     test_second_pass_head_dim_128::<bf16>();
+}
+
+#[test]
+fn test_second_pass_head_dim_512_f32() {
+    test_second_pass_head_dim_512::<f32>();
+}
+
+#[test]
+fn test_second_pass_head_dim_512_f16() {
+    test_second_pass_head_dim_512::<f16>();
+}
+
+#[test]
+fn test_second_pass_head_dim_512_bf16() {
+    test_second_pass_head_dim_512::<bf16>();
 }

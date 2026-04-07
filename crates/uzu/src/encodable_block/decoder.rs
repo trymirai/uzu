@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    array::{Array, ArrayContextExt},
+    array::ArrayContextExt,
     backends::common::{
         Backend, Encoder,
         kernel::{Kernels as KernelsTrait, RMSNormKernel, TensorAddScaleKernel},
@@ -38,45 +38,25 @@ pub enum DecoderError<B: Backend> {
 }
 
 struct PleModelWeights<B: Backend> {
-    embed: Option<Embedding<B>>,
-    projection: Option<Box<dyn Linear<B>>>,
-    norm_kernel: Option<<B::Kernels as KernelsTrait>::RMSNormKernel>,
-    norm_scales: Option<Rc<RefCell<B::Buffer>>>,
-    norm_config: Option<NormalizationConfig>,
-    scale_kernel: Option<<B::Kernels as KernelsTrait>::TensorAddScaleKernel>,
-    zero_bias: Option<Array<B>>,
-}
-
-impl<B: Backend> Default for PleModelWeights<B> {
-    fn default() -> Self {
-        Self {
-            embed: None,
-            projection: None,
-            norm_kernel: None,
-            norm_scales: None,
-            norm_config: None,
-            scale_kernel: None,
-            zero_bias: None,
-        }
-    }
+    embed: Embedding<B>,
+    projection: Box<dyn Linear<B>>,
+    norm_kernel: <B::Kernels as KernelsTrait>::RMSNormKernel,
+    norm_scales: Rc<RefCell<B::Buffer>>,
+    norm_config: NormalizationConfig,
+    scale_kernel: <B::Kernels as KernelsTrait>::TensorAddScaleKernel,
+    zero_bias: B::Buffer,
+    zero_bias_len: usize,
+    projection_scale: f32,
+    combination_scale: f32,
+    num_layers: usize,
+    dim: usize,
 }
 
 pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
-    pub ple_embed: Option<Embedding<B>>,
-    pub ple_projection: Option<Box<dyn Linear<B>>>,
-    ple_norm_kernel: Option<<B::Kernels as KernelsTrait>::RMSNormKernel>,
-    ple_norm_scales: Option<Rc<RefCell<B::Buffer>>>,
-    ple_norm_config: Option<NormalizationConfig>,
-    ple_scale_kernel: Option<<B::Kernels as KernelsTrait>::TensorAddScaleKernel>,
-    /// Zero-valued bias buffer used for scalar-only multiply via TensorAddScale: (input + 0) * scale
-    ple_zero_bias: Option<Array<B>>,
-    ple_projection_scale: f32,
-    ple_combination_scale: f32,
-    ple_num_layers: usize,
-    ple_dim: usize,
+    ple: Option<PleModelWeights<B>>,
 }
 
 impl<B: Backend> Decoder<B> {
@@ -99,23 +79,11 @@ impl<B: Backend> Decoder<B> {
         let (layers, norm) =
             Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, "transformer");
 
-        let ple = Self::load_ple_model_weights(context, decoder_config, root_weight_loader);
-
         Self {
             embed,
             layers,
             norm,
-            ple_embed: ple.embed,
-            ple_projection: ple.projection,
-            ple_norm_kernel: ple.norm_kernel,
-            ple_norm_scales: ple.norm_scales,
-            ple_norm_config: ple.norm_config,
-            ple_scale_kernel: ple.scale_kernel,
-            ple_zero_bias: ple.zero_bias,
-            ple_projection_scale: decoder_config.ple_projection_scale.unwrap_or(1.0),
-            ple_combination_scale: decoder_config.ple_combination_scale.unwrap_or(1.0),
-            ple_num_layers: decoder_config.num_layers,
-            ple_dim: decoder_config.ple_dim.unwrap_or(0),
+            ple: Self::load_ple_model_weights(context, decoder_config, root_weight_loader),
         }
     }
 
@@ -146,23 +114,11 @@ impl<B: Backend> Decoder<B> {
         let (layers, norm) =
             Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, transformer_subtree);
 
-        let ple = Self::load_ple_model_weights(context, decoder_config, root_weight_loader);
-
         Self {
             embed,
             layers,
             norm,
-            ple_embed: ple.embed,
-            ple_projection: ple.projection,
-            ple_norm_kernel: ple.norm_kernel,
-            ple_norm_scales: ple.norm_scales,
-            ple_norm_config: ple.norm_config,
-            ple_scale_kernel: ple.scale_kernel,
-            ple_zero_bias: ple.zero_bias,
-            ple_projection_scale: decoder_config.ple_projection_scale.unwrap_or(1.0),
-            ple_combination_scale: decoder_config.ple_combination_scale.unwrap_or(1.0),
-            ple_num_layers: decoder_config.num_layers,
-            ple_dim: decoder_config.ple_dim.unwrap_or(0),
+            ple: Self::load_ple_model_weights(context, decoder_config, root_weight_loader),
         }
     }
 
@@ -307,10 +263,10 @@ impl<B: Backend> Decoder<B> {
         context: &B::Context,
         decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B::Context>,
-    ) -> PleModelWeights<B> {
+    ) -> Option<PleModelWeights<B>> {
         let ple_dim = match decoder_config.ple_dim {
             Some(dim) if dim > 0 => dim,
-            _ => return PleModelWeights::default(),
+            _ => return None,
         };
         let ple_linear_config =
             decoder_config.ple_linear_config.as_ref().expect("ple_linear_config required when ple_dim > 0");
@@ -380,17 +336,26 @@ impl<B: Backend> Decoder<B> {
         let ple_scale_kernel = <B::Kernels as KernelsTrait>::TensorAddScaleKernel::new(context, ple_data_type)
             .expect("Failed to create TensorAddScale kernel for PLE");
 
-        let ple_zero_bias = context.create_array_zeros(&[ple_total_dim], ple_data_type, "ple_zero_bias");
+        let ple_zero_bias_arr = context.create_array_zeros(&[ple_total_dim], ple_data_type, "ple_zero_bias");
+        let ple_zero_bias_len = ple_zero_bias_arr.num_elements();
+        let ple_zero_bias_rc = ple_zero_bias_arr.buffer();
+        drop(ple_zero_bias_arr);
+        let ple_zero_bias = Rc::try_unwrap(ple_zero_bias_rc).expect("unique owner").into_inner();
 
-        PleModelWeights {
-            embed: Some(ple_embed),
-            projection: Some(ple_projection),
-            norm_kernel: Some(ple_norm_kernel),
-            norm_scales: Some(norm_scales.buffer()),
-            norm_config: Some(ple_norm_config.clone()),
-            scale_kernel: Some(ple_scale_kernel),
-            zero_bias: Some(ple_zero_bias),
-        }
+        Some(PleModelWeights {
+            embed: ple_embed,
+            projection: ple_projection,
+            norm_kernel: ple_norm_kernel,
+            norm_scales: norm_scales.buffer(),
+            norm_config: ple_norm_config.clone(),
+            scale_kernel: ple_scale_kernel,
+            zero_bias: ple_zero_bias,
+            zero_bias_len: ple_zero_bias_len,
+            projection_scale: decoder_config.ple_projection_scale.unwrap_or(1.0),
+            combination_scale: decoder_config.ple_combination_scale.unwrap_or(1.0),
+            num_layers: decoder_config.num_layers,
+            dim: ple_dim,
+        })
     }
 
     fn create_rope_block(
@@ -422,31 +387,29 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<(), DecoderError<B>> {
         self.embed.encode_lookup(state, encoder)?;
 
-        if let (Some(ple_embed), Some(ple_projection)) = (&self.ple_embed, &self.ple_projection) {
-            ple_embed.encode_lookup_to(state, encoder, ArrayId::PleEmbeddings)?;
+        if let Some(ref ple) = self.ple {
+            ple.embed.encode_lookup_to(state, encoder, ArrayId::PleEmbeddings)?;
 
-            ple_projection.encode(state, encoder).map_err(DecoderError::BackendError)?;
+            ple.projection.encode(state, encoder).map_err(DecoderError::BackendError)?;
 
-            // Scale PleProjection by ple_projection_scale (in-place via TensorAddScale with zero bias)
+            // Scale PleProjection by projection_scale (in-place via TensorAddScale with zero bias)
             {
                 let ple_proj = state.array(ArrayId::PleProjection);
                 let length = ple_proj.num_elements();
-                let zero_bias = self.ple_zero_bias.as_ref().unwrap();
-                let kernel = self.ple_scale_kernel.as_ref().unwrap();
 
                 let proj_buffer_rc = ple_proj.buffer();
                 let mut proj_buffer = proj_buffer_rc.borrow_mut();
                 // TensorAddScale is element-wise, so in-place read/write aliasing is valid.
                 let proj_input: &B::Buffer = unsafe { &*(&*proj_buffer as *const B::Buffer) };
 
-                let num_cols = zero_bias.num_elements() as u32;
-                kernel.encode(
+                let num_cols = ple.zero_bias_len as u32;
+                ple.scale_kernel.encode(
                     (proj_input, ple_proj.offset()),
-                    &*zero_bias.buffer().borrow(),
+                    &ple.zero_bias,
                     (&mut *proj_buffer, ple_proj.offset()),
                     num_cols,
                     length as u32,
-                    self.ple_projection_scale,
+                    ple.projection_scale,
                     encoder,
                 );
             }
@@ -456,24 +419,21 @@ impl<B: Backend> Decoder<B> {
             // so norm operates per layer-chunk, matching the HF reshape-then-norm pattern.
             {
                 let ple_proj = state.array(ArrayId::PleProjection);
-                let ple_norm_kernel = self.ple_norm_kernel.as_ref().unwrap();
-                let ple_norm_scales = self.ple_norm_scales.as_ref().unwrap();
-                let ple_norm_config = self.ple_norm_config.as_ref().unwrap();
 
                 let active_rows = state.active_row_count();
-                let batch_len = (active_rows * self.ple_num_layers) as u32;
-                let element_count = self.ple_dim as u32;
+                let batch_len = (active_rows * ple.num_layers) as u32;
+                let element_count = ple.dim as u32;
 
-                ple_norm_kernel.encode(
+                ple.norm_kernel.encode(
                     None::<(&B::Buffer, usize)>,
-                    ple_norm_scales.borrow().deref(),
+                    ple.norm_scales.borrow().deref(),
                     (ple_proj.buffer().borrow_mut().deref_mut(), ple_proj.offset()),
                     None::<(&mut B::Buffer, usize)>,
                     batch_len,
                     element_count,
-                    ple_norm_config.epsilon,
-                    ple_norm_config.scale_offset.unwrap_or(0.0),
-                    ple_norm_config.upcast_mode == UpcastMode::FullLayer,
+                    ple.norm_config.epsilon,
+                    ple.norm_config.scale_offset.unwrap_or(0.0),
+                    ple.norm_config.upcast_mode == UpcastMode::FullLayer,
                     encoder,
                 );
             }
@@ -483,10 +443,9 @@ impl<B: Backend> Decoder<B> {
                 let ple_embed_arr = state.array(ArrayId::PleEmbeddings);
                 let ple_combined = state.array(ArrayId::PlePerLayerInputs);
                 let length = ple_proj.num_elements();
-                let kernel = self.ple_scale_kernel.as_ref().unwrap();
 
                 debug_assert_eq!(ple_embed_arr.offset(), 0, "PLE combine assumes zero offset on embeddings bias");
-                kernel.encode(
+                ple.scale_kernel.encode(
                     (&*ple_proj.buffer().borrow(), ple_proj.offset()),
                     &*ple_embed_arr.buffer().borrow(),
                     (&mut *ple_combined.buffer().borrow_mut(), ple_combined.offset()),
@@ -500,21 +459,19 @@ impl<B: Backend> Decoder<B> {
             {
                 let ple_combined = state.array(ArrayId::PlePerLayerInputs);
                 let length = ple_combined.num_elements();
-                let zero_bias = self.ple_zero_bias.as_ref().unwrap();
-                let kernel = self.ple_scale_kernel.as_ref().unwrap();
 
                 let combined_buffer_rc = ple_combined.buffer();
                 let mut combined_buffer = combined_buffer_rc.borrow_mut();
                 let combined_input: &B::Buffer = unsafe { &*(&*combined_buffer as *const B::Buffer) };
 
-                let num_cols = zero_bias.num_elements() as u32;
-                kernel.encode(
+                let num_cols = ple.zero_bias_len as u32;
+                ple.scale_kernel.encode(
                     (combined_input, ple_combined.offset()),
-                    &*zero_bias.buffer().borrow(),
+                    &ple.zero_bias,
                     (&mut *combined_buffer, ple_combined.offset()),
                     num_cols,
                     length as u32,
-                    self.ple_combination_scale,
+                    ple.combination_scale,
                     encoder,
                 );
             }

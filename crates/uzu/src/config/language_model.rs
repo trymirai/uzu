@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    ConfigDataType, ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig,
+    AttentionConfig, ConfigDataType, ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig,
     GenerationConfig, MessageProcessorConfig, MixerConfig, NormalizationConfig, TransformerConfig, UpcastMode,
 };
 
@@ -34,9 +34,9 @@ pub struct InnerModelConfig {
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
     #[serde(default)]
-    pub hidden_dims: Option<Vec<usize>>,
+    pub hidden_dims: Option<Box<[usize]>>,
     #[serde(default)]
-    pub kv_shared_layer_sources: Option<Vec<Option<usize>>>,
+    pub kv_shared_layer_sources: Option<Box<[Option<usize>]>>,
     #[serde(default)]
     pub ple_dim: Option<usize>,
     #[serde(default)]
@@ -76,23 +76,21 @@ impl InnerModelConfig {
         tf: &TransformerConfig,
     ) -> MixerConfig {
         match mixer {
-            MixerConfig::Attention(attn) => {
-                let mut attn = attn.clone();
-
-                if attn.normalize_values && attn.value_norm_config.is_none() {
-                    attn.value_norm_config = Some(Self::default_value_norm_config());
-                }
-
-                if attn.partial_rope_dim.is_none() {
-                    if let Some(global_rope_dim) = tf.global_rope_dim {
-                        if attn.sliding_window_size.is_none() {
-                            attn.partial_rope_dim = Some(global_rope_dim);
-                        }
+            MixerConfig::Attention(attn) => MixerConfig::Attention(AttentionConfig {
+                value_norm_config: if attn.normalize_values && attn.value_norm_config.is_none() {
+                    Some(Self::default_value_norm_config())
+                } else {
+                    attn.value_norm_config.clone()
+                },
+                partial_rope_dim: attn.partial_rope_dim.or_else(|| {
+                    if attn.sliding_window_size.is_none() {
+                        tf.global_rope_dim
+                    } else {
+                        None
                     }
-                }
-
-                MixerConfig::Attention(attn)
-            },
+                }),
+                ..attn.clone()
+            }),
             other => other.clone(),
         }
     }
@@ -162,20 +160,16 @@ impl InnerModelConfig {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        let hidden_dims = if self.hidden_dims.is_some() {
-            self.hidden_dims.as_ref().map(|v| v.clone().into_boxed_slice())
-        } else {
+        let hidden_dims = self.hidden_dims.clone().or_else(|| {
             let per_layer: Vec<usize> = tf.layer_configs.iter().filter_map(|l| l.hidden_dim).collect();
             if per_layer.len() == tf.layer_configs.len() && !per_layer.is_empty() {
                 Some(per_layer.into_boxed_slice())
             } else {
                 None
             }
-        };
+        });
 
-        let kv_shared_layer_sources = if self.kv_shared_layer_sources.is_some() {
-            self.kv_shared_layer_sources.as_ref().map(|v| v.clone().into_boxed_slice())
-        } else {
+        let kv_shared_layer_sources = self.kv_shared_layer_sources.clone().or_else(|| {
             let has_any = tf.layer_configs.iter().any(|l| l.kv_source_layer.is_some());
             if has_any {
                 let sources: Vec<Option<usize>> = tf.layer_configs.iter().map(|l| l.kv_source_layer).collect();
@@ -183,7 +177,7 @@ impl InnerModelConfig {
             } else {
                 None
             }
-        };
+        });
 
         let ple_dim = self.ple_dim.or_else(|| ple.and_then(|p| p.ple_dim));
         let ple_embed_scale = self.ple_embed_scale.or_else(|| ple.and_then(|p| p.ple_embed_scale));
