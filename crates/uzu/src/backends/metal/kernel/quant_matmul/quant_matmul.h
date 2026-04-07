@@ -735,8 +735,8 @@ void qmm_transposed_impl(
   static_assert(BK >= 32, "BK should be larger than METAL_SIMD_SIZE");
   static_assert(BK % 32 == 0, "BK should be divisible by METAL_SIMD_SIZE");
 
-  constexpr int WM = 2;
-  constexpr int WN = 2;
+  constexpr int WM = use_mlx_quant && group_size == 64 && bits == 4 ? 4 : 2;
+  constexpr int WN = use_mlx_quant && group_size == 64 && bits == 4 ? 1 : 2;
   constexpr int pack_factor = get_pack_factor<bits, 8>();
   constexpr int bytes_per_pack = get_bytes_per_pack<bits>();
   constexpr int BK_padded = (BK + 16 / sizeof(T));

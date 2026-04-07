@@ -16,19 +16,19 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& batch_size,
-    threadgroup T Xs[32 * (32 + 16 / sizeof(T))],
+    threadgroup T Xs[160 * (32 + 16 / sizeof(T))],
     threadgroup T Ws[32 * (32 + 16 / sizeof(T))],
     const bool use_zero_points SPECIALIZE,
     const bool use_mlx_quant SPECIALIZE,
     const bool aligned_n SPECIALIZE,
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
-    const uint batch_block_idx GROUPS(batch_size.div_ceil(32)),
+    const uint batch_block_idx GROUPS(batch_size.div_ceil(160)),
     const uint simd_lane THREADS(32),
     const uint simd_group THREADS(4)
 ) {
   if (use_mlx_quant) {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 32, 32, 32, true>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 160, 32, 32, true>(
           weights,
           scales,
           zero_points,
@@ -46,7 +46,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lane
       );
     } else {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, 32, 32, 32, true>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, 160, 32, 32, true>(
           weights,
           scales,
           zero_points,
@@ -66,7 +66,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     }
   } else {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 32, 32, 32, false>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, 160, 32, 32, false>(
           weights,
           scales,
           zero_points,
@@ -84,7 +84,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lane
       );
     } else {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, 32, 32, 32, false>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, 160, 32, 32, false>(
           weights,
           scales,
           zero_points,
