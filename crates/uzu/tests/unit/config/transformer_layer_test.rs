@@ -148,6 +148,7 @@ fn test_transformer_layer_config() {
             gate_projection_config: None,
             partial_rope_dim: None,
             value_norm_config: None,
+            normalize_values: false,
         }),
         mlp_config: MLPConfig::Dense(mlp::DenseMLPConfig {
             linear_config: LinearConfig::QLoRA {
@@ -169,6 +170,9 @@ fn test_transformer_layer_config() {
         }),
         post_attention_norm_config: None,
         post_mlp_norm_config: None,
+        hidden_dim: None,
+        kv_source_layer: None,
+        ple_config: None,
     };
 
     let deserialized_config: TransformerLayerConfig = from_str(config_str).unwrap();

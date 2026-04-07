@@ -22,4 +22,18 @@ pub struct TransformerConfig {
     #[serde(default)]
     pub num_layers: Option<usize>,
     pub context_length: usize,
+
+    /// Global attention RoPE dimension (lalamo PR #197). Used to derive partial_rope_dim.
+    #[serde(default)]
+    pub global_rope_dim: Option<usize>,
+
+    /// Local attention RoPE dimension (lalamo PR #197). Deserialized for forward
+    /// compatibility; not used in conversion because local layers use full head_dim for RoPE.
+    #[serde(default)]
+    pub local_rope_dim: Option<usize>,
+
+    /// Global attention head dimension (lalamo PR #197). Deserialized for forward
+    /// compatibility; per-layer head_dim from AttentionConfig is used instead.
+    #[serde(default)]
+    pub global_head_dim: Option<usize>,
 }

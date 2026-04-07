@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use super::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig};
 
+/// Per-layer PLE config (lalamo PR #197 format).
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct PLELayerConfig {
+    #[serde(default)]
+    pub has_layer_scalar: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerLayerConfig {
     #[serde(alias = "pre_mixer_norm_config")]
@@ -12,6 +19,18 @@ pub struct TransformerLayerConfig {
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+
+    /// Per-layer MLP hidden dimension (lalamo PR #197 format)
+    #[serde(default)]
+    pub hidden_dim: Option<usize>,
+
+    /// Source layer index for KV cache sharing (lalamo PR #197 format)
+    #[serde(default)]
+    pub kv_source_layer: Option<usize>,
+
+    /// Per-layer PLE config (lalamo PR #197 format)
+    #[serde(default)]
+    pub ple_config: Option<PLELayerConfig>,
 }
 
 impl TransformerLayerConfig {

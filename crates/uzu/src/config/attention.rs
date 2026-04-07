@@ -30,6 +30,11 @@ pub struct AttentionConfig {
     pub partial_rope_dim: Option<usize>,
     #[serde(default)]
     pub value_norm_config: Option<NormalizationConfig>,
+
+    /// lalamo PR #197 uses a bool flag instead of full NormalizationConfig.
+    /// Consumed during config conversion to populate value_norm_config; not re-serialized.
+    #[serde(default, skip_serializing)]
+    pub normalize_values: bool,
 }
 
 #[cfg(test)]

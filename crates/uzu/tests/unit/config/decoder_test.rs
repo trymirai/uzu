@@ -203,6 +203,7 @@ fn test_decoder_config() {
                 gate_projection_config: None,
                 partial_rope_dim: None,
                 value_norm_config: None,
+                normalize_values: false,
             }),
             mlp_config: MLPConfig::Dense(DenseMLPConfig {
                 linear_config: LinearConfig::QLoRA {
