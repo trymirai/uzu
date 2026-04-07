@@ -10,7 +10,10 @@ pub struct GemmMppSpecialization {
 }
 
 impl GemmMppSpecialization {
-    pub fn precompile_configs() -> &'static [Self] {
+    pub fn precompile_configs(data_type: crate::DataType) -> &'static [Self] {
+        if !matches!(data_type, crate::DataType::F16 | crate::DataType::BF16) {
+            return &[];
+        }
         &[
             Self {
                 block_rows: 64,

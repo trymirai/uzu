@@ -45,11 +45,11 @@ fn get_test_data<T: ArrayElement + Float>(
         n,
     };
 
-    let expected = get_output::<T, Cpu>(&input);
+    let expected = get_output::<T, Cpu>(&input, 1.0);
     (input, expected)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f32) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let m = input.m as u32;
@@ -77,7 +77,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             a: a_ref.deref(),
             a_offset: 0,
             b: b_ref.deref(),
-            ab_scale: 1.0,
+            ab_scale,
             c: MatmulArgumentC::None,
             d: d_ref.deref_mut(),
             batch_dim: m,
@@ -100,8 +100,23 @@ fn test<T: ArrayElement + Float + Debug + Display>(
 ) {
     let (input, expected) = get_test_data::<T>(m, k, n);
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input);
+        let output = get_output::<T, B>(&input, 1.0);
         assert_eq_float(&expected, &output, eps, &format!("backend {}", std::any::type_name::<B>()));
+    });
+}
+
+fn test_with_scale<T: ArrayElement + Float + Debug + Display>(
+    m: usize,
+    k: usize,
+    n: usize,
+    ab_scale: f32,
+    eps: f32,
+) {
+    let (input, _) = get_test_data::<T>(m, k, n);
+    let expected = get_output::<T, Cpu>(&input, ab_scale);
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<T, B>(&input, ab_scale);
+        assert_eq_float(&expected, &output, eps, &format!("backend {} ab_scale={ab_scale}", std::any::type_name::<B>()));
     });
 }
 
@@ -148,4 +163,16 @@ fn test_f16_large() {
 #[uzu_test]
 fn test_bf16_large() {
     test::<bf16>(16, 128, 256, 0.1);
+}
+
+// ab_scale tests
+
+#[uzu_test]
+fn test_f32_ab_scale() {
+    test_with_scale::<f32>(16, 128, 256, 0.5, 0.01);
+}
+
+#[uzu_test]
+fn test_bf16_ab_scale() {
+    test_with_scale::<bf16>(16, 128, 256, 0.5, 0.1);
 }

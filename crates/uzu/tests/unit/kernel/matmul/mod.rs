@@ -1,2 +1,3 @@
+mod gemm_mpp_test;
+mod gemm_test;
 mod gemv_test;
-mod steel_gemm_test;

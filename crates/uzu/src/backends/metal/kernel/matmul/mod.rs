@@ -49,10 +49,11 @@ fn max_gemv_batch_threshold() -> u32 {
 
 impl MatmulMetalKernel {
     fn is_mpp_eligible(
+        &self,
         context: &MetalContext,
         _arguments: &MatmulArguments<Metal>,
     ) -> bool {
-        context.device.supports_mxu()
+        context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
     }
 
     fn get_or_create_gemv(
@@ -289,6 +290,34 @@ impl MatmulMetalKernel {
     }
 }
 
+/// Explicit dispatch paths for testing individual kernels independent of production routing.
+#[derive(Debug, Clone, Copy)]
+pub enum MatmulDispatchPath {
+    Auto,
+    Gemv,
+    Gemm,
+    GemmMpp,
+}
+
+impl MatmulMetalKernel {
+    pub fn encode_with_path(
+        &mut self,
+        context: &MetalContext,
+        arguments: MatmulArguments<Metal>,
+        encoder: &mut Encoder<Metal>,
+        path: MatmulDispatchPath,
+    ) {
+        match path {
+            MatmulDispatchPath::Auto => self.encode(context, arguments, encoder),
+            MatmulDispatchPath::Gemv => self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV"),
+            MatmulDispatchPath::Gemm => self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM"),
+            MatmulDispatchPath::GemmMpp => {
+                self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP")
+            },
+        }
+    }
+}
+
 impl MatmulKernel for MatmulMetalKernel {
     type Backend = Metal;
 
@@ -317,7 +346,7 @@ impl MatmulKernel for MatmulMetalKernel {
             kernel.get_or_create_gemm(context, config)?;
         }
         if context.device.supports_mxu() {
-            for &config in gemm_mpp::GemmMppSpecialization::precompile_configs() {
+            for &config in gemm_mpp::GemmMppSpecialization::precompile_configs(data_type) {
                 kernel.get_or_create_gemm_mpp(context, config)?;
             }
         }
@@ -333,7 +362,7 @@ impl MatmulKernel for MatmulMetalKernel {
     ) {
         if arguments.batch_dim <= max_gemv_batch_threshold() {
             self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV kernel");
-        } else if Self::is_mpp_eligible(context, &arguments) {
+        } else if self.is_mpp_eligible(context, &arguments) {
             self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP kernel");
         } else {
             self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM kernel");
