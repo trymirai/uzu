@@ -234,8 +234,8 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         // They're always present, https://developer.apple.com/documentation/metal/mtlcommandbuffer/gpustarttime?language=objc
-        let start = self.command_buffer.gpu_start_time().unwrap();
-        let end = self.command_buffer.gpu_end_time().unwrap();
+        let start = self.command_buffer.gpu_start_time();
+        let end = self.command_buffer.gpu_end_time();
         Duration::from_secs_f64(end - start)
     }
 }

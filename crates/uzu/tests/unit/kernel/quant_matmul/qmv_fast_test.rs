@@ -282,25 +282,31 @@ macro_rules! qmv_fast_test {
     ($name:ident, gs=$gs:expr, bits=$bits:expr, zp=$zp:expr, mlx=$mlx:expr) => {
         #[uzu_test]
         fn $name() {
-            for_each_float_type!(|F| { test_basic::<F>($gs, $bits, $zp, $mlx); })
+            for_each_float_type!(|F| {
+                test_basic::<F>($gs, $bits, $zp, $mlx);
+            })
         }
     };
 }
 
-qmv_fast_test!(test_gs32_4bit_zp,   gs=32,  bits=4, zp=true,  mlx=false);
-qmv_fast_test!(test_gs64_4bit_zp,   gs=64,  bits=4, zp=true,  mlx=false);
-qmv_fast_test!(test_gs128_4bit_zp,  gs=128, bits=4, zp=true,  mlx=false);
-qmv_fast_test!(test_gs32_8bit_zp,   gs=32,  bits=8, zp=true,  mlx=false);
-qmv_fast_test!(test_gs64_8bit_zp,   gs=64,  bits=8, zp=true,  mlx=false);
-qmv_fast_test!(test_gs128_8bit_zp,  gs=128, bits=8, zp=true,  mlx=false);
-qmv_fast_test!(test_gs32_4bit_mlx,  gs=32,  bits=4, zp=false, mlx=true);
-qmv_fast_test!(test_gs64_4bit_mlx,  gs=64,  bits=4, zp=false, mlx=true);
-qmv_fast_test!(test_gs128_4bit_mlx, gs=128, bits=4, zp=false, mlx=true);
-qmv_fast_test!(test_gs32_8bit_mlx,  gs=32,  bits=8, zp=false, mlx=true);
-qmv_fast_test!(test_gs64_8bit_mlx,  gs=64,  bits=8, zp=false, mlx=true);
-qmv_fast_test!(test_gs128_8bit_mlx, gs=128, bits=8, zp=false, mlx=true);
+qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, zp = true, mlx = false);
+qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, zp = true, mlx = false);
+qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, zp = true, mlx = false);
+qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, zp = true, mlx = false);
+qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, zp = true, mlx = false);
+qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, zp = true, mlx = false);
+qmv_fast_test!(test_gs32_4bit_mlx, gs = 32, bits = 4, zp = false, mlx = true);
+qmv_fast_test!(test_gs64_4bit_mlx, gs = 64, bits = 4, zp = false, mlx = true);
+qmv_fast_test!(test_gs128_4bit_mlx, gs = 128, bits = 4, zp = false, mlx = true);
+qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, zp = false, mlx = true);
+qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, zp = false, mlx = true);
+qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, zp = false, mlx = true);
 
-fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(rng: &mut R, range: std::ops::Range<T>, len: usize) -> Box<[T]> {
+fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(
+    rng: &mut R,
+    range: std::ops::Range<T>,
+    len: usize,
+) -> Box<[T]> {
     (0..len).map(|_| rng.random_range(range.clone())).collect()
 }
 
@@ -314,29 +320,63 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
     use_mlx_quant: bool,
 ) {
     let mut group = c.benchmark_group(format!("{}/Kernel/QmvFast/{}", type_short_name::<B>(), label));
-    let block_size: usize = if bits == 4 { 512 } else { 256 };
+    let block_size: usize = if bits == 4 {
+        512
+    } else {
+        256
+    };
 
     for (m, n, k) in iproduct!([1, 2, 3, 4], [2048, 4096, 14336], [2048, 4096, 8192, 14336]) {
-        if n % 8 != 0 || k % block_size != 0 { continue; }
+        if n % 8 != 0 || k % block_size != 0 {
+            continue;
+        }
 
         let num_groups = k.div_ceil(group_size as usize);
         let mut rng = SmallRng::seed_from_u64(42);
 
         let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
-            context, T::data_type(), group_size, bits, use_zero_points, use_mlx_quant,
-        ).unwrap();
+            context,
+            T::data_type(),
+            group_size,
+            bits,
+            use_zero_points,
+            use_mlx_quant,
+        )
+        .unwrap();
 
-        let w_buf = alloc_buffer_with_data::<B, u32>(context, &gen_random::<u32, _>(&mut rng, 0..u32::MAX, n * k * bits as usize / 32));
-        let scales_buf = alloc_buffer_with_data::<B, T>(context, &gen_random::<f32, _>(&mut rng, 0.01..1.0, n * num_groups).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>());
-        let x_buf = alloc_buffer_with_data::<B, T>(context, &gen_random::<f32, _>(&mut rng, -1.0..1.0, m * k).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>());
+        let w_buf = alloc_buffer_with_data::<B, u32>(
+            context,
+            &gen_random::<u32, _>(&mut rng, 0..u32::MAX, n * k * bits as usize / 32),
+        );
+        let scales_buf = alloc_buffer_with_data::<B, T>(
+            context,
+            &gen_random::<f32, _>(&mut rng, 0.01..1.0, n * num_groups)
+                .iter()
+                .map(|&v| T::from(v).unwrap())
+                .collect::<Vec<_>>(),
+        );
+        let x_buf = alloc_buffer_with_data::<B, T>(
+            context,
+            &gen_random::<f32, _>(&mut rng, -1.0..1.0, m * k).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>(),
+        );
         let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
 
         let zp_buf = use_zero_points.then(|| {
-            let zp_stride = if bits == 4 { (num_groups + 1) / 2 } else { num_groups };
+            let zp_stride = if bits == 4 {
+                (num_groups + 1) / 2
+            } else {
+                num_groups
+            };
             alloc_buffer_with_data::<B, u8>(context, &gen_random::<u8, _>(&mut rng, 0..u8::MAX, n * zp_stride))
         });
         let bias_buf = use_mlx_quant.then(|| {
-            alloc_buffer_with_data::<B, T>(context, &gen_random::<f32, _>(&mut rng, -0.5..0.5, n * num_groups).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>())
+            alloc_buffer_with_data::<B, T>(
+                context,
+                &gen_random::<f32, _>(&mut rng, -0.5..0.5, n * num_groups)
+                    .iter()
+                    .map(|&v| T::from(v).unwrap())
+                    .collect::<Vec<_>>(),
+            )
         });
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
@@ -344,9 +384,20 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
             b.iter_custom(|n_iters| {
                 let mut encoder = Encoder::<B>::new(context).unwrap();
                 for _ in 0..n_iters {
-                    kernel.encode(&w_buf, &scales_buf, zp_buf.as_ref(), bias_buf.as_ref(), &x_buf, &mut y_buf, k as u32, n as u32, m as u32, &mut encoder);
+                    kernel.encode(
+                        &w_buf,
+                        &scales_buf,
+                        zp_buf.as_ref(),
+                        bias_buf.as_ref(),
+                        &x_buf,
+                        &mut y_buf,
+                        k as u32,
+                        n as u32,
+                        m as u32,
+                        &mut encoder,
+                    );
                 }
-                encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+                encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
             })
         });
     }
