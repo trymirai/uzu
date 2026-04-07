@@ -127,6 +127,7 @@ fn get_output<
         AccumT::data_type(),
         input.in_place,
         false,
+        false,
     )
     .expect("Failed to create RMSNormKernel");
 
