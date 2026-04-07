@@ -4,19 +4,23 @@ use std::{
     time::{Duration, Instant},
 };
 
+use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};
+use itertools::iproduct;
 use num_traits::Float;
-#[cfg(metal_backend)]
-use rand::{RngExt, SeedableRng, prelude::StdRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
+        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
 };
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{assert::assert_eq_float, type_short_name},
+    uzu_bench, uzu_test,
+};
 
 static BOOL_ALL: &[bool] = &[true, false];
 static BOOL_FALSE: &[bool] = &[false];
@@ -126,6 +130,7 @@ fn get_output<
         OutputT::data_type(),
         AccumT::data_type(),
         input.in_place,
+        input.full_layer,
         false,
         false,
     )
@@ -154,7 +159,6 @@ fn get_output<
         input.element_count,
         input.epsilon,
         input.scale_offset,
-        input.full_layer,
         &mut encoder,
     );
 
@@ -235,75 +239,22 @@ fn test_edge<
     }
 }
 
-#[cfg(metal_backend)]
-fn test_performance<B: Backend>(
+fn get_rms_norm_data(
+    seed: u64,
     batch_size: usize,
     model_dim: usize,
-) {
-    let epsilon = 1e-6f32;
-    let scale_offset = 0.0f32;
-    let mut rng = StdRng::seed_from_u64(42);
-
+) -> (Box<[f32]>, Box<[f32]>) {
+    let mut rng = SmallRng::seed_from_u64(seed);
     let input_size = batch_size * model_dim;
-    let mut input_data = vec![0.0f32; batch_size * model_dim];
-    let mut output_data = vec![0.0f32; batch_size * model_dim];
-    for i in 0..input_size {
-        input_data[i] = rng.random_range(-2.0f32..2.0f32);
-        output_data[i] = input_data[i]
+    let mut input_data = vec![0.0f32; input_size];
+    for x in input_data.iter_mut() {
+        *x = rng.random_range(-2.0f32..2.0f32);
     }
-
     let mut scale_data = vec![0.0f32; model_dim];
     for x in scale_data.iter_mut() {
         *x = rng.random_range(0.1f32..3.0f32);
     }
-
-    let input = Input::<f32, f32, f32> {
-        input: input_data.into_boxed_slice(),
-        scales: scale_data.into_boxed_slice(),
-        output: output_data.into_boxed_slice(),
-        batch_size: batch_size as u32,
-        element_count: model_dim as u32,
-        epsilon,
-        scale_offset,
-        full_layer: false,
-        in_place: false,
-    };
-    let (output_data, host_elapsed_ms, gpu_time) = get_output::<B, f32, f32, f32, f32>(&input);
-    match gpu_time {
-        Some(gpu_time) => {
-            println!(
-                "RMS norm perf (backend={}, batch={}, model_dim={}): GPU={:.2} ms, Host-side={:.2} ms",
-                std::any::type_name::<B>(),
-                batch_size,
-                model_dim,
-                gpu_time.as_secs_f64() * 1e3,
-                host_elapsed_ms
-            );
-        },
-        None => {
-            println!(
-                "RMS norm perf (backend={}, batch={}, model_dim={}): Host-side={:.2} ms (GPU timing unavailable)",
-                std::any::type_name::<B>(),
-                batch_size,
-                model_dim,
-                host_elapsed_ms
-            );
-        },
-    }
-
-    // Sample check for large outputs
-    let sample_size = std::cmp::min(1000, output_data.len());
-    for i in (0..output_data.len()).step_by(std::cmp::max(1, output_data.len() / sample_size)) {
-        assert!(output_data[i].is_finite(), "Output at index {} is not finite: {}", i, output_data[i]);
-    }
-
-    // Check that normalization is working
-    let mean_abs = output_data.iter().take(sample_size).map(|x| x.abs()).sum::<f32>() / sample_size as f32;
-    assert!(
-        mean_abs > 0.01 && mean_abs < 100.0,
-        "Mean absolute value {} seems unreasonable - normalization may not be working",
-        mean_abs
-    );
+    (input_data.into_boxed_slice(), scale_data.into_boxed_slice())
 }
 
 // AccumT f32
@@ -436,17 +387,83 @@ fn test_edge_f16_f16_f16_f16() {
     test_edge::<f16, f16, f16, f16>();
 }
 
-// performance tests
-#[cfg(metal_backend)]
-#[uzu_test]
-fn test_perf_8k() {
-    use uzu::backends::metal::Metal;
-    test_performance::<Metal>(8, 8192); // Large model like LLaMA-70B
-}
+// benchmarks
+#[uzu_bench]
+fn bench_rms_norm(c: &mut Criterion) {
+    type T = f32;
+    let epsilon = 1e-6f32;
+    let scale_offset = 0.0f32;
 
-#[cfg(metal_backend)]
-#[uzu_test]
-fn test_perf_16k() {
-    use uzu::backends::metal::Metal;
-    test_performance::<Metal>(16, 16384); // Huge model dimension
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().unwrap();
+
+        let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
+            &context,
+            T::data_type(),
+            T::data_type(),
+            T::data_type(),
+            T::data_type(),
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let mut group = c.benchmark_group(format!("{}/Kernel/RMSNorm", type_short_name::<B>()));
+
+        for (batch_size, model_dim) in iproduct!(
+            [1, 4, 32, 128, 1024], // Batch sizes
+            [
+                1024, // LFM2-350M
+                1152, // Gemma-3-1b
+                2048, // Llama-3.2-1B
+                2560, // Qwen3-4B
+                3072, // Llama-3.2-3B
+                4096, // Qwen3-8B
+                5120, // Qwen2.5-32B
+            ]
+        ) {
+            let (input_data, scale_data) = get_rms_norm_data(1337, batch_size, model_dim);
+            let input_size = batch_size * model_dim;
+
+            let input_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
+            unsafe {
+                std::slice::from_raw_parts_mut::<T>(input_buffer.cpu_ptr().as_ptr() as *mut T, input_size)
+                    .copy_from_slice(input_data.as_ref());
+            }
+
+            let scales_buffer = context.create_buffer(model_dim * std::mem::size_of::<T>()).unwrap();
+            unsafe {
+                std::slice::from_raw_parts_mut::<T>(scales_buffer.cpu_ptr().as_ptr() as *mut T, model_dim)
+                    .copy_from_slice(scale_data.as_ref());
+            }
+
+            let mut output_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
+
+            group.throughput(Throughput::Elements((batch_size * model_dim) as u64));
+
+            group.bench_function(BenchmarkId::from_parameter(format!("Batch[{batch_size}]Dim[{model_dim}]")), |b| {
+                b.iter_custom(|n_iters| {
+                    let mut encoder = Encoder::<B>::new(&context).unwrap();
+
+                    for _ in 0..n_iters {
+                        kernel.encode(
+                            Some(&input_buffer),
+                            &scales_buffer,
+                            &mut output_buffer,
+                            None::<&mut <B as Backend>::Buffer>,
+                            batch_size as u32,
+                            model_dim as u32,
+                            epsilon,
+                            scale_offset,
+                            &mut encoder,
+                        );
+                    }
+
+                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+                })
+            });
+        }
+    });
 }

@@ -18,13 +18,13 @@ pub fn rms_norm<
     #[optional(!in_place)] input: Option<*const InputT>,
     scales: *const ScaleT,
     output: *mut OutputT,
-    #[optional(copy_to_shortcut)] shortcut_buffer: Option<*mut InputT>,
+    #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
     scale_offset: f32,
-    full_layer: bool,
     #[specialize] in_place: bool,
+    #[specialize] full_layer: bool,
     #[specialize] copy_to_shortcut: bool,
     #[specialize] residual_add: bool,
 ) {
@@ -49,7 +49,7 @@ pub fn rms_norm<
             let input_val = unsafe { *input.add(batch_offset + i) };
             let mut val = input_val;
             if copy_to_shortcut {
-                let skip_ptr = unsafe { shortcut_buffer.unwrap().add(batch_offset + i) };
+                let skip_ptr = unsafe { shortcut.unwrap().add(batch_offset + i) };
                 if residual_add {
                     val = val + unsafe { *skip_ptr };
                 }
@@ -64,7 +64,7 @@ pub fn rms_norm<
         // Normalization and scaling
         for i in 0..element_count {
             let input_val = if residual_add {
-                unsafe { AccumT::from(*shortcut_buffer.unwrap().add(batch_offset + i)).unwrap() }
+                unsafe { AccumT::from(*shortcut.unwrap().add(batch_offset + i)).unwrap() }
             } else {
                 unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() }
             };
