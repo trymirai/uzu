@@ -62,20 +62,13 @@ pub struct DecoderConfig {
     pub context_length: usize,
 
     /// For each layer, optionally the index of the layer whose KV cache to reuse.
-    /// None means the layer computes its own KV. Some(idx) means reuse from layer idx.
     pub kv_shared_layer_sources: Option<Box<[Option<usize>]>>,
 
-    /// Per-Layer Embedding dimension (0 = disabled, 256 for Gemma 4 E2B/E4B)
     pub ple_dim: Option<usize>,
-    /// PLE embed scale: sqrt(ple_dim), e.g. 16.0
     pub ple_embed_scale: Option<f32>,
-    /// PLE projection scale: hidden_size^-0.5
     pub ple_projection_scale: Option<f32>,
-    /// PLE combination scale: 2.0^-0.5 ≈ 0.7071
     pub ple_combination_scale: Option<f32>,
-    /// LinearConfig for PLE projections (same quantization as main model)
     pub ple_linear_config: Option<LinearConfig>,
-    /// NormalizationConfig for PLE norms
     pub ple_norm_config: Option<NormalizationConfig>,
 }
 

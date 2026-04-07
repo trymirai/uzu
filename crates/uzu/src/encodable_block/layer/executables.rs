@@ -35,38 +35,28 @@ pub struct LayerExecutables<B: Backend> {
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
-    /// PLE: gate projection (model_dim -> ple_dim), applied to hidden_states within layer
+    /// Explicit residual add for layers with PLE/scalar. These must operate on the full
+    /// residual sum (input + attn + mlp), so the normally-deferred MLP residual add is
+    /// performed here instead of in the next layer's pre_attention_norm.
+    mlp_residual_add: Option<TensorAddSwap<B>>,
     pub ple_gate: Option<Box<dyn Linear<B>>>,
-    /// PLE: projection back (ple_dim -> model_dim), applied after gating
     pub ple_projection: Option<Box<dyn Linear<B>>>,
-    /// PLE: RMSNorm applied after PLE projection, before residual add
     pub post_ple_norm: Option<RMSNorm<B>>,
-    /// PLE: GELU activation applied to PleGate buffer
     ple_activation: Option<Activation<B>>,
-    /// PLE: element-wise multiply kernel for strided PLE per-layer inputs
     ple_mul_strided_kernel: Option<<B::Kernels as Kernels>::ElementWiseMulStridedKernel>,
-    /// PLE: residual add after PLE injection (Main = PLE_output + Shortcut)
     ple_add_swap: Option<TensorAddSwap<B>>,
-    /// PLE: dimension of per-layer embedding
     ple_dim: usize,
-    /// PLE: total dimension across all layers (num_layers * ple_dim)
     ple_total_dim: usize,
-    /// Per-layer learnable scalar applied after all operations (Gemma 4).
-    /// Stored as f32 for use as the scale parameter in TensorAddScale.
     layer_scalar: f32,
-    /// TensorAddScale kernel for applying layer_scalar (only created when needed)
     layer_scalar_kernel: Option<<B::Kernels as Kernels>::TensorAddScaleKernel>,
-    /// Zero-bias buffer [model_dim] for scalar-only multiply via TensorAddScale: (input + 0) * scale
+    /// Zero-bias buffer for scalar-only multiply via TensorAddScale: (input + 0) * scale
     layer_scalar_zero_bias: Option<Array<B>>,
-    /// Model dimension, needed for num_cols when encoding layer_scalar
     model_dim: usize,
-    /// Per-layer attention dimensions for buffer reshaping (num_heads, num_groups, head_dim).
-    /// These are the actual dimensions for this layer's attention, which may differ from the
-    /// max dimensions used for buffer allocation.
+    /// Per-layer attention dimensions for buffer reshaping. May differ from the max
+    /// dimensions used for buffer allocation.
     attention_num_heads: usize,
     attention_num_groups: usize,
     attention_head_dim: usize,
-    /// Whether this layer uses shared KV cache from another layer.
     /// When true, the KV cache update is skipped to avoid overwriting the source layer's cache.
     is_kv_shared_layer: bool,
 }
@@ -91,6 +81,7 @@ impl<B: Backend> LayerExecutables<B> {
         ple_norm_config: Option<&NormalizationConfig>,
         num_layers: usize,
         is_kv_shared_layer: bool,
+        previous_layer_did_explicit_residual: bool,
     ) -> Self {
         let intermediate_data_type: DataType = match &layer_config.mixer_config {
             MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
@@ -103,6 +94,7 @@ impl<B: Backend> LayerExecutables<B> {
         let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
             .expect("Failed to create TensorAddBiasKernel kernel"); // TODO: this function return Result
 
+        let fused_residual_add = layer_index > 0 && !previous_layer_did_explicit_residual;
         let pre_attention_norm = RMSNorm::new(
             context,
             intermediate_data_type,
@@ -111,11 +103,10 @@ impl<B: Backend> LayerExecutables<B> {
             ArrayId::Main,
             &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
             Some(ArrayId::Shortcut),
-            layer_index > 0,
+            fused_residual_add,
         )
         .expect("Failed to create RMS norm kernel");
 
-        // Extract per-layer attention dimensions (defaults for non-attention layers)
         let (attn_num_heads, attn_num_groups, attn_head_dim) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => (
                 attention_config.num_heads.unwrap_or(num_heads),
@@ -400,7 +391,16 @@ impl<B: Backend> LayerExecutables<B> {
             _ => (None, None, None, None, None, None, 0, 0),
         };
 
-        // Load per-layer scalar if configured (Gemma 4)
+        let has_ple = ple_gate.is_some();
+        let mlp_residual_add = if has_ple || layer_config.has_layer_scalar {
+            Some(
+                TensorAddSwap::new(context, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main)
+                    .expect("Failed to create MLP residual add-swap"),
+            )
+        } else {
+            None
+        };
+
         let (layer_scalar, layer_scalar_kernel, layer_scalar_zero_bias) = if layer_config.has_layer_scalar {
             let scalar_array =
                 decoder_layer_loader.leaf_array("layer_scalar").expect("Failed to load layer_scalar weight");
@@ -445,6 +445,7 @@ impl<B: Backend> LayerExecutables<B> {
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
+            mlp_residual_add,
             ple_gate,
             ple_projection,
             post_ple_norm,
@@ -480,7 +481,6 @@ impl<B: Backend> LayerExecutables<B> {
             state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
         }
 
-        // Reshape shared rotated Q/K/V and attention buffers to this layer's dimensions.
         // Buffers are allocated with max dims; each layer views the subset it needs.
         if matches!(&self.mixer, MixerExecutables::Attention { .. }) {
             let suffix_length = state.active_row_count();
@@ -574,10 +574,7 @@ impl<B: Backend> LayerExecutables<B> {
                 state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_attention_norm.clone());
             }
         }
-        // main = attention_result
-
         self.pre_mlp_norm.encode(state, encoder)?;
-        // shortcut = attention_result + shortcut; main = normalized(shortcut)
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(encoder, ArrayId::Shortcut, layer_traces.borrow().mlp_inputs.clone());
@@ -597,8 +594,9 @@ impl<B: Backend> LayerExecutables<B> {
                 state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
         }
-        // main = mlp_result
-        // next layer's pre_attention_norm (or output_norm) fuses the residual add
+        if let Some(ref residual_add) = self.mlp_residual_add {
+            residual_add.encode(state, encoder)?;
+        }
 
         if let (Some(ple_gate), Some(ple_projection), Some(post_ple_norm), Some(ple_activation), Some(ple_mul_kernel)) = (
             &self.ple_gate,
@@ -607,13 +605,10 @@ impl<B: Backend> LayerExecutables<B> {
             &self.ple_activation,
             &self.ple_mul_strided_kernel,
         ) {
-            // Step 1: Gate projection: Main → PleGate [seq, ple_dim]
             ple_gate.encode(state, encoder)?;
-
-            // Step 2: GELU activation on PleGate (in-place)
             ple_activation.encode(state, encoder)?;
 
-            // Step 3: Element-wise multiply PleGate * PlePerLayerInputs[layer_i] (strided)
+            // Element-wise multiply PleGate * PlePerLayerInputs[layer_i] (strided)
             {
                 let ple_gate_arr = state.array(ArrayId::PleGate);
                 let ple_inputs = state.array(ArrayId::PlePerLayerInputs);
@@ -639,17 +634,11 @@ impl<B: Backend> LayerExecutables<B> {
                 );
             }
 
-            // Step 4: Project gated PLE back to model_dim: PleGate → Main
             ple_projection.encode(state, encoder)?;
-
-            // Step 5: Post-PLE norm on Main
             post_ple_norm.encode(state, encoder)?;
-
-            // Step 6: Residual add: Main = PLE_output + pre-PLE hidden_states (in Shortcut)
             self.ple_add_swap.as_ref().unwrap().encode(state, encoder)?;
         }
 
-        // Apply per-layer scalar: hidden_states *= layer_scalar (Gemma 4)
         if let (Some(kernel), Some(zero_bias)) = (&self.layer_scalar_kernel, &self.layer_scalar_zero_bias) {
             let main = state.array(ArrayId::Main);
             let length = main.num_elements();
@@ -674,17 +663,22 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             let size = state.array(ArrayId::Main).shape().into_iter().copied().product::<usize>() as u32;
-            let input_a = state.array(ArrayId::Main).buffer();
-            let input_b = state.array(ArrayId::Shortcut).buffer();
             let output = layer_traces.borrow().outputs.buffer();
-            self.tensor_add.encode(
-                Some(input_a.borrow().deref()),
-                input_b.borrow().deref(),
-                output.borrow_mut().deref_mut(),
-                size,
-                size,
-                encoder,
-            );
+
+            if self.mlp_residual_add.is_some() {
+                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().outputs.clone());
+            } else {
+                let input_a = state.array(ArrayId::Main).buffer();
+                let input_b = state.array(ArrayId::Shortcut).buffer();
+                self.tensor_add.encode(
+                    Some(input_a.borrow().deref()),
+                    input_b.borrow().deref(),
+                    output.borrow_mut().deref_mut(),
+                    size,
+                    size,
+                    encoder,
+                );
+            }
         }
 
         Ok(())

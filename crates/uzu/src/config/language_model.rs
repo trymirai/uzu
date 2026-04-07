@@ -12,17 +12,14 @@ struct AttentionDims {
     attention_scale: Option<f32>,
 }
 
-/// Nested PLE config from lalamo PR #197 format.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct PLEModelConfig {
     #[serde(default)]
     pub ple_dim: Option<usize>,
     #[serde(default)]
     pub ple_embed_scale: Option<f32>,
-    /// Their name for our ple_projection_scale
     #[serde(default)]
     pub model_projection_scale: Option<f32>,
-    /// Their name for our ple_combination_scale
     #[serde(default)]
     pub input_scale: Option<f32>,
     #[serde(default, alias = "linear_config")]
@@ -31,8 +28,6 @@ pub struct PLEModelConfig {
     pub ple_norm_config: Option<NormalizationConfig>,
 }
 
-/// Inner model config matching the new lalamo export format.
-/// Contains embedding_config at the top level, with transformer_config nested.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct InnerModelConfig {
     pub embedding_config: EmbeddingConfig,
@@ -57,7 +52,6 @@ pub struct InnerModelConfig {
     #[serde(default)]
     pub has_layer_scalar: bool,
 
-    /// Nested PLE config (lalamo PR #197 format)
     #[serde(default)]
     pub ple_model_config: Option<PLEModelConfig>,
 }
@@ -77,8 +71,6 @@ impl InnerModelConfig {
         }
     }
 
-    /// Apply normalize_values -> value_norm_config and global_rope_dim -> partial_rope_dim
-    /// conversions on a MixerConfig, returning the (possibly modified) config.
     fn apply_mixer_conversions(
         mixer: &MixerConfig,
         tf: &TransformerConfig,
@@ -87,13 +79,10 @@ impl InnerModelConfig {
             MixerConfig::Attention(attn) => {
                 let mut attn = attn.clone();
 
-                // normalize_values -> value_norm_config fallback
                 if attn.normalize_values && attn.value_norm_config.is_none() {
                     attn.value_norm_config = Some(Self::default_value_norm_config());
                 }
 
-                // global_rope_dim -> partial_rope_dim for global attention layers
-                // (global = no sliding window)
                 if attn.partial_rope_dim.is_none() {
                     if let Some(global_rope_dim) = tf.global_rope_dim {
                         if attn.sliding_window_size.is_none() {
@@ -108,14 +97,12 @@ impl InnerModelConfig {
         }
     }
 
-    /// Convert to DecoderConfig for backward compatibility with the rest of the codebase.
     pub fn to_decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         let tf = &self.transformer_config;
         let ple = self.ple_model_config.as_ref();
 
         let first_layer = tf.layer_configs.first().ok_or(ConfigError::NoLayers)?;
 
-        // Resolve has_layer_scalar: top-level, or from any per-layer ple_config
         let has_layer_scalar = if self.has_layer_scalar {
             true
         } else {
@@ -175,7 +162,6 @@ impl InnerModelConfig {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        // hidden_dims: top-level, or build from per-layer hidden_dim
         let hidden_dims = if self.hidden_dims.is_some() {
             self.hidden_dims.as_ref().map(|v| v.clone().into_boxed_slice())
         } else {
@@ -187,7 +173,6 @@ impl InnerModelConfig {
             }
         };
 
-        // kv_shared_layer_sources: top-level, or build from per-layer kv_source_layer
         let kv_shared_layer_sources = if self.kv_shared_layer_sources.is_some() {
             self.kv_shared_layer_sources.as_ref().map(|v| v.clone().into_boxed_slice())
         } else {
@@ -200,7 +185,6 @@ impl InnerModelConfig {
             }
         };
 
-        // PLE fields: top-level, or fallback to ple_model_config
         let ple_dim = self.ple_dim.or_else(|| ple.and_then(|p| p.ple_dim));
         let ple_embed_scale = self.ple_embed_scale.or_else(|| ple.and_then(|p| p.ple_embed_scale));
         let ple_projection_scale = self.ple_projection_scale.or_else(|| ple.and_then(|p| p.model_projection_scale));
@@ -319,8 +303,6 @@ pub struct LanguageModelConfig {
 }
 
 impl LanguageModelConfig {
-    /// Get the decoder config for backward compatibility.
-    /// This converts the new format to the old DecoderConfig format.
     pub fn decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         self.model_config.to_decoder_config()
     }

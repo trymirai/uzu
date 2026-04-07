@@ -41,7 +41,6 @@ pub struct ModelShape {
     ple_dim: Option<usize>,
     ple_total_dim: Option<usize>,
     pub kv_shared_layer_sources: Option<Box<[Option<usize>]>>,
-    /// Per-layer (num_groups, head_dim) for KV cache. None means use uniform values.
     kv_cache_per_layer_shapes: Option<Box<[(usize, usize)]>>,
 }
 
@@ -144,7 +143,6 @@ impl ModelShape {
                     has_gate = has_gate || attn.has_gate || attn.gate_projection_config.is_some();
                     linear_configs.extend([&attn.qkv_projection_config, &attn.out_projection_config]);
 
-                    // Track max attention dimensions across all layers for buffer sizing.
                     max_num_heads = max_num_heads.max(nh);
                     max_num_groups = max_num_groups.max(ng);
                     max_head_dim = max_head_dim.max(hd);

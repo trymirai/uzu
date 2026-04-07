@@ -231,13 +231,9 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
-        // Share KV cache buffers for shared layers (e.g. Gemma 4 E2B layers 15-34).
         // Array<B> uses Rc<RefCell<B::Buffer>>, so .clone() creates a shared reference
-        // to the same underlying GPU buffer — both source and shared layers will read
-        // from identical K/V data without extra allocations.
+        // to the same underlying GPU buffer — no extra allocations.
         if let Some(sources) = &model_shape.kv_shared_layer_sources {
-            // First pass: collect cloned arrays from source layers to avoid simultaneous
-            // mutable + immutable borrows on the layers Vec.
             let shared_refs: Vec<Option<(crate::array::Array<B>, crate::array::Array<B>)>> = sources
                 .iter()
                 .enumerate()
@@ -250,7 +246,6 @@ impl<B: Backend> CacheLayers<B> {
                 })
                 .collect();
 
-            // Second pass: replace shared layers' keys/values with the cloned references.
             for (layer_idx, refs) in shared_refs.into_iter().enumerate() {
                 if let Some((keys, values)) = refs {
                     if let CacheLayer::Transformer(ref mut cache) = layers[layer_idx] {
@@ -495,9 +490,6 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
-        // Re-establish KV sharing after creating all layers.
-        // Array<B> uses Rc<RefCell<B::Buffer>>, so .clone() creates a shared
-        // reference to the same underlying buffer.
         let mut layers: Vec<CacheLayer<B>> = data.into_vec();
 
         if let Some(sources) = &self.kv_shared_layer_sources {

@@ -37,7 +37,6 @@ pub enum DecoderError<B: Backend> {
     EmbeddingError(#[from] EmbeddingError<B>),
 }
 
-/// PLE model-level weights loaded from the weight tree.
 struct PleModelWeights<B: Backend> {
     embed: Option<Embedding<B>>,
     projection: Option<Box<dyn Linear<B>>>,
@@ -62,32 +61,21 @@ impl<B: Backend> Default for PleModelWeights<B> {
     }
 }
 
-/// Full decoder executable with all layers and components.
 pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
-    /// PLE: per-layer embedding lookup table [vocab_size, ple_total_dim] (embedding index lookup)
     pub ple_embed: Option<Embedding<B>>,
-    /// PLE: model projection [model_dim, ple_dim] (projects main embeddings into PLE space)
     pub ple_projection: Option<Box<dyn Linear<B>>>,
-    /// PLE: RMSNorm kernel for normalizing projected embeddings (norm dim = ple_dim, NOT ple_total_dim)
     ple_norm_kernel: Option<<B::Kernels as KernelsTrait>::RMSNormKernel>,
-    /// PLE: RMSNorm scales buffer [ple_dim] for per-layer-chunk normalization
     ple_norm_scales: Option<Rc<RefCell<B::Buffer>>>,
-    /// PLE: RMSNorm config (epsilon, scale_offset, upcast_mode)
     ple_norm_config: Option<NormalizationConfig>,
-    /// PLE: TensorAddScale kernel for scaling and combining PLE buffers
     ple_scale_kernel: Option<<B::Kernels as KernelsTrait>::TensorAddScaleKernel>,
-    /// PLE: zero-valued bias buffer [ple_total_dim] used for scalar-only multiply via TensorAddScale
+    /// Zero-valued bias buffer used for scalar-only multiply via TensorAddScale: (input + 0) * scale
     ple_zero_bias: Option<Array<B>>,
-    /// PLE: scale applied to the projected embeddings before normalization
     ple_projection_scale: f32,
-    /// PLE: scale applied when combining projection + embedding
     ple_combination_scale: f32,
-    /// PLE: number of layers (needed for RMSNorm batch dimension)
     ple_num_layers: usize,
-    /// PLE: per-layer embedding dimension (normalization dimension)
     ple_dim: usize,
 }
 
@@ -249,6 +237,21 @@ impl<B: Backend> Decoder<B> {
 
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
+                // When the previous layer did an explicit residual add (PLE or layer_scalar),
+                // this layer's pre_attention_norm must NOT fuse a residual add — the
+                // previous layer's output already includes the full residual sum.
+                let previous_layer_did_explicit_residual = if layer_index > 0 {
+                    let prev_has_ple = decoder_config.ple_dim.map_or(false, |d| d > 0);
+                    let prev_has_scalar = decoder_config
+                        .layer_configs
+                        .as_ref()
+                        .and_then(|lcs| lcs.get(layer_index - 1))
+                        .map_or(false, |l| l.has_layer_scalar);
+                    prev_has_ple || prev_has_scalar
+                } else {
+                    false
+                };
+
                 LayerExecutables::new(
                     context,
                     layer_config,
@@ -275,10 +278,15 @@ impl<B: Backend> Decoder<B> {
                         .as_ref()
                         .and_then(|sources| sources.get(layer_index).copied().flatten())
                         .is_some(),
+                    previous_layer_did_explicit_residual,
                 )
             })
             .collect::<Vec<_>>();
 
+        let last_layer_has_ple = decoder_config.ple_dim.map_or(false, |d| d > 0);
+        let last_layer_has_scalar =
+            decoder_config.layer_configs.as_ref().and_then(|lcs| lcs.last()).map_or(false, |l| l.has_layer_scalar);
+        let output_norm_residual_add = !(last_layer_has_ple || last_layer_has_scalar);
         let norm_block = RMSNorm::new(
             context,
             norm_data_type,
@@ -287,7 +295,7 @@ impl<B: Backend> Decoder<B> {
             ArrayId::Main,
             &decoder_weight_loader.subtree("output_norm").unwrap(),
             Some(ArrayId::Shortcut),
-            true,
+            output_norm_residual_add,
         )
         .map(RMSNorm::with_sampling_range)
         .expect("Failed to create output RMS norm kernel");
@@ -314,7 +322,6 @@ impl<B: Backend> Decoder<B> {
 
         let ple_total_dim = decoder_config.num_layers * ple_dim;
 
-        // embed_tokens_per_layer: [vocab_size, ple_total_dim] — embedding index lookup by token ID
         let ple_embed_config = EmbeddingConfig::Untied {
             common: EmbeddingConfigCommon {
                 input_scale: Some(decoder_config.ple_embed_scale.unwrap_or(1.0)),
@@ -332,7 +339,6 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create PLE embed_tokens_per_layer");
 
-        // per_layer_model_projection: projects model_dim → ple_total_dim
         let ple_projection = <dyn Linear<B>>::new(
             ple_linear_config,
             false,
@@ -345,11 +351,9 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create PLE per_layer_model_projection");
 
-        // per_layer_projection_norm: RMSNorm kernel + scales (norm over ple_dim per layer-chunk)
-        // We use the kernel directly instead of the RMSNorm encodable because:
-        // - The scale weight has [ple_dim=256] elements, not [ple_total_dim=8960]
-        // - We need batch_len = suffix_length * num_layers, not just suffix_length
-        // - The norm operates on [suffix_length * num_layers, ple_dim] reshaped view
+        // We use the kernel directly instead of the RMSNorm encodable because the scale
+        // weight has [ple_dim] elements and we need batch_len = suffix_length * num_layers,
+        // operating on a [suffix_length * num_layers, ple_dim] reshaped view.
         let norm_scales = ple_loader
             .subtree("per_layer_projection_norm")
             .unwrap()
@@ -373,11 +377,9 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create PLE RMSNorm kernel");
 
-        // TensorAddScale kernel used for scaling PleProjection and combining PleProjection + PleEmbeddings
         let ple_scale_kernel = <B::Kernels as KernelsTrait>::TensorAddScaleKernel::new(context, ple_data_type)
             .expect("Failed to create TensorAddScale kernel for PLE");
 
-        // Zero-valued bias buffer for scalar-only multiply via TensorAddScale (input + 0) * scale
         let ple_zero_bias = context.create_array_zeros(&[ple_total_dim], ple_data_type, "ple_zero_bias");
 
         PleModelWeights {
@@ -420,16 +422,12 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<(), DecoderError<B>> {
         self.embed.encode_lookup(state, encoder)?;
 
-        // PLE model-level computation: embedding lookup + projection + normalization + combine
         if let (Some(ple_embed), Some(ple_projection)) = (&self.ple_embed, &self.ple_projection) {
-            // Step 1: PLE embedding lookup → PleEmbeddings [seq, ple_total_dim]
-            // input_scale (ple_embed_scale) is applied automatically by the embedding lookup kernel.
             ple_embed.encode_lookup_to(state, encoder, ArrayId::PleEmbeddings)?;
 
-            // Step 2: Project main embeddings → PleProjection [seq, ple_total_dim]
             ple_projection.encode(state, encoder).map_err(DecoderError::BackendError)?;
 
-            // Step 3: Scale PleProjection by ple_projection_scale (in-place via TensorAddScale with zero bias)
+            // Scale PleProjection by ple_projection_scale (in-place via TensorAddScale with zero bias)
             {
                 let ple_proj = state.array(ArrayId::PleProjection);
                 let length = ple_proj.num_elements();
@@ -453,11 +451,9 @@ impl<B: Backend> Decoder<B> {
                 );
             }
 
-            // Step 4: RMSNorm on PleProjection (in-place, BEFORE adding embeddings)
-            // HF: per_layer_projection = per_layer_projection_norm(per_layer_projection)
-            // The norm weight has [ple_dim=256] elements. The buffer is [suffix_length, ple_total_dim=8960].
-            // We treat it as [suffix_length * num_layers, ple_dim] so norm operates over 256 elements
-            // per layer-chunk, matching the HF reshape-then-norm pattern.
+            // RMSNorm on PleProjection. The norm weight has [ple_dim] elements but the buffer
+            // is [suffix_length, ple_total_dim]. We treat it as [suffix_length * num_layers, ple_dim]
+            // so norm operates per layer-chunk, matching the HF reshape-then-norm pattern.
             {
                 let ple_proj = state.array(ArrayId::PleProjection);
                 let ple_norm_kernel = self.ple_norm_kernel.as_ref().unwrap();
@@ -482,8 +478,6 @@ impl<B: Backend> Decoder<B> {
                 );
             }
 
-            // Step 5: Combine (add only): PlePerLayerInputs = PleProjection (now normed) + PleEmbeddings
-            // HF: return (per_layer_projection + per_layer_inputs) * input_scale
             {
                 let ple_proj = state.array(ArrayId::PleProjection);
                 let ple_embed_arr = state.array(ArrayId::PleEmbeddings);
@@ -503,7 +497,6 @@ impl<B: Backend> Decoder<B> {
                 );
             }
 
-            // Step 6: Scale PlePerLayerInputs by ple_combination_scale (0.7071)
             {
                 let ple_combined = state.array(ArrayId::PlePerLayerInputs);
                 let length = ple_combined.num_elements();
