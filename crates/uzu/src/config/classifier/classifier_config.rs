@@ -49,6 +49,7 @@ impl ClassifierConfig {
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
+            has_layer_scalar: false,
         };
 
         let first_mixer = &first_layer.mixer_config;
@@ -92,7 +93,15 @@ impl ClassifierConfig {
             },
             context_length: self.context_length,
             layer_configs: None, // Classifier doesn't use heterogeneous layers usually
+            hidden_dims: None,
             layer_types: None,
+            kv_shared_layer_sources: None,
+            ple_dim: None,
+            ple_embed_scale: None,
+            ple_projection_scale: None,
+            ple_combination_scale: None,
+            ple_linear_config: None,
+            ple_norm_config: None,
         })
     }
 }

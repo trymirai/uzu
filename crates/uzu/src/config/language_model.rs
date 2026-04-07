@@ -19,6 +19,24 @@ pub struct InnerModelConfig {
     pub embedding_config: EmbeddingConfig,
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
+    #[serde(default)]
+    pub hidden_dims: Option<Vec<usize>>,
+    #[serde(default)]
+    pub kv_shared_layer_sources: Option<Vec<Option<usize>>>,
+    #[serde(default)]
+    pub ple_dim: Option<usize>,
+    #[serde(default)]
+    pub ple_embed_scale: Option<f32>,
+    #[serde(default)]
+    pub ple_projection_scale: Option<f32>,
+    #[serde(default)]
+    pub ple_combination_scale: Option<f32>,
+    #[serde(default)]
+    pub ple_linear_config: Option<crate::config::LinearConfig>,
+    #[serde(default)]
+    pub ple_norm_config: Option<crate::config::NormalizationConfig>,
+    #[serde(default)]
+    pub has_layer_scalar: bool,
 }
 
 impl InnerModelConfig {
@@ -38,6 +56,7 @@ impl InnerModelConfig {
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
+            has_layer_scalar: self.has_layer_scalar,
         };
 
         let attention_dims = Self::derive_attention_dims(tf)?;
@@ -70,6 +89,7 @@ impl InnerModelConfig {
                 pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
                 mlp_config: layer.mlp_config.clone(),
                 post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
+                has_layer_scalar: self.has_layer_scalar,
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -90,8 +110,16 @@ impl InnerModelConfig {
             attention_scale: attention_dims.attention_scale,
             num_layers,
             sliding_window_sizes: Some(sliding_window_sizes),
+            hidden_dims: self.hidden_dims.as_ref().map(|v| v.clone().into_boxed_slice()),
             layer_types: Some(layer_types),
             context_length: tf.context_length,
+            kv_shared_layer_sources: self.kv_shared_layer_sources.as_ref().map(|v| v.clone().into_boxed_slice()),
+            ple_dim: self.ple_dim,
+            ple_embed_scale: self.ple_embed_scale,
+            ple_projection_scale: self.ple_projection_scale,
+            ple_combination_scale: self.ple_combination_scale,
+            ple_linear_config: self.ple_linear_config.clone(),
+            ple_norm_config: self.ple_norm_config.clone(),
         })
     }
 

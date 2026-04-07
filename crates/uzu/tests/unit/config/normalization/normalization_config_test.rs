@@ -22,6 +22,7 @@ fn test_normalization_config() {
         upcast_mode: UpcastMode::OnlyNormalization,
         subtract_mean: false,
         use_bias: false,
+        has_scale: true,
     };
 
     let deserialized_config: NormalizationConfig = from_str(config_str).unwrap();

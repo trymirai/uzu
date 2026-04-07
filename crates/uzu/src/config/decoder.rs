@@ -6,6 +6,7 @@ use serde::{
 use super::{
     decoder_layer::{DecoderLayerConfig, MixerConfig},
     embedding::EmbeddingConfig,
+    linear::LinearConfig,
     normalization::NormalizationConfig,
     rope::RoPEConfig,
 };
@@ -56,8 +57,26 @@ pub struct DecoderConfig {
     pub attention_scale: Option<f32>,
     pub num_layers: usize,
     pub sliding_window_sizes: Option<Box<[Option<usize>]>>,
+    pub hidden_dims: Option<Box<[usize]>>,
     pub layer_types: Option<Box<[DecoderLayerType]>>,
     pub context_length: usize,
+
+    /// For each layer, optionally the index of the layer whose KV cache to reuse.
+    /// None means the layer computes its own KV. Some(idx) means reuse from layer idx.
+    pub kv_shared_layer_sources: Option<Box<[Option<usize>]>>,
+
+    /// Per-Layer Embedding dimension (0 = disabled, 256 for Gemma 4 E2B/E4B)
+    pub ple_dim: Option<usize>,
+    /// PLE embed scale: sqrt(ple_dim), e.g. 16.0
+    pub ple_embed_scale: Option<f32>,
+    /// PLE projection scale: hidden_size^-0.5
+    pub ple_projection_scale: Option<f32>,
+    /// PLE combination scale: 2.0^-0.5 ≈ 0.7071
+    pub ple_combination_scale: Option<f32>,
+    /// LinearConfig for PLE projections (same quantization as main model)
+    pub ple_linear_config: Option<LinearConfig>,
+    /// NormalizationConfig for PLE norms
+    pub ple_norm_config: Option<NormalizationConfig>,
 }
 
 impl<'de> Deserialize<'de> for DecoderConfig {
@@ -82,8 +101,16 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             attention_scale,
             num_layers,
             sliding_window_sizes,
+            hidden_dims,
             layer_types,
             context_length,
+            kv_shared_layer_sources,
+            ple_dim,
+            ple_embed_scale,
+            ple_projection_scale,
+            ple_combination_scale,
+            ple_linear_config,
+            ple_norm_config,
         } = raw;
 
         let layer_configs_boxed = layer_configs.map(|layers| layers.into_boxed_slice());
@@ -134,6 +161,9 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             None
         };
 
+        let hidden_dims = hidden_dims.map(|v| v.into_boxed_slice());
+        let kv_shared_layer_sources = kv_shared_layer_sources.map(|v| v.into_boxed_slice());
+
         let explicit_layer_types = layer_types.map(|types| types.into_boxed_slice());
         let derived_layer_types = if let Some(configs) = layer_configs_boxed.as_ref() {
             Some(configs.iter().map(layer_type_from_config).collect::<Vec<_>>().into_boxed_slice())
@@ -158,8 +188,16 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             attention_scale: attention_scale_value,
             num_layers: num_layers_value,
             sliding_window_sizes: sliding_window_sizes_boxed,
+            hidden_dims,
             layer_types: layer_types_value,
             context_length,
+            kv_shared_layer_sources,
+            ple_dim,
+            ple_embed_scale,
+            ple_projection_scale,
+            ple_combination_scale,
+            ple_linear_config,
+            ple_norm_config,
         })
     }
 }
@@ -192,8 +230,24 @@ struct RawDecoderConfig {
     #[serde(default)]
     sliding_window_sizes: Option<Vec<Option<usize>>>,
     #[serde(default)]
+    hidden_dims: Option<Vec<usize>>,
+    #[serde(default)]
     layer_types: Option<Vec<DecoderLayerType>>,
     context_length: usize,
+    #[serde(default)]
+    kv_shared_layer_sources: Option<Vec<Option<usize>>>,
+    #[serde(default)]
+    ple_dim: Option<usize>,
+    #[serde(default)]
+    ple_embed_scale: Option<f32>,
+    #[serde(default)]
+    ple_projection_scale: Option<f32>,
+    #[serde(default)]
+    ple_combination_scale: Option<f32>,
+    #[serde(default)]
+    ple_linear_config: Option<LinearConfig>,
+    #[serde(default)]
+    ple_norm_config: Option<NormalizationConfig>,
 }
 
 fn derive_dims_from_layer(layer: &DecoderLayerConfig) -> Option<(usize, usize, usize)> {

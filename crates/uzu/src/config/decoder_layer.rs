@@ -102,6 +102,10 @@ pub struct DecoderLayerConfig {
     pub mlp_config: MLPConfig,
     #[serde(alias = "post_mlp_norm_config")]
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    /// Whether this layer has a per-layer learnable scalar applied after all operations.
+    /// Used by Gemma 4 (`hidden_states *= layer_scalar`).
+    #[serde(default)]
+    pub has_layer_scalar: bool,
 }
 
 impl DecoderLayerConfig {

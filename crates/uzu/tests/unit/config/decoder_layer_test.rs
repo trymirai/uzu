@@ -91,6 +91,7 @@ fn test_decoder_layer_config() {
             upcast_mode: UpcastMode::OnlyNormalization,
             subtract_mean: false,
             use_bias: false,
+            has_scale: true,
         },
         pre_mlp_norm_config: NormalizationConfig {
             scale_precision: ConfigDataType::BFloat16,
@@ -100,6 +101,7 @@ fn test_decoder_layer_config() {
             upcast_mode: UpcastMode::OnlyNormalization,
             subtract_mean: false,
             use_bias: false,
+            has_scale: true,
         },
         mixer_config: MixerConfig::Attention(AttentionConfig {
             qkv_projection_config: LinearConfig::QLoRA {
@@ -137,6 +139,7 @@ fn test_decoder_layer_config() {
             has_gate: false,
             gate_projection_config: None,
             partial_rope_dim: None,
+            value_norm_config: None,
         }),
         mlp_config: MLPConfig::Dense(mlp::DenseMLPConfig {
             linear_config: LinearConfig::QLoRA {
@@ -158,6 +161,7 @@ fn test_decoder_layer_config() {
         }),
         post_attention_norm_config: None,
         post_mlp_norm_config: None,
+        has_layer_scalar: false,
     };
 
     let deserialized_config: DecoderLayerConfig = from_str(config_str).unwrap();

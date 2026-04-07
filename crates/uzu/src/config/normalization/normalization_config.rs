@@ -14,6 +14,12 @@ pub struct NormalizationConfig {
     pub subtract_mean: bool,
     #[serde(default)]
     pub use_bias: bool,
+    #[serde(default = "default_true")]
+    pub has_scale: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]

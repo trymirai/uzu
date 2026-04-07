@@ -79,6 +79,7 @@ fn test_attention_config() {
         has_gate: false,
         gate_projection_config: None,
         partial_rope_dim: None,
+        value_norm_config: None,
     };
 
     let deserialized_config: AttentionConfig = from_str(config_str).unwrap();

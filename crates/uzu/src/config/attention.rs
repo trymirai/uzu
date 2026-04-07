@@ -28,6 +28,8 @@ pub struct AttentionConfig {
     pub gate_projection_config: Option<LinearConfig>,
     #[serde(default)]
     pub partial_rope_dim: Option<usize>,
+    #[serde(default)]
+    pub value_norm_config: Option<NormalizationConfig>,
 }
 
 #[cfg(test)]
