@@ -48,11 +48,7 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 impl MatmulMetalKernel {
-    fn is_mpp_eligible(
-        &self,
-        context: &MetalContext,
-        _arguments: &MatmulArguments<Metal>,
-    ) -> bool {
+    fn is_mpp_eligible(&self, context: &MetalContext) -> bool {
         context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
     }
 
@@ -362,7 +358,7 @@ impl MatmulKernel for MatmulMetalKernel {
     ) {
         if arguments.batch_dim <= max_gemv_batch_threshold() {
             self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV kernel");
-        } else if self.is_mpp_eligible(context, &arguments) {
+        } else if self.is_mpp_eligible(context) {
             self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP kernel");
         } else {
             self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM kernel");
