@@ -693,6 +693,10 @@ impl ChatSession {
 
         stats
     }
+
+    pub fn peak_memory_usage(&self) -> Option<usize> {
+        self.llm.as_ref().unwrap().peak_memory_usage()
+    }
 }
 
 impl Drop for ChatSession {
