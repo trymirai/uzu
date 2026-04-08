@@ -4,12 +4,9 @@
 fn bench_runner(benches: &[&dyn Fn()]) {
     #[cfg(target_os = "ios")]
     {
-        use objc2_foundation::{
-            NSSearchPathDirectory, NSSearchPathDomainMask,
-            NSSearchPathForDirectoriesInDomains,
-        };
+        use objc2_foundation::{NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains};
         let paths = NSSearchPathForDirectoriesInDomains(
-            NSSearchPathDirectory(9), // NSDocumentDirectory
+            NSSearchPathDirectory(9),  // NSDocumentDirectory
             NSSearchPathDomainMask(1), // NSUserDomainMask
             true,
         );
