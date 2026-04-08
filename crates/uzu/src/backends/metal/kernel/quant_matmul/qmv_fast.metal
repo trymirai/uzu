@@ -118,13 +118,13 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
           zp3 = static_cast<U>(zp_byte3);
         }
         result[0] +=
-            qdot_zero_point<U, values_per_thread, BITS>(wl0, x_thread, s0, zp0);
+            qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, -s0 * zp0, sum);
         result[1] +=
-            qdot_zero_point<U, values_per_thread, BITS>(wl1, x_thread, s1, zp1);
+            qdot<U, values_per_thread, BITS>(wl1, x_thread, s1, -s1 * zp1, sum);
         result[2] +=
-            qdot_zero_point<U, values_per_thread, BITS>(wl2, x_thread, s2, zp2);
+            qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, -s2 * zp2, sum);
         result[3] +=
-            qdot_zero_point<U, values_per_thread, BITS>(wl3, x_thread, s3, zp3);
+            qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, -s3 * zp3, sum);
       }
     }
 

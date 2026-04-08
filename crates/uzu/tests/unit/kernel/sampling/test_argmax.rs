@@ -180,7 +180,7 @@ fn bench_argmax(c: &mut Criterion) {
                         );
                     }
 
-                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
                 })
             });
 
@@ -205,7 +205,7 @@ fn bench_argmax(c: &mut Criterion) {
                         );
                     }
 
-                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
                 })
             });
         }

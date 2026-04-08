@@ -212,7 +212,7 @@ pub struct CpuCommandBufferCompleted {
 impl CommandBufferCompleted for CpuCommandBufferCompleted {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn gpu_execution_time(&self) -> Option<Duration> {
-        Some(self.gpu_execution_time)
+    fn gpu_execution_time(&self) -> Duration {
+        self.gpu_execution_time
     }
 }
