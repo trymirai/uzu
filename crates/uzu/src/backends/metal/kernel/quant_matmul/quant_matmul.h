@@ -7,6 +7,37 @@ using namespace metal;
 
 #include "mma.h"
 
+// Avoids air.convert (SFU) for int → float which is slower on Apple GPU.
+template <typename U>
+inline U uint_to_fp(uint32_t x) {
+  return static_cast<U>(as_type<float>(x | 0x4B000000u) - 8388608.0f);
+}
+
+template <>
+inline bfloat uint_to_fp<bfloat>(uint32_t x) {
+  return as_type<bfloat>(uint16_t(x | 0x4300u)) - bfloat(128.0f);
+}
+
+template <typename U>
+inline vec<U, 4> uint4_to_fp4(uint4 n);
+
+template <>
+inline float4 uint4_to_fp4<float>(uint4 n) {
+  n &= uint4(0xFu);
+  return as_type<float4>(n | uint4(0x4B000000u)) - float4(8388608.0f);
+}
+
+template <>
+inline half4 uint4_to_fp4<half>(uint4 n) {
+  return half4(uint4_to_fp4<float>(n));
+}
+
+template <>
+inline bfloat4 uint4_to_fp4<bfloat>(uint4 n) {
+  ushort4 narrow = ushort4(n & uint4(0xFu));
+  return as_type<bfloat4>(narrow | ushort4(0x4300u)) - bfloat(128.0f);
+}
+
 template <int bits, int wsize = 8>
 inline constexpr short get_pack_factor() {
   return (bits == 3 || bits == 5) ? 8 : (bits == 6 ? 4 : wsize / bits);
@@ -22,20 +53,13 @@ template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector(const device T* x, thread U* x_thread) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
+  using U4 = vec<U, 4>;
   U sum = 0;
-  if (bits == 4) {
-    for (int i = 0; i < values_per_thread; i += 4) {
-      sum += x[i] + x[i + 1] + x[i + 2] + x[i + 3];
-      x_thread[i] = x[i];
-      x_thread[i + 1] = x[i + 1] / 16.0f;
-      x_thread[i + 2] = x[i + 2] / 256.0f;
-      x_thread[i + 3] = x[i + 3] / 4096.0f;
-    }
-  } else if (bits == 8) {
-    for (int i = 0; i < values_per_thread; i++) {
-      sum += x[i];
-      x_thread[i] = x[i];
-    }
+  thread U4* x4 = (thread U4*)x_thread;
+  for (int i = 0; i < values_per_thread / 4; i++) {
+    U4 v = U4(x[4 * i], x[4 * i + 1], x[4 * i + 2], x[4 * i + 3]);
+    sum += v[0] + v[1] + v[2] + v[3];
+    x4[i] = v;
   }
   return sum;
 }
@@ -45,31 +69,13 @@ inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   U sum = 0;
-  if (bits == 4) {
-    const U scale_lut[4] = {
-        static_cast<U>(1.0f),
-        static_cast<U>(1.0f / 16.0f),
-        static_cast<U>(1.0f / 256.0f),
-        static_cast<U>(1.0f / 4096.0f)
-    };
-
-    for (int i = 0; i < values_per_thread; ++i) {
-      x_thread[i] = 0;
-    }
-    for (int i = 0; i < N; ++i) {
-      U v = x[i];
-      sum += v;
-      x_thread[i] = v * scale_lut[i & 3];
-    }
-  } else if (bits == 8) {
-    for (int i = 0; i < N; ++i) {
-      U v = x[i];
-      sum += v;
-      x_thread[i] = v;
-    }
-    for (int i = N; i < values_per_thread; ++i) {
-      x_thread[i] = 0;
-    }
+  for (int i = 0; i < values_per_thread; ++i) {
+    x_thread[i] = 0;
+  }
+  for (int i = 0; i < N; ++i) {
+    U v = x[i];
+    sum += v;
+    x_thread[i] = v;
   }
   return sum;
 }
@@ -85,11 +91,10 @@ inline void qouter(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    U s0 = scale;
-    U s1 = scale / 16.0f;
     for (int i = 0; i < (values_per_thread / 2); i++) {
-      result[2 * i] += x * (s0 * (w[i] & 0x0f) + bias);
-      result[2 * i + 1] += x * (s1 * (w[i] & 0xf0) + bias);
+      result[2 * i] += x * (scale * uint_to_fp<U>(w[i] & 0x0fu) + bias);
+      result[2 * i + 1] +=
+          x * (scale * uint_to_fp<U>((w[i] >> 4) & 0x0fu) + bias);
     }
   } else if (bits == 8) {
     for (int i = 0; i < values_per_thread; i++) {
@@ -110,13 +115,14 @@ inline U qdot(
 
   U accum = 0;
   if (bits == 4) {
-    const device uint16_t* ws = (const device uint16_t*)w;
+    using U4 = vec<U, 4>;
+    const device ushort* ws = (const device ushort*)w;
+    const thread U4* x4 = (const thread U4*)x_thread;
     for (int i = 0; i < (values_per_thread / 4); i++) {
-      accum +=
-          (x_thread[4 * i] * (ws[i] & 0x000f) +
-           x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
-           x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
-           x_thread[4 * i + 3] * (ws[i] & 0xf000));
+      ushort wi = ws[i];
+      uint wi_u = wi;
+      U4 w_vec = uint4_to_fp4<U>(uint4(wi_u, wi_u >> 4, wi_u >> 8, wi_u >> 12));
+      accum += dot(x4[i], w_vec);
     }
   } else if (bits == 8) {
     for (int i = 0; i < values_per_thread; i++) {
@@ -124,50 +130,6 @@ inline U qdot(
     }
   }
   return scale * accum + sum * bias;
-}
-
-template <typename U, int values_per_thread, int bits>
-inline U qdot_zero_point(
-    const device uint8_t* w,
-    const thread U* x_thread,
-    U scale,
-    U zero_point
-) {
-  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
-
-  U accum = 0;
-  if (bits == 4) {
-    const device uint16_t* ws = (const device uint16_t*)w;
-    const uint16_t zp0 = static_cast<uint16_t>(zero_point);
-    const uint16_t zp1 = static_cast<uint16_t>(zero_point) * 16;
-    const uint16_t zp2 = static_cast<uint16_t>(zero_point) * 256;
-    const uint16_t zp3 = static_cast<uint16_t>(zero_point) * 4096;
-
-    for (int i = 0; i < (values_per_thread / 4); i++) {
-      uint16_t word = ws[i];
-      accum += x_thread[4 * i] *
-               static_cast<U>(
-                   static_cast<int>(word & 0x000f) - static_cast<int>(zp0)
-               );
-      accum += x_thread[4 * i + 1] *
-               static_cast<U>(
-                   static_cast<int>(word & 0x00f0) - static_cast<int>(zp1)
-               );
-      accum += x_thread[4 * i + 2] *
-               static_cast<U>(
-                   static_cast<int>(word & 0x0f00) - static_cast<int>(zp2)
-               );
-      accum += x_thread[4 * i + 3] *
-               static_cast<U>(
-                   static_cast<int>(word & 0xf000) - static_cast<int>(zp3)
-               );
-    }
-  } else if (bits == 8) {
-    for (int i = 0; i < values_per_thread; i++) {
-      accum += x_thread[i] * (static_cast<U>(w[i]) - zero_point);
-    }
-  }
-  return scale * accum;
 }
 
 template <typename U, int values_per_thread, int bits>
@@ -187,11 +149,13 @@ inline U qdot_safe(
 
     int full = N / 4;
     for (int i = 0; i < full; i++) {
-      accum +=
-          (x_thread[4 * i] * (ws[i] & 0x000f) +
-           x_thread[4 * i + 1] * (ws[i] & 0x00f0) +
-           x_thread[4 * i + 2] * (ws[i] & 0x0f00) +
-           x_thread[4 * i + 3] * (ws[i] & 0xf000));
+      auto wi = ws[i];
+      float wf0 = uint_to_fp<float>(wi & 0xfu);
+      float wf1 = uint_to_fp<float>((wi >> 4) & 0xfu);
+      float wf2 = uint_to_fp<float>((wi >> 8) & 0xfu);
+      float wf3 = uint_to_fp<float>((wi >> 12) & 0xfu);
+      accum += x_thread[4 * i] * wf0 + x_thread[4 * i + 1] * wf1 +
+               x_thread[4 * i + 2] * wf2 + x_thread[4 * i + 3] * wf3;
     }
 
     int rem = N & 3;
@@ -199,11 +163,11 @@ inline U qdot_safe(
       uint16_t wv = ws[full];
       int base = 4 * full;
       if (rem > 0)
-        accum += x_thread[base] * (wv & 0x000f);
+        accum += x_thread[base] * uint_to_fp<float>(wv & 0xf);
       if (rem > 1)
-        accum += x_thread[base + 1] * (wv & 0x00f0);
+        accum += x_thread[base + 1] * uint_to_fp<float>((wv >> 4) & 0xf);
       if (rem > 2)
-        accum += x_thread[base + 2] * (wv & 0x0f00);
+        accum += x_thread[base + 2] * uint_to_fp<float>((wv >> 8) & 0xf);
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
@@ -224,11 +188,11 @@ inline void dequantize(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    U s0 = scale;
-    U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
-      w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
-      w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
+      U n0 = uint_to_fp<U>(w[i] & 0xfu);
+      U n1 = uint_to_fp<U>((w[i] >> 4) & 0xfu);
+      w_local[2 * i] = scale * n0 + bias;
+      w_local[2 * i + 1] = scale * n1 + bias;
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
@@ -247,19 +211,12 @@ inline void dequantize<bfloat, 8, 4>(
   const device uint32_t* w_ptr = (const device uint32_t*)w;
   uint32_t packed = *w_ptr;
 
-  bfloat4 v0, v1;
-
-  // Low 4 nibbles
-  v0.x = static_cast<bfloat>(packed & 0xF);
-  v0.y = static_cast<bfloat>((packed >> 4) & 0xF);
-  v0.z = static_cast<bfloat>((packed >> 8) & 0xF);
-  v0.w = static_cast<bfloat>((packed >> 12) & 0xF);
-
-  // High 4 nibbles
-  v1.x = static_cast<bfloat>((packed >> 16) & 0xF);
-  v1.y = static_cast<bfloat>((packed >> 20) & 0xF);
-  v1.z = static_cast<bfloat>((packed >> 24) & 0xF);
-  v1.w = static_cast<bfloat>((packed >> 28) & 0xF);
+  bfloat4 v0 = uint4_to_fp4<bfloat>(
+      uint4(packed, packed >> 4, packed >> 8, packed >> 12)
+  );
+  bfloat4 v1 = uint4_to_fp4<bfloat>(
+      uint4(packed >> 16, packed >> 20, packed >> 24, packed >> 28)
+  );
 
   v0 = v0 * scale + bias;
   v1 = v1 * scale + bias;
