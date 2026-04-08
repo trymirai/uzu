@@ -243,8 +243,6 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-/// The fast kernel requires in_vec_size to be a multiple of block_size
-/// (512 for 4-bit, 256 for 8-bit) and out_vec_size to be a multiple of 32.
 fn get_test_dims(
     group_size: u32,
     bits: u32,
@@ -280,99 +278,27 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
     }
 }
 
-// ── 4-bit, zero points ─────────────────────────────────────────────────────
-
-#[uzu_test]
-fn test_gs32_4bit_zp() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(32, 4, true, false);
-    })
+macro_rules! qmv_fast_test {
+    ($name:ident, gs=$gs:expr, bits=$bits:expr, zp=$zp:expr, mlx=$mlx:expr) => {
+        #[uzu_test]
+        fn $name() {
+            for_each_float_type!(|F| { test_basic::<F>($gs, $bits, $zp, $mlx); })
+        }
+    };
 }
 
-#[uzu_test]
-fn test_gs64_4bit_zp() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(64, 4, true, false);
-    })
-}
-
-#[uzu_test]
-fn test_gs128_4bit_zp() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(128, 4, true, false);
-    })
-}
-
-// ── 8-bit, zero points ─────────────────────────────────────────────────────
-
-#[uzu_test]
-fn test_gs32_8bit_zp() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(32, 8, true, false);
-    })
-}
-
-#[uzu_test]
-fn test_gs64_8bit_zp() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(64, 8, true, false);
-    })
-}
-
-#[uzu_test]
-fn test_gs128_8bit_zp() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(128, 8, true, false);
-    })
-}
-
-// ── 4-bit, mlx quant ───────────────────────────────────────────────────────
-
-#[uzu_test]
-fn test_gs32_4bit_mlx() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(32, 4, false, true);
-    })
-}
-
-#[uzu_test]
-fn test_gs64_4bit_mlx() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(64, 4, false, true);
-    })
-}
-
-#[uzu_test]
-fn test_gs128_4bit_mlx() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(128, 4, false, true);
-    })
-}
-
-// ── 8-bit, mlx quant ───────────────────────────────────────────────────────
-
-#[uzu_test]
-fn test_gs32_8bit_mlx() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(32, 8, false, true);
-    })
-}
-
-#[uzu_test]
-fn test_gs64_8bit_mlx() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(64, 8, false, true);
-    })
-}
-
-#[uzu_test]
-fn test_gs128_8bit_mlx() {
-    for_each_float_type!(|F| {
-        test_basic::<F>(128, 8, false, true);
-    })
-}
-
-// ── Benchmarks ─────────────────────────────────────────────────────────────
+qmv_fast_test!(test_gs32_4bit_zp,   gs=32,  bits=4, zp=true,  mlx=false);
+qmv_fast_test!(test_gs64_4bit_zp,   gs=64,  bits=4, zp=true,  mlx=false);
+qmv_fast_test!(test_gs128_4bit_zp,  gs=128, bits=4, zp=true,  mlx=false);
+qmv_fast_test!(test_gs32_8bit_zp,   gs=32,  bits=8, zp=true,  mlx=false);
+qmv_fast_test!(test_gs64_8bit_zp,   gs=64,  bits=8, zp=true,  mlx=false);
+qmv_fast_test!(test_gs128_8bit_zp,  gs=128, bits=8, zp=true,  mlx=false);
+qmv_fast_test!(test_gs32_4bit_mlx,  gs=32,  bits=4, zp=false, mlx=true);
+qmv_fast_test!(test_gs64_4bit_mlx,  gs=64,  bits=4, zp=false, mlx=true);
+qmv_fast_test!(test_gs128_4bit_mlx, gs=128, bits=4, zp=false, mlx=true);
+qmv_fast_test!(test_gs32_8bit_mlx,  gs=32,  bits=8, zp=false, mlx=true);
+qmv_fast_test!(test_gs64_8bit_mlx,  gs=64,  bits=8, zp=false, mlx=true);
+qmv_fast_test!(test_gs128_8bit_mlx, gs=128, bits=8, zp=false, mlx=true);
 
 fn gen_random_bytes(seed: u64, len: usize) -> Box<[u8]> {
     let mut rng = SmallRng::seed_from_u64(seed);

@@ -119,9 +119,8 @@ inline U qdot(
     const device ushort* ws = (const device ushort*)w;
     const thread U4* x4 = (const thread U4*)x_thread;
     for (int i = 0; i < (values_per_thread / 4); i++) {
-      ushort wi = ws[i];
-      uint wi_u = wi;
-      U4 w_vec = uint4_to_fp4<U>(uint4(wi_u, wi_u >> 4, wi_u >> 8, wi_u >> 12));
+      uint wi = ws[i];
+      U4 w_vec = uint4_to_fp4<U>(uint4(wi, wi >> 4, wi >> 8, wi >> 12));
       accum += dot(x4[i], w_vec);
     }
   } else if (bits == 8) {
@@ -188,11 +187,11 @@ inline void dequantize(
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
+    U s0 = scale;
+    U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
-      U n0 = uint_to_fp<U>(w[i] & 0xfu);
-      U n1 = uint_to_fp<U>((w[i] >> 4) & 0xfu);
-      w_local[2 * i] = scale * n0 + bias;
-      w_local[2 * i + 1] = scale * n1 + bias;
+      w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
+      w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
@@ -211,66 +210,24 @@ inline void dequantize<bfloat, 8, 4>(
   const device uint32_t* w_ptr = (const device uint32_t*)w;
   uint32_t packed = *w_ptr;
 
-  bfloat4 v0 = uint4_to_fp4<bfloat>(
-      uint4(packed, packed >> 4, packed >> 8, packed >> 12)
-  );
-  bfloat4 v1 = uint4_to_fp4<bfloat>(
-      uint4(packed >> 16, packed >> 20, packed >> 24, packed >> 28)
-  );
+  bfloat4 v0, v1;
+
+  // Low 4 nibbles
+  v0.x = static_cast<bfloat>(packed & 0xF);
+  v0.y = static_cast<bfloat>((packed >> 4) & 0xF);
+  v0.z = static_cast<bfloat>((packed >> 8) & 0xF);
+  v0.w = static_cast<bfloat>((packed >> 12) & 0xF);
+
+  // High 4 nibbles
+  v1.x = static_cast<bfloat>((packed >> 16) & 0xF);
+  v1.y = static_cast<bfloat>((packed >> 20) & 0xF);
+  v1.z = static_cast<bfloat>((packed >> 24) & 0xF);
+  v1.w = static_cast<bfloat>((packed >> 28) & 0xF);
 
   v0 = v0 * scale + bias;
   v1 = v1 * scale + bias;
 
   threadgroup bfloat4* out_ptr = (threadgroup bfloat4*)w_local;
-  out_ptr[0] = v0;
-  out_ptr[1] = v1;
-}
-
-template <>
-inline void dequantize<float, 8, 4>(
-    const device uint8_t* w,
-    float scale,
-    float bias,
-    threadgroup float* w_local
-) {
-  const device uint32_t* w_ptr = (const device uint32_t*)w;
-  uint32_t packed = *w_ptr;
-
-  float4 v0 = uint4_to_fp4<float>(
-      uint4(packed, packed >> 4, packed >> 8, packed >> 12)
-  );
-  float4 v1 = uint4_to_fp4<float>(
-      uint4(packed >> 16, packed >> 20, packed >> 24, packed >> 28)
-  );
-
-  v0 = v0 * scale + bias;
-  v1 = v1 * scale + bias;
-
-  threadgroup float4* out_ptr = (threadgroup float4*)w_local;
-  out_ptr[0] = v0;
-  out_ptr[1] = v1;
-}
-
-template <>
-inline void dequantize<half, 8, 4>(
-    const device uint8_t* w,
-    half scale,
-    half bias,
-    threadgroup half* w_local
-) {
-  const device uint32_t* w_ptr = (const device uint32_t*)w;
-  uint32_t packed = *w_ptr;
-
-  half4 v0 =
-      uint4_to_fp4<half>(uint4(packed, packed >> 4, packed >> 8, packed >> 12));
-  half4 v1 = uint4_to_fp4<half>(
-      uint4(packed >> 16, packed >> 20, packed >> 24, packed >> 28)
-  );
-
-  v0 = v0 * scale + bias;
-  v1 = v1 * scale + bias;
-
-  threadgroup half4* out_ptr = (threadgroup half4*)w_local;
   out_ptr[0] = v0;
   out_ptr[1] = v1;
 }
