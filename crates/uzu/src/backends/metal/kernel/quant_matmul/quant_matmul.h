@@ -9,7 +9,7 @@ using namespace metal;
 
 // Avoids air.convert (SFU) for int → float which is slower on Apple GPU.
 template <typename U>
-inline U uint_to_fp(uint32_t x) {
+METAL_FUNC U uint_to_fp(uint32_t x) {
   return static_cast<U>(as_type<float>(x | 0x4B000000u) - 8388608.0f);
 }
 
