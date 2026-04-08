@@ -121,7 +121,7 @@ fn get_output<
     AccumT: ArrayElement + Float,
 >(
     input: &Input<InputT, ScaleT, OutputT>
-) -> (Vec<OutputT>, f64, Option<Duration>) {
+) -> (Vec<OutputT>, f64, Duration) {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
         &context,
@@ -461,7 +461,7 @@ fn bench_rms_norm(c: &mut Criterion) {
                         );
                     }
 
-                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
                 })
             });
         }

@@ -192,20 +192,11 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
-        Some(gpu_time_ms) => {
-            println!(
-                "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, strategy, gpu_time_ms, host_elapsed_ms
-            );
-        },
-        None => {
-            println!(
-                "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): Host-side={:.2} ms (GPU timing unavailable)",
-                BATCH, VOCAB, strategy, host_elapsed_ms
-            );
-        },
-    }
+    let gpu_time_ms = completed.gpu_execution_time().as_secs_f64() * 1e3;
+    println!(
+        "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
+        BATCH, VOCAB, strategy, gpu_time_ms, host_elapsed_ms
+    );
 
     // Ensure the kernel produced *some* output (sanity).
     let ptr = output_buf.contents().as_ptr() as *const u32;
@@ -548,20 +539,11 @@ fn perf_categorical_128k_vocab() {
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     let host_elapsed_ms = host_timer.elapsed().as_secs_f64() * 1e3;
 
-    match completed.gpu_execution_time().map(|d| d.as_secs_f64() * 1e3) {
-        Some(gpu_time_ms) => {
-            println!(
-                "Categorical sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
-                BATCH, VOCAB, gpu_time_ms, host_elapsed_ms
-            );
-        },
-        None => {
-            println!(
-                "Categorical sampling perf (batch={}, vocab={}): Host-side={:.2} ms (GPU timing unavailable)",
-                BATCH, VOCAB, host_elapsed_ms
-            );
-        },
-    }
+    let gpu_time_ms = completed.gpu_execution_time().as_secs_f64() * 1e3;
+    println!(
+        "Categorical sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
+        BATCH, VOCAB, gpu_time_ms, host_elapsed_ms
+    );
 
     // Sanity check
     let ptr = output_buf.contents().as_ptr() as *const u32;

@@ -170,7 +170,7 @@ pub struct Completed<B: Backend> {
 }
 
 impl<B: Backend> Completed<B> {
-    pub fn gpu_execution_time(&self) -> Option<Duration> {
+    pub fn gpu_execution_time(&self) -> Duration {
         self.command_buffer.gpu_execution_time()
     }
 }

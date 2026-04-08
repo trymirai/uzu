@@ -1,4 +1,4 @@
-#![cfg(all(feature = "audio-runtime", metal_backend))]
+#![cfg(metal_backend)]
 
 use uzu::{
     ArrayContextExt, DataType,

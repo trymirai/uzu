@@ -1,5 +1,3 @@
-#![cfg(feature = "audio-runtime")]
-
 use std::{path::Path, rc::Rc};
 
 use super::{AudioResult, NanoCodecFsqRuntime};
