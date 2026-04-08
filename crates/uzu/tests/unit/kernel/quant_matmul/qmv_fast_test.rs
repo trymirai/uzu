@@ -4,7 +4,7 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};
 use itertools::iproduct;
 use num_traits::Float;
-use rand::{SeedableRng, rngs::SmallRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu::{
     ArrayElement, DataType,
     backends::{
@@ -300,7 +300,7 @@ qmv_fast_test!(test_gs32_8bit_mlx,  gs=32,  bits=8, zp=false, mlx=true);
 qmv_fast_test!(test_gs64_8bit_mlx,  gs=64,  bits=8, zp=false, mlx=true);
 qmv_fast_test!(test_gs128_8bit_mlx, gs=128, bits=8, zp=false, mlx=true);
 
-fn gen_random<T: rand::distr::SampleUniform + Copy, R: rand::Rng>(rng: &mut R, range: std::ops::Range<T>, len: usize) -> Box<[T]> {
+fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(rng: &mut R, range: std::ops::Range<T>, len: usize) -> Box<[T]> {
     (0..len).map(|_| rng.random_range(range.clone())).collect()
 }
 
