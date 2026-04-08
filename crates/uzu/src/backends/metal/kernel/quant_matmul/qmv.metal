@@ -96,7 +96,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
             zp = static_cast<U>(zl[g]);
           }
           result[row] +=
-              qdot_zero_point<U, values_per_thread, BITS>(wl, x_thread, s, zp);
+              qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
         }
       }
 
@@ -140,7 +140,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
             zp = static_cast<U>(zl[g]);
           }
           result[row] +=
-              qdot_zero_point<U, values_per_thread, BITS>(wl, x_thread, s, zp);
+              qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
         }
       }
     }
@@ -197,7 +197,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
             zp = static_cast<U>(zl[g]);
           }
           result[row] +=
-              qdot_zero_point<U, values_per_thread, BITS>(wl, x_thread, s, zp);
+              qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
         }
       }
 
@@ -246,7 +246,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
             zp = static_cast<U>(zl[g]);
           }
           result[row] +=
-              qdot_zero_point<U, values_per_thread, BITS>(wl, x_thread, s, zp);
+              qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
         }
       }
     }
