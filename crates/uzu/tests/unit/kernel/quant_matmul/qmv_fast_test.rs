@@ -395,7 +395,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
 ) {
     let mut group = c.benchmark_group(format!("{}/Kernel/QmvFast/{}", type_short_name::<B>(), label));
 
-    for (m, n, k) in iproduct!([1, 2, 4], [2048, 4096, 14336], [2048, 4096, 8192, 14336]) {
+    for (m, n, k) in iproduct!([1, 2, 3, 4], [2048, 4096, 14336], [2048, 4096, 8192, 14336]) {
         let block_size: usize = if bits == 4 { 512 } else { 256 };
         if n % 8 != 0 || k % block_size != 0 {
             continue;

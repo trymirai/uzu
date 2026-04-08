@@ -226,6 +226,55 @@ inline void dequantize<bfloat, 8, 4>(
   out_ptr[1] = v1;
 }
 
+template <>
+inline void dequantize<float, 8, 4>(
+    const device uint8_t* w,
+    float scale,
+    float bias,
+    threadgroup float* w_local
+) {
+  const device uint32_t* w_ptr = (const device uint32_t*)w;
+  uint32_t packed = *w_ptr;
+
+  float4 v0 = uint4_to_fp4<float>(
+      uint4(packed, packed >> 4, packed >> 8, packed >> 12)
+  );
+  float4 v1 = uint4_to_fp4<float>(
+      uint4(packed >> 16, packed >> 20, packed >> 24, packed >> 28)
+  );
+
+  v0 = v0 * scale + bias;
+  v1 = v1 * scale + bias;
+
+  threadgroup float4* out_ptr = (threadgroup float4*)w_local;
+  out_ptr[0] = v0;
+  out_ptr[1] = v1;
+}
+
+template <>
+inline void dequantize<half, 8, 4>(
+    const device uint8_t* w,
+    half scale,
+    half bias,
+    threadgroup half* w_local
+) {
+  const device uint32_t* w_ptr = (const device uint32_t*)w;
+  uint32_t packed = *w_ptr;
+
+  half4 v0 =
+      uint4_to_fp4<half>(uint4(packed, packed >> 4, packed >> 8, packed >> 12));
+  half4 v1 = uint4_to_fp4<half>(
+      uint4(packed >> 16, packed >> 20, packed >> 24, packed >> 28)
+  );
+
+  v0 = v0 * scale + bias;
+  v1 = v1 * scale + bias;
+
+  threadgroup half4* out_ptr = (threadgroup half4*)w_local;
+  out_ptr[0] = v0;
+  out_ptr[1] = v1;
+}
+
 template <
     typename T,
     short BROWS,
