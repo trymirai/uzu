@@ -232,10 +232,10 @@ pub struct MetalCommandBufferCompleted {
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn gpu_execution_time(&self) -> Option<Duration> {
-        match (self.command_buffer.gpu_start_time(), self.command_buffer.gpu_end_time()) {
-            (Some(start), Some(end)) if end > start => Some(Duration::from_secs_f64(end - start)),
-            _ => None,
-        }
+    fn gpu_execution_time(&self) -> Duration {
+        // They're always present, https://developer.apple.com/documentation/metal/mtlcommandbuffer/gpustarttime?language=objc
+        let start = self.command_buffer.gpu_start_time();
+        let end = self.command_buffer.gpu_end_time();
+        Duration::from_secs_f64(end - start)
     }
 }
