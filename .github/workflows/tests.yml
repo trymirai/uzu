@@ -79,6 +79,14 @@ jobs:
             ${{ matrix.tracing && '--features tracing' || '' }} \
             ${{ matrix.audio && '--features audio-runtime' || '' }}
 
+      - name: Build benches
+        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.audio }}
+        run: |
+          cargo +nightly bench --no-run --no-default-features \
+            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.tracing && '--features tracing' || '' }} \
+            ${{ matrix.audio && '--features audio-runtime' || '' }}
+
       - name: Run tests
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.audio }}
         run: |
