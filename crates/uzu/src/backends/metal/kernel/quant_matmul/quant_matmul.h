@@ -14,26 +14,26 @@ METAL_FUNC U uint_to_fp(uint32_t x) {
 }
 
 template <>
-inline bfloat uint_to_fp<bfloat>(uint32_t x) {
+METAL_FUNC bfloat uint_to_fp<bfloat>(uint32_t x) {
   return as_type<bfloat>(uint16_t(x | 0x4300u)) - bfloat(128.0f);
 }
 
 template <typename U>
-inline vec<U, 4> uint4_to_fp4(uint4 n);
+METAL_FUNC vec<U, 4> uint4_to_fp4(uint4 n);
 
 template <>
-inline float4 uint4_to_fp4<float>(uint4 n) {
+METAL_FUNC float4 uint4_to_fp4<float>(uint4 n) {
   n &= uint4(0xFu);
   return as_type<float4>(n | uint4(0x4B000000u)) - float4(8388608.0f);
 }
 
 template <>
-inline half4 uint4_to_fp4<half>(uint4 n) {
+METAL_FUNC half4 uint4_to_fp4<half>(uint4 n) {
   return half4(uint4_to_fp4<float>(n));
 }
 
 template <>
-inline bfloat4 uint4_to_fp4<bfloat>(uint4 n) {
+METAL_FUNC bfloat4 uint4_to_fp4<bfloat>(uint4 n) {
   ushort4 narrow = ushort4(n & uint4(0xFu));
   return as_type<bfloat4>(narrow | ushort4(0x4300u)) - bfloat(128.0f);
 }
@@ -144,17 +144,15 @@ inline U qdot_safe(
 
   U accum = 0;
   if (bits == 4) {
+    using U4 = vec<U, 4>;
     const device uint16_t* ws = (const device uint16_t*)w;
+    const thread U4* x4 = (const thread U4*)x_thread;
 
     int full = N / 4;
     for (int i = 0; i < full; i++) {
-      auto wi = ws[i];
-      float wf0 = uint_to_fp<float>(wi & 0xfu);
-      float wf1 = uint_to_fp<float>((wi >> 4) & 0xfu);
-      float wf2 = uint_to_fp<float>((wi >> 8) & 0xfu);
-      float wf3 = uint_to_fp<float>((wi >> 12) & 0xfu);
-      accum += x_thread[4 * i] * wf0 + x_thread[4 * i + 1] * wf1 +
-               x_thread[4 * i + 2] * wf2 + x_thread[4 * i + 3] * wf3;
+      uint16_t wi = ws[i];
+      U4 w_vec = uint4_to_fp4<U>(uint4(wi, wi >> 4, wi >> 8, wi >> 12));
+      accum += dot(x4[i], w_vec);
     }
 
     int rem = N & 3;
@@ -162,11 +160,11 @@ inline U qdot_safe(
       uint16_t wv = ws[full];
       int base = 4 * full;
       if (rem > 0)
-        accum += x_thread[base] * uint_to_fp<float>(wv & 0xf);
+        accum += x_thread[base] * uint_to_fp<U>(wv & 0xf);
       if (rem > 1)
-        accum += x_thread[base + 1] * uint_to_fp<float>((wv >> 4) & 0xf);
+        accum += x_thread[base + 1] * uint_to_fp<U>((wv >> 4) & 0xf);
       if (rem > 2)
-        accum += x_thread[base + 2] * uint_to_fp<float>((wv >> 8) & 0xf);
+        accum += x_thread[base + 2] * uint_to_fp<U>((wv >> 8) & 0xf);
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
