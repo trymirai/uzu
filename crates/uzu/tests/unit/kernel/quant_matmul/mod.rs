@@ -8,8 +8,11 @@ mod qmm_transposed_wide_test;
 mod qmv_fast_test;
 mod qmv_test;
 
+use half::{bf16, f16};
 use num_traits::Float;
 use uzu::ArrayElement;
+
+use crate::uzu_test;
 
 pub(super) struct Input<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
@@ -86,4 +89,32 @@ pub(super) fn check_tolerance(
     let diff = (expected - actual).abs() as f64;
     let tol = abs_tol.max(expected.abs() as f64 * rel_tol);
     diff <= tol
+}
+
+/// Validates the bit-manipulation used by uint_to_fp / uint4_to_fp4 in quant_matmul.h
+/// for nibble values 0–15.
+#[uzu_test]
+fn test_uint4_to_fp_bit_trick() {
+    // float path: as_type<float>(x | 0x4B000000) - 8388608.0
+    for x in 0u32..=15 {
+        let bits = x | 0x4B00_0000;
+        let result = f32::from_bits(bits) - 8388608.0f32;
+        assert_eq!(result, x as f32, "float path failed for x={x}");
+    }
+
+    // half path: narrows from float, exact for 0–15
+    for x in 0u32..=15 {
+        let bits = x | 0x4B00_0000;
+        let via_float = f32::from_bits(bits) - 8388608.0f32;
+        let as_half = f16::from_f32(via_float);
+        assert_eq!(as_half.to_f32(), x as f32, "half path failed for x={x}");
+    }
+
+    // bfloat path: as_type<bfloat>((x as u16) | 0x4300) - bf16(128.0)
+    for x in 0u32..=15 {
+        let narrow = (x as u16) | 0x4300;
+        let val = bf16::from_bits(narrow);
+        let result = val.to_f32() - 128.0f32;
+        assert_eq!(result, x as f32, "bfloat path failed for x={x}");
+    }
 }

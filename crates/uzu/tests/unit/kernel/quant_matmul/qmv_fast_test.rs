@@ -1,6 +1,10 @@
 use std::fmt::{Debug, Display};
 
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::{bf16, f16};
+use itertools::iproduct;
 use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu::{
     ArrayElement, DataType,
     backends::{
@@ -13,7 +17,10 @@ use uzu::{
 };
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
-use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
+use crate::{
+    common::{helpers::alloc_buffer_with_data, type_short_name},
+    uzu_bench, uzu_test,
+};
 
 fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
@@ -363,4 +370,106 @@ fn test_gs128_8bit_mlx() {
     for_each_float_type!(|F| {
         test_basic::<F>(128, 8, false, true);
     })
+}
+
+// ── Benchmarks ─────────────────────────────────────────────────────────────
+
+fn gen_random_bytes(seed: u64, len: usize) -> Box<[u8]> {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    (0..len).map(|_| rng.random::<u8>()).collect()
+}
+
+fn gen_random_weights(seed: u64, len: usize) -> Box<[u32]> {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    (0..len).map(|_| rng.random::<u32>()).collect()
+}
+
+fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
+    c: &mut Criterion,
+    context: &B::Context,
+    label: &str,
+    group_size: u32,
+    bits: u32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+) {
+    let mut group = c.benchmark_group(format!("{}/Kernel/QmvFast/{}", type_short_name::<B>(), label));
+
+    for (m, n, k) in iproduct!([1, 2, 4], [2048, 4096, 14336], [2048, 4096, 8192, 14336]) {
+        let block_size: usize = if bits == 4 { 512 } else { 256 };
+        if n % 8 != 0 || k % block_size != 0 {
+            continue;
+        }
+
+        let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+            context,
+            T::data_type(),
+            group_size,
+            bits,
+            use_zero_points,
+            use_mlx_quant,
+        )
+        .unwrap();
+
+        let num_groups = (k + group_size as usize - 1) / group_size as usize;
+        let w_packed = gen_random_weights(1337, n * k / 8);
+
+        let mut rng = SmallRng::seed_from_u64(42);
+        let x_data: Box<[T]> = (0..m * k).map(|_| T::from(rng.random_range(-1.0f32..1.0)).unwrap()).collect();
+        let scales_data: Box<[T]> = (0..n * num_groups)
+            .map(|_| T::from(rng.random_range(0.01f32..1.0)).unwrap())
+            .collect();
+
+        let w_buf = alloc_buffer_with_data::<B, u32>(context, &w_packed);
+        let scales_buf = alloc_buffer_with_data::<B, T>(context, &scales_data);
+        let x_buf = alloc_buffer_with_data::<B, T>(context, &x_data);
+        let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
+
+        let zp_buf = if use_zero_points {
+            let zp_stride = if bits == 4 { (num_groups + 1) / 2 } else { num_groups };
+            Some(alloc_buffer_with_data::<B, u8>(context, &gen_random_bytes(77, n * zp_stride)))
+        } else {
+            None
+        };
+        let bias_buf = if use_mlx_quant {
+            let data: Box<[T]> = (0..n * num_groups)
+                .map(|_| T::from(rng.random_range(-0.5f32..0.5)).unwrap())
+                .collect();
+            Some(alloc_buffer_with_data::<B, T>(context, &data))
+        } else {
+            None
+        };
+
+        group.throughput(Throughput::Elements((m * n * k) as u64));
+
+        group.bench_function(BenchmarkId::from_parameter(format!("M[{m}]N[{n}]K[{k}]")), |b| {
+            b.iter_custom(|n_iters| {
+                let mut encoder = Encoder::<B>::new(context).unwrap();
+                for _ in 0..n_iters {
+                    kernel.encode(
+                        &w_buf,
+                        &scales_buf,
+                        zp_buf.as_ref(),
+                        bias_buf.as_ref(),
+                        &x_buf,
+                        &mut y_buf,
+                        k as u32,
+                        n as u32,
+                        m as u32,
+                        &mut encoder,
+                    );
+                }
+                encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+            })
+        });
+    }
+}
+
+#[uzu_bench]
+fn bench_qmv_fast(c: &mut Criterion) {
+    for_each_backend!(|B| {
+        let context = <B as Backend>::Context::new().unwrap();
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, false, true);
+        bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, true, false);
+    });
 }

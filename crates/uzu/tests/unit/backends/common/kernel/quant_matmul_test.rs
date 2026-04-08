@@ -52,7 +52,8 @@ fn quantize_slice(
 }
 
 struct ExecutionResult {
-    elapsed: f64,
+    /// Individual per-iteration GPU times in milliseconds (one entry per iteration)
+    samples_ms: Vec<f64>,
 }
 
 fn create_test_weights(
@@ -363,8 +364,8 @@ fn execute_quantized_matmul<B: Backend>(
         }
     }
 
-    let start = Instant::now();
-    for _ in 0..iterations {
+    let mut samples_ms: Vec<f64> = Vec::with_capacity(iterations);
+    for _i in 0..iterations {
         let args = QuantizedMatmulArguments {
             a_buffer: &x_buf,
             a_offset: 0,
@@ -376,9 +377,12 @@ fn execute_quantized_matmul<B: Backend>(
         };
         let mut encoder = Encoder::new(ctx).unwrap();
         kernel.encode(&mut encoder, args).unwrap();
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        if let Some(gpu_time) = completed.gpu_execution_time() {
+            samples_ms.push(gpu_time.as_secs_f64() * 1000.0);
+        }
     }
-    let elapsed = start.elapsed();
+    assert!(!samples_ms.is_empty(), "GPU timestamps unavailable — cannot measure performance");
 
     if validate {
         let y_expected = cpu_reference(
@@ -450,15 +454,38 @@ fn execute_quantized_matmul<B: Backend>(
             println!("Dims batch={} output_dim={} input_dim={}", batch, output_dim, input_dim);
             panic!("Validation failed with {} mismatches", debug_prints);
         }
-
-        ExecutionResult {
-            elapsed: elapsed.as_secs_f64(),
-        }
-    } else {
-        ExecutionResult {
-            elapsed: elapsed.as_secs_f64(),
-        }
     }
+
+    ExecutionResult {
+        samples_ms,
+    }
+}
+
+/// Returns (trimmed_mean, trimmed_median) of `samples` after removing the
+/// `trim` lowest and `trim` highest values.  Panics if fewer than
+/// `2 * trim + 1` samples are present.
+fn trimmed_stats(
+    samples: &[f64],
+    trim: usize,
+) -> (f64, f64) {
+    assert!(
+        samples.len() > 2 * trim,
+        "Need at least {} samples for trim={}, got {}",
+        2 * trim + 1,
+        trim,
+        samples.len()
+    );
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let trimmed = &sorted[trim..sorted.len() - trim];
+    let mean = trimmed.iter().sum::<f64>() / trimmed.len() as f64;
+    let mid = trimmed.len() / 2;
+    let median = if trimmed.len() % 2 == 0 {
+        (trimmed[mid - 1] + trimmed[mid]) / 2.0
+    } else {
+        trimmed[mid]
+    };
+    (mean, median)
 }
 
 struct TestConfig {
@@ -634,10 +661,10 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
     ];
 
     println!(
-        "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:<15}",
-        "Kernel Config", "M x N x K", "Type", "Bits", "Group", "Avg Duration"
+        "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:<12} | {:<12}",
+        "Kernel Config", "M x N x K", "Type", "Bits", "Group", "Avg (ms)", "Median (ms)"
     );
-    println!("{}", "-".repeat(85));
+    println!("{}", "-".repeat(100));
 
     let iterations = 20;
     for config in &configs {
@@ -646,13 +673,14 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
             let avg = result.elapsed / (iterations as f64) * 1000.0; // ms
 
             println!(
-                "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:.4} ms",
+                "{:<20} | {:<10} | {:<6} | {:<5} | {:<5} | {:.4}       | {:.4}",
                 format!("{:?}", config.quant_type),
                 format!("{}x{}x{}", batch, output_dim, input_dim),
                 format!("{:?}", config.data_type),
                 config.bits,
                 config.group_size,
-                avg
+                avg,
+                median,
             );
         }
     }
