@@ -18,7 +18,8 @@ use crate::{
             Metal,
             context::MetalContext,
             kernel::{
-                MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
+                MatmulGemmMetalKernel, MatmulGemmMppDirectMetalKernel, MatmulGemmMppMetalKernel,
+                MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
             },
             metal_extensions::DeviceExt,
         },
@@ -27,6 +28,7 @@ use crate::{
 
 mod gemm;
 mod gemm_mpp;
+mod gemm_mpp_direct;
 mod gemv;
 
 pub struct MatmulMetalKernel {
@@ -34,6 +36,8 @@ pub struct MatmulMetalKernel {
     gemv_kernels: HashMap<gemv::GemvSpecialization, MatmulGemvMetalKernel>,
     gemm_kernels: HashMap<gemm::GemmSpecialization, MatmulGemmMetalKernel>,
     gemm_mpp_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppMetalKernel>,
+    gemm_mpp_direct_kernels:
+        HashMap<gemm_mpp_direct::GemmMppDirectSpecialization, MatmulGemmMppDirectMetalKernel>,
     bias_add: TensorAddBiasMetalKernel,
 }
 
@@ -287,6 +291,86 @@ impl MatmulMetalKernel {
 
         Ok(())
     }
+
+    fn get_or_create_gemm_mpp_direct(
+        &mut self,
+        context: &MetalContext,
+        specialization: gemm_mpp_direct::GemmMppDirectSpecialization,
+    ) -> Result<&MatmulGemmMppDirectMetalKernel, MatmulError<Metal>> {
+        match self.gemm_mpp_direct_kernels.entry(specialization) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = MatmulGemmMppDirectMetalKernel::new(
+                    context,
+                    self.data_type,
+                    specialization.block_rows,
+                    specialization.block_cols,
+                    specialization.simdgroups_per_row,
+                    specialization.simdgroups_per_column,
+                    specialization.align_m,
+                    specialization.align_n,
+                    specialization.align_k,
+                    specialization.bk,
+                )
+                .map_err(MatmulError::BackendError)?;
+                Ok(entry.insert(kernel))
+            },
+        }
+    }
+
+    fn encode_gemm_mpp_direct(
+        &mut self,
+        context: &MetalContext,
+        encoder: &mut Encoder<Metal>,
+        arguments: MatmulArguments<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        let specialization = gemm_mpp_direct::GemmMppDirectSpecialization::select(
+            arguments.batch_dim,
+            arguments.output_dim,
+            arguments.input_dim,
+        );
+
+        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
+        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
+
+        let params = GemmParams {
+            M: arguments.batch_dim,
+            N: arguments.output_dim,
+            K: arguments.input_dim,
+            leading_dimension_a: arguments.input_dim,
+            leading_dimension_b: arguments.input_dim,
+            leading_dimension_d: arguments.output_dim,
+            threadgroups_per_row,
+            threadgroups_per_column,
+            swizzle_log: 0,
+            aligned_inner_iterations: 0,
+            use_morton: false,
+        };
+
+        let kernel = self.get_or_create_gemm_mpp_direct(context, specialization)?;
+        kernel.encode(
+            (arguments.a, arguments.a_offset as usize),
+            arguments.b,
+            &mut *arguments.d,
+            std::slice::from_ref(&params),
+            threadgroups_per_row,
+            threadgroups_per_column,
+            encoder,
+        );
+
+        if let MatmulArgumentC::Bias(bias) = arguments.c {
+            self.bias_add.encode(
+                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                bias,
+                arguments.d,
+                arguments.output_dim,
+                arguments.batch_dim * arguments.output_dim,
+                encoder,
+            );
+        }
+
+        Ok(())
+    }
 }
 
 /// Explicit dispatch paths for testing individual kernels independent of production routing.
@@ -296,6 +380,7 @@ pub enum MatmulDispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
+    GemmMppDirect,
 }
 
 impl MatmulMetalKernel {
@@ -312,6 +397,10 @@ impl MatmulMetalKernel {
             MatmulDispatchPath::Gemm => self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM"),
             MatmulDispatchPath::GemmMpp => {
                 self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP")
+            },
+            MatmulDispatchPath::GemmMppDirect => {
+                self.encode_gemm_mpp_direct(context, encoder, arguments)
+                    .expect("Failed to encode GEMM MPP Direct")
             },
         }
     }
@@ -335,6 +424,7 @@ impl MatmulKernel for MatmulMetalKernel {
             gemv_kernels: HashMap::new(),
             gemm_kernels: HashMap::new(),
             gemm_mpp_kernels: HashMap::new(),
+            gemm_mpp_direct_kernels: HashMap::new(),
             bias_add,
         };
 
@@ -347,6 +437,9 @@ impl MatmulKernel for MatmulMetalKernel {
         if context.device.supports_mxu() {
             for &config in gemm_mpp::GemmMppSpecialization::precompile_configs(data_type) {
                 kernel.get_or_create_gemm_mpp(context, config)?;
+            }
+            for &config in gemm_mpp_direct::GemmMppDirectSpecialization::precompile_configs(data_type) {
+                kernel.get_or_create_gemm_mpp_direct(context, config)?;
             }
         }
 
