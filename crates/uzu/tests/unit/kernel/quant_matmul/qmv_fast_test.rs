@@ -326,7 +326,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
             context, T::data_type(), group_size, bits, use_zero_points, use_mlx_quant,
         ).unwrap();
 
-        let w_buf = alloc_buffer_with_data::<B, u32>(context, &gen_random::<u32, _>(&mut rng, 0..u32::MAX, n * k / 8));
+        let w_buf = alloc_buffer_with_data::<B, u32>(context, &gen_random::<u32, _>(&mut rng, 0..u32::MAX, n * k * bits as usize / 32));
         let scales_buf = alloc_buffer_with_data::<B, T>(context, &gen_random::<f32, _>(&mut rng, 0.01..1.0, n * num_groups).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>());
         let x_buf = alloc_buffer_with_data::<B, T>(context, &gen_random::<f32, _>(&mut rng, -1.0..1.0, m * k).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>());
         let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
