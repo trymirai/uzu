@@ -87,7 +87,6 @@ metal = [
     "dep:metal",
 ]
 tracing = []
-audio-runtime = []
 
 [[test]]
 name = "integration"
