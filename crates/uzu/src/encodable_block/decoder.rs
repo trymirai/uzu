@@ -59,7 +59,7 @@ impl<B: Backend> Decoder<B> {
     }
 
     /// Used by models whose token lookup weights and logits readout weights
-    #[cfg(all(feature = "audio-runtime", metal_backend))]
+    #[cfg(metal_backend)]
     pub fn new_with_embedding_and_readout_subtrees(
         context: &B::Context,
         decoder_config: &DecoderConfig,

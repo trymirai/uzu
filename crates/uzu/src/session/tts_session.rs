@@ -1,4 +1,4 @@
-#![cfg(all(feature = "audio-runtime", metal_backend))]
+#![cfg(metal_backend)]
 
 mod audio_backend;
 mod backend_factory;

@@ -11,7 +11,7 @@
 // Speculators
 #[cfg(metal_backend)]
 pub use crate::backends::metal::MetalContext;
-#[cfg(all(feature = "audio-runtime", metal_backend))]
+#[cfg(metal_backend)]
 pub use crate::session::TtsSession;
 pub use crate::{
     VERSION,
