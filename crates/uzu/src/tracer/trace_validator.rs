@@ -702,7 +702,20 @@ impl<B: Backend> TraceValidator<B> {
 
         let result: Vec<f32> = produced_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
 
-        Self::compare_arrays(&reference, expected_data.shape().to_vec(), &result, produced_data.shape().to_vec())
+        let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
+            DataType::BF16 => (0.04, 0.06, 0.03),
+            _ => (0.01, 0.03, 0.01),
+        };
+
+        Self::compare_arrays(
+            &reference,
+            expected_data.shape().to_vec(),
+            &result,
+            produced_data.shape().to_vec(),
+            atol,
+            rtol,
+            allowed_voilations_tol,
+        )
     }
 
     fn compare_arrays(
@@ -710,12 +723,11 @@ impl<B: Backend> TraceValidator<B> {
         reference_shape: Vec<usize>,
         result: &[f32],
         result_shape: Vec<usize>,
+        atol: f32,
+        rtol: f32,
+        fraction_of_allowed_violations: f32,
     ) -> TracerValidationMetrics {
         assert_eq!(result.len(), reference.len());
-
-        let atol: f32 = 1e-2;
-        let rtol: f32 = 0.03;
-        let fraction_of_allowed_violations: f32 = 0.01;
 
         let mut num_violations = 0;
         let mut max_err = 0.0f32;

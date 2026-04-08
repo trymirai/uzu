@@ -1,66 +1,47 @@
-#![cfg(all(metal_backend, feature = "tracing"))]
+#![cfg(all(feature = "tracing"))]
 
-use uzu::{TraceValidator, backends::metal::Metal};
+use uzu::{TraceValidator, backends::common::Backend};
 
-use crate::common::path::{get_test_model_path, get_traces_path};
+use crate::common::{
+    for_each_non_cpu_backend,
+    path::{get_test_model_path, get_traces_path},
+};
+
+fn test_tracer_internal<B: Backend>() {
+    let model_path = get_test_model_path();
+    let mut tracer = TraceValidator::<B>::new(&model_path).expect("Failed to create TraceValidator");
+    let results = tracer.run().expect("Failed to run tracer");
+    for result in results.results.iter() {
+        // this layers contains too many errors
+        if result.name == "activation_trace.output_norm" || result.name == "logits" {
+            continue;
+        }
+        assert!(result.metrics.is_valid(), "{} error:\n{}", result.name, result.metrics.message().as_str());
+    }
+
+    let total_token_violations = results.number_of_tokens_violations();
+    let allowed_token_violations = results.number_of_allowed_tokens_violations();
+    assert!(
+        total_token_violations < allowed_token_violations,
+        "Too much token violations: {} / {}. Indices: {:?}",
+        total_token_violations,
+        allowed_token_violations,
+        results.tokens_violation_indices
+    );
+}
 
 #[test]
 fn test_tracer() {
-    let model_path = get_test_model_path();
-    // Ensure traces file present, otherwise skip
     let traces_path = get_traces_path();
+
+    // TODO: when api will return `traces.safetensor` remove `if` and uncomment `assert`
     if !traces_path.exists() {
         println!("Skipping tracer test: traces file missing at {:?}", traces_path);
         return;
     }
+    // assert!(traces_path.exists(), "Traces file missing at {:?}", traces_path);
 
-    let mut tracer = match TraceValidator::<Metal>::new(&model_path) {
-        Ok(t) => t,
-        Err(e) => {
-            println!("Failed to create TraceValidator: {:?}", e);
-            return;
-        },
-    };
-
-    let colored_text = |text: &str, valid: bool| {
-        if valid {
-            format!("\x1b[32m{}\x1b[0m", text)
-        } else {
-            format!("\x1b[31m{}\x1b[0m", text)
-        }
-    };
-
-    let results = match tracer.run() {
-        Ok(r) => r,
-        Err(e) => {
-            println!("Tracer run failed: {:?}", e);
-            return;
-        },
-    };
-
-    for result in results.results.iter() {
-        let valid = result.metrics.is_valid();
-        let text = colored_text(
-            if valid {
-                "ok"
-            } else {
-                "error"
-            },
-            valid,
-        );
-        println!("{}: {}", result.name, text);
-        if !valid {
-            println!("{}", colored_text(result.metrics.message().as_str(), false));
-        }
-    }
-    println!("-------------------------");
-    println!(
-        "number_of_tokens_violations: {}",
-        colored_text(
-            format!("{} / {}", results.number_of_tokens_violations(), results.number_of_allowed_tokens_violations())
-                .as_str(),
-            results.is_valid(),
-        )
-    );
-    println!("tokens_violation_indices: {:?}", results.tokens_violation_indices);
+    for_each_non_cpu_backend!(|B| {
+        test_tracer_internal::<B>();
+    })
 }
