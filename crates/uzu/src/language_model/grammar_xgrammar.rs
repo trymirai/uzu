@@ -4,10 +4,7 @@ use std::iter::repeat_n;
 
 use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
-use crate::{
-    language_model::grammar::CompiledGrammar,
-    session::{config::GrammarConfig, types::Error},
-};
+use crate::{language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig};
 
 enum CompiledGrammarEngagementState {
     Always,

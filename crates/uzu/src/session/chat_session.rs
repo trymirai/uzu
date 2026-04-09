@@ -12,13 +12,14 @@ use std::{
 };
 
 use tokenizers::Tokenizer;
+use uzu::language_model::grammar::create_compiled_grammar;
 
 use crate::{
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
-        grammar::{CompiledGrammar, CompiledGrammarFactory},
+        grammar::CompiledGrammar,
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -50,7 +51,7 @@ pub struct ChatSession {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
-    grammar_factory: CompiledGrammarFactory,
+    stop_token_ids: Vec<i32>,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     decoding_config: DecodingConfig,
@@ -129,9 +130,6 @@ impl ChatSession {
         let stop_token_ids: Vec<i32> =
             language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
 
-        let grammar_factory = CompiledGrammarFactory::new(&tokenizer, Some(&stop_token_ids))
-            .map_err(|error_message| Error::GrammarError(error_message))?;
-
         let input_processor =
             Box::new(InputProcessorDefault::new(language_model_config.message_processor_config.clone()));
 
@@ -147,7 +145,7 @@ impl ChatSession {
             model_path,
             model_metadata,
             tokenizer,
-            grammar_factory,
+            stop_token_ids,
             input_processor,
             output_parser,
             decoding_config,
@@ -260,7 +258,7 @@ impl ChatSession {
 
         let sampling_method = config.sampling_policy.resolve(language_model_config);
         let mut compiled_grammar: Option<Box<dyn CompiledGrammar>> =
-            self.grammar_factory.create(config.grammar_config)?;
+            create_compiled_grammar(config.grammar_config, &self.tokenizer, Some(&self.stop_token_ids))?;
 
         let prefill_start = Instant::now();
         let sample_suffix = config.tokens_limit > 0;

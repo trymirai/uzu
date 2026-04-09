@@ -1,3 +1,5 @@
+mod grammar_xgrammar;
+
 pub mod gpu_capture;
 pub mod grammar;
 pub mod gumbel;
