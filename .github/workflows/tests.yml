@@ -71,6 +71,7 @@ jobs:
           metal: ${{ matrix.backend == 'metal' }}
           test_model: true
           nextest: true
+          wasi: ${{ matrix.target == 'wasm32-wasip1-threads' }}
 
       - name: Build crates
         if: ${{ matrix.target == 'default' }}
