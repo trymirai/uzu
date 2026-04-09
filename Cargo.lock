@@ -329,7 +329,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "mach2",
  "serde",
@@ -626,7 +626,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "benchmarks",
  "clap",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "dsl"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4595,7 +4595,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
