@@ -49,7 +49,7 @@ pub struct QuantizedMatmulArguments<'a, B: Backend> {
 
 pub struct QuantizedMatmulKernelEncodable<B: Backend> {
     matrix_vector: MatrixVectorKernel<B>,
-    matrix_matrix: <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel,
+    matrix_matrix: MatrixMatrixKernel<B>,
     input_dim: usize,
     output_dim: usize,
     quantization_type: QuantizedMatmulType,
@@ -58,6 +58,37 @@ pub struct QuantizedMatmulKernelEncodable<B: Backend> {
 enum MatrixVectorKernel<B: Backend> {
     Qmv(<B::Kernels as Kernels>::QuantizedMatmulQmvKernel),
     QmvFast(<B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel),
+}
+
+type QmmKernel<B> = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel;
+
+/// Big tile alone, or paired with a BM=8 small tile for `batch_dim < 48`.
+enum MatrixMatrixKernel<B: Backend> {
+    Big(QmmKernel<B>),
+    BigAndSmall {
+        big: QmmKernel<B>,
+        small: QmmKernel<B>,
+    },
+}
+
+impl<B: Backend> MatrixMatrixKernel<B> {
+    /// `None` means fall back to `matrix_vector` (small `batch_dim`, no small tile available).
+    fn pick(
+        &self,
+        batch_dim: usize,
+    ) -> Option<&QmmKernel<B>> {
+        match self {
+            Self::Big(big) => (batch_dim >= 32).then_some(big),
+            Self::BigAndSmall {
+                big,
+                small,
+            } => Some(if batch_dim < 48 {
+                small
+            } else {
+                big
+            }),
+        }
+    }
 }
 
 impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
@@ -116,6 +147,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         // 64-tile (BM=BN=64): bf16 + output_dim%64==0; BK=64 if group_size≥64, BK=32 otherwise.
         // 32-tile fallback otherwise.
         let aligned_n_64 = configuration.output_dim % 64 == 0;
+        let aligned_n_32 = configuration.output_dim % 32 == 0;
         let is_bf16 = configuration.data_type == DataType::BF16;
         let can_use_64_tile = aligned_n_64 && is_bf16;
 
@@ -127,7 +159,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             (32u32, 32u32, 32u32, configuration.output_dim % 32 == 0)
         };
 
-        let matrix_matrix = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+        let big = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
             context,
             configuration.data_type,
             group_size,
@@ -135,12 +167,42 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             bm,
             bk,
             bn,
+            2u32, // WM
+            2u32, // WN
             use_zero_points,
             use_mlx_quant,
             configuration.use_hadamard,
             aligned_n,
         )
         .map_err(QuantizedMatmulError::BackendError)?;
+
+        // Small-tile kernel: BM=8, BK=32, BN=32, WM=1, WN=1. Requires N%32==0
+        // and supported bits/group_size. Works for any supported T via the unified kernel.
+        // Used for batch_dim in [8, 48) at encode time.
+        let matrix_matrix = if aligned_n_32 {
+            let small = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+                context,
+                configuration.data_type,
+                group_size,
+                bits,
+                8u32,  // BM
+                32u32, // BK
+                32u32, // BN
+                1u32,  // WM
+                1u32,  // WN
+                use_zero_points,
+                use_mlx_quant,
+                false, // use_hadamard: BM=8 tile does not support hadamard
+                true,  // aligned_n: BN=32, always aligned for the small tile
+            )
+            .map_err(QuantizedMatmulError::BackendError)?;
+            MatrixMatrixKernel::BigAndSmall {
+                big,
+                small,
+            }
+        } else {
+            MatrixMatrixKernel::Big(big)
+        };
 
         Ok(Self {
             matrix_vector,
@@ -179,13 +241,18 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             };
         }
 
-        if arguments.batch_dim < 32 || self.output_dim == 1 {
-            match &self.matrix_vector {
-                MatrixVectorKernel::Qmv(k) => encode_kernel!(k,),
-                MatrixVectorKernel::QmvFast(k) => encode_kernel!(k, arguments.hadamard_factors),
+        if arguments.batch_dim >= 8 && self.output_dim > 1 {
+            if let Some(kernel) = self.matrix_matrix.pick(arguments.batch_dim) {
+                encode_kernel!(kernel, arguments.hadamard_factors);
+                return Ok(());
             }
-        } else {
-            encode_kernel!(&self.matrix_matrix, arguments.hadamard_factors);
+        }
+
+        // Matrix-vector fallback: small batch_dim, scalar output, or Big-tile-only
+        // configs that don't cover this batch_dim.
+        match &self.matrix_vector {
+            MatrixVectorKernel::Qmv(k) => encode_kernel!(k,),
+            MatrixVectorKernel::QmvFast(k) => encode_kernel!(k, arguments.hadamard_factors),
         }
 
         Ok(())

@@ -88,12 +88,18 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
 #[variants(T, f32, f16, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-#[variants(BM, 32, 64)]
+#[variants(BM, 8, 32, 64)]
 #[variants(BK, 32, 64)]
 #[variants(BN, 32, 64)]
-#[constraint(BK <= BM)]
+#[variants(WM, 1, 2)]
+#[variants(WN, 1, 2)]
+#[constraint(
+    (BM == 8  && BK == 32 && BN == 32 && WM == 1 && WN == 1) ||
+    (BM == 32 && BK == 32 && BN == 32 && WM == 2 && WN == 2) ||
+    (BM == 32 && BK == 64 && BN == 32 && WM == 2 && WN == 2) ||
+    (BM == 64 && BK == 32 && BN == 64 && WM == 2 && WN == 2) ||
+    (BM == 64 && BK == 64 && BN == 64 && WM == 2 && WN == 2))]
 #[constraint(BK <= GROUP_SIZE)]
-#[constraint(BM == BN)]
 #[constraint(T != "f32" || BK < 64)]
 pub fn quantized_matmul_qmm_transposed<
     T: ArrayElement + Float,
@@ -102,6 +108,8 @@ pub fn quantized_matmul_qmm_transposed<
     const BM: u32,
     const BK: u32,
     const BN: u32,
+    const WM: u32,
+    const WN: u32,
 >(
     weights: *const u32,
     scales: *const T,
@@ -118,7 +126,7 @@ pub fn quantized_matmul_qmm_transposed<
     #[specialize] use_hadamard: bool,
     #[specialize] aligned_n: bool,
 ) {
-    let _ = (BM, BK, BN); // tile params unused in tile-agnostic CPU reference
+    let _ = (BM, BK, BN, WM, WN); // tile params unused in tile-agnostic CPU reference
     if use_hadamard {
         unimplemented!("not supported yet");
     }

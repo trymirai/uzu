@@ -4,17 +4,23 @@
 #include "quant_matmul.h"
 
 // Transposed QMM kernel. BM = batch tile rows, BK = K-axis tile, BN = output
-// tile cols.
-template <typename T, uint GROUP_SIZE, uint BITS, uint BM, uint BK, uint BN>
+// tile cols. WM, WN = simdgroup tile counts along M and N axes.
+template <typename T, uint GROUP_SIZE, uint BITS, uint BM, uint BK, uint BN, uint WM, uint WN>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
-VARIANTS(BM, 32, 64)
+VARIANTS(BM, 8, 32, 64)
 VARIANTS(BK, 32, 64)
 VARIANTS(BN, 32, 64)
-CONSTRAINT(BK <= BM)
+VARIANTS(WM, 1, 2)
+VARIANTS(WN, 1, 2)
+CONSTRAINT(
+  (BM == 8  && BK == 32 && BN == 32 && WM == 1 && WN == 1) ||
+  (BM == 32 && BK == 32 && BN == 32 && WM == 2 && WN == 2) ||
+  (BM == 32 && BK == 64 && BN == 32 && WM == 2 && WN == 2) ||
+  (BM == 64 && BK == 32 && BN == 64 && WM == 2 && WN == 2) ||
+  (BM == 64 && BK == 64 && BN == 64 && WM == 2 && WN == 2))
 CONSTRAINT(BK <= GROUP_SIZE)
-CONSTRAINT(BM == BN)
 CONSTRAINT(T != "float" || BK < 64)
 PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const device uint32_t* weights,
@@ -36,11 +42,11 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(BN)),
     const uint batch_block_idx GROUPS(batch_size.div_ceil(BM)),
     const uint simd_lane THREADS(32),
-    const uint simd_group THREADS(4)
+    const uint simd_group THREADS(WM * WN)
 ) {
   if (use_mlx_quant) {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, true>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, true, WM, WN>(
           weights,
           scales,
           zero_points,
@@ -58,7 +64,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lane
       );
     } else {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, BM, BK, BN, true>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, BM, BK, BN, true, WM, WN>(
           weights,
           scales,
           zero_points,
@@ -78,7 +84,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     }
   } else {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, false>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, false, WM, WN>(
           weights,
           scales,
           zero_points,
@@ -96,7 +102,17 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lane
       );
     } else {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, BM, BK, BN, false>(
+      qmm_transposed_impl<
+          T,
+          GROUP_SIZE,
+          BITS,
+          false,
+          BM,
+          BK,
+          BN,
+          false,
+          WM,
+          WN>(
           weights,
           scales,
           zero_points,
@@ -120,7 +136,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     threadgroup_barrier(mem_flags::mem_device);
 
     // Each lane covers BN/32 output columns (1 at BN=32, 2 at BN=64).
-    constexpr uint NUM_SIMD_GROUPS = 4;
+    constexpr uint NUM_SIMD_GROUPS = WM * WN;
     constexpr uint ROWS_PER_SIMD_GROUP = BM / NUM_SIMD_GROUPS;
     constexpr uint COLS_PER_LANE = BN / 32;
 
