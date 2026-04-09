@@ -1,6 +1,7 @@
 mod activation;
 mod attention;
 mod classifier_layer;
+mod common;
 mod decoder;
 mod delta_net_mixer;
 mod embedding;
@@ -23,6 +24,7 @@ mod tensor_copy;
 pub use activation::Activation;
 pub use attention::Attention;
 pub use classifier_layer::ClassifierLayer;
+pub(crate) use common::migration::BlockAllocation;
 pub use decoder::Decoder;
 pub(crate) use delta_net_mixer::DeltaNetMixer;
 pub use embedding::Embedding;

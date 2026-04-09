@@ -5,7 +5,8 @@ use crate::{
     backends::common::{Backend, Encoder},
     config::TransformerLayerConfig,
     encodable_block::{
-        Attention, EncodingParameters, Linear, Mlp, Normalization, QKNorm, Rope, TensorAddSwap, TensorCopy,
+        Attention, BlockAllocation, EncodingParameters, Linear, Mlp, Normalization, QKNorm, Rope, TensorAddSwap,
+        TensorCopy, attention::AttentionArguments,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -208,7 +209,7 @@ impl<B: Backend> ClassifierLayer<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
+        _parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         #[cfg(feature = "tracing")]
@@ -239,7 +240,43 @@ impl<B: Backend> ClassifierLayer<B> {
             qk_norm.encode(state, encoder)?;
         }
         self.rope.encode(state, encoder)?;
-        self.attention.encode(state, parameters, encoder)?;
+        let qkv = state.array(ArrayId::QKV);
+        let queries = state.array(ArrayId::RotatedQueries);
+        let rotated_keys = state.array(ArrayId::RotatedKeys);
+        let attention_output = state.array(ArrayId::AttentionOutput);
+        let trie = state.token_subtrie_ranges.clone();
+        let sinks =
+            self.attention.has_sinks().then(|| state.array(ArrayId::AttentionSinks(self.attention.layer_index())));
+        let mut runtime = AttentionArguments {
+            max_sequence_length: qkv.shape()[0],
+            qkv: BlockAllocation::from_array(&qkv),
+            queries: BlockAllocation::from_array(&queries),
+            rotated_keys: BlockAllocation::from_array(&rotated_keys),
+            gate: None,
+            trie: trie.as_ref().map(BlockAllocation::from_array),
+            sinks: sinks.as_ref().map(BlockAllocation::from_array),
+            key_cache: None,
+            value_cache: None,
+            suffix_length: qkv.shape()[0],
+            num_heads: queries.shape()[0],
+            head_dim: queries.shape()[2],
+            num_groups: rotated_keys.shape()[0],
+            element_size: qkv.data_type().size_in_bytes(),
+            segment_prefix_length: 0,
+            ring_params: None,
+        };
+        let attention_output_allocation = self.attention.encode(state.context(), &mut runtime, encoder)?;
+        {
+            let (src_buf, src_range) = attention_output_allocation.as_buffer_range();
+            let dst_buf_rc = attention_output.buffer();
+            let mut dst_buf = dst_buf_rc.borrow_mut();
+            encoder.encode_copy(
+                src_buf,
+                src_range,
+                &mut *dst_buf,
+                attention_output.offset()..attention_output.offset() + attention_output.size(),
+            );
+        }
         self.out_projection.encode(state, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {

@@ -1,14 +1,11 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::{fmt::{Debug, Display}, mem::size_of};
 
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::{
-        common::{Backend, Context, Encoder, kernel::attention::AttentionGemmArguments},
+        common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, kernel::attention::AttentionGemmBlock},
         cpu::Cpu,
     },
 };
@@ -79,53 +76,72 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let block = uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
+    let block = AttentionGemmBlock::<B>::new(T::data_type());
 
-    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
-    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");
-    let values_array = context.create_array_from(&[input.values.len()], &input.values, "");
+    let queries = allocation_from_slice::<T, B>(context.as_ref(), &input.queries);
+    let keys = allocation_from_slice::<T, B>(context.as_ref(), &input.keys);
+    let values = allocation_from_slice::<T, B>(context.as_ref(), &input.values);
 
     let output_size = input.suffix_length * input.num_heads * input.head_dim;
-    let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
+    let mut output = context
+        .create_allocation(output_size * size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create output allocation");
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
-
-    {
-        let q_buf_rc = queries_array.buffer();
-        let q_buf = q_buf_rc.borrow();
-        let k_buf_rc = keys_array.buffer();
-        let k_buf = k_buf_rc.borrow();
-        let v_buf_rc = values_array.buffer();
-        let v_buf = v_buf_rc.borrow();
-        let o_buf_rc = output_array.buffer();
-        let mut o_buf = o_buf_rc.borrow_mut();
-
-        let args = AttentionGemmArguments::<B> {
-            queries_buffer: q_buf.deref(),
-            keys_buffer: k_buf.deref(),
-            values_buffer: v_buf.deref(),
-            output_buffer: o_buf.deref_mut(),
-            trie_buffer: None,
-            sinks_buffer: None,
-            num_heads: input.num_heads,
-            num_groups: input.num_kv_heads,
-            suffix_length: input.suffix_length,
-            sequence_length: input.sequence_length,
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    block
+        .encode(
+            &context,
+            &mut encoder,
+            &queries,
+            &keys,
+            &values,
+            &mut output,
+            None::<&Allocation<B>>,
+            None::<&Allocation<B>>,
+            input.num_heads,
+            input.num_kv_heads,
+            input.suffix_length,
+            input.sequence_length,
             segment_prefix_length,
-            max_sequence_length: input.sequence_length,
-            ring_params: None,
-            head_dim: input.head_dim,
-            sliding_window_size: None,
-            is_causal: input.do_causal,
-            scale: input.scale,
-        };
+            input.sequence_length,
+            None,
+            input.head_dim,
+            None,
+            input.do_causal,
+            input.scale,
+        )
+        .expect("Failed to encode AttentionGemm");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-        block.encode(&context, &mut encoder, args).expect("Failed to encode AttentionGemm");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<T, B>(&output)
+}
+
+fn allocation_from_slice<T: ArrayElement, B: Backend>(
+    context: &B::Context,
+    data: &[T],
+) -> Allocation<B> {
+    let allocation = context
+        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let (buffer, range) = allocation.as_buffer_range();
+    let bytes = bytemuck::cast_slice(data);
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
     }
+    allocation
+}
 
-    output_array.as_slice().to_vec()
+fn allocation_to_vec<T: ArrayElement, B: Backend>(allocation: &Allocation<B>) -> Vec<T> {
+    let (buffer, range) = allocation.as_buffer_range();
+    let byte_len = range.end - range.start;
+    let element_count = byte_len / size_of::<T>();
+    unsafe {
+        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+        let bytes = std::slice::from_raw_parts(src, byte_len);
+        bytemuck::cast_slice(bytes)[..element_count].to_vec()
+    }
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

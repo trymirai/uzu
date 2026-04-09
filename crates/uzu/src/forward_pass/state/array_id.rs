@@ -37,11 +37,6 @@ pub enum ArrayId {
 
     RotatedQueries,
     RotatedKeys,
-    ExtractedValues,
-
-    AttentionPartials,
-    AttentionSums,
-    AttentionMaxs,
 
     RopeCosines(RopeType),
     RopeSines(RopeType),

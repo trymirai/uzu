@@ -416,10 +416,6 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::MlpHidden => self.common_aux.mlp_hidden.clone(),
             ArrayId::RotatedQueries => self.common_aux.rotated_queries.clone(),
             ArrayId::RotatedKeys => self.common_aux.rotated_keys.clone(),
-            ArrayId::ExtractedValues => self.common_aux.extracted_values.clone(),
-            ArrayId::AttentionPartials => self.common_aux.attention_partials.clone(),
-            ArrayId::AttentionSums => self.common_aux.attention_sums.clone(),
-            ArrayId::AttentionMaxs => self.common_aux.attention_maxs.clone(),
 
             // Shared buffer arrays
             ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => {

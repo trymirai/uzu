@@ -16,10 +16,6 @@ pub struct CommonAuxBuffers<B: Backend> {
     pub lora_intermediate: Option<Array<B>>,
     pub rotated_queries: Array<B>,
     pub rotated_keys: Array<B>,
-    pub extracted_values: Array<B>,
-    pub attention_partials: Array<B>,
-    pub attention_sums: Array<B>,
-    pub attention_maxs: Array<B>,
 }
 
 impl<B: Backend> CommonAuxBuffers<B> {
@@ -44,10 +40,6 @@ impl<B: Backend> CommonAuxBuffers<B> {
                 .map(|(buf, shape)| buf.view(&shape)),
             rotated_queries: scratch.rotated_queries.view(&model_shape.rotated_queries_shape(suffix_length)),
             rotated_keys: scratch.rotated_keys.view(&model_shape.rotated_keys_shape(suffix_length)),
-            extracted_values: scratch.extracted_values.view(&model_shape.extracted_values_shape(suffix_length)),
-            attention_partials: scratch.attention_partials.view(&model_shape.attention_partials_shape(suffix_length)),
-            attention_sums: scratch.attention_sums.view(&model_shape.attention_sums_shape(suffix_length)),
-            attention_maxs: scratch.attention_maxs.view(&model_shape.attention_maxs_shape(suffix_length)),
         }
     }
 }

@@ -42,13 +42,6 @@ pub struct ScratchBuffers<B: Backend> {
     // 3-D
     pub rotated_queries: Array<B>,
     pub rotated_keys: Array<B>,
-    pub extracted_values: Array<B>,
-
-    // 2-pass attention intermediate buffers
-    pub attention_partials: Array<B>, // [num_heads * max_suffix_len * total_blocks_count * head_dim]
-    pub attention_sums: Array<B>,     // [num_heads * max_suffix_len * total_blocks_count]
-    pub attention_maxs: Array<B>,     // [num_heads * max_suffix_len * total_blocks_count]
-
     pub moe_topk_ids: Option<Array<B>>,
     pub moe_topk_probs: Option<Array<B>>,
     pub moe_offsets: Option<Array<B>>,
@@ -84,7 +77,6 @@ impl<B: Backend> ScratchBuffers<B> {
 
         let act_ty = model_shape.activation_data_type();
 
-        let sums_maxs_shape = model_shape.attention_sums_shape(max_suffix_len);
         let moe = match &decoder_config.layer_config.mlp_config {
             MLPConfig::MixtureOfExperts(moe) => Some(moe),
             _ => None,
@@ -147,15 +139,6 @@ impl<B: Backend> ScratchBuffers<B> {
             // 3-D
             rotated_queries: alloc(&model_shape.rotated_queries_shape(max_suffix_len), act_ty, "rotated_queries"),
             rotated_keys: alloc(&model_shape.rotated_keys_shape(max_suffix_len), act_ty, "rotated_keys"),
-            extracted_values: alloc(&model_shape.extracted_values_shape(max_suffix_len), act_ty, "extracted_values"),
-
-            attention_partials: alloc(
-                &model_shape.attention_partials_shape(max_suffix_len),
-                act_ty,
-                "attention_partials",
-            ),
-            attention_sums: alloc(&sums_maxs_shape, act_ty, "attention_sums"),
-            attention_maxs: alloc(&sums_maxs_shape, act_ty, "attention_maxs"),
 
             moe_topk_ids: moe.map(|moe| {
                 alloc(

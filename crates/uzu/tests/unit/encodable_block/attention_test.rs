@@ -12,10 +12,10 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
-                attention::{AttentionGemmArguments, AttentionGemmBlock},
+                attention::AttentionGemmBlock,
             },
         },
         metal::Metal,
@@ -370,48 +370,81 @@ fn run_gemm_attention(
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
-    let query_buffer = create_query_buffer(queries, context);
-    let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
-    let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
+    let queries_data: Vec<f32> = (0..num_heads)
+        .flat_map(|h| (0..seq_len).flat_map(move |t| (0..head_dim).map(move |d| queries[[0, h, t, d]])))
+        .collect();
+    let keys_data: Vec<f32> = (0..num_kv_heads)
+        .flat_map(|h| (0..seq_len).flat_map(move |t| (0..head_dim).map(move |d| keys[[0, h, t, d]])))
+        .collect();
+    let values_data: Vec<f32> = (0..num_kv_heads)
+        .flat_map(|h| (0..seq_len).flat_map(move |t| (0..head_dim).map(move |d| values[[0, h, t, d]])))
+        .collect();
 
-    let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
-
-    let mut output_buffer = context
-        .device
-        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let queries_allocation = allocation_from_slice(context, &queries_data);
+    let keys_allocation = allocation_from_slice(context, &keys_data);
+    let values_allocation = allocation_from_slice(context, &values_data);
+    let sinks_allocation = sinks.map(|data| allocation_from_slice(context, data));
+    let mut output_allocation = context
+        .create_allocation(num_heads * seq_len * head_dim * size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create output allocation");
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
-
-    let args = AttentionGemmArguments {
-        queries_buffer: &query_buffer,
-        keys_buffer: &key_cache_buffer,
-        values_buffer: &value_cache_buffer,
-        output_buffer: &mut output_buffer,
-        trie_buffer: None,
-        sinks_buffer: sinks_buffer.as_ref(),
+    kernel.encode(
+        context,
+        &mut encoder,
+        &queries_allocation,
+        &keys_allocation,
+        &values_allocation,
+        &mut output_allocation,
+        None::<&Allocation<Metal>>,
+        sinks_allocation.as_ref(),
         num_heads,
-        num_groups: num_kv_heads,
-        suffix_length: seq_len,
-        sequence_length: seq_len,
-        segment_prefix_length: 0,
-        max_sequence_length: seq_len,
-        ring_params: None,
+        num_kv_heads,
+        seq_len,
+        seq_len,
+        0,
+        seq_len,
+        None,
         head_dim,
-        sliding_window_size: None,
+        None,
         is_causal,
         scale,
-    };
-
-    kernel.encode(context, &mut encoder, args)?;
+    )?;
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
+    let output_vec = allocation_to_vec::<f32, Metal>(&output_allocation);
+    let output_slice = output_vec.as_slice();
 
     let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
+}
+
+fn allocation_from_slice<T: bytemuck::Pod>(
+    context: &<Metal as Backend>::Context,
+    data: &[T],
+) -> Allocation<Metal> {
+    let allocation = context
+        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let (buffer, range) = allocation.as_buffer_range();
+    let bytes = bytemuck::cast_slice(data);
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+    }
+    allocation
+}
+
+fn allocation_to_vec<T: bytemuck::Pod, B: Backend>(allocation: &Allocation<B>) -> Vec<T> {
+    let (buffer, range) = allocation.as_buffer_range();
+    let byte_len = range.end - range.start;
+    let element_count = byte_len / size_of::<T>();
+    unsafe {
+        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+        let bytes = std::slice::from_raw_parts(src, byte_len);
+        bytemuck::cast_slice(bytes)[..element_count].to_vec()
+    }
 }
 
 fn compare_results(

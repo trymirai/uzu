@@ -1,7 +1,5 @@
 //! Layer executables - a single decoder layer with mixer, norms, and MLP.
 
-#[cfg(feature = "tracing")]
-use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use super::MixerExecutables;
@@ -9,12 +7,16 @@ use super::MixerExecutables;
 use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder},
+    backends::common::{Backend, Encoder, gpu_types::ring::RingParams},
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
-        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer,
+        Attention, BlockAllocation, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope,
+        ShortConvMixer, attention::AttentionArguments,
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
+    forward_pass::{
+        kv_cache_layer::KVCacheLayerState,
+        state::{ArrayId, ForwardPassState},
+    },
     parameters::ParameterTree,
 };
 
@@ -314,7 +316,83 @@ impl<B: Backend> LayerExecutables<B> {
                     norm.encode(state, encoder)?;
                 }
                 rope.encode(state, encoder)?;
-                attention.encode(state, parameters, encoder)?;
+                let qkv = state.array(ArrayId::QKV);
+                let queries = state.array(ArrayId::RotatedQueries);
+                let rotated_keys = state.array(ArrayId::RotatedKeys);
+                let attention_output = state.array(ArrayId::AttentionOutput);
+                let gate = attention.has_gate().then(|| state.array(ArrayId::Gate));
+                let trie = state.token_subtrie_ranges.clone();
+                let sinks =
+                    attention.has_sinks().then(|| state.array(ArrayId::AttentionSinks(attention.layer_index())));
+                let suffix_length = qkv.shape()[0];
+                let num_heads = queries.shape()[0];
+                let head_dim = queries.shape()[2];
+                let num_groups = rotated_keys.shape()[0];
+                let element_size = qkv.data_type().size_in_bytes();
+                let (key_cache, value_cache, segment_prefix_length, max_sequence_length, ring_params) =
+                    if let Some(cache_layers) = state.cache_layers() {
+                        let projection_step = parameters.projection_step.unwrap_or(0);
+                        let cache = cache_layers.borrow();
+                        let layer = cache.data[attention.layer_index()]
+                            .as_transformer()
+                            .expect("Attention kernel expects transformer layer state");
+                        let ring_params = match &layer.state {
+                            KVCacheLayerState::Windowed {
+                                ring_offset,
+                                ring_length,
+                                window_length,
+                            } => {
+                                let overflow = (*ring_length + projection_step).saturating_sub(*window_length);
+                                Some(RingParams {
+                                    ring_offset: ((*ring_offset + overflow) % *window_length) as u32,
+                                    ring_length: (*ring_length + projection_step).min(*window_length) as u32,
+                                })
+                            },
+                            KVCacheLayerState::Full {
+                                ..
+                            } => None,
+                        };
+
+                        (
+                            Some(BlockAllocation::from_array(&layer.keys)),
+                            Some(BlockAllocation::from_array(&layer.values)),
+                            layer.projected_segment_prefix_length(projection_step),
+                            layer.keys.shape()[1],
+                            ring_params,
+                        )
+                    } else {
+                        (None, None, 0, suffix_length, None)
+                    };
+                let mut runtime = AttentionArguments {
+                    qkv: BlockAllocation::from_array(&qkv),
+                    queries: BlockAllocation::from_array(&queries),
+                    rotated_keys: BlockAllocation::from_array(&rotated_keys),
+                    gate: gate.as_ref().map(BlockAllocation::from_array),
+                    trie: trie.as_ref().map(BlockAllocation::from_array),
+                    sinks: sinks.as_ref().map(BlockAllocation::from_array),
+                    key_cache,
+                    value_cache,
+                    suffix_length,
+                    num_heads,
+                    head_dim,
+                    num_groups,
+                    element_size,
+                    segment_prefix_length,
+                    max_sequence_length,
+                    ring_params,
+                };
+                let attention_output_allocation = attention.encode(state.context(), &mut runtime, encoder)?;
+                {
+                    let (src_buf, src_range) = attention_output_allocation.as_buffer_range();
+                    let dst_buf_rc = attention_output.buffer();
+                    let mut dst_buf = dst_buf_rc.borrow_mut();
+                    encoder.encode_copy(
+                        src_buf,
+                        src_range,
+                        &mut *dst_buf,
+                        attention_output.offset()..attention_output.offset() + attention_output.size(),
+                    );
+                }
                 out_projection.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
                 if let Some(ref layer_traces) = layer_traces {
