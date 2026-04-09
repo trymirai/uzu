@@ -77,6 +77,12 @@ jobs:
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
+      - name: Build uzu for target wasi
+        if: ${{ matrix.backend == 'cpu' && !matrix.tracing }}
+        run: |
+          cargo +stable build --package uzu --no-default-features \
+            --target wasm32-wasip1-threads \
+
       - name: Build benches
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
         run: |
@@ -94,7 +100,7 @@ jobs:
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [linters, tests]
+    needs: [ linters, tests ]
     if: ${{ always() }}
 
     steps:
