@@ -1,7 +1,7 @@
 use bytemuck::Pod;
 use half::{bf16, f16};
 use num_traits::NumCast;
-#[cfg(grammar_xgram)]
+#[cfg(grammar_xgrammar)]
 use xgrammar::{DLDataType, DLDataTypeCode};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
@@ -41,7 +41,7 @@ impl DataType {
         self.size_in_bits().div_ceil(8)
     }
 
-    #[cfg(grammar_xgram)]
+    #[cfg(grammar_xgrammar)]
     const fn dl_data_type_code(self) -> DLDataTypeCode {
         match self {
             DataType::BF16 => DLDataTypeCode::kDLBfloat,
@@ -52,7 +52,7 @@ impl DataType {
     }
 }
 
-#[cfg(grammar_xgram)]
+#[cfg(grammar_xgrammar)]
 impl From<DataType> for DLDataType {
     fn from(data_type: DataType) -> Self {
         Self {

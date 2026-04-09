@@ -1,4 +1,4 @@
-#![cfg(grammar_xgram)]
+#![cfg(grammar_xgrammar)]
 
 use std::iter::repeat_n;
 
