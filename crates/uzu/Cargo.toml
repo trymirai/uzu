@@ -44,13 +44,15 @@ xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
-proptest.workspace = true
-criterion.workspace = true
-criterion-macro.workspace = true
 rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+criterion-macro.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true
 
