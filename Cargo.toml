@@ -67,6 +67,7 @@ objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-security = "0.3.2"
 metal = { package = "mtl-rs", version = "0.1" }
+wgpu = "29.0.1"
 block2 = "0.6"
 bytemuck = "1.23"
 bytesize = "2"
@@ -94,9 +95,13 @@ walkdir = "2.5"
 depfile = "0.1"
 tempfile = "3.24"
 clang-ast = "0.1"
+shader-slang = { git = "https://github.com/trymirai/slang-rs.git", rev = "2026.7.1" }
+shader-slang-sys = { git = "https://github.com/trymirai/slang-rs.git", rev = "2026.7.1" }
+naga = "29.0.1"
 rangemap = "1.7.1"
 futures = "0.3"
 tokio = { version = "1.49", features = ["full"] }
+pollster = "0.4.0"
 blake3 = "1.8"
 quote = "1.0"
 proc-macro2 = "1.0"

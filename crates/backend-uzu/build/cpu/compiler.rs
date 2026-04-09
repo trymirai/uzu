@@ -474,7 +474,6 @@ impl CpuCompiler {
                 parameter_idents = quote! { (#parameter_idents) };
             }
 
-            let rhai_engine = (!function_constraints.is_empty()).then(rhai::Engine::new);
             let constraint_strs: Vec<String> =
                 function_constraints.iter().map(|c| c.to_token_stream().to_string()).collect();
 
@@ -498,15 +497,12 @@ impl CpuCompiler {
                 })
                 .multi_cartesian_product()
                 .filter(|variants| {
-                    let Some(engine) = &rhai_engine else {
-                        return true;
-                    };
                     let bindings: Vec<(String, String)> = function_parameters
                         .iter()
                         .enumerate()
                         .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string()))
                         .collect();
-                    crate::common::constraints::satisfied(engine, &bindings, &constraint_strs)
+                    crate::common::constraints::satisfied(&bindings, &constraint_strs)
                 })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
