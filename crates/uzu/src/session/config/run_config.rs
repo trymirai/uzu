@@ -19,7 +19,7 @@ impl RunConfig {
             tokens_limit,
             enable_thinking,
             sampling_policy,
-            grammar_config: grammar_config,
+            grammar_config,
         }
     }
 

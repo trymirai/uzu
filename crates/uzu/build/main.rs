@@ -26,11 +26,16 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let metal_backend = cfg!(feature = "metal")
-        && matches!(env::var("CARGO_CFG_TARGET_OS").unwrap().as_ref(), "macos" | "ios" | "tvos" | "visionos");
-
+        && matches!(env::var("CARGO_CFG_TARGET_OS")?.as_ref(), "macos" | "ios" | "tvos" | "visionos");
     println!("cargo::rustc-check-cfg=cfg(metal_backend)");
     if metal_backend {
         println!("cargo::rustc-cfg=metal_backend");
+    }
+
+    let grammar_xgram = cfg!(feature = "grammar") && env::var("CARGO_CFG_TARGET_ARCH")? != "wasm32";
+    println!("cargo::rustc-check-cfg=cfg(grammar_xgram)");
+    if grammar_xgram {
+        println!("cargo::rustc-cfg=grammar_xgram");
     }
 
     debug_log!("build script started");

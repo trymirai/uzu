@@ -62,7 +62,7 @@ fn test_trie_from_speculator_sprout() {
     let trie_root = TrieNode::from_speculator(
         &[0],
         &rng,
-        None,
+        &mut None,
         &speculator,
         &TrieCreationConfig {
             width: 5,
@@ -133,7 +133,7 @@ fn test_trie_from_speculator_stick() {
     let trie_root = TrieNode::from_speculator(
         &[0],
         &rng,
-        None,
+        &mut None,
         &speculator,
         &TrieCreationConfig {
             width: 1,
@@ -201,7 +201,7 @@ fn test_trie_from_speculator_bush() {
     let trie_root = TrieNode::from_speculator(
         &[0],
         &rng,
-        None,
+        &mut None,
         &speculator,
         &TrieCreationConfig {
             width: 3,

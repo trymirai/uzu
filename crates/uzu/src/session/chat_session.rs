@@ -12,14 +12,13 @@ use std::{
 };
 
 use tokenizers::Tokenizer;
-use xgrammar::TokenizerInfo;
 
 use crate::{
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
-        grammar::CompiledGrammar,
+        grammar::{CompiledGrammar, CompiledGrammarFactory},
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -51,7 +50,7 @@ pub struct ChatSession {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
-    tokenizer_info: TokenizerInfo,
+    grammar_factory: CompiledGrammarFactory,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     decoding_config: DecodingConfig,
@@ -129,10 +128,12 @@ impl ChatSession {
 
         let stop_token_ids: Vec<i32> =
             language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
-        let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, Some(&stop_token_ids))
+
+        let grammar_factory = CompiledGrammarFactory::new(&tokenizer, Some(&stop_token_ids))
             .map_err(|error_message| Error::GrammarError(error_message))?;
 
-        let input_processor = InputProcessorDefault::new(language_model_config.message_processor_config.clone());
+        let input_processor =
+            Box::new(InputProcessorDefault::new(language_model_config.message_processor_config.clone()));
 
         let output_parser =
             OutputParser::new(language_model_config.message_processor_config.output_parser_regex.clone())?;
@@ -146,8 +147,8 @@ impl ChatSession {
             model_path,
             model_metadata,
             tokenizer,
-            tokenizer_info,
-            input_processor: Box::new(input_processor),
+            grammar_factory,
+            input_processor,
             output_parser,
             decoding_config,
             llm: Some(llm),
@@ -258,18 +259,14 @@ impl ChatSession {
             language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as u64).collect();
 
         let sampling_method = config.sampling_policy.resolve(language_model_config);
-
-        let mut compiled_grammar: Option<CompiledGrammar> = if let Some(ref grammar_config) = config.grammar_config {
-            Some(CompiledGrammar::from_config(grammar_config, None, &self.tokenizer_info)?)
-        } else {
-            None
-        };
+        let mut compiled_grammar: Option<Box<dyn CompiledGrammar>> =
+            self.grammar_factory.create(config.grammar_config)?;
 
         let prefill_start = Instant::now();
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = language_model_generator.prefill(
             tokens.clone(),
-            compiled_grammar.as_mut(),
+            &mut compiled_grammar,
             sampling_method,
             prefix_offset,
             sample_suffix,
@@ -342,7 +339,7 @@ impl ChatSession {
                 &self.output_parser,
                 &run_context,
                 language_model_generator.as_mut(),
-                compiled_grammar.as_mut(),
+                &mut compiled_grammar,
                 sampling_method,
                 &progress,
             )?
@@ -357,7 +354,7 @@ impl ChatSession {
         output_parser: &OutputParser,
         run_context: &RunContext,
         language_model_generator: &mut dyn LanguageModelGeneratorTrait,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        compiled_grammar: &mut Option<Box<dyn CompiledGrammar>>,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
     ) -> Result<Output, Error>
@@ -366,18 +363,16 @@ impl ChatSession {
     {
         let mut generate_results: Vec<GenerateResult> = Vec::new();
         let mut generate_durations: Vec<f64> = Vec::new();
-        let mut compiled_grammar_mut = compiled_grammar;
 
         loop {
             let generate_start = Instant::now();
-            let generate_result =
-                language_model_generator.generate(compiled_grammar_mut.as_deref_mut(), sampling_method)?;
+            let generate_result = language_model_generator.generate(compiled_grammar, sampling_method)?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
-            let grammar_terminated = compiled_grammar_mut.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
+            let grammar_terminated = compiled_grammar.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
 
             let generate_finish_reason = if grammar_terminated {
                 Some(FinishReason::Stop)
