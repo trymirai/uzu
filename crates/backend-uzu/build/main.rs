@@ -11,6 +11,12 @@ mod cpu;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
+#[cfg(feature = "webgpu")]
+mod slang;
+
+#[cfg(feature = "webgpu")]
+mod webgpu;
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     println!("cargo::rerun-if-changed=.");
@@ -32,16 +38,23 @@ async fn main() -> anyhow::Result<()> {
         println!("cargo::rustc-cfg=metal_backend");
     }
 
+    let webgpu_backend = cfg!(feature = "webgpu");
+    println!("cargo::rustc-check-cfg=cfg(webgpu_backend)");
+    if webgpu_backend {
+        println!("cargo::rustc-cfg=webgpu_backend");
+    }
+
     let grammar_xgrammar = cfg!(feature = "grammar") && target_arch != "wasm32";
     println!("cargo::rustc-check-cfg=cfg(grammar_xgrammar)");
     if grammar_xgrammar {
         println!("cargo::rustc-cfg=grammar_xgrammar");
     }
 
-    debug_log!("build script started");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
+
+    debug_log!("build script started in {}", out_dir.to_str().unwrap());
 
     if envs::build_clean() {
-        let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
         if out_dir.exists() {
             fs::remove_dir_all(&out_dir).with_context(|| format!("cannot clean {}", out_dir.display()))?;
             fs::create_dir_all(&out_dir).with_context(|| format!("cannot recreate {}", out_dir.display()))?;
@@ -59,6 +72,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if metal_backend {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
+    }
+
+    #[cfg(feature = "webgpu")]
+    if webgpu_backend {
+        compilers.push(Box::new(slang::SlangCompiler::<webgpu::WebGPU>::new()?));
     }
 
     let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types))).await?;
