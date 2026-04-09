@@ -10,7 +10,6 @@ build = "build/main.rs"
 
 [dependencies]
 dsl.workspace = true
-xgrammar.workspace = true
 half.workspace = true
 ndarray.workspace = true
 serde.workspace = true
@@ -38,6 +37,10 @@ objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
 bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
+
+# grammar on non-wasm requires xgrammar
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
@@ -76,7 +79,7 @@ clang-ast = { workspace = true, optional = true }
 rhai = { workspace = true, optional = true }
 
 [features]
-default = ["metal"]
+default = ["metal", "grammar"]
 
 metal = [
     "dep:clang-ast",
@@ -87,6 +90,7 @@ metal = [
     "dep:metal",
 ]
 tracing = []
+grammar = ["dep:xgrammar"]
 
 [[test]]
 name = "integration"
