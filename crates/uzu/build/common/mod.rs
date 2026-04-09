@@ -2,6 +2,7 @@ pub mod caching;
 pub mod codegen;
 pub mod compiler;
 pub mod envs;
+pub mod gpu_types;
 pub mod kernel;
 pub mod logging;
 pub mod mangling;

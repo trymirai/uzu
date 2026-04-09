@@ -1,19 +1,10 @@
 // Auto-generated from gpu_types/matmul.rs - do not edit manually
 #pragma once
 
-#ifndef UZU_MATMUL_H
-#define UZU_MATMUL_H
-
-#ifdef __METAL_VERSION__
 #include <metal_stdlib>
 using namespace metal;
 
-namespace uzu {
-namespace matmul {
-#else
-#include <stdint.h>
-#endif
-
+namespace uzu::matmul {
 typedef struct {
   uint32_t M;
   uint32_t N;
@@ -27,10 +18,4 @@ typedef struct {
   uint32_t aligned_inner_iterations;
   bool use_morton;
 } GemmParams;
-
-#ifdef __METAL_VERSION__
-} // namespace matmul
-} // namespace uzu
-#endif
-
-#endif // UZU_MATMUL_H
+} // namespace uzu::matmul
