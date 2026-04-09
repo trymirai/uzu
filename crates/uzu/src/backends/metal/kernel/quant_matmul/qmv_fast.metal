@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../hadamard_transform/hadamard_transform.h"
 #include "quant_matmul.h"
 
 template <typename T, uint GROUP_SIZE, uint BITS>
@@ -13,11 +14,14 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const device T* biases OPTIONAL(use_mlx_quant),
     const device T* input,
     device T* output,
+    const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& batch_size,
     const bool use_zero_points SPECIALIZE,
     const bool use_mlx_quant SPECIALIZE,
+    const bool use_hadamard SPECIALIZE,
+    threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
     const uint simd_lane THREADS(32),
@@ -144,8 +148,32 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
 
   for (uint row = 0; row < results_per_simdgroup; row++) {
     result[row] = simd_sum(result[row]);
+  }
+
+  if (use_hadamard) {
     if (simd_lane == 0) {
-      output[row] = static_cast<T>(result[row]);
+      for (uint row = 0; row < results_per_simdgroup; row++) {
+        shared_results[simd_group * results_per_simdgroup + row] = result[row];
+      }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simd_group == 0) {
+      uint global_out_idx = out_block_idx * 32 + simd_lane;
+      if (global_out_idx < out_vec_size) {
+        output[simd_lane] = simdgroup_random_hadamard_transform(
+            static_cast<ushort>(simd_lane),
+            T(shared_results[simd_lane]),
+            hadamard_factors[global_out_idx]
+        );
+      }
+    }
+  } else {
+    if (simd_lane == 0) {
+      for (uint row = 0; row < results_per_simdgroup; row++) {
+        output[row] = static_cast<T>(result[row]);
+      }
     }
   }
 }

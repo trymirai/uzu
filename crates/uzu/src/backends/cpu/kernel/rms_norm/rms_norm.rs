@@ -19,6 +19,7 @@ pub fn rms_norm<
     scales: *const ScaleT,
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
+    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
@@ -27,7 +28,12 @@ pub fn rms_norm<
     #[specialize] full_layer: bool,
     #[specialize] copy_to_shortcut: bool,
     #[specialize] residual_add: bool,
+    #[specialize] use_hadamard: bool,
 ) {
+    if use_hadamard {
+        unimplemented!("not supported yet");
+    }
+
     let input = match in_place {
         true => output as *const InputT,
         false => input.unwrap(),

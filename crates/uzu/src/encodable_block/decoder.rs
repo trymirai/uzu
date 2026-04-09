@@ -187,6 +187,7 @@ impl<B: Backend> Decoder<B> {
             ArrayId::Main,
             ArrayId::Main,
             &decoder_weight_loader.subtree("output_norm").unwrap(),
+            None,
             Some(ArrayId::Shortcut),
             true,
         )

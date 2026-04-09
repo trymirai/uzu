@@ -95,13 +95,18 @@ pub fn quantized_matmul_qmm_transposed<T: ArrayElement + Float, const GROUP_SIZE
     #[optional(use_mlx_quant)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
+    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     in_vec_size: u32,
     out_vec_size: u32,
     batch_size: u32,
     #[specialize] use_zero_points: bool,
     #[specialize] use_mlx_quant: bool,
+    #[specialize] use_hadamard: bool,
     #[specialize] aligned_n: bool,
 ) {
+    if use_hadamard {
+        unimplemented!("not supported yet");
+    }
     qmm_transposed::<T>(
         weights,
         scales,
