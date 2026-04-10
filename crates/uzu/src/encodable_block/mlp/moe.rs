@@ -105,6 +105,11 @@ impl<B: Backend> MoeBlock<B> {
             } => {
                 unimplemented!("QLoRA router not yet supported for MoE");
             },
+            LinearConfig::RHTLinearWrapper {
+                ..
+            } => {
+                unimplemented!("RHTLinearWrapper router not yet supported for MoE");
+            },
         };
 
         let router_topk_kernel = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, router_data_type)

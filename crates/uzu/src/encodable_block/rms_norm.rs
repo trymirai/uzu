@@ -34,6 +34,7 @@ pub struct RMSNorm<B: Backend> {
     output_array_id: ArrayId,
     shortcut_array_id: Option<ArrayId>,
     scales_buffer: Rc<RefCell<B::Buffer>>,
+    hadamard_factors_buffer: Option<B::Buffer>,
     use_sampling_range: bool,
 }
 
@@ -45,6 +46,7 @@ impl<B: Backend> RMSNorm<B> {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
+        hadamard_factors_buffer: Option<B::Buffer>,
         shortcut_array_id: Option<ArrayId>,
         residual_add: bool,
     ) -> Result<Self, RMSNormError<B>> {
@@ -68,6 +70,7 @@ impl<B: Backend> RMSNorm<B> {
             config.upcast_mode == UpcastMode::FullLayer,
             shortcut_array_id.is_some(),
             residual_add,
+            hadamard_factors_buffer.is_some(),
         )
         .map_err(RMSNormError::BackendError)?;
 
@@ -78,6 +81,7 @@ impl<B: Backend> RMSNorm<B> {
             output_array_id,
             shortcut_array_id,
             scales_buffer: scales.buffer(),
+            hadamard_factors_buffer,
             use_sampling_range: false,
         })
     }
@@ -131,6 +135,7 @@ impl<B: Backend> RMSNorm<B> {
             self.scales_buffer.borrow().deref(),
             (output_array.buffer().borrow_mut().deref_mut(), output_offset),
             shortcut_borrow.as_deref_mut().map(|b| (b, input_offset)),
+            self.hadamard_factors_buffer.as_ref(),
             batch_len as u32,
             element_count as u32,
             self.config.epsilon,
