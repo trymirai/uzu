@@ -51,7 +51,7 @@ jobs:
         run: cargo deny check
 
   tests:
-    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }}
+    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }} ${{ matrix.grammar && ' (grammar)' || '' }}
     runs-on: [ self-hosted, macos, mac, arm64 ]
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
 
