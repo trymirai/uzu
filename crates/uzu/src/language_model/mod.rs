@@ -8,6 +8,7 @@ pub mod rng;
 
 #[cfg(feature = "tracing")]
 pub(crate) mod sampler;
+mod xgrammar;
 
 // Re-export main types
 pub use language_model_generator::{LanguageModelGenerator, LanguageModelGeneratorTrait};
