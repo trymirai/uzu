@@ -46,7 +46,7 @@ runs:
 
     - if: inputs.wasi == 'true'
       run: |
-        rustup target add wasm32-wasip1-threads
+        arch -arm64 rustup target add wasm32-wasip1-threads --toolchain stable
       shell: bash
 
     - if: inputs.nextest == 'true'
