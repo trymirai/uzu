@@ -74,7 +74,7 @@ jobs:
       - name: Build crates
         run: |
           cargo +stable build --no-default-features \
-            --features grammar-xgrammar \
+            --features grammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
@@ -82,7 +82,7 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
         run: |
           cargo +nightly bench --no-run --no-default-features \
-            --features grammar-xgrammar \
+            --features grammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
@@ -90,7 +90,7 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && matrix.tracing }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
-            --features grammar-xgrammar \
+            --features grammar \
             ${{ format('--features {0}', matrix.backend) || '' }} \
             --features tracing
 

@@ -76,7 +76,7 @@ clang-ast = { workspace = true, optional = true }
 rhai = { workspace = true, optional = true }
 
 [features]
-default = ["metal", "grammar-xgrammar"]
+default = ["metal", "grammar"]
 
 metal = [
     "dep:clang-ast",
@@ -86,7 +86,7 @@ metal = [
     "dep:bytesize",
     "dep:metal",
 ]
-grammar-xgrammar = ["dep:xgrammar"]
+grammar = ["dep:xgrammar"]
 tracing = []
 
 [[test]]
