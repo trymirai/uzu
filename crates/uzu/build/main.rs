@@ -25,14 +25,16 @@ async fn main() -> anyhow::Result<()> {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }
 
-    let metal_backend = cfg!(feature = "metal")
-        && matches!(env::var("CARGO_CFG_TARGET_OS")?.as_ref(), "macos" | "ios" | "tvos" | "visionos");
+    let target_os = env::var("CARGO_CFG_TARGET_OS")?;
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
+
+    let metal_backend = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
     println!("cargo::rustc-check-cfg=cfg(metal_backend)");
     if metal_backend {
         println!("cargo::rustc-cfg=metal_backend");
     }
 
-    let grammar_xgrammar = cfg!(feature = "grammar") && env::var("CARGO_CFG_TARGET_ARCH")? != "wasm32";
+    let grammar_xgrammar = target_arch != "wasm32";
     println!("cargo::rustc-check-cfg=cfg(grammar_xgrammar)");
     if grammar_xgrammar {
         println!("cargo::rustc-cfg=grammar_xgrammar");
