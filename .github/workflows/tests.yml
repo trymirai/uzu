@@ -97,7 +97,7 @@ jobs:
       - name: Build uzu for target wasi
         if: ${{ matrix.target == 'wasm32-wasip1-threads' && matrix.backend == 'cpu' && !matrix.tracing }}
         run: |
-          rustup target add wasm32-wasip1-threads
+          rustup target add wasm32-wasip1-threads && \
           cargo +stable build --package uzu --no-default-features \
             --target wasm32-wasip1-threads \
 
