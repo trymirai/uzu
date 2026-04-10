@@ -83,7 +83,6 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
         run: |
           cargo +nightly bench --no-run --no-default-features \
-            --features grammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.grammar && '--features grammar' || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
@@ -93,8 +92,8 @@ jobs:
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
             ${{ format('--features {0}', matrix.backend) || '' }} \
-            ${{ matrix.grammar && '--features grammar' || '' }} \
-            --features tracing
+            --features grammar \
+            --features tracing \
 
   completed:
     name: completed
