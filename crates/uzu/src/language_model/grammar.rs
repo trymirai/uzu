@@ -1,5 +1,7 @@
 use std::iter::repeat_n;
 
+use tokenizers::Tokenizer;
+#[cfg(grammar_xgrammar)]
 use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
 use crate::session::{config::GrammarConfig, types::Error};
@@ -60,13 +62,49 @@ impl CompiledGrammarEngagementState {
     }
 }
 
-pub struct CompiledGrammar {
+pub trait CompiledGrammar {
+    fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error>;
+
+    fn accept_token(
+        &mut self,
+        token_id: u64,
+    ) -> Result<(), Error>;
+
+    fn rollback(
+        &mut self,
+        num_tokens: usize,
+    );
+
+    fn is_terminated(&self) -> bool;
+}
+
+pub fn create_compiled_grammar(
+    #[allow(unused)] config: &GrammarConfig,
+    #[allow(unused)] tokenizer: &Tokenizer,
+    #[allow(unused)] stop_token_ids: Option<&[i32]>,
+) -> Result<Box<dyn CompiledGrammar>, Error> {
+    #[cfg(grammar_xgrammar)]
+    {
+        let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, stop_token_ids)
+            .map_err(|msg| Error::GrammarError(msg))?;
+        let grammar = CompiledXGrammar::from_config(config, None, &tokenizer_info)
+            .map_err(|err| Error::GrammarError(format!("Can not create grammar from config: {err}").to_string()))?;
+        Ok(Box::new(grammar))
+    }
+
+    #[cfg(not(grammar_xgrammar))]
+    Err(Error::GrammarNoBackend)
+}
+
+#[cfg(grammar_xgrammar)]
+struct CompiledXGrammar {
     vocab_size: usize,
     matcher: GrammarMatcher,
     engagement_state: CompiledGrammarEngagementState,
 }
 
-impl CompiledGrammar {
+#[cfg(grammar_xgrammar)]
+impl CompiledXGrammar {
     pub fn from_config(
         config: &GrammarConfig,
         trigger_token_id: Option<u64>,
@@ -115,8 +153,11 @@ impl CompiledGrammar {
             engagement_state,
         })
     }
+}
 
-    pub fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error> {
+#[cfg(grammar_xgrammar)]
+impl CompiledGrammar for CompiledXGrammar {
+    fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error> {
         if self.engagement_state.is_engaged() {
             let mut cpu_mask = repeat_n(0, self.vocab_size.div_ceil(32)).collect::<Box<[u32]>>();
             let batch_mask_slice = &mut cpu_mask;
@@ -149,7 +190,7 @@ impl CompiledGrammar {
         }
     }
 
-    pub fn accept_token(
+    fn accept_token(
         &mut self,
         token_id: u64,
     ) -> Result<(), Error> {
@@ -167,7 +208,7 @@ impl CompiledGrammar {
         Ok(())
     }
 
-    pub fn rollback(
+    fn rollback(
         &mut self,
         num_tokens: usize,
     ) {
@@ -178,7 +219,7 @@ impl CompiledGrammar {
         }
     }
 
-    pub fn is_terminated(&self) -> bool {
+    fn is_terminated(&self) -> bool {
         self.matcher.is_terminated()
     }
 }

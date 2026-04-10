@@ -95,7 +95,7 @@ impl TrieNode {
     pub fn from_speculator(
         prefix: &[u64],
         seed: &PRng,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         speculator: &dyn Speculator,
         creation_config: &TrieCreationConfig,
         max_length: usize,
@@ -262,7 +262,7 @@ impl<'a> FlatTrie<'a> {
     pub fn accept(
         &self,
         sampled_tokens: &[u64],
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
     ) -> (Vec<u64>, Vec<usize>) {
         let mut current_token = self.root().unwrap();
         let mut accepted_tokens = Vec::new();

@@ -12,14 +12,13 @@ use std::{
 };
 
 use tokenizers::Tokenizer;
-use xgrammar::TokenizerInfo;
 
 use crate::{
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
-        grammar::CompiledGrammar,
+        grammar::{CompiledGrammar, create_compiled_grammar},
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -51,7 +50,7 @@ pub struct ChatSession {
     pub model_metadata: ModelMetadata,
 
     tokenizer: Tokenizer,
-    tokenizer_info: TokenizerInfo,
+    stop_token_ids: Vec<i32>,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     decoding_config: DecodingConfig,
@@ -129,8 +128,6 @@ impl ChatSession {
 
         let stop_token_ids: Vec<i32> =
             language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
-        let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, Some(&stop_token_ids))
-            .map_err(|error_message| Error::GrammarError(error_message))?;
 
         let input_processor = InputProcessorDefault::new(language_model_config.message_processor_config.clone());
 
@@ -146,7 +143,7 @@ impl ChatSession {
             model_path,
             model_metadata,
             tokenizer,
-            tokenizer_info,
+            stop_token_ids,
             input_processor: Box::new(input_processor),
             output_parser,
             decoding_config,
@@ -259,8 +256,12 @@ impl ChatSession {
 
         let sampling_method = config.sampling_policy.resolve(language_model_config);
 
-        let mut compiled_grammar: Option<CompiledGrammar> = if let Some(ref grammar_config) = config.grammar_config {
-            Some(CompiledGrammar::from_config(grammar_config, None, &self.tokenizer_info)?)
+        let mut compiled_grammar: Option<Box<dyn CompiledGrammar>> = if let Some(ref config) = config.grammar_config {
+            match create_compiled_grammar(config, &self.tokenizer, Some(&self.stop_token_ids)) {
+                Ok(grammar) => Some(grammar),
+                Err(Error::GrammarNoBackend) => None,
+                Err(err) => return Err(err),
+            }
         } else {
             None
         };
@@ -269,7 +270,7 @@ impl ChatSession {
         let sample_suffix = config.tokens_limit > 0;
         let prefill_result = language_model_generator.prefill(
             tokens.clone(),
-            compiled_grammar.as_mut(),
+            compiled_grammar.as_deref_mut(),
             sampling_method,
             prefix_offset,
             sample_suffix,
@@ -342,7 +343,7 @@ impl ChatSession {
                 &self.output_parser,
                 &run_context,
                 language_model_generator.as_mut(),
-                compiled_grammar.as_mut(),
+                compiled_grammar.as_deref_mut(),
                 sampling_method,
                 &progress,
             )?
@@ -357,7 +358,7 @@ impl ChatSession {
         output_parser: &OutputParser,
         run_context: &RunContext,
         language_model_generator: &mut dyn LanguageModelGeneratorTrait,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         sampling_method: super::parameter::SamplingMethod,
         progress: &Option<F>,
     ) -> Result<Output, Error>
