@@ -23,10 +23,9 @@ runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
-    - if: inputs.linters == 'true'
-      uses: dtolnay/rust-toolchain@nightly
+    - uses: dtolnay/rust-toolchain@nightly
       with:
-        components: rustfmt
+        components: ${{ inputs.linters == 'true' && 'rustfmt' || '' }}
     - if: inputs.linters == 'true'
       run: |
         arch -arm64 brew install clang-format cargo-deny
