@@ -74,6 +74,7 @@ jobs:
       - name: Build crates
         run: |
           cargo +stable build --no-default-features \
+            --features grammar-xgrammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
@@ -81,6 +82,7 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
         run: |
           cargo +nightly bench --no-run --no-default-features \
+            --features grammar-xgrammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
@@ -88,13 +90,14 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && matrix.tracing }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
+            --features grammar-xgrammar \
             ${{ format('--features {0}', matrix.backend) || '' }} \
             --features tracing
 
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [linters, tests]
+    needs: [ linters, tests ]
     if: ${{ always() }}
 
     steps:
