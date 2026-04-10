@@ -1,5 +1,3 @@
-#![cfg_attr(target_arch = "wasm32", feature(wasi_ext))]
-
 // needed for tests to resolve `uzu::` imports
 extern crate self as uzu;
 
