@@ -1,10 +1,14 @@
 use std::iter::repeat_n;
 
 use tokenizers::Tokenizer;
+use xgrammar::DLDataTypeCode;
 #[cfg(grammar_xgrammar)]
 use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
-use crate::session::{config::GrammarConfig, types::Error};
+use crate::{
+    DataType,
+    session::{config::GrammarConfig, types::Error},
+};
 
 enum CompiledGrammarEngagementState {
     Always,
@@ -221,5 +225,33 @@ impl CompiledGrammar for CompiledXGrammar {
 
     fn is_terminated(&self) -> bool {
         self.matcher.is_terminated()
+    }
+}
+
+#[cfg(grammar_xgrammar)]
+trait DLDataTypeCodeProvider {
+    fn dl_data_type_code(self) -> DLDataTypeCode;
+}
+
+#[cfg(grammar_xgrammar)]
+impl DLDataTypeCodeProvider for DataType {
+    const fn dl_data_type_code(self) -> DLDataTypeCode {
+        match self {
+            DataType::BF16 => DLDataTypeCode::kDLBfloat,
+            DataType::F16 | DataType::F32 | DataType::F64 => DLDataTypeCode::kDLFloat,
+            DataType::I4 | DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64 => DLDataTypeCode::kDLInt,
+            DataType::U4 | DataType::U8 | DataType::U16 | DataType::U32 | DataType::U64 => DLDataTypeCode::kDLUInt,
+        }
+    }
+}
+
+#[cfg(grammar_xgrammar)]
+impl From<DataType> for DLDataType {
+    fn from(data_type: DataType) -> Self {
+        Self {
+            code: data_type.dl_data_type_code() as u8,
+            bits: data_type.size_in_bits() as u8,
+            lanes: 1,
+        }
     }
 }
