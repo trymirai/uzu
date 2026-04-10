@@ -1,8 +1,6 @@
 use bytemuck::Pod;
 use half::{bf16, f16};
 use num_traits::NumCast;
-#[cfg(grammar_xgrammar)]
-use xgrammar::{DLDataType, DLDataTypeCode};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub enum DataType {

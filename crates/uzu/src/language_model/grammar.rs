@@ -1,14 +1,16 @@
+#[cfg(grammar_xgrammar)]
 use std::iter::repeat_n;
 
 use tokenizers::Tokenizer;
-use xgrammar::DLDataTypeCode;
 #[cfg(grammar_xgrammar)]
-use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
-
-use crate::{
-    DataType,
-    session::{config::GrammarConfig, types::Error},
+use xgrammar::{
+    DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher,
+    TokenizerInfo,
 };
+
+#[cfg(grammar_xgrammar)]
+use crate::DataType;
+use crate::session::{config::GrammarConfig, types::Error};
 
 enum CompiledGrammarEngagementState {
     Always,
@@ -235,7 +237,7 @@ trait DLDataTypeCodeProvider {
 
 #[cfg(grammar_xgrammar)]
 impl DLDataTypeCodeProvider for DataType {
-    const fn dl_data_type_code(self) -> DLDataTypeCode {
+    fn dl_data_type_code(self) -> DLDataTypeCode {
         match self {
             DataType::BF16 => DLDataTypeCode::kDLBfloat,
             DataType::F16 | DataType::F32 | DataType::F64 => DLDataTypeCode::kDLFloat,
