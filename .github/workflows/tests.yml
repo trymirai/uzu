@@ -58,6 +58,7 @@ jobs:
     strategy:
       matrix:
         backend: [ 'cpu', 'metal' ]
+        grammar: [ false, true ]
         tracing: [ false, true ]
 
     env:
@@ -74,8 +75,8 @@ jobs:
       - name: Build crates
         run: |
           cargo +stable build --no-default-features \
-            --features grammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.grammar && '--features grammar' || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
       - name: Build benches
@@ -84,14 +85,15 @@ jobs:
           cargo +nightly bench --no-run --no-default-features \
             --features grammar \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.grammar && '--features grammar' || '' }} \
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
       - name: Run tests
         if: ${{ matrix.backend != 'cpu' && matrix.tracing }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
-            --features grammar \
             ${{ format('--features {0}', matrix.backend) || '' }} \
+            ${{ matrix.grammar && '--features grammar' || '' }} \
             --features tracing
 
   completed:
