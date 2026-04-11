@@ -32,8 +32,7 @@ pub fn create_compiled_grammar(
             .map_err(|msg| Error::GrammarError(msg))?;
 
         use xgram::CompiledXGrammar;
-        let grammar = CompiledXGrammar::from_config(config, None, &tokenizer_info)
-            .map_err(|err| Error::GrammarError(format!("Can not create grammar from config: {err}").to_string()))?;
+        let grammar = CompiledXGrammar::from_config(config, None, &tokenizer_info)?;
 
         Ok(Box::new(grammar))
     }
