@@ -80,27 +80,39 @@ pub fn bindgen(
         Ok(rewrite_variant_idents(parse_expr(expr)?, &variant_param_names, &mut referenced_variants))
     };
 
-    let parsed_variant_types: Vec<Option<Type>> = if let Some(variants) = &kernel.variants {
-        variants
-            .iter()
-            .map(|v| match &v.ty {
-                MetalTemplateParameterType::Type => Ok(None),
-                MetalTemplateParameterType::Value(ty) => Ok(Some(syn::parse_str(ty.as_ref())?)),
-            })
-            .collect::<anyhow::Result<_>>()?
-    } else {
-        Vec::new()
-    };
+    // Precomputed per-variant state shared across constructor args, mangling,
+    // and the post-dispatch struct-field pass; avoids re-zipping parallel arrays.
+    struct VariantBind {
+        param_ident: Ident,
+        field_ident: Ident,
+        parsed_ty: Option<Type>,
+    }
 
-    let (variants_extra_arguments, variants_kernel_format): (Vec<TokenStream>, Vec<TokenStream>) = kernel
+    let variant_binds: Vec<VariantBind> = kernel
         .variants
         .as_deref()
         .unwrap_or(&[])
         .iter()
-        .zip(parsed_variant_types.iter())
-        .map(|(variant, parsed_ty)| {
-            let name = Ident::new(variant.name.as_ref(), Span::call_site());
-            match parsed_ty {
+        .map(|v| {
+            let param_ident = Ident::new(v.name.as_ref(), Span::call_site());
+            let field_ident = variant_field_ident(v.name.as_ref());
+            let parsed_ty = match &v.ty {
+                MetalTemplateParameterType::Type => None,
+                MetalTemplateParameterType::Value(ty) => Some(syn::parse_str::<Type>(ty.as_ref())?),
+            };
+            Ok(VariantBind {
+                param_ident,
+                field_ident,
+                parsed_ty,
+            })
+        })
+        .collect::<anyhow::Result<_>>()?;
+
+    let (variants_extra_arguments, variants_kernel_format): (Vec<TokenStream>, Vec<TokenStream>) = variant_binds
+        .iter()
+        .map(|v| {
+            let name = &v.param_ident;
+            match &v.parsed_ty {
                 None => (quote! { #[allow(non_snake_case)] #name: crate::DataType }, quote! { #name.metal_type() }),
                 Some(ty) => (quote! { #[allow(non_snake_case)] #name: #ty }, quote! { #name.to_string() }),
             }
@@ -329,8 +341,8 @@ pub fn bindgen(
                 _ => None,
             })
             .map(|(threads_rexprs, threads_per_group_rexprs)| {
-                let threads = parse_expr(&threads_rexprs)?;
-                let threads_per_group = parse_expr(&threads_per_group_rexprs)?;
+                let threads = parse_expr_rewritten(&threads_rexprs)?;
+                let threads_per_group = parse_expr_rewritten(&threads_per_group_rexprs)?;
                 Ok((threads, threads_per_group))
             })
             .collect::<anyhow::Result<Vec<(TokenStream, TokenStream)>>>()?;
@@ -444,20 +456,16 @@ pub fn bindgen(
     };
 
     // Emit struct fields only for variants actually referenced in THREADS/GROUPS expressions.
-    let (variant_fields, variant_inits): (Vec<TokenStream>, Vec<TokenStream>) = kernel
-        .variants
-        .as_deref()
-        .unwrap_or(&[])
+    let (variant_fields, variant_inits): (Vec<TokenStream>, Vec<TokenStream>) = variant_binds
         .iter()
-        .zip(parsed_variant_types.iter())
-        .filter_map(|(variant, parsed_ty)| {
-            let ty = parsed_ty.as_ref()?;
-            if !referenced_variants.contains(variant.name.as_ref()) {
+        .filter_map(|v| {
+            let ty = v.parsed_ty.as_ref()?;
+            if !referenced_variants.contains(&v.param_ident.to_string()) {
                 return None;
             }
-            let param_name = Ident::new(variant.name.as_ref(), Span::call_site());
-            let field_name = variant_field_ident(variant.name.as_ref());
-            Some((quote! { #field_name: #ty }, quote! { #field_name: #param_name }))
+            let field = &v.field_ident;
+            let param = &v.param_ident;
+            Some((quote! { #field: #ty }, quote! { #field: #param }))
         })
         .unzip();
 
