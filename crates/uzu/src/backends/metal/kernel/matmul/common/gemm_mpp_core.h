@@ -2,7 +2,7 @@
 
 #include "defines.h"
 #include "loader.h"
-#include "../../../generated/matmul.h"
+#include "../../generated/matmul.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 

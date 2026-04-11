@@ -54,15 +54,15 @@ inline T activate_tanh(T x) {
 template <typename T>
 inline T activate(T x, ActivationType type) {
   switch (type) {
-  case SILU:
+  case ActivationType::SILU:
     return activate_silu(x);
-  case GELU:
+  case ActivationType::GELU:
     return activate_gelu(x);
-  case TANH:
+  case ActivationType::TANH:
     return activate_tanh(x);
-  case IDENTITY:
+  case ActivationType::IDENTITY:
     return x;
-  case SOFTPLUS:
+  case ActivationType::SOFTPLUS:
     return activate_softplus(x);
   }
 }
