@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use crate::common::{
     codegen::write_tokens,
     compiler::Compiler,
+    gpu_types::GpuTypes,
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
 };
 
@@ -601,7 +602,10 @@ impl CpuCompiler {
 
 #[async_trait]
 impl Compiler for CpuCompiler {
-    async fn build(&self) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(
+        &self,
+        _gpu_types: &GpuTypes,
+    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         let objects = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|e| e.ok())
