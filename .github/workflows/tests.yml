@@ -61,6 +61,7 @@ jobs:
           - grammar: true
           - backend: 'cpu'
             tracing: false
+          - backend: 'cpu'
             grammar: false
 
     env:
