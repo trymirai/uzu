@@ -1,8 +1,8 @@
-use std::iter::repeat_n;
+use std::{collections::BTreeSet, iter::repeat_n};
 
 use anyhow::Context;
 use itertools::Itertools;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{format_ident, quote};
 use syn::{Ident, Lifetime, LitInt, Type};
 
@@ -15,6 +15,50 @@ use crate::{
     metal::ast::{MetalBufferAccess, MetalGroupsType, MetalTemplateParameterType},
 };
 
+fn variant_field_ident(name: &str) -> Ident {
+    format_ident!("{}", name.to_ascii_lowercase())
+}
+
+/// Rewrite bare `BM` → `self.bm`. Skips idents preceded by `.` or `:` so
+/// `foo.BM` / `foo::BM` are left alone — heuristic vs. `syn::Fold<Expr::Path>`,
+/// which would need the `syn/full,fold` features.
+fn rewrite_variant_idents(
+    ts: TokenStream,
+    variant_names: &[&str],
+    referenced: &mut BTreeSet<String>,
+) -> TokenStream {
+    let mut out = TokenStream::new();
+    let mut prev_punct: Option<char> = None;
+    for tt in ts {
+        match tt {
+            TokenTree::Ident(ident)
+                if !matches!(prev_punct, Some('.') | Some(':'))
+                    && variant_names.contains(&ident.to_string().as_str()) =>
+            {
+                let name = ident.to_string();
+                let field = variant_field_ident(&name);
+                referenced.insert(name);
+                out.extend(quote! { self.#field });
+                prev_punct = None;
+            },
+            TokenTree::Group(group) => {
+                let new_stream = rewrite_variant_idents(group.stream(), variant_names, referenced);
+                out.extend([TokenTree::Group(proc_macro2::Group::new(group.delimiter(), new_stream))]);
+                prev_punct = None;
+            },
+            TokenTree::Punct(p) => {
+                prev_punct = Some(p.as_char());
+                out.extend([TokenTree::Punct(p)]);
+            },
+            other => {
+                prev_punct = None;
+                out.extend([other]);
+            },
+        }
+    }
+    out
+}
+
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
@@ -23,31 +67,45 @@ pub fn bindgen(
     let trait_name = format_ident!("{kernel_name}Kernel");
     let struct_name = format_ident!("{kernel_name}MetalKernel");
 
+    let variant_param_names: Vec<&str> =
+        kernel.variants.as_ref().map(|v| v.iter().map(|p| p.name.as_ref()).collect()).unwrap_or_default();
+
     let parse_expr = |expr: &str| -> anyhow::Result<TokenStream> {
         syn::parse_str(expr.as_ref())
             .with_context(|| format!("cannot parse rust expression `{}` in kernel `{}`", expr, kernel_name))
     };
 
-    let (variants_extra_arguments, variants_kernel_format) = if let Some(variants) = &kernel.variants {
+    let mut referenced_variants: BTreeSet<String> = BTreeSet::new();
+    let mut parse_expr_rewritten = |expr: &str| -> anyhow::Result<TokenStream> {
+        Ok(rewrite_variant_idents(parse_expr(expr)?, &variant_param_names, &mut referenced_variants))
+    };
+
+    let parsed_variant_types: Vec<Option<Type>> = if let Some(variants) = &kernel.variants {
         variants
             .iter()
-            .map(|variant| {
-                let name = Ident::new(variant.name.as_ref(), Span::call_site());
-
-                match &variant.ty {
-                    MetalTemplateParameterType::Type => {
-                        Ok((quote! { #[allow(non_snake_case)] #name: crate::DataType }, quote! { #name.metal_type() }))
-                    },
-                    MetalTemplateParameterType::Value(ty) => {
-                        let ty: Type = syn::parse_str(ty.as_ref())?;
-                        Ok((quote! { #[allow(non_snake_case)] #name: #ty }, quote! { #name.to_string() }))
-                    },
-                }
+            .map(|v| match &v.ty {
+                MetalTemplateParameterType::Type => Ok(None),
+                MetalTemplateParameterType::Value(ty) => Ok(Some(syn::parse_str(ty.as_ref())?)),
             })
             .collect::<anyhow::Result<_>>()?
     } else {
-        (Vec::new(), Vec::new())
+        Vec::new()
     };
+
+    let (variants_extra_arguments, variants_kernel_format): (Vec<TokenStream>, Vec<TokenStream>) = kernel
+        .variants
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .zip(parsed_variant_types.iter())
+        .map(|(variant, parsed_ty)| {
+            let name = Ident::new(variant.name.as_ref(), Span::call_site());
+            match parsed_ty {
+                None => (quote! { #[allow(non_snake_case)] #name: crate::DataType }, quote! { #name.metal_type() }),
+                Some(ty) => (quote! { #[allow(non_snake_case)] #name: #ty }, quote! { #name.to_string() }),
+            }
+        })
+        .unzip();
 
     let entry_name = dynamic_mangle(kernel.name.as_ref(), variants_kernel_format);
 
@@ -295,7 +353,7 @@ pub fn bindgen(
             .iter()
             .filter_map(|a| {
                 if let Ok(MetalArgumentType::Threads(rexprs)) = a.argument_type() {
-                    Some(parse_expr(&rexprs))
+                    Some(parse_expr_rewritten(&rexprs))
                 } else {
                     None
                 }
@@ -324,7 +382,7 @@ pub fn bindgen(
                 .iter()
                 .filter_map(|a| {
                     if let Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(rexprs))) = a.argument_type() {
-                        Some(parse_expr(&rexprs))
+                        Some(parse_expr_rewritten(&rexprs))
                     } else {
                         None
                     }
@@ -385,10 +443,29 @@ pub fn bindgen(
         quote! { pub(crate) }
     };
 
+    // Emit struct fields only for variants actually referenced in THREADS/GROUPS expressions.
+    let (variant_fields, variant_inits): (Vec<TokenStream>, Vec<TokenStream>) = kernel
+        .variants
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .zip(parsed_variant_types.iter())
+        .filter_map(|(variant, parsed_ty)| {
+            let ty = parsed_ty.as_ref()?;
+            if !referenced_variants.contains(variant.name.as_ref()) {
+                return None;
+            }
+            let param_name = Ident::new(variant.name.as_ref(), Span::call_site());
+            let field_name = variant_field_ident(variant.name.as_ref());
+            Some((quote! { #field_name: #ty }, quote! { #field_name: #param_name }))
+        })
+        .unzip();
+
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
             #(#conditional_buffer_fields,)*
+            #(#variant_fields,)*
         }
 
         impl #maybe_trait_impl #struct_name {
@@ -398,7 +475,7 @@ pub fn bindgen(
                 let entry_name = #entry_name;
                 #function_constants_init
                 let pipeline = context.compute_pipeline_state(#cache_key, &entry_name, #function_constants_arg)?;
-                Ok(Self { pipeline #(, #conditional_buffer_sets)* })
+                Ok(Self { pipeline #(, #conditional_buffer_sets)* #(, #variant_inits)* })
             }
 
             #method_visibility fn encode<#(#encode_generics, )* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>) {
