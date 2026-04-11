@@ -10,7 +10,7 @@ build = "build/main.rs"
 
 [dependencies]
 dsl.workspace = true
-xgrammar.workspace = true
+xgrammar = { workspace = true, optional = true }
 half.workspace = true
 ndarray.workspace = true
 serde.workspace = true
@@ -76,7 +76,7 @@ clang-ast = { workspace = true, optional = true }
 rhai = { workspace = true, optional = true }
 
 [features]
-default = ["metal"]
+default = ["metal", "grammar"]
 
 metal = [
     "dep:clang-ast",
@@ -86,6 +86,7 @@ metal = [
     "dep:bytesize",
     "dep:metal",
 ]
+grammar = ["dep:xgrammar"]
 tracing = []
 
 [[test]]

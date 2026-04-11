@@ -10,7 +10,6 @@ use itertools::{Either, Itertools, izip};
 
 use super::{
     gpu_capture::GpuCaptureManager,
-    grammar::CompiledGrammar,
     language_model_generator_context::LanguageModelGeneratorContext,
     result::{GenerateResult, PrefillResult},
     rng::PRng,
@@ -27,6 +26,7 @@ use crate::{
         kv_cache_layer::INVALID_POSITION,
         state::ForwardPassState,
     },
+    language_model::grammar::CompiledGrammar,
     session::{
         config::DecodingConfig,
         helpers::Context as LlmContext,
@@ -78,7 +78,7 @@ pub trait LanguageModelGeneratorTrait {
     fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -86,7 +86,7 @@ pub trait LanguageModelGeneratorTrait {
 
     fn generate(
         &mut self,
-        compiled_grammar: Option<&mut CompiledGrammar>,
+        compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error>;
 
@@ -137,7 +137,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
@@ -343,7 +343,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
     fn generate(
         &mut self,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
