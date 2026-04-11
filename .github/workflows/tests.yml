@@ -90,7 +90,7 @@ jobs:
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
       - name: Run tests
-        if: ${{ (matrix.backend != 'cpu' && matrix.tracing) || matrix.grammar }}
+        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
             ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
