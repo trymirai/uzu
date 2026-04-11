@@ -58,9 +58,12 @@ jobs:
     strategy:
       matrix:
         backend: [ 'cpu', 'metal' ]
-        grammar: [ false, true ]
         tracing: [ false, true ]
-
+        include:
+          - grammar: true
+          - grammar: false
+            backend: 'cpu'
+            tracing: false
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
 
@@ -88,12 +91,12 @@ jobs:
             ${{ matrix.tracing && '--features tracing' || '' }} \
 
       - name: Run tests
-        if: ${{ matrix.backend != 'cpu' && matrix.tracing }}
+        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features \
             ${{ format('--features {0}', matrix.backend) || '' }} \
-            --features grammar \
-            --features tracing \
+            ${{ matrix.grammar && '--features grammar' || '' }} \
+            ${{ matrix.tracing && '--features tracing' || '' }} \
 
   completed:
     name: completed

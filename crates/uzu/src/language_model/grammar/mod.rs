@@ -1,3 +1,5 @@
+mod xgram;
+
 use tokenizers::Tokenizer;
 
 use crate::session::{config::GrammarConfig, types::Error};
@@ -29,7 +31,7 @@ pub fn create_compiled_grammar(
         let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, stop_token_ids)
             .map_err(|msg| Error::GrammarError(msg))?;
 
-        use crate::language_model::xgrammar::CompiledXGrammar;
+        use xgram::CompiledXGrammar;
         let grammar = CompiledXGrammar::from_config(config, None, &tokenizer_info)
             .map_err(|err| Error::GrammarError(format!("Can not create grammar from config: {err}").to_string()))?;
 
