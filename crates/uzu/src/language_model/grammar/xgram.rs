@@ -122,7 +122,6 @@ impl CompiledXGrammar {
     }
 }
 
-#[cfg(grammar_xgrammar)]
 impl CompiledGrammar for CompiledXGrammar {
     fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error> {
         if self.engagement_state.is_engaged() {
