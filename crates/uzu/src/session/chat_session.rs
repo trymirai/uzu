@@ -257,11 +257,7 @@ impl ChatSession {
         let sampling_method = config.sampling_policy.resolve(language_model_config);
 
         let mut compiled_grammar: Option<Box<dyn CompiledGrammar>> = if let Some(ref config) = config.grammar_config {
-            match create_compiled_grammar(config, &self.tokenizer, Some(&self.stop_token_ids)) {
-                Ok(grammar) => Some(grammar),
-                Err(Error::GrammarNoBackend) => None,
-                Err(err) => return Err(err),
-            }
+            Some(create_compiled_grammar(config, &self.tokenizer, Some(&self.stop_token_ids))?)
         } else {
             None
         };
