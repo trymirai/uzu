@@ -58,9 +58,10 @@ jobs:
         backend: [ 'cpu', 'metal' ]
         tracing: [ false, true ]
         include:
+          - grammar: true
           - backend: 'cpu'
             tracing: false
-            grammar: true
+            grammar: false
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
