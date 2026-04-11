@@ -154,6 +154,7 @@ impl CpuCompiler {
     ) -> anyhow::Result<Kernel> {
         let mut kernel_ident = None;
         let mut function_variants = Vec::new();
+        let mut function_constraints: Vec<Expr> = Vec::new();
 
         for attr in ifn.attrs {
             match attr.path().get_ident().map(|i| i.to_string()).as_ref().map(|s| s.as_ref()) {
@@ -175,6 +176,10 @@ impl CpuCompiler {
                             .unwrap(),
                         args.collect::<Box<[_]>>(),
                     ));
+                },
+                Some("constraint") => {
+                    let expr = attr.parse_args::<Expr>().context("cannot parse constraint attribute")?;
+                    function_constraints.push(expr);
                 },
                 _ => bail!("Unexpected attr {attr:?}"),
             }
@@ -462,6 +467,8 @@ impl CpuCompiler {
                 parameter_idents = quote! { (#parameter_idents) };
             }
 
+            let rhai_engine = (!function_constraints.is_empty()).then(rhai::Engine::new);
+
             let match_arms = function_parameters
                 .iter()
                 .zip(function_variants.iter())
@@ -481,6 +488,23 @@ impl CpuCompiler {
                     })
                 })
                 .multi_cartesian_product()
+                .filter(|variants| {
+                    let Some(engine) = &rhai_engine else {
+                        return true;
+                    };
+                    let mut scope = rhai::Scope::with_capacity(function_parameters.len());
+                    for (i, parameter) in function_parameters.iter().enumerate() {
+                        let val_str = variants[i].1.to_string();
+                        scope.push(
+                            parameter.name.to_string(),
+                            engine.eval_expression::<rhai::Dynamic>(&val_str).unwrap_or_else(|_| val_str.into()),
+                        );
+                    }
+                    function_constraints.iter().all(|constraint| {
+                        let expr_str = constraint.to_token_stream().to_string();
+                        engine.eval_expression_with_scope::<bool>(&mut scope, &expr_str).unwrap_or(false)
+                    })
+                })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
                         variants.into_iter().unzip();

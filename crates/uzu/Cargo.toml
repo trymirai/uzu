@@ -69,18 +69,17 @@ syn.workspace = true
 prettyplease.workspace = true
 itertools.workspace = true
 cbindgen.workspace = true
+rhai.workspace = true
 
 # metal on macos requires clang-ast for dsl build
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }
-rhai = { workspace = true, optional = true }
 
 [features]
 default = ["metal", "grammar"]
 
 metal = [
     "dep:clang-ast",
-    "dep:rhai",
     "dep:objc2",
     "dep:objc2-foundation",
     "dep:bytesize",

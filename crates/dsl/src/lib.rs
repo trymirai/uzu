@@ -11,7 +11,7 @@ pub fn kernel(
 
     let mut func = parse_macro_input!(input as ItemFn);
 
-    func.attrs.retain(|attr| !attr.path().is_ident("variants"));
+    func.attrs.retain(|attr| !attr.path().is_ident("variants") && !attr.path().is_ident("constraint"));
 
     for arg in &mut func.sig.inputs {
         if let FnArg::Typed(pat) = arg {
