@@ -154,6 +154,7 @@ impl CpuCompiler {
     ) -> anyhow::Result<Kernel> {
         let mut kernel_ident = None;
         let mut function_variants = Vec::new();
+        let mut function_constraints: Vec<Expr> = Vec::new();
 
         for attr in ifn.attrs {
             match attr.path().get_ident().map(|i| i.to_string()).as_ref().map(|s| s.as_ref()) {
@@ -175,6 +176,10 @@ impl CpuCompiler {
                             .unwrap(),
                         args.collect::<Box<[_]>>(),
                     ));
+                },
+                Some("constraint") => {
+                    let expr = attr.parse_args::<Expr>().context("cannot parse constraint attribute")?;
+                    function_constraints.push(expr);
                 },
                 _ => bail!("Unexpected attr {attr:?}"),
             }
@@ -462,6 +467,10 @@ impl CpuCompiler {
                 parameter_idents = quote! { (#parameter_idents) };
             }
 
+            let rhai_engine = (!function_constraints.is_empty()).then(rhai::Engine::new);
+            let constraint_strs: Vec<String> =
+                function_constraints.iter().map(|c| c.to_token_stream().to_string()).collect();
+
             let match_arms = function_parameters
                 .iter()
                 .zip(function_variants.iter())
@@ -481,6 +490,17 @@ impl CpuCompiler {
                     })
                 })
                 .multi_cartesian_product()
+                .filter(|variants| {
+                    let Some(engine) = &rhai_engine else {
+                        return true;
+                    };
+                    let bindings: Vec<(String, String)> = function_parameters
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string()))
+                        .collect();
+                    crate::common::constraints::satisfied(engine, &bindings, &constraint_strs)
+                })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
                         variants.into_iter().unzip();

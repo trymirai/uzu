@@ -101,21 +101,8 @@ fn kernel_wrappers(
     } else {
         vec![None]
     } {
-        if let Some(type_variant) = &type_variant {
-            let mut scope = rhai::Scope::with_capacity(type_variant.len());
-            for (type_variant_name, type_variant_value) in type_variant {
-                scope.push(
-                    type_variant_name.clone(),
-                    engine
-                        .eval_expression::<rhai::Dynamic>(type_variant_value.as_ref())
-                        .unwrap_or_else(|_| type_variant_value.clone().into()),
-                );
-            }
-            if !kernel
-                .constraints
-                .iter()
-                .all(|constraint_expr| engine.eval_expression_with_scope(&mut scope, constraint_expr.as_ref()).unwrap())
-            {
+        if let Some(ref tv) = type_variant {
+            if !crate::common::constraints::satisfied(&engine, tv, &kernel.constraints) {
                 continue;
             }
         }
