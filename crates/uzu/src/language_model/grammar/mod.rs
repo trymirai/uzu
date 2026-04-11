@@ -39,5 +39,5 @@ pub fn create_compiled_grammar(
     }
 
     #[cfg(not(grammar_xgrammar))]
-    Err(Error::GrammarError("Grammar backend is not available".to_string()))
+    Err(Error::GrammarNoBackendAvailable)
 }
