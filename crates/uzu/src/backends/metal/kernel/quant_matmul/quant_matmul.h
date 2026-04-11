@@ -675,7 +675,9 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32,
-    const bool use_mlx_quant = false>
+    const bool use_mlx_quant = false,
+    const int WM = 2,
+    const int WN = 2>
 void qmm_transposed_impl(
     const device uint32_t* weights,
     const device T* scales,
@@ -695,9 +697,6 @@ void qmm_transposed_impl(
 ) {
   static_assert(BK >= 32, "BK should be larger than METAL_SIMD_SIZE");
   static_assert(BK % 32 == 0, "BK should be divisible by METAL_SIMD_SIZE");
-
-  constexpr int WM = 2;
-  constexpr int WN = 2;
   constexpr int pack_factor = get_pack_factor<bits, 8>();
   constexpr int bytes_per_pack = get_bytes_per_pack<bits>();
   constexpr int BK_padded = (BK + 16 / sizeof(T));

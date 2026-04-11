@@ -161,6 +161,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     bm: u32,
     bk: u32,
     bn: u32,
+    wm: u32,
+    wn: u32,
     aligned_n: bool,
     hadamard_factors: Option<&[i32]>,
 ) -> Vec<T> {
@@ -174,6 +176,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         bm,
         bk,
         bn,
+        wm,
+        wn,
         input.use_zero_points,
         input.use_mlx_quant,
         use_hadamard,
@@ -220,6 +224,8 @@ fn check_against_expected<T: ArrayElement + Float + Debug + Display>(
     bm: u32,
     bk: u32,
     bn: u32,
+    wm: u32,
+    wn: u32,
     aligned_n: bool,
 ) {
     // GPU tiled accumulation rounds differently from CPU scalar reference.
@@ -230,7 +236,7 @@ fn check_against_expected<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, T>(input, bm, bk, bn, aligned_n, None);
+        let output = get_output::<B, T>(input, bm, bk, bn, wm, wn, aligned_n, None);
         assert_eq!(expected.len(), output.len(), "Output length mismatch");
 
         let mut errors = 0;
@@ -268,6 +274,8 @@ struct TileCfg {
     bm: u32,
     bk: u32,
     bn: u32,
+    wm: u32,
+    wn: u32,
 }
 
 impl TileCfg {
@@ -277,9 +285,10 @@ impl TileCfg {
     }
 }
 
-const CFG_32X32: TileCfg = TileCfg { bm: 32, bk: 32, bn: 32 };
-const CFG_WIDE: TileCfg = TileCfg { bm: 64, bk: 32, bn: 64 };
-const CFG_64X64: TileCfg = TileCfg { bm: 64, bk: 64, bn: 64 };
+const CFG_BM8: TileCfg = TileCfg { bm: 8, bk: 32, bn: 32, wm: 1, wn: 1 };
+const CFG_32X32: TileCfg = TileCfg { bm: 32, bk: 32, bn: 32, wm: 2, wn: 2 };
+const CFG_WIDE: TileCfg = TileCfg { bm: 64, bk: 32, bn: 64, wm: 2, wn: 2 };
+const CFG_64X64: TileCfg = TileCfg { bm: 64, bk: 64, bn: 64, wm: 2, wn: 2 };
 
 fn pick_aligned_n(
     cfg: &TileCfg,
@@ -312,8 +321,8 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
     for (m, k, n) in dims {
         let input = make_input_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
         let aligned_n = pick_aligned_n(cfg, n);
-        let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, aligned_n, None);
-        check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, aligned_n);
+        let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n, None);
+        check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n);
     }
 }
 
@@ -328,8 +337,8 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
     let n = cfg.bn as usize;
     let input = make_input_edge::<T>(n, group_size, bits, use_zero_points, use_mlx_quant);
     let aligned_n = pick_aligned_n(cfg, n);
-    let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, aligned_n, None);
-    check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, aligned_n);
+    let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n, None);
+    check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n);
 }
 
 // No CPU Hadamard reference — verify all three tile shapes agree instead.
@@ -357,16 +366,16 @@ fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let shapes: [(u32, u32, u32, &str); 3] = [
-            (32, 32, 32, "32x32"),
-            (64, 32, 64, "wide"),
-            (64, 64, 64, "64x64"),
+        let shapes: [(u32, u32, u32, u32, u32, &str); 3] = [
+            (32, 32, 32, 2, 2, "32x32"),
+            (64, 32, 64, 2, 2, "wide"),
+            (64, 64, 64, 2, 2, "64x64"),
         ];
 
         let outputs: Vec<(&str, Vec<T>)> = shapes
             .iter()
-            .map(|&(bm, bk, bn, name)| {
-                let out = get_output::<B, T>(&input, bm, bk, bn, true, Some(&factors));
+            .map(|&(bm, bk, bn, wm, wn, name)| {
+                let out = get_output::<B, T>(&input, bm, bk, bn, wm, wn, true, Some(&factors));
                 (name, out)
             })
             .collect();
@@ -454,6 +463,28 @@ macro_rules! hadamard_tests {
             }
         )*
     };
+}
+
+mod tile_bm8 {
+    use super::*;
+
+    basic_tests!(&CFG_BM8;
+        // bf16 4-bit ZP has known precision limits
+        #[ignore] fn test_bf16_gs32_4bit_zp:  bf16, 32, 4, true,  false;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16, 64, 4, true,  false;
+        fn test_bf16_gs32_8bit_zp:  bf16, 32, 8, true,  false;
+        fn test_bf16_gs64_8bit_zp:  bf16, 64, 8, true,  false;
+        fn test_bf16_gs32_4bit_mlx: bf16, 32, 4, false, true;
+        fn test_bf16_gs64_4bit_mlx: bf16, 64, 4, false, true;
+        fn test_bf16_gs32_8bit_mlx: bf16, 32, 8, false, true;
+        fn test_bf16_gs64_8bit_mlx: bf16, 64, 8, false, true;
+    );
+
+    edge_tests!(&CFG_BM8;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, false, true;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, false, true;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, true,  false;
+    );
 }
 
 // ---- tile_32x32 — the original base shape, full dtype matrix -------------
