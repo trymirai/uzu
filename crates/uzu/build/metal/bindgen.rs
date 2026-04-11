@@ -2,9 +2,9 @@ use std::{collections::BTreeSet, iter::repeat_n};
 
 use anyhow::Context;
 use itertools::Itertools;
-use proc_macro2::{Span, TokenStream, TokenTree};
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Ident, Lifetime, LitInt, Type};
+use syn::{Expr, Ident, Lifetime, LitInt, Type, fold::Fold};
 
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
@@ -19,44 +19,42 @@ fn variant_field_ident(name: &str) -> Ident {
     format_ident!("{}", name.to_ascii_lowercase())
 }
 
-/// Rewrite bare `BM` → `self.bm`. Skips idents preceded by `.` or `:` so
-/// `foo.BM` / `foo::BM` are left alone — heuristic vs. `syn::Fold<Expr::Path>`,
-/// which would need the `syn/full,fold` features.
-fn rewrite_variant_idents(
-    ts: TokenStream,
+fn fold_variant_idents(
+    expr: Expr,
     variant_names: &[&str],
     referenced: &mut BTreeSet<String>,
-) -> TokenStream {
-    let mut out = TokenStream::new();
-    let mut prev_punct: Option<char> = None;
-    for tt in ts {
-        match tt {
-            TokenTree::Ident(ident)
-                if !matches!(prev_punct, Some('.') | Some(':'))
-                    && variant_names.contains(&ident.to_string().as_str()) =>
-            {
-                let name = ident.to_string();
-                let field = variant_field_ident(&name);
-                referenced.insert(name);
-                out.extend(quote! { self.#field });
-                prev_punct = None;
-            },
-            TokenTree::Group(group) => {
-                let new_stream = rewrite_variant_idents(group.stream(), variant_names, referenced);
-                out.extend([TokenTree::Group(proc_macro2::Group::new(group.delimiter(), new_stream))]);
-                prev_punct = None;
-            },
-            TokenTree::Punct(p) => {
-                prev_punct = Some(p.as_char());
-                out.extend([TokenTree::Punct(p)]);
-            },
-            other => {
-                prev_punct = None;
-                out.extend([other]);
-            },
+) -> Expr {
+    struct VariantFolder<'a> {
+        names: &'a [&'a str],
+        referenced: &'a mut BTreeSet<String>,
+    }
+    impl syn::fold::Fold for VariantFolder<'_> {
+        fn fold_expr(
+            &mut self,
+            e: Expr,
+        ) -> Expr {
+            if let Expr::Path(ref ep) = e {
+                if ep.qself.is_none()
+                    && ep.path.leading_colon.is_none()
+                    && ep.path.segments.len() == 1
+                    && matches!(ep.path.segments[0].arguments, syn::PathArguments::None)
+                {
+                    let name = ep.path.segments[0].ident.to_string();
+                    if self.names.contains(&name.as_str()) {
+                        self.referenced.insert(name.clone());
+                        let field = variant_field_ident(&name);
+                        return syn::parse_quote! { self.#field };
+                    }
+                }
+            }
+            syn::fold::fold_expr(self, e)
         }
     }
-    out
+    VariantFolder {
+        names: variant_names,
+        referenced,
+    }
+    .fold_expr(expr)
 }
 
 pub fn bindgen(
@@ -77,7 +75,10 @@ pub fn bindgen(
 
     let mut referenced_variants: BTreeSet<String> = BTreeSet::new();
     let mut parse_expr_rewritten = |expr: &str| -> anyhow::Result<TokenStream> {
-        Ok(rewrite_variant_idents(parse_expr(expr)?, &variant_param_names, &mut referenced_variants))
+        let e: Expr = syn::parse_str(expr)
+            .with_context(|| format!("cannot parse rust expression `{}` in kernel `{}`", expr, kernel_name))?;
+        let folded = fold_variant_idents(e, &variant_param_names, &mut referenced_variants);
+        Ok(quote! { #folded })
     };
 
     // Precomputed per-variant state shared across constructor args, mangling,

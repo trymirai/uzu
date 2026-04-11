@@ -468,6 +468,8 @@ impl CpuCompiler {
             }
 
             let rhai_engine = (!function_constraints.is_empty()).then(rhai::Engine::new);
+            let constraint_strs: Vec<String> =
+                function_constraints.iter().map(|c| c.to_token_stream().to_string()).collect();
 
             let match_arms = function_parameters
                 .iter()
@@ -492,18 +494,12 @@ impl CpuCompiler {
                     let Some(engine) = &rhai_engine else {
                         return true;
                     };
-                    let mut scope = rhai::Scope::with_capacity(function_parameters.len());
-                    for (i, parameter) in function_parameters.iter().enumerate() {
-                        let val_str = variants[i].1.to_string();
-                        scope.push(
-                            parameter.name.to_string(),
-                            engine.eval_expression::<rhai::Dynamic>(&val_str).unwrap_or_else(|_| val_str.into()),
-                        );
-                    }
-                    function_constraints.iter().all(|constraint| {
-                        let expr_str = constraint.to_token_stream().to_string();
-                        engine.eval_expression_with_scope::<bool>(&mut scope, &expr_str).unwrap_or(false)
-                    })
+                    let bindings: Vec<(String, String)> = function_parameters
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string()))
+                        .collect();
+                    crate::common::constraints::satisfied(engine, &bindings, &constraint_strs)
                 })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
