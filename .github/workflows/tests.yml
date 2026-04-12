@@ -59,15 +59,14 @@ jobs:
     strategy:
       matrix:
         backend: [ 'cpu', 'metal' ]
+        target: [ '' ]
         tracing: [ false, true ]
         include:
           - grammar: true
-          - grammar: false
-            backend: 'cpu'
+          - backend: 'cpu'
+            target: 'wasm32-wasip1-threads'
             tracing: false
-          - target: ''
-          - target: 'wasm32-wasip1-threads'
-            backend: 'cpu'
+            grammar: false
         exclude:
           - backend: 'cpu'
             tracing: true
@@ -75,7 +74,7 @@ jobs:
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
       FEATURE_FLAGS: >-
-        ${{ matrix.target != '' && format('--features {0}', matrix.target) || '' }}
+        ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
         ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}
         ${{ matrix.grammar && '--features grammar' || '' }}
         ${{ matrix.tracing && '--features tracing' || '' }}
