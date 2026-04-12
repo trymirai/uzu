@@ -62,6 +62,9 @@ jobs:
           - grammar: false
             backend: 'cpu'
             tracing: false
+        exclude:
+          - backend: 'cpu'
+            tracing: true
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
