@@ -1,6 +1,6 @@
 // This code is based on the safetensors implementation: https://docs.rs/safetensors/latest/src/safetensors/tensor.rs.html
 
-use std::{collections::HashMap, fs::File, os::unix::fs::FileExt};
+use std::{collections::HashMap, fs::File};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

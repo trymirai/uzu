@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, hash_map::Keys},
     fs::File,
-    os::unix::fs::FileExt,
 };
 
 use thiserror::Error;
