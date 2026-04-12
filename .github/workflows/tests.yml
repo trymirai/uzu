@@ -59,12 +59,16 @@ jobs:
         tracing: [ false, true ]
         include:
           - grammar: true
-          - backend: 'cpu'
-            grammar: false
+          - grammar: false
+            backend: 'cpu'
             tracing: false
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
+      FEATURE_FLAGS: >-
+        ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}
+        ${{ matrix.grammar && '--features grammar' || '' }}
+        ${{ matrix.tracing && '--features tracing' || '' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -74,28 +78,20 @@ jobs:
           test_model: true
           nextest: true
 
+      - name: Build uzu
+        if: ${{ matrix.backend == 'cpu' }}
+        run: cargo +stable build --package uzu --no-default-features $FEATURE_FLAGS
+
       - name: Build crates
-        run: |
-          cargo +stable build --no-default-features \
-            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
-            ${{ matrix.grammar && '--features grammar' || '' }} \
-            ${{ matrix.tracing && '--features tracing' || '' }} \
+        run: cargo +stable build --no-default-features $FEATURE_FLAGS
 
       - name: Build benches
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
-        run: |
-          cargo +nightly bench --no-run --no-default-features \
-            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
-            ${{ matrix.grammar && '--features grammar' || '' }} \
-            ${{ matrix.tracing && '--features tracing' || '' }} \
+        run: cargo +nightly bench --no-run --no-default-features $FEATURE_FLAGS
 
       - name: Run tests
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar }}
-        run: |
-          cargo +stable nextest run --profile=ci --no-default-features \
-            ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }} \
-            ${{ matrix.grammar && '--features grammar' || '' }} \
-            ${{ matrix.tracing && '--features tracing' || '' }} \
+        run: cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS
 
   completed:
     name: completed
