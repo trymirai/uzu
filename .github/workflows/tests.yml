@@ -50,7 +50,10 @@ jobs:
         run: cargo deny check
 
   tests:
-    name: ${{ matrix.backend }} ${{ matrix.tracing && ' (tracing)' || '' }} ${{ matrix.grammar && ' (grammar)' || '' }}
+    name: ${{ matrix.backend }}
+      ${{ matrix.tracing && ' (tracing)' || '' }}
+      ${{ matrix.grammar && ' (grammar)' || '' }}
+      ${{ matrix.target != '' && format(' ({0})', matrix.target) || '' }}
     runs-on: [ self-hosted, macos, mac, arm64 ]
 
     strategy:
@@ -62,6 +65,9 @@ jobs:
           - grammar: false
             backend: 'cpu'
             tracing: false
+          - target: ''
+          - target: 'wasm32-wasip1-threads'
+            backend: 'cpu'
         exclude:
           - backend: 'cpu'
             tracing: true
@@ -69,6 +75,7 @@ jobs:
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
       FEATURE_FLAGS: >-
+        ${{ matrix.target != '' && format('--features {0}', matrix.target) || '' }}
         ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}
         ${{ matrix.grammar && '--features grammar' || '' }}
         ${{ matrix.tracing && '--features tracing' || '' }}
@@ -82,10 +89,11 @@ jobs:
           nextest: true
 
       - name: Build uzu
-        if: ${{ matrix.backend == 'cpu' }}
+        if: ${{ matrix.backend == 'cpu' && matrix.target == 'wasm32-wasip1-threads' }}
         run: cargo +stable build --package uzu --no-default-features $FEATURE_FLAGS
 
       - name: Build crates
+        if: ${{ matrix.target != 'wasm32-wasip1-threads' }}
         run: cargo +stable build --no-default-features $FEATURE_FLAGS
 
       - name: Build benches
