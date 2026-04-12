@@ -4633,6 +4633,7 @@ dependencies = [
  "rangemap",
  "regex",
  "rhai",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",

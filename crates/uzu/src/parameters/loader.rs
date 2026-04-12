@@ -11,6 +11,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt},
     backends::common::{Backend, Buffer, Context},
+    utils::fs::file_read_exact_at,
 };
 
 pub struct ParameterMetadata {
@@ -124,7 +125,7 @@ where
             });
         }
 
-        self.file.read_exact_at(array.as_bytes_mut(), offset as u64)?;
+        file_read_exact_at(self.file, array.as_bytes_mut(), offset as u64)?;
         Ok(array)
     }
 
@@ -136,7 +137,7 @@ where
         data_type: &mut DataType,
     ) -> Result<(), ParameterLoaderError<C::Backend>> {
         let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
-        self.file.read_exact_at(buf, metadata_entry.offset as u64)?;
+        file_read_exact_at(self.file, buf, metadata_entry.offset as u64)?;
         *shape = metadata_entry.shape.to_owned();
         *data_type = metadata_entry.data_type;
         Ok(())
@@ -173,7 +174,8 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         let mut buffer =
             self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
         buffer.set_label(Some(&format!("parameter_loader_{}", self.key.replace(".", "_"))));
-        self.loader.file.read_exact_at(
+        file_read_exact_at(
+            self.loader.file,
             unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, self.metadata.size) },
             self.metadata.offset as u64,
         )?;

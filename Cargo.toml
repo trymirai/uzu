@@ -76,6 +76,7 @@ test-tag = "0.1"
 proptest = "1.10"
 criterion = "0.8.2"
 criterion-macro = "0.4.0"
+rustix = "1.1.4"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
