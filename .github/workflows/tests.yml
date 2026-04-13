@@ -87,13 +87,8 @@ jobs:
           test_model: true
           nextest: true
 
-      - name: Build uzu
-        if: ${{ matrix.backend == 'cpu' && matrix.target == 'wasm32-wasip1-threads' }}
-        run: cargo +stable build --package uzu --no-default-features $FEATURE_FLAGS
-
       - name: Build crates
-        if: ${{ matrix.target != 'wasm32-wasip1-threads' }}
-        run: cargo +stable build --no-default-features $FEATURE_FLAGS
+        run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }}
 
       - name: Build benches
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}

@@ -45,18 +45,15 @@ xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
+proptest.workspace = true
+criterion.workspace = true
+criterion-macro.workspace = true
 rand_distr.workspace = true
 is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
-
-# these crates pull in terminal/process/threading deps that don't support wasm
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 comfy-table.workspace = true
-criterion.workspace = true
-criterion-macro.workspace = true
 indicatif.workspace = true
-proptest.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true

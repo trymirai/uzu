@@ -32,10 +32,7 @@ async fn main() -> anyhow::Result<()> {
         println!("cargo::rustc-cfg=metal_backend");
     }
 
-    let mut grammar_xgrammar = cfg!(feature = "grammar");
-    if target_arch == "wasm32" {
-        grammar_xgrammar = false;
-    }
+    let grammar_xgrammar = cfg!(feature = "grammar") && target_arch != "wasm32";
     println!("cargo::rustc-check-cfg=cfg(grammar_xgrammar)");
     if grammar_xgrammar {
         println!("cargo::rustc-cfg=grammar_xgrammar");
