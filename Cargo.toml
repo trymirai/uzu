@@ -20,7 +20,7 @@ ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-tokenizers = "0.22"
+tokenizers = { version = "0.22", features = ["fancy-regex"], default-features = false }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 metal = { package = "mtl-rs", version = "0.1" }
@@ -76,6 +76,7 @@ test-tag = "0.1"
 proptest = "1.10"
 criterion = "0.8.2"
 criterion-macro = "0.4.0"
+rustix = "1.1.4"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]
