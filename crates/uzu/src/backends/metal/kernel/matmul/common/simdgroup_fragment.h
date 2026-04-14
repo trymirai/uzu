@@ -50,21 +50,21 @@ struct SimdgroupFragment {
 
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < MULTIPLY_ACCUMULATE_COUNT; ++i) {
+    for (ushort i = 0; i < MULTIPLY_ACCUMULATE_COUNT; ++i) {
       multiply_accumulate_data[i] = ThreadDataType(0);
     }
   }
 
   METAL_FUNC constexpr thread ThreadDataType& multiply_accumulate_at(
-      const short i,
-      const short j
+      const ushort i,
+      const ushort j
   ) {
     return multiply_accumulate_data[i * GRID_COLS + j];
   }
 
   METAL_FUNC constexpr const thread ThreadDataType& multiply_accumulate_at(
-      const short i,
-      const short j
+      const ushort i,
+      const ushort j
   ) const {
     return multiply_accumulate_data[i * GRID_COLS + j];
   }
@@ -85,18 +85,18 @@ struct SimdgroupFragment {
       int SIMDGROUP_STRIDE_Y,
       int STRIDE_X,
       int STRIDE_Y>
-  METAL_FUNC void load(const threadgroup U* src) {
+  METAL_FUNC void load(const threadgroup U* source) {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < GRID_ROWS; ++i) {
+    for (ushort i = 0; i < GRID_ROWS; ++i) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < GRID_COLS; ++j) {
+      for (ushort j = 0; j < GRID_COLS; ++j) {
         SimdgroupMultiplyAccumulateOpsType::load(
             multiply_accumulate_at(i, j),
             &(
-                src[(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
-                        STRIDE_X +
-                    (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y *
-                        STRIDE_Y]
+                source[(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
+                           STRIDE_X +
+                       (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y *
+                           STRIDE_Y]
             ),
             STRIDE_X,
             STRIDE_Y
@@ -106,17 +106,17 @@ struct SimdgroupFragment {
   }
 
   template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y>
-  METAL_FUNC void store(device U* dst, const int leading_dimension) const {
+  METAL_FUNC void store(device U* destination, const int leading_dimension) const {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < GRID_ROWS; ++i) {
+    for (ushort i = 0; i < GRID_ROWS; ++i) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < GRID_COLS; ++j) {
+      for (ushort j = 0; j < GRID_COLS; ++j) {
         SimdgroupMultiplyAccumulateOpsType::store(
             multiply_accumulate_at(i, j),
             &(
-                dst[(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
-                        leading_dimension +
-                    (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y]
+                destination[(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
+                                leading_dimension +
+                            (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y]
             ),
             leading_dimension,
             1
@@ -127,7 +127,7 @@ struct SimdgroupFragment {
 
   template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y>
   METAL_FUNC void store_safe(
-      device U* dst,
+      device U* destination,
       const int leading_dimension,
       const short2 destination_tile_dimensions
   ) const {
@@ -137,7 +137,7 @@ struct SimdgroupFragment {
       for (int j = 0; j < GRID_COLS; ++j) {
         SimdgroupMultiplyAccumulateOpsType::store_safe(
             multiply_accumulate_at(i, j),
-            dst,
+            destination,
             leading_dimension,
             1,
             destination_tile_dimensions.y,
@@ -162,12 +162,12 @@ METAL_FUNC void tile_multiply_accumulate(
     thread SimdgroupFragment<T, M, N>& C
 ) {
   METAL_PRAGMA_UNROLL
-  for (short m = 0; m < M; ++m) {
+  for (ushort m = 0; m < M; ++m) {
     METAL_PRAGMA_UNROLL
-    for (short n = 0; n < N; ++n) {
-      short column_serpentine = (m % 2) ? (N - 1 - n) : n;
+    for (ushort n = 0; n < N; ++n) {
+      const ushort column_serpentine = (m % 2) ? (N - 1 - n) : n;
       METAL_PRAGMA_UNROLL
-      for (short k = 0; k < K; ++k) {
+      for (ushort k = 0; k < K; ++k) {
         SimdgroupFragment<T, M, N>::SimdgroupMultiplyAccumulateOpsType::
             multiply_accumulate(
                 D.multiply_accumulate_at(m, column_serpentine),

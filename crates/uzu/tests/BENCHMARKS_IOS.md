@@ -13,7 +13,6 @@
 | Benchmark group                       | Filter pattern     | MXU required |
 | ------------------------------------- | ------------------ | ------------ |
 | `Metal/Kernel/Matmul/GEMM_MPP`        | `GEMM_MPP/`        | yes          |
-| `Metal/Kernel/Matmul/GEMM_MPP_DIRECT` | `GEMM_MPP_DIRECT/` | yes          |
 | `Metal/Kernel/RMSNorm`                | `RMSNorm/`         | no           |
 | `Metal/Kernel/Sampling/Argmax`        | `Argmax/`          | no           |
 

@@ -15,7 +15,8 @@ mod matmul;
 mod moe;
 mod pooling;
 mod qk_norm_test;
-mod quant_matmul;
+#[path = "quant_matmul/mod.rs"]
+mod quantized;
 mod rms_norm_test;
 mod rope_test;
 mod sampling;

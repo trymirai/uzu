@@ -1,6 +1,6 @@
 #pragma once
 
-#include "defines.h"
+#include "../../common/defines.h"
 
 using namespace metal;
 
@@ -13,32 +13,31 @@ namespace matmul {
 
 template <
     typename T,
-    short BLOCK_ROWS,
-    short BLOCK_COLS,
-    short DESTINATION_LEADING_DIMENSION,
-    short REDUCTION_DIMENSION,
-    short THREADGROUP_SIZE,
-    short ALIGNMENT = 1,
-    short READS_PER_THREAD = (BLOCK_COLS * BLOCK_ROWS) / (THREADGROUP_SIZE),
-    short THREAD_COLS = BLOCK_COLS / READS_PER_THREAD,
-    short THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS>
+    ushort BLOCK_ROWS,
+    ushort BLOCK_COLS,
+    ushort DESTINATION_LEADING_DIMENSION,
+    ushort REDUCTION_DIMENSION,
+    ushort THREADGROUP_SIZE,
+    ushort ALIGNMENT = 1,
+    ushort READS_PER_THREAD = (BLOCK_COLS * BLOCK_ROWS) / (THREADGROUP_SIZE),
+    ushort THREAD_COLS = BLOCK_COLS / READS_PER_THREAD,
+    ushort THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS>
 struct ThreadgroupLoader {
-  METAL_CONST short ROW_ITERATIONS =
+  METAL_CONST ushort ROW_ITERATIONS =
       (BLOCK_ROWS + THREAD_ROWS - 1) / THREAD_ROWS;
-  METAL_CONST short VECTOR_SIZE = READS_PER_THREAD;
 
   const int source_leading_dimension;
   const int tile_stride;
 
-  const short thread_index;
-  const short block_row_index;
-  const short block_col_index;
+  const ushort thread_index;
+  const ushort block_row_index;
+  const ushort block_col_index;
 
   threadgroup T* destination;
   const device T* source;
 
   struct alignas(ALIGNMENT * sizeof(T)) ReadVector {
-    uint8_t bytes[sizeof(T) * VECTOR_SIZE];
+    uint8_t bytes[sizeof(T) * READS_PER_THREAD];
   };
 
   METAL_FUNC ThreadgroupLoader(
@@ -52,9 +51,9 @@ struct ThreadgroupLoader {
         tile_stride(
             REDUCTION_DIMENSION ? BLOCK_COLS : BLOCK_ROWS * source_leading_dim
         ),
-        thread_index(simd_group_id * 32 + simd_lane_id),
+        thread_index(simd_group_id * METAL_SIMD_SIZE + simd_lane_id),
         block_row_index(thread_index / THREAD_COLS),
-        block_col_index(VECTOR_SIZE * (thread_index % THREAD_COLS)),
+        block_col_index(READS_PER_THREAD * (thread_index % THREAD_COLS)),
         destination(
             destination_ptr + block_row_index * DESTINATION_LEADING_DIMENSION +
             block_col_index
@@ -66,9 +65,9 @@ struct ThreadgroupLoader {
   template <typename UnaryOp>
   METAL_FUNC void apply_inplace_op(thread const UnaryOp& operation) const {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+    for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < VECTOR_SIZE; j++) {
+      for (ushort j = 0; j < READS_PER_THREAD; j++) {
         destination[i * DESTINATION_LEADING_DIMENSION + j] =
             operation.apply(destination[i * DESTINATION_LEADING_DIMENSION + j]);
       }
@@ -77,7 +76,7 @@ struct ThreadgroupLoader {
 
   METAL_FUNC void load_unsafe() const {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+    for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
       *((threadgroup ReadVector*)(&destination
                                       [i * DESTINATION_LEADING_DIMENSION])) =
           *((const device ReadVector*)(&source[i * source_leading_dimension]));
@@ -90,39 +89,39 @@ struct ThreadgroupLoader {
 
     if (source_tile_dimensions.x <= 0 || source_tile_dimensions.y <= 0) {
       METAL_PRAGMA_UNROLL
-      for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
         METAL_PRAGMA_UNROLL
-        for (short j = 0; j < VECTOR_SIZE; j++) {
+        for (ushort j = 0; j < READS_PER_THREAD; j++) {
           destination[i * DESTINATION_LEADING_DIMENSION + j] = T(0);
         }
       }
       return;
     }
 
-    bool valid_mask[VECTOR_SIZE];
-    T loaded_values[VECTOR_SIZE];
+    bool valid_mask[READS_PER_THREAD];
+    T loaded_values[READS_PER_THREAD];
 
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+    for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < VECTOR_SIZE; j++) {
+      for (ushort j = 0; j < READS_PER_THREAD; j++) {
         valid_mask[j] =
             (i < source_tile_dimensions.y) && (j < source_tile_dimensions.x);
       }
 
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < VECTOR_SIZE; j++) {
+      for (ushort j = 0; j < READS_PER_THREAD; j++) {
         loaded_values[j] =
             source[(valid_mask[j] ? i * source_leading_dimension + j : 0)];
       }
 
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < VECTOR_SIZE; j++) {
+      for (ushort j = 0; j < READS_PER_THREAD; j++) {
         loaded_values[j] = valid_mask[j] ? loaded_values[j] : T(0);
       }
 
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < VECTOR_SIZE; j++) {
+      for (ushort j = 0; j < READS_PER_THREAD; j++) {
         destination[i * DESTINATION_LEADING_DIMENSION + j] = loaded_values[j];
       }
     }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "defines.h"
+#include "matmul_support.h"
 
 using namespace metal;
 
@@ -27,7 +27,7 @@ template <typename T>
 struct SimdgroupMultiplyAccumulate<T, 8, 8> {
   METAL_CONST int ROWS = 8;
   METAL_CONST int COLS = 8;
-  METAL_CONST int THREAD_ELEMENT_COUNT = (ROWS * COLS) / 32;
+  METAL_CONST int THREAD_ELEMENT_COUNT = (ROWS * COLS) / METAL_SIMD_SIZE;
   METAL_CONST int THREAD_ELEMENT_ROWS = 1;
   METAL_CONST int THREAD_ELEMENT_COLS = 2;
 
@@ -39,111 +39,111 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
   typedef metal::simdgroup_matrix<T, ROWS, COLS> SimdgroupMatrixType;
   typedef metal::vec<T, THREAD_ELEMENT_COUNT> ThreadDataType;
 
-  METAL_FUNC static constexpr short2 get_lane_coordinates(
+  METAL_FUNC static constexpr ushort2 get_lane_coordinates(
       ushort simd_lane_id [[thread_index_in_simdgroup]]
   ) {
-    const short quad_index = simd_lane_id / 4;
-    const short lane_row = (quad_index & 4) + ((simd_lane_id / 2) % 4);
-    const short lane_col = (quad_index & 2) * 2 + (simd_lane_id % 2) * 2;
-    return short2{lane_col, lane_row};
+    const ushort quad_index = simd_lane_id / 4;
+    const ushort lane_row = (quad_index & 4) + ((simd_lane_id / 2) % 4);
+    const ushort lane_col = (quad_index & 2) * 2 + (simd_lane_id % 2) * 2;
+    return ushort2{lane_col, lane_row};
   }
 
-  template <typename SrcPtrType, typename StrideX, typename StrideY>
+  template <typename SourcePointerType, typename RowStride, typename ColStride>
   METAL_FUNC static constexpr void load(
-      thread ThreadDataType& dst,
-      SrcPtrType src,
-      StrideX stride_x,
-      StrideY stride_y
+      thread ThreadDataType& destination,
+      SourcePointerType source,
+      RowStride row_stride,
+      ColStride col_stride
   ) {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < THREAD_ELEMENT_ROWS; i++) {
+    for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        dst[i * THREAD_ELEMENT_COLS + j] =
-            static_cast<T>(src[i * stride_x + j * stride_y]);
+      for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
+        destination[i * THREAD_ELEMENT_COLS + j] =
+            static_cast<T>(source[i * row_stride + j * col_stride]);
       }
     }
   }
 
   template <
-      typename SrcPtrType,
-      typename StrideX,
-      typename StrideY,
-      typename LimitX,
-      typename LimitY,
-      typename OffsetX,
-      typename OffsetY>
+      typename SourcePointerType,
+      typename RowStride,
+      typename ColStride,
+      typename RowLimit,
+      typename ColLimit,
+      typename RowOffset,
+      typename ColOffset>
   METAL_FUNC static constexpr void load_safe(
-      thread ThreadDataType& dst,
-      SrcPtrType src,
-      StrideX stride_x,
-      StrideY stride_y,
-      LimitX limit_x,
-      LimitY limit_y,
-      OffsetX offset_x = 0,
-      OffsetY offset_y = 0
+      thread ThreadDataType& destination,
+      SourcePointerType source,
+      RowStride row_stride,
+      ColStride col_stride,
+      RowLimit row_limit,
+      ColLimit col_limit,
+      RowOffset row_offset = 0,
+      ColOffset col_offset = 0
   ) {
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < THREAD_ELEMENT_ROWS; i++) {
+    for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        if ((offset_x + i) < limit_x && (offset_y + j) < limit_y) {
-          dst[i * THREAD_ELEMENT_COLS + j] = static_cast<T>(
-              src[(offset_x + i) * stride_x + (offset_y + j) * stride_y]
+      for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
+        if ((row_offset + i) < row_limit && (col_offset + j) < col_limit) {
+          destination[i * THREAD_ELEMENT_COLS + j] = static_cast<T>(
+              source[(row_offset + i) * row_stride + (col_offset + j) * col_stride]
           );
         } else {
-          dst[i * THREAD_ELEMENT_COLS + j] = T(0);
+          destination[i * THREAD_ELEMENT_COLS + j] = T(0);
         }
       }
     }
   }
 
-  template <typename DstPtrType, typename StrideX, typename StrideY>
+  template <typename DestinationPointerType, typename RowStride, typename ColStride>
   METAL_FUNC static constexpr void store(
-      const thread ThreadDataType& src,
-      DstPtrType dst,
-      StrideX stride_x,
-      StrideY stride_y
+      const thread ThreadDataType& source,
+      DestinationPointerType destination,
+      RowStride row_stride,
+      ColStride col_stride
   ) {
-    using U = PointerElementType<DstPtrType>;
+    using U = PointerElementType<DestinationPointerType>;
 
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < THREAD_ELEMENT_ROWS; i++) {
+    for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        dst[i * stride_x + j * stride_y] =
-            static_cast<U>(src[i * THREAD_ELEMENT_COLS + j]);
+      for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
+        destination[i * row_stride + j * col_stride] =
+            static_cast<U>(source[i * THREAD_ELEMENT_COLS + j]);
       }
     }
   }
 
   template <
-      typename DstPtrType,
-      typename StrideX,
-      typename StrideY,
-      typename LimitX,
-      typename LimitY,
-      typename OffsetX,
-      typename OffsetY>
+      typename DestinationPointerType,
+      typename RowStride,
+      typename ColStride,
+      typename RowLimit,
+      typename ColLimit,
+      typename RowOffset,
+      typename ColOffset>
   METAL_FUNC static constexpr void store_safe(
-      const thread ThreadDataType& src,
-      DstPtrType dst,
-      StrideX stride_x,
-      StrideY stride_y,
-      LimitX limit_x,
-      LimitY limit_y,
-      OffsetX offset_x = 0,
-      OffsetY offset_y = 0
+      const thread ThreadDataType& source,
+      DestinationPointerType destination,
+      RowStride row_stride,
+      ColStride col_stride,
+      RowLimit row_limit,
+      ColLimit col_limit,
+      RowOffset row_offset = 0,
+      ColOffset col_offset = 0
   ) {
-    using U = PointerElementType<DstPtrType>;
+    using U = PointerElementType<DestinationPointerType>;
 
     METAL_PRAGMA_UNROLL
-    for (short i = 0; i < THREAD_ELEMENT_ROWS; i++) {
+    for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
-      for (short j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        if ((offset_x + i) < limit_x && (offset_y + j) < limit_y) {
-          dst[(offset_x + i) * stride_x + (offset_y + j) * stride_y] =
-              static_cast<U>(src[i * THREAD_ELEMENT_COLS + j]);
+      for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
+        if ((row_offset + i) < row_limit && (col_offset + j) < col_limit) {
+          destination[(row_offset + i) * row_stride + (col_offset + j) * col_stride] =
+              static_cast<U>(source[i * THREAD_ELEMENT_COLS + j]);
         }
       }
     }

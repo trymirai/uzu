@@ -32,22 +32,22 @@ template <
     bool transpose_b,
     bool MN_aligned,
     bool K_aligned,
-    typename AccumType = float,
-    typename Epilogue = TransformNone<U, AccumType>>
+    typename AccumulatorType = float,
+    typename Epilogue = TransformNone<U, AccumulatorType>>
 struct ThreadgroupGemm {
-  METAL_CONST short THREADGROUP_PADDING_A = 16 / sizeof(T);
-  METAL_CONST short THREADGROUP_PADDING_B = 16 / sizeof(T);
-  METAL_CONST short THREADGROUP_MEMORY_SIZE_A =
+  METAL_CONST ushort THREADGROUP_PADDING_A = 16 / sizeof(T);
+  METAL_CONST ushort THREADGROUP_PADDING_B = 16 / sizeof(T);
+  METAL_CONST ushort THREADGROUP_MEMORY_SIZE_A =
       transpose_a ? BLOCK_DEPTH * (BLOCK_ROWS + THREADGROUP_PADDING_A)
                   : BLOCK_ROWS * (BLOCK_DEPTH + THREADGROUP_PADDING_A);
-  METAL_CONST short THREADGROUP_MEMORY_SIZE_B =
+  METAL_CONST ushort THREADGROUP_MEMORY_SIZE_B =
       transpose_b ? BLOCK_COLS * (BLOCK_DEPTH + THREADGROUP_PADDING_B)
                   : BLOCK_DEPTH * (BLOCK_COLS + THREADGROUP_PADDING_B);
-  METAL_CONST short THREADGROUP_MEMORY_SIZE =
+  METAL_CONST ushort THREADGROUP_MEMORY_SIZE =
       THREADGROUP_MEMORY_SIZE_A + THREADGROUP_MEMORY_SIZE_B;
 
-  METAL_CONST short THREADGROUP_SIZE =
-      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32;
+  METAL_CONST ushort THREADGROUP_SIZE =
+      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
   using LoaderAType = ThreadgroupLoader<
       T,
@@ -79,20 +79,20 @@ struct ThreadgroupGemm {
                   : BLOCK_DEPTH + THREADGROUP_PADDING_A,
       transpose_b ? BLOCK_DEPTH + THREADGROUP_PADDING_B
                   : BLOCK_COLS + THREADGROUP_PADDING_B,
-      AccumType,
+      AccumulatorType,
       Epilogue>;
 
   template <bool M_aligned, bool N_aligned, bool K_aligned_>
   static METAL_FUNC void gemm_loop(
       threadgroup T* a_shared,
       threadgroup T* b_shared,
-      const int gemm_k_iterations,
+      const int aligned_k_iterations,
       thread LoaderAType& loader_a,
       thread LoaderBType& loader_b,
       thread ThreadgroupTileType& threadgroup_tile,
-      thread const short& threadgroup_block_rows,
-      thread const short& threadgroup_block_cols,
-      thread const short& leftover_block_depth,
+      thread const ushort& threadgroup_block_rows,
+      thread const ushort& threadgroup_block_cols,
+      thread const ushort& leftover_block_depth,
       LoopAlignment<M_aligned, N_aligned, K_aligned_> alignment = {}
   ) {
     (void)alignment;
@@ -104,7 +104,7 @@ struct ThreadgroupGemm {
         transpose_b ? short2(BLOCK_DEPTH, threadgroup_block_cols)
                     : short2(threadgroup_block_cols, BLOCK_DEPTH);
 
-    for (int k = 0; k < gemm_k_iterations; k++) {
+    for (int k = 0; k < aligned_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
       if (M_aligned) {
         loader_a.load_unsafe();
@@ -156,15 +156,15 @@ struct ThreadgroupGemm {
       threadgroup T* b_shared,
       uint simd_lane_id [[thread_index_in_simdgroup]],
       uint simd_group_id [[simdgroup_index_in_threadgroup]],
-      uint2 tid [[threadgroup_position_in_grid]],
-      uint3 lid [[thread_position_in_threadgroup]]
+      uint2 threadgroup_position [[threadgroup_position_in_grid]],
+      uint3 thread_position [[thread_position_in_threadgroup]]
   ) {
-    (void)lid;
+    (void)thread_position;
 
     const int swizzle_stride = pow2(params->swizzle_log);
     const int swizzled_row_id =
-        tid.y * swizzle_stride + (tid.x % swizzle_stride);
-    const int swizzled_col_id = tid.x / swizzle_stride;
+        threadgroup_position.y * swizzle_stride + (threadgroup_position.x % swizzle_stride);
+    const int swizzled_col_id = threadgroup_position.x / swizzle_stride;
 
     if (params->threadgroups_per_row <= swizzled_col_id ||
         params->threadgroups_per_column <= swizzled_row_id) {
@@ -201,17 +201,16 @@ struct ThreadgroupGemm {
 
     thread ThreadgroupTileType threadgroup_tile(simd_group_id, simd_lane_id);
 
-    TransformScaleAccumulate<AccumType, AccumType> epilogue(
+    TransformScaleAccumulate<AccumulatorType, AccumulatorType> epilogue(
         ab_scale,
         is_accumulate ? 1.0f : 0.0f
     );
 
-    int gemm_k_iterations = params->aligned_inner_iterations;
 
     ///////////////////////////////////////////////////////////////////////////
     // MNK aligned loop
     if (MN_aligned) {
-      for (int k = 0; k < gemm_k_iterations; k++) {
+      for (int k = 0; k < params->aligned_inner_iterations; k++) {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         loader_a.load_unsafe();
         loader_b.load_unsafe();
@@ -252,11 +251,11 @@ struct ThreadgroupGemm {
     ///////////////////////////////////////////////////////////////////////////
     // MN unaligned loop
     else {
-      short threadgroup_block_rows =
+      ushort threadgroup_block_rows =
           min(BLOCK_ROWS, ((int)params->M) - output_row);
-      short threadgroup_block_cols =
+      ushort threadgroup_block_cols =
           min(BLOCK_COLS, ((int)params->N) - output_col);
-      short leftover_block_depth =
+      ushort leftover_block_depth =
           params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
 
       if (threadgroup_block_rows == BLOCK_ROWS &&
@@ -264,7 +263,7 @@ struct ThreadgroupGemm {
         gemm_loop<true, true, K_aligned>(
             a_shared,
             b_shared,
-            gemm_k_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -282,7 +281,7 @@ struct ThreadgroupGemm {
         gemm_loop<false, true, K_aligned>(
             a_shared,
             b_shared,
-            gemm_k_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -309,7 +308,7 @@ struct ThreadgroupGemm {
         gemm_loop<true, false, K_aligned>(
             a_shared,
             b_shared,
-            gemm_k_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -336,7 +335,7 @@ struct ThreadgroupGemm {
         gemm_loop<false, false, K_aligned>(
             a_shared,
             b_shared,
-            gemm_k_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,

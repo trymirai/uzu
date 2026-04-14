@@ -5,7 +5,6 @@
 #pragma METAL internals : enable
 
 namespace uzu {
-namespace matmul {
 
 template <typename T, T v>
 struct integral_constant {
@@ -23,15 +22,6 @@ using false_type = bool_constant<false>;
 
 template <int val>
 using Int = integral_constant<int, val>;
-
-template <class T>
-struct is_integral_constant : bool_constant<false> {};
-
-template <class T, T v>
-struct is_integral_constant<integral_constant<T, v>> : bool_constant<true> {};
-
-template <typename T>
-constexpr constant bool is_integral_constant_v = is_integral_constant<T>::value;
 
 #define UZU_INTEGRAL_CONST_BINOP(op, fn)                                \
   template <typename T, T tv, typename U, U uv>                         \
@@ -65,7 +55,6 @@ void dispatch_bool(bool v, F f) {
   }
 }
 
-} // namespace matmul
 } // namespace uzu
 
 #pragma METAL internals : disable

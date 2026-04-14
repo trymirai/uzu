@@ -239,6 +239,38 @@ fn test_bf16_scale_and_accumulate() {
     test_mpp_correctness(64, 2048, 2048, 0.5, true, 1.0);
 }
 
+// 128x128 tile (M >= 128, N >= 128)
+
+#[uzu_test]
+fn test_bf16_128x128_aligned() {
+    test_mpp_correctness(128, 2048, 2048, 1.0, false, 1.0);
+}
+
+#[uzu_test]
+fn test_bf16_128x128_unaligned_m() {
+    test_mpp_correctness(200, 2048, 2048, 1.0, false, 1.0);
+}
+
+#[uzu_test]
+fn test_bf16_128x128_unaligned_n() {
+    test_mpp_correctness(128, 2048, 200, 1.0, false, 1.0);
+}
+
+#[uzu_test]
+fn test_bf16_128x128_large() {
+    test_mpp_correctness(256, 4096, 4096, 1.0, false, 2.0);
+}
+
+#[uzu_test]
+fn test_bf16_128x128_accumulate() {
+    test_mpp_correctness(128, 2048, 2048, 1.0, true, 1.0);
+}
+
+#[uzu_test]
+fn test_bf16_128x128_scale_and_accumulate() {
+    test_mpp_correctness(256, 2048, 2048, 0.5, true, 1.0);
+}
+
 // Benchmarks
 
 const BENCHMARK_SHAPES: &[(usize, usize, usize)] =
