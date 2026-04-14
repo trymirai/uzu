@@ -58,11 +58,9 @@ jobs:
 
     strategy:
       matrix:
-        #        backend: [ 'cpu', 'metal' ]
-        backend: [ 'cpu' ]
+        backend: [ 'cpu', 'metal' ]
         target: [ '' ]
-        #        tracing: [ false, true ]
-        tracing: [ false ]
+        tracing: [ false, true ]
         include:
           - grammar: true
           - backend: 'cpu'
@@ -100,9 +98,8 @@ jobs:
       - name: Run tests
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
         run: |
-          export WASMTIME_BACKTRACE_DETAILS=1 && RUST_BACKTRACE=1 cargo +stable nextest run --profile=ci --no-default-features \
-            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} \
-            $FEATURE_FLAGS
+          cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
+            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu --lib --test kernel' || '' }}
 
   completed:
     name: completed
