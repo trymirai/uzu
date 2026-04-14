@@ -2,4 +2,5 @@
 RUST_TEST_THREADS = "1"
 
 [target.wasm32-wasip1-threads]
-runner = ["wasmtime", "-W", "threads=y,shared-memory=y", "-S", "threads=y", "--"]
+runner = ["wasmtime", "-W", "threads=y,shared-memory=y", "-S", "threads=y", "--dir", "/::/", "--"]
+rustflags = ["-C", "link-arg=--max-memory=4294967296"]

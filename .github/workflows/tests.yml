@@ -95,8 +95,11 @@ jobs:
         run: cargo +nightly bench --no-run --no-default-features $FEATURE_FLAGS
 
       - name: Run tests
-        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar }}
-        run: cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS
+        if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
+        run: |
+          cargo +stable nextest run --profile=ci --no-default-features \
+            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} \
+            $FEATURE_FLAGS
 
   completed:
     name: completed
