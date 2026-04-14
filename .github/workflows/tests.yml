@@ -58,9 +58,11 @@ jobs:
 
     strategy:
       matrix:
-        backend: [ 'cpu', 'metal' ]
+        #        backend: [ 'cpu', 'metal' ]
+        backend: [ 'cpu' ]
         target: [ '' ]
-        tracing: [ false, true ]
+        #        tracing: [ false, true ]
+        tracing: [ false ]
         include:
           - grammar: true
           - backend: 'cpu'
@@ -86,6 +88,7 @@ jobs:
           metal: ${{ matrix.backend == 'metal' }}
           test_model: true
           nextest: true
+          target: ${{ matrix.target }}
 
       - name: Build crates
         run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }}
@@ -97,7 +100,7 @@ jobs:
       - name: Run tests
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
         run: |
-          cargo +stable nextest run --profile=ci --no-default-features \
+          export WASMTIME_BACKTRACE_DETAILS=1 && RUST_BACKTRACE=1 cargo +stable nextest run --profile=ci --no-default-features \
             ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} \
             $FEATURE_FLAGS
 

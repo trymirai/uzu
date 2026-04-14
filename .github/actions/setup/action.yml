@@ -18,18 +18,24 @@ inputs:
     description: "Install nextest"
     required: false
     default: 'false'
+  target:
+    description: "Additional Rust target to install"
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
       with:
-        targets:
-          wasm32-wasip1-threads
+        targets: ${{ inputs.target }}
 
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: ${{ inputs.linters == 'true' && 'rustfmt' || '' }}
+
+    - if: inputs.target == 'wasm32-wasip1-threads'
+      uses: bytecodealliance/actions/wasmtime/setup@v1
 
     - if: inputs.linters == 'true'
       run: |
