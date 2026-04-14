@@ -80,8 +80,9 @@ struct ThreadgroupTile {
     ushort tile_col_base =
         SIMDGROUP_BLOCK_SIZE * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
-    ushort2 simdgroup_coordinates =
-        SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd_lane_id);
+    const ushort2 simdgroup_coordinates = ushort2(
+        SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd_lane_id)
+    );
     simdgroup_row_offset = simdgroup_coordinates.y;
     simdgroup_col_offset = simdgroup_coordinates.x;
 

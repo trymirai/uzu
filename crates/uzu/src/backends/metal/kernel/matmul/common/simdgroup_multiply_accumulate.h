@@ -39,13 +39,13 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
   typedef metal::simdgroup_matrix<T, ROWS, COLS> SimdgroupMatrixType;
   typedef metal::vec<T, THREAD_ELEMENT_COUNT> ThreadDataType;
 
-  METAL_FUNC static constexpr ushort2 get_lane_coordinates(
+  METAL_FUNC static constexpr short2 get_lane_coordinates(
       ushort simd_lane_id [[thread_index_in_simdgroup]]
   ) {
-    const ushort quad_index = simd_lane_id / 4;
-    const ushort lane_row = (quad_index & 4) + ((simd_lane_id / 2) % 4);
-    const ushort lane_col = (quad_index & 2) * 2 + (simd_lane_id % 2) * 2;
-    return ushort2{lane_col, lane_row};
+    const short quad_index = simd_lane_id / 4;
+    const short lane_row = (quad_index & 4) + ((simd_lane_id / 2) % 4);
+    const short lane_col = (quad_index & 2) * 2 + (simd_lane_id % 2) * 2;
+    return short2{lane_col, lane_row};
   }
 
   template <typename SourcePointerType, typename RowStride, typename ColStride>
