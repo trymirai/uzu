@@ -176,10 +176,9 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         )
         .map_err(QuantizedMatmulError::BackendError)?;
 
-        // Small-tile kernel: BM=8, BK=32, BN=32, WM=1, WN=1. Requires N%32==0
-        // and supported bits/group_size. Works for any supported T via the unified kernel.
-        // Used for batch_dim in [8, 48) at encode time.
-        let matrix_matrix = if aligned_n_32 {
+        // Small-tile kernel (BM=8): batch_dim in [8, 48). Skipped for hadamard configs
+        // since the BM=8 tile doesn't support it; QmvFast handles those batch sizes instead.
+        let matrix_matrix = if aligned_n_32 && !configuration.use_hadamard {
             let small = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
                 context,
                 configuration.data_type,
