@@ -5,16 +5,14 @@ use std::{cell::RefCell, rc::Rc};
 use ndarray::ArrayView2;
 
 #[cfg(feature = "tracing")]
-use crate::backends::common::Encoder;
-#[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
-    array::Array,
-    backends::common::{Backend, Context},
+    array::{Array, ArrayContextExt},
+    backends::common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderConfig,
     forward_pass::{
-        cache_layers::CacheLayers,
+        cache_layers::{CacheLayer, CacheLayers},
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
         state::{ArrayId, CommonAuxBuffers, LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers},
@@ -27,8 +25,14 @@ pub enum ForwardPassMode<B: Backend> {
     Classifier(ClassifierModeState<B>),
 }
 
+pub struct MaterializedTransformerLayer<B: Backend> {
+    pub keys: Option<Array<B>>,
+    pub values: Option<Array<B>>,
+}
+
 pub struct LanguageModelGeneratorModeState<B: Backend> {
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
+    pub materialized_transformer_layers: Box<[Option<MaterializedTransformerLayer<B>>]>,
     pub token_seeds: Array<B>,
     pub logits: Array<B>,
     pub sampling_output: Option<Array<B>>,
@@ -228,12 +232,71 @@ impl<B: Backend> ForwardPassState<B> {
         // LLM-specific aux buffers
         let llm_aux = Some(LanguageModelGeneratorAuxBuffers::new(scratch, decoder_config, model_shape, suffix_length));
 
+        let materialized_transformer_layers = {
+            let cache_layers = cache_layers.borrow();
+            cache_layers
+                .data
+                .iter()
+                .enumerate()
+                .map(|(layer_index, layer)| match layer {
+                    CacheLayer::Transformer(layer) if layer.uses_compressed_storage() => {
+                        let skip_prefix_key_materialization = suffix_length == 1
+                            && layer.keys.is_none()
+                            && matches!(
+                                layer.state,
+                                crate::forward_pass::kv_cache_layer::KVCacheLayerState::Full { .. }
+                            )
+                            && layer.supports_compressed_prefix_attention_scores_for_single_decode();
+                        let skip_prefix_value_materialization = suffix_length == 1
+                            && layer.values.is_none()
+                            && matches!(
+                                layer.state,
+                                crate::forward_pass::kv_cache_layer::KVCacheLayerState::Full { .. }
+                            )
+                            && layer.supports_value_row_decoding_for_single_decode()
+                            && (layer.sparse_value.is_none() || active_row_count == 1);
+                        let mut keys = layer.keys.is_none().then(|| {
+                            context.create_array(
+                                &layer.shape,
+                                layer.data_type,
+                                &format!("state_materialized_keys_{layer_index}"),
+                            )
+                        });
+                        let mut values = layer.values.is_none().then(|| {
+                            context.create_array(
+                                &layer.shape,
+                                layer.data_type,
+                                &format!("state_materialized_values_{layer_index}"),
+                            )
+                        });
+                        if let Some(materialized_keys) = keys.as_mut() {
+                            if !skip_prefix_key_materialization {
+                                layer.materialize_keys_into(materialized_keys);
+                            }
+                        }
+                        if let Some(materialized_values) = values.as_mut() {
+                            if !skip_prefix_value_materialization {
+                                layer.materialize_values_into(materialized_values);
+                            }
+                        }
+
+                        (keys.is_some() || values.is_some()).then_some(MaterializedTransformerLayer {
+                            keys,
+                            values,
+                        })
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+
         // Traces
         #[cfg(feature = "tracing")]
         let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(context.as_ref(), model_shape, suffix_length)));
 
         let mode = ForwardPassMode::LanguageModelGenerator(LanguageModelGeneratorModeState {
             cache_layers,
+            materialized_transformer_layers,
             token_seeds: token_seeds_cell,
             logits: logits_cell,
             sampling_output,
@@ -430,12 +493,32 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::Logits => self.llm_state().logits.clone(),
             ArrayId::TokenSeeds => self.llm_state().token_seeds.clone(),
             ArrayId::Keys(layer_index) => {
+                if let Some(layer) = self.llm_state().materialized_transformer_layers[layer_index].as_ref() {
+                    if let Some(keys) = &layer.keys {
+                        return keys.clone();
+                    }
+                }
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_transformer().expect("Expected transformer layer").keys.clone()
+                cache.data[layer_index]
+                    .as_transformer()
+                    .expect("Expected transformer layer")
+                    .dense_keys()
+                    .borrow()
+                    .clone()
             },
             ArrayId::Values(layer_index) => {
+                if let Some(layer) = self.llm_state().materialized_transformer_layers[layer_index].as_ref() {
+                    if let Some(values) = &layer.values {
+                        return values.clone();
+                    }
+                }
                 let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_transformer().expect("Expected transformer layer").values.clone()
+                cache.data[layer_index]
+                    .as_transformer()
+                    .expect("Expected transformer layer")
+                    .dense_values()
+                    .borrow()
+                    .clone()
             },
             ArrayId::AttentionSinks(layer_index) => {
                 self.shared_buffers.borrow().attention_sinks.as_ref().expect("Attention sinks not initialized")
@@ -593,6 +676,32 @@ impl<B: Backend> ForwardPassState<B> {
         self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
     }
 
+    pub fn sparse_value_buffers_for(
+        &self,
+        keys: &Array<B>,
+        values: &Array<B>,
+    ) -> (Array<B>, Array<B>) {
+        let mut shared = self.shared_buffers.borrow_mut();
+        if shared.sparse_value_keys.is_none() {
+            shared.sparse_value_keys = Some(self.context.create_array_uninitialized(
+                keys.shape(),
+                keys.data_type(),
+                "shared_buffers_sparse_value_keys",
+            ));
+        }
+        if shared.sparse_value_values.is_none() {
+            shared.sparse_value_values = Some(self.context.create_array_uninitialized(
+                values.shape(),
+                values.data_type(),
+                "shared_buffers_sparse_value_values",
+            ));
+        }
+        (
+            shared.sparse_value_keys.as_ref().expect("SparseValue key scratch must exist").clone(),
+            shared.sparse_value_values.as_ref().expect("SparseValue value scratch must exist").clone(),
+        )
+    }
+
     // ========================================================================
     // Public API Methods (formerly trait methods)
     // ========================================================================
@@ -641,6 +750,42 @@ impl<B: Backend> ForwardPassState<B> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => Some(&state.cache_layers),
             ForwardPassMode::Classifier(_) => None,
+        }
+    }
+
+    pub fn update_cache_after_acceptance(
+        &self,
+        context: &B::Context,
+        accepted_suffix_indices: &[usize],
+        suffix_start: Option<usize>,
+        encoder: &mut Encoder<B>,
+        kv_cache_update: &KVCacheUpdate<B>,
+    ) {
+        let ForwardPassMode::LanguageModelGenerator(state) = &self.mode else {
+            return;
+        };
+        let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
+        let mut cache_layers = state.cache_layers.borrow_mut();
+        assert_eq!(
+            cache_layers.data.len(),
+            state.materialized_transformer_layers.len(),
+            "materialized transformer layer count must match cache layer count",
+        );
+
+        for (layer, materialized) in cache_layers.data.iter_mut().zip(state.materialized_transformer_layers.iter()) {
+            if let Some(layer) = layer.as_transformer_mut() {
+                layer.update_after_acceptance(
+                    context,
+                    accepted_suffix_indices,
+                    suffix_start,
+                    materialized.as_ref().and_then(|layer| layer.keys.as_ref()),
+                    materialized.as_ref().and_then(|layer| layer.values.as_ref()),
+                    encoder,
+                    kv_cache_update,
+                );
+            } else if let Some(layer) = layer.as_short_conv_mut() {
+                layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
+            }
         }
     }
 

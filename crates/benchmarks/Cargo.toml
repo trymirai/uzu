@@ -11,6 +11,7 @@ repository.workspace = true
 uzu.workspace = true
 serde.workspace = true
 sysinfo.workspace = true
+blake3.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2.workspace = true

@@ -1,3 +1,4 @@
+pub mod attention;
 pub mod env_utils;
 #[cfg(metal_backend)]
 pub mod model_size;

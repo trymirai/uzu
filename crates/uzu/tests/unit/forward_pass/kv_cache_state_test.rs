@@ -1,12 +1,14 @@
 #![cfg(metal_backend)]
 
+use std::cell::RefCell;
+
 use crate::{
     ArrayContextExt, DataType,
     backends::{
         common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
-    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
+    forward_pass::kv_cache_layer::{INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KvCompressionMode},
 };
 
 #[derive(Debug)]
@@ -46,14 +48,34 @@ fn make_test_layer(
 
     KVCacheLayer {
         state,
-        keys,
-        values,
+        shape,
+        data_type: DataType::F32,
+        keys: Some(RefCell::new(keys)),
+        values: Some(RefCell::new(values)),
+        prefix_token_positions: match &state {
+            KVCacheLayerState::Full {
+                prefix_len,
+            } => (0..*prefix_len).collect(),
+            KVCacheLayerState::Windowed {
+                window_length,
+                ..
+            } => vec![INVALID_POSITION; *window_length],
+        },
+        next_token_position: 0,
+        max_suffix_length: suffix_capacity,
+        compression_mode: KvCompressionMode::None,
+        compressor: None,
+        sparse_value: None,
+        sparse_value_pending_values: None,
+        sparse_value_recent_values: None,
+        triattention: None,
     }
 }
 
 fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
-        let slice = layer.keys.as_slice_mut::<f32>();
+        let mut keys = layer.dense_keys().borrow_mut();
+        let slice = keys.as_slice_mut::<f32>();
         for (idx, value) in slice.iter_mut().enumerate() {
             *value = 1_000.0 + idx as f32;
         }
@@ -61,7 +83,8 @@ fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     };
 
     let initial_values = {
-        let slice = layer.values.as_slice_mut::<f32>();
+        let mut values = layer.dense_values().borrow_mut();
+        let slice = values.as_slice_mut::<f32>();
         for (idx, value) in slice.iter_mut().enumerate() {
             *value = 2_000.0 + idx as f32;
         }
@@ -145,8 +168,11 @@ fn run_scenario(
 
     let mut encoder = Encoder::new(context).unwrap();
     layer.update_after_acceptance(
+        context,
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
+        None,
+        None,
         &mut encoder,
         &kv_cache_update,
     );
@@ -155,10 +181,10 @@ fn run_scenario(
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
-    let actual_keys = layer.keys.as_slice::<f32>().to_vec();
+    let actual_keys = layer.dense_keys().borrow().as_slice::<f32>().to_vec();
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
-    let actual_values = layer.values.as_slice::<f32>().to_vec();
+    let actual_values = layer.dense_values().borrow().as_slice::<f32>().to_vec();
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -292,16 +318,18 @@ fn kv_cache_slice_apply_contiguous_window() {
     let slice = layer.slice(&context, 0..2).expect("slice should exist");
     // Mutate the captured slots.
     {
-        layer.keys.as_slice_mut::<f32>()[0] = -1.0;
-        layer.keys.as_slice_mut::<f32>()[1] = -2.0;
-        layer.values.as_slice_mut::<f32>()[0] = -3.0;
-        layer.values.as_slice_mut::<f32>()[1] = -4.0;
+        let mut keys = layer.dense_keys().borrow_mut();
+        keys.as_slice_mut::<f32>()[0] = -1.0;
+        keys.as_slice_mut::<f32>()[1] = -2.0;
+        let mut values = layer.dense_values().borrow_mut();
+        values.as_slice_mut::<f32>()[0] = -3.0;
+        values.as_slice_mut::<f32>()[1] = -4.0;
     }
 
-    layer.apply_slice(&slice, None);
+    layer.apply_slice(&context, &slice, None);
 
-    let keys_after = layer.keys.as_slice::<f32>().to_vec();
-    let values_after = layer.values.as_slice::<f32>().to_vec();
+    let keys_after = layer.dense_keys().borrow().as_slice::<f32>().to_vec();
+    let values_after = layer.dense_values().borrow().as_slice::<f32>().to_vec();
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -327,16 +355,18 @@ fn kv_cache_slice_apply_wrap_window() {
     let slice = layer.slice(&context, 2..4).expect("slice should exist");
     // Captured slots are expected to wrap; mutate them.
     {
-        layer.keys.as_slice_mut::<f32>()[2] = -11.0;
-        layer.keys.as_slice_mut::<f32>()[3] = -12.0;
-        layer.values.as_slice_mut::<f32>()[2] = -13.0;
-        layer.values.as_slice_mut::<f32>()[3] = -14.0;
+        let mut keys = layer.dense_keys().borrow_mut();
+        keys.as_slice_mut::<f32>()[2] = -11.0;
+        keys.as_slice_mut::<f32>()[3] = -12.0;
+        let mut values = layer.dense_values().borrow_mut();
+        values.as_slice_mut::<f32>()[2] = -13.0;
+        values.as_slice_mut::<f32>()[3] = -14.0;
     }
 
-    layer.apply_slice(&slice, None);
+    layer.apply_slice(&context, &slice, None);
 
-    let keys_after = layer.keys.as_slice::<f32>().to_vec();
-    let values_after = layer.values.as_slice::<f32>().to_vec();
+    let keys_after = layer.dense_keys().borrow().as_slice::<f32>().to_vec();
+    let values_after = layer.dense_values().borrow().as_slice::<f32>().to_vec();
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
@@ -366,7 +396,7 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         *prefix_len = 1;
     }
 
-    layer.apply_slice(&slice, None);
+    layer.apply_slice(&context, &slice, None);
 
     if let KVCacheLayerState::Full {
         prefix_len,

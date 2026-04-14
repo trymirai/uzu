@@ -4,4 +4,4 @@ mod task;
 
 pub use device::Device;
 pub use result::Result;
-pub use task::Task;
+pub use task::{BenchRunMode, Task};

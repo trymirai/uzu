@@ -24,6 +24,7 @@ use crate::{
     encodable_block::{EncodingParameters, Sampling},
     forward_pass::{
         cache_layers::CacheLayers,
+        kv_compression::env_kv_compression_config,
         scratch_buffers::ScratchBuffers,
         state::{ArrayId, ForwardPassState},
         traces::ActivationTrace,
@@ -845,6 +846,7 @@ impl<B: Backend> TraceValidator<B> {
             &context.model_shape,
             resolved_prefix_length,
             desired_suffix_length,
+            env_kv_compression_config::<B>(),
         )));
 
         let intermediate_dtype: DataType = decoder_config.output_norm_config.scale_precision.into();

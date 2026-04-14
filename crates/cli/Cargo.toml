@@ -30,3 +30,4 @@ comfy-table.workspace = true
 default = ["metal"]
 
 metal = ["benchmarks/metal", "uzu/metal"]
+tracing = ["uzu/tracing"]

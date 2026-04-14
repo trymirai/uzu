@@ -14,6 +14,8 @@ pub struct SharedBuffers<B: Backend> {
     pub global_rope: Option<RopeBuffers<B>>,
     pub local_rope: Option<RopeBuffers<B>>,
     pub attention_sinks: Option<Vec<Array<B>>>,
+    pub sparse_value_keys: Option<Array<B>>,
+    pub sparse_value_values: Option<Array<B>>,
 }
 
 impl<B: Backend> SharedBuffers<B> {
@@ -39,6 +41,8 @@ impl<B: Backend> SharedBuffers<B> {
             global_rope,
             local_rope,
             attention_sinks,
+            sparse_value_keys: None,
+            sparse_value_values: None,
         }
     }
 

@@ -25,7 +25,14 @@ pub use array::{Array, ArrayContextExt};
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use config::ConfigDataType;
 pub use data_type::{ArrayElement, DataType};
+pub use forward_pass::kv_spectral::{
+    KvSpectralCalibration, KvSpectralLayerCalibration, average_group_variances, dims_for_cumulative_variance,
+};
 pub use language_model::gumbel::{gumbel_float, revidx};
+pub use language_model::{
+    KvDebugLayerSnapshot, KvDebugSnapshot, TargetHiddenLayerSnapshot, TargetHiddenSnapshot, TraceDebugLayerSnapshot,
+    TraceDebugSnapshot,
+};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
 #[cfg(feature = "tracing")]
 pub use tracer::TraceValidator;

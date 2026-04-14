@@ -15,6 +15,7 @@ use tokenizers::Tokenizer;
 use xgrammar::TokenizerInfo;
 
 use crate::{
+    KvDebugSnapshot, TargetHiddenSnapshot, TraceDebugSnapshot,
     backends::{common::Backend, select_backend},
     config::{MixerConfig, ModelMetadata},
     language_model::{
@@ -28,6 +29,7 @@ use crate::{
         parameter::{ConfigResolvableValue, ContextMode},
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
+    utils::env_utils::EnvVar,
 };
 
 fn nanos_to_secs(nanos: u64) -> f64 {
@@ -164,6 +166,127 @@ impl ChatSession {
     where
         F: Fn(Output) -> bool,
     {
+        self.run_with_forced_token_path(input, config, None, progress)
+    }
+
+    pub fn run_forced_token_path<F>(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        forced_token_path: &[u64],
+        progress: Option<F>,
+    ) -> Result<Output, Error>
+    where
+        F: Fn(Output) -> bool,
+    {
+        assert!(!forced_token_path.is_empty(), "forced token path must not be empty");
+        self.run_with_forced_token_path(input, config, Some(forced_token_path), progress)
+    }
+
+    pub fn run_forced_token_path_once(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        forced_token_path: &[u64],
+    ) -> Result<Output, Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "single forced generate only supports ContextMode::None",
+        );
+        assert!(!forced_token_path.is_empty(), "forced token path must not be empty");
+
+        let language_model_config =
+            self.model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
+        let text = self.input_processor.process(&input, config.enable_thinking, config.tokens_limit > 0)?;
+        let tokens: Vec<u64> = self
+            .tokenizer
+            .encode(text.as_str(), false)
+            .map_err(|_| Error::UnableToEncodeText)?
+            .get_ids()
+            .iter()
+            .map(|&id| id as u64)
+            .collect();
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let context_length = self.decoding_config.context_length.resolve(language_model_config);
+        if tokens.len() >= context_length {
+            return Err(Error::ContextLengthExceeded);
+        }
+
+        let prefix_offset = language_model_generator.tokens_len();
+        let prefix_len_before = prefix_offset;
+        let eos_tokens: Vec<u64> =
+            language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as u64).collect();
+        let sampling_method = config.sampling_policy.resolve(language_model_config);
+        let mut compiled_grammar: Option<CompiledGrammar> = if let Some(ref grammar_config) = config.grammar_config {
+            Some(CompiledGrammar::from_config(grammar_config, None, &self.tokenizer_info)?)
+        } else {
+            None
+        };
+
+        let prefill_start = Instant::now();
+        let prefill_result = language_model_generator.prefill(
+            tokens.clone(),
+            compiled_grammar.as_mut(),
+            sampling_method,
+            prefix_offset,
+            false,
+        )?;
+        let prefill_duration = prefill_start.elapsed().as_secs_f64();
+        language_model_generator.clear_cache();
+
+        let run_context = RunContext {
+            eos_tokens,
+            context_length,
+            prefix_len_before,
+            input_tokens_len: tokens.len(),
+            tokens_limit: config.tokens_limit as usize,
+            prefill_result: prefill_result.clone(),
+            prefill_duration,
+            prefill_suffix_length: self.decoding_config.prefill_step_size.resolve(language_model_config),
+            run_start: Instant::now(),
+        };
+
+        let generate_start = Instant::now();
+        let generate_result = language_model_generator.generate_from_token_path(
+            forced_token_path,
+            compiled_grammar.as_mut(),
+            sampling_method,
+        )?;
+        let generate_duration = generate_start.elapsed().as_secs_f64();
+        let generate_tokens = generate_result.tokens.clone();
+        let grammar_terminated = compiled_grammar.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
+        let finish_reason = if grammar_terminated {
+            Some(FinishReason::Stop)
+        } else {
+            Self::check_finish_reason(&run_context, language_model_generator.as_ref(), &generate_tokens)
+        };
+        let output = Self::build_output(
+            &self.tokenizer,
+            &self.output_parser,
+            &run_context,
+            language_model_generator.as_ref(),
+            &[generate_result],
+            &[generate_duration],
+            finish_reason,
+        )?;
+
+        language_model_generator.reset_state();
+        Ok(output)
+    }
+
+    fn run_with_forced_token_path<F>(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        forced_token_path: Option<&[u64]>,
+        progress: Option<F>,
+    ) -> Result<Output, Error>
+    where
+        F: Fn(Output) -> bool,
+    {
         match &self.decoding_config.context_mode {
             ContextMode::None => {
                 let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
@@ -187,7 +310,7 @@ impl ChatSession {
             ContextMode::Dynamic => {},
         }
 
-        let output = self.run_internal(input, config, progress)?;
+        let output = self.run_internal(input, config, progress, forced_token_path)?;
 
         match &self.decoding_config.context_mode {
             ContextMode::None
@@ -208,6 +331,193 @@ impl ChatSession {
         Ok(())
     }
 
+    pub fn run_capture_kv_debug(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+    ) -> Result<(Output, KvDebugSnapshot), Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "KV debug capture only supports ContextMode::None",
+        );
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let output = self.run_internal(input, config, None::<fn(Output) -> bool>, None)?;
+        let snapshot = self.kv_debug_snapshot()?;
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        Ok((output, snapshot))
+    }
+
+    pub fn run_capture_prefill_kv_debug(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+    ) -> Result<(Output, KvDebugSnapshot), Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "KV debug capture only supports ContextMode::None",
+        );
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let output = self.run_internal(input, config, Some(|_: Output| false), None)?;
+        let snapshot = self.kv_debug_snapshot()?;
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        Ok((output, snapshot))
+    }
+
+    pub fn run_capture_first_generate_kv_debug(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+    ) -> Result<(Output, KvDebugSnapshot), Error> {
+        self.run_capture_generated_kv_debug(input, config, 1)
+    }
+
+    pub fn run_capture_generated_kv_debug(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        generated_tokens: usize,
+    ) -> Result<(Output, KvDebugSnapshot), Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "KV debug capture only supports ContextMode::None",
+        );
+        assert!(generated_tokens > 0, "generated KV debug capture requires at least one generated token");
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let generated_so_far = std::cell::Cell::new(0usize);
+        let output = self.run_internal(
+            input,
+            config,
+            Some(|_: Output| {
+                let generated = generated_so_far.get() + 1;
+                generated_so_far.set(generated);
+                generated < generated_tokens
+            }),
+            None,
+        )?;
+        let snapshot = self.kv_debug_snapshot()?;
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        Ok((output, snapshot))
+    }
+
+    pub fn run_capture_generated_trace_debug(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        generated_tokens: usize,
+    ) -> Result<(Output, TraceDebugSnapshot), Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "trace debug capture only supports ContextMode::None",
+        );
+        assert!(generated_tokens > 0, "generated trace debug capture requires at least one generated token");
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let generated_so_far = std::cell::Cell::new(0usize);
+        let output = self.run_internal(
+            input,
+            config,
+            Some(|_: Output| {
+                let generated = generated_so_far.get() + 1;
+                generated_so_far.set(generated);
+                generated < generated_tokens
+            }),
+            None,
+        )?;
+        let snapshot = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?.trace_debug_snapshot();
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        Ok((output, snapshot))
+    }
+
+    #[cfg(feature = "tracing")]
+    pub fn run_capture_target_hidden(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        sample_count: usize,
+    ) -> Result<(Output, TargetHiddenSnapshot), Error> {
+        let (output, snapshot) = self.run_capture_generated_trace_debug(input, config, 1)?;
+        Ok((output, TargetHiddenSnapshot::from_trace_snapshot(&snapshot, sample_count)))
+    }
+
+    #[cfg(feature = "tracing")]
+    pub fn run_capture_first_generate_step(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+        sample_count: usize,
+    ) -> Result<(Output, TargetHiddenSnapshot, Box<[u64]>), Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "first-step capture only supports ContextMode::None",
+        );
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let output = self.run_internal(input, config, Some(|_: Output| false), None)?;
+        let trace_snapshot = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?.trace_debug_snapshot();
+
+        let generated_token_count = output.stats.total_stats.tokens_count_output as usize;
+        let language_model_generator = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        let tokens = language_model_generator.tokens();
+        assert!(generated_token_count <= tokens.len(), "generated token count must fit inside generator tokens");
+        let generated_token_ids = tokens[tokens.len() - generated_token_count..].to_vec().into_boxed_slice();
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        Ok((output, TargetHiddenSnapshot::from_trace_snapshot(&trace_snapshot, sample_count), generated_token_ids))
+    }
+
+    pub fn run_capture_generated_token_ids(
+        &mut self,
+        input: Input,
+        config: RunConfig,
+    ) -> Result<(Output, Box<[u64]>), Error> {
+        assert!(
+            matches!(self.decoding_config.context_mode, ContextMode::None),
+            "token capture only supports ContextMode::None",
+        );
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        let output = self.run_internal(input, config, None::<fn(Output) -> bool>, None)?;
+        let generated_token_count = output.stats.total_stats.tokens_count_output as usize;
+        let language_model_generator = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        let tokens = language_model_generator.tokens();
+        assert!(generated_token_count <= tokens.len(), "generated token count must fit inside generator tokens");
+        let generated_token_ids = tokens[tokens.len() - generated_token_count..].to_vec().into_boxed_slice();
+
+        let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        language_model_generator.reset_state();
+
+        Ok((output, generated_token_ids))
+    }
+
     fn extend(
         &mut self,
         input: Input,
@@ -215,7 +525,7 @@ impl ChatSession {
         config: RunConfig,
     ) -> Result<(Output, Box<dyn Any>), Error> {
         self.reconfigure_language_model_generator(context)?;
-        let output = self.run_internal(input, config, None::<fn(Output) -> bool>)?;
+        let output = self.run_internal(input, config, None::<fn(Output) -> bool>, None)?;
         let new_context = self.build_context_from_language_model_generator()?;
         let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
         language_model_generator.reset_state();
@@ -227,6 +537,7 @@ impl ChatSession {
         input: Input,
         config: RunConfig,
         progress: Option<F>,
+        forced_token_path: Option<&[u64]>,
     ) -> Result<Output, Error>
     where
         F: Fn(Output) -> bool,
@@ -266,7 +577,7 @@ impl ChatSession {
         };
 
         let prefill_start = Instant::now();
-        let sample_suffix = config.tokens_limit > 0;
+        let sample_suffix = forced_token_path.is_none() && config.tokens_limit > 0;
         let prefill_result = language_model_generator.prefill(
             tokens.clone(),
             compiled_grammar.as_mut(),
@@ -323,9 +634,24 @@ impl ChatSession {
             }
         }
 
-        let can_use_async = language_model_generator.generate_suffix_length() == 1 && compiled_grammar.is_none();
+        let can_use_async = forced_token_path.is_none()
+            && language_model_generator.generate_suffix_length() == 1
+            && compiled_grammar.is_none()
+            && !language_model_generator.uses_materialized_transformer_state()
+            && !EnvVar::DisableAsyncGeneration.is_enabled();
 
-        let generate_output = if can_use_async {
+        let generate_output = if let Some(forced_token_path) = forced_token_path {
+            Self::run_sync_generate_forced_token_path(
+                &self.tokenizer,
+                &self.output_parser,
+                &run_context,
+                language_model_generator.as_mut(),
+                compiled_grammar.as_mut(),
+                sampling_method,
+                forced_token_path,
+                &progress,
+            )?
+        } else if can_use_async {
             let batch_size = language_model_generator.async_batch_size(&self.model_path);
             Self::run_async_batch(
                 &self.tokenizer,
@@ -374,6 +700,83 @@ impl ChatSession {
                 language_model_generator.generate(compiled_grammar_mut.as_deref_mut(), sampling_method)?;
             let generate_tokens = generate_result.tokens.clone();
             let generate_duration = generate_start.elapsed().as_secs_f64();
+            generate_results.push(generate_result);
+            generate_durations.push(generate_duration);
+
+            let grammar_terminated = compiled_grammar_mut.as_ref().map(|g| g.is_terminated()).unwrap_or(false);
+
+            let generate_finish_reason = if grammar_terminated {
+                Some(FinishReason::Stop)
+            } else {
+                Self::check_finish_reason(run_context, language_model_generator, &generate_tokens)
+            };
+            let generate_output = Self::build_output(
+                tokenizer,
+                output_parser,
+                run_context,
+                language_model_generator,
+                &generate_results,
+                &generate_durations,
+                generate_finish_reason.clone(),
+            )?;
+
+            let generate_should_continue = if let Some(progress_fn) = progress {
+                progress_fn(generate_output.clone())
+            } else {
+                true
+            };
+
+            if !generate_should_continue || generate_finish_reason.is_some() {
+                if generate_should_continue {
+                    return Ok(generate_output);
+                } else {
+                    return Ok(generate_output.clone_with_finish_reason(Some(FinishReason::Cancelled)));
+                }
+            }
+        }
+    }
+
+    fn run_sync_generate_forced_token_path<F>(
+        tokenizer: &Tokenizer,
+        output_parser: &OutputParser,
+        run_context: &RunContext,
+        language_model_generator: &mut dyn LanguageModelGeneratorTrait,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: super::parameter::SamplingMethod,
+        forced_token_path: &[u64],
+        progress: &Option<F>,
+    ) -> Result<Output, Error>
+    where
+        F: Fn(Output) -> bool,
+    {
+        let mut generate_results: Vec<GenerateResult> = Vec::new();
+        let mut generate_durations: Vec<f64> = Vec::new();
+        let mut compiled_grammar_mut = compiled_grammar;
+        let mut path_offset = 0;
+
+        loop {
+            let remaining_path = &forced_token_path[path_offset..];
+            if remaining_path.is_empty() {
+                return Ok(Self::build_output(
+                    tokenizer,
+                    output_parser,
+                    run_context,
+                    language_model_generator,
+                    &generate_results,
+                    &generate_durations,
+                    None,
+                )?);
+            }
+
+            let generate_start = Instant::now();
+            let generate_result = language_model_generator.generate_from_token_path(
+                remaining_path,
+                compiled_grammar_mut.as_deref_mut(),
+                sampling_method,
+            )?;
+            let generate_tokens = generate_result.tokens.clone();
+            let generate_duration = generate_start.elapsed().as_secs_f64();
+            path_offset += generate_tokens.len();
             generate_results.push(generate_result);
             generate_durations.push(generate_duration);
 
@@ -696,6 +1099,15 @@ impl ChatSession {
 
     pub fn peak_memory_usage(&self) -> Option<usize> {
         self.llm.as_ref().unwrap().peak_memory_usage()
+    }
+
+    pub fn kv_storage_bytes(&self) -> u64 {
+        self.llm.as_ref().expect("language model generator must exist").kv_storage_bytes() as u64
+    }
+
+    pub fn kv_debug_snapshot(&self) -> Result<KvDebugSnapshot, Error> {
+        let language_model_generator = self.llm.as_ref().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
+        Ok(language_model_generator.kv_debug_snapshot())
     }
 }
 

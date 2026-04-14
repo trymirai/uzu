@@ -73,6 +73,14 @@ fn test_trie_from_speculator_sprout() {
     verify_sprout(&trie_root, rng.derive(0));
 }
 
+#[test]
+fn test_trie_from_token_path_sprout() {
+    let rng = PRng::new(42);
+    let trie_root = TrieNode::from_token_path(0, &[], &rng, 0, None);
+
+    verify_sprout(&trie_root, rng.derive(0));
+}
+
 fn verify_stick(
     trie_root: &TrieNode,
     rng: &PRng,
@@ -140,6 +148,15 @@ fn test_trie_from_speculator_stick() {
         },
         10,
     );
+
+    verify_stick(&trie_root, &rng);
+}
+
+#[test]
+fn test_trie_from_token_path_stick() {
+    let rng = PRng::new(42);
+    let continuation = (1..10).collect::<Vec<u64>>();
+    let trie_root = TrieNode::from_token_path(0, &continuation, &rng, 0, None);
 
     verify_stick(&trie_root, &rng);
 }

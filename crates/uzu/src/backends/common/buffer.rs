@@ -14,6 +14,12 @@ pub trait Buffer: Debug {
     fn gpu_ptr(&self) -> usize;
 
     fn length(&self) -> usize;
+
+    fn did_modify_range(
+        &self,
+        _range: Range<usize>,
+    ) {
+    }
 }
 
 pub trait BufferGpuAddressRangeExt: Buffer {

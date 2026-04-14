@@ -1,17 +1,50 @@
-use std::cell::Cell;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    sync::Arc,
+};
 
 use crate::{
-    array::ArrayContextExt,
+    array::{Array, ArrayContextExt},
     backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
-        kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVSlice},
+        kv_cache_layer::{
+            AttentionBiasUpdate, INVALID_POSITION, KVCacheLayer, KVCacheLayerState, KVSlice, KvCompressionMode,
+            KvCompressor, SparseValueConfig, SparseValueState, TriAttentionConfig, TriAttentionState,
+        },
         model_shape::ModelShape,
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
     },
 };
+
+pub type KvCompressorFactory<B> =
+    dyn Fn(&<B as Backend>::Context, usize, [usize; 3]) -> Box<dyn KvCompressor<B>> + Send + Sync;
+
+#[derive(Clone)]
+pub struct KvCompressionConfig<B: Backend> {
+    pub mode: KvCompressionMode,
+    pub compress_keys: bool,
+    pub compress_values: bool,
+    pub factory: Option<Arc<KvCompressorFactory<B>>>,
+    pub sparse_value: Option<SparseValueConfig>,
+    pub triattention: Option<TriAttentionConfig>,
+}
+
+impl<B: Backend> KvCompressionConfig<B> {
+    pub fn disabled() -> Self {
+        Self {
+            mode: KvCompressionMode::None,
+            compress_keys: false,
+            compress_values: false,
+            factory: None,
+            sparse_value: None,
+            triattention: None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum CacheLayer<B: Backend> {
@@ -113,10 +146,17 @@ impl<B: Backend> CacheLayers<B> {
         model_shape: &ModelShape,
         max_prefix_length: usize,
         max_suffix_length: usize,
+        kv_compression: KvCompressionConfig<B>,
     ) -> Self {
         let total_context_length = max_prefix_length.max(max_suffix_length);
         let kv_shapes: Vec<[usize; 3]> =
             model_shape.kv_cache_layer_shapes(max_prefix_length, max_suffix_length).collect();
+        let compression_mode = kv_compression.mode;
+        let compress_keys = kv_compression.compress_keys;
+        let compress_values = kv_compression.compress_values;
+        let compression_factory = kv_compression.factory.clone();
+        let sparse_value_config = kv_compression.sparse_value.clone();
+        let triattention_config = kv_compression.triattention.clone();
 
         let data: Box<[CacheLayer<B>]> = model_shape
             .layer_types()
@@ -124,9 +164,61 @@ impl<B: Backend> CacheLayers<B> {
             .enumerate()
             .map(|(layer_index, layer_type)| match layer_type {
                 DecoderLayerType::Transformer => {
-                    let shape = kv_shapes[layer_index];
+                    let base_shape = kv_shapes[layer_index];
                     let window_length = model_shape.sliding_window_length_per_layer[layer_index]
                         .filter(|&window_size| window_size < total_context_length);
+                    let use_dense_windowed_sparse_value = sparse_value_config.is_some() && window_length.is_some();
+                    let layer_compression_mode = if use_dense_windowed_sparse_value {
+                        KvCompressionMode::None
+                    } else {
+                        compression_mode
+                    };
+                    let layer_compress_keys = compress_keys && !use_dense_windowed_sparse_value;
+                    let layer_compress_values = compress_values && !use_dense_windowed_sparse_value;
+                    let triattention = (triattention_config.is_some() && window_length.is_none()).then(|| {
+                        let config = triattention_config
+                            .clone()
+                            .expect("TriAttention config is required when TriAttention is enabled");
+                        TriAttentionState {
+                            config,
+                            tokens_since_last_prune: 0,
+                            calibration: crate::forward_pass::kv_cache_layer::TriAttentionCalibration::new(
+                                model_shape.num_heads(),
+                                model_shape.head_dim(),
+                                model_shape.rope_dim(),
+                            ),
+                        }
+                    });
+                    let sparse_value = (sparse_value_config.is_some() && window_length.is_none()).then(|| {
+                        SparseValueState::new(
+                            sparse_value_config
+                                .clone()
+                                .expect("SparseValue config is required when SparseValue is enabled"),
+                            base_shape[0],
+                            base_shape[1],
+                            base_shape[2],
+                            max_suffix_length,
+                        )
+                    });
+                    let sparse_value_recent_values = sparse_value.as_ref().map(|state| {
+                        RefCell::new(context.create_array(
+                            &[base_shape[0], state.hot_value_capacity, base_shape[2]],
+                            model_shape.kv_cache_data_type(),
+                            &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}_sparse_recent"),
+                        ))
+                    });
+                    let sparse_value_pending_values = sparse_value.as_ref().map(|_| {
+                        RefCell::new(context.create_array(
+                            &[base_shape[0], max_suffix_length, base_shape[2]],
+                            model_shape.kv_cache_data_type(),
+                            &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}_sparse_pending"),
+                        ))
+                    });
+                    let shape = if let Some(triattention) = &triattention {
+                        [base_shape[0], triattention.config.budget + max_suffix_length, base_shape[2]]
+                    } else {
+                        base_shape
+                    };
 
                     let state = if let Some(w) = window_length {
                         KVCacheLayerState::Windowed {
@@ -142,16 +234,41 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: context.create_array_zeros(
-                            &shape,
-                            model_shape.kv_cache_data_type(),
-                            &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
-                        ),
-                        values: context.create_array_zeros(
-                            &shape,
-                            model_shape.kv_cache_data_type(),
-                            &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
-                        ),
+                        shape,
+                        data_type: model_shape.kv_cache_data_type(),
+                        keys: (!layer_compress_keys).then(|| {
+                            RefCell::new(context.create_array(
+                                &shape,
+                                model_shape.kv_cache_data_type(),
+                                &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
+                            ))
+                        }),
+                        values: (!layer_compress_values).then(|| {
+                            RefCell::new(context.create_array(
+                                &shape,
+                                model_shape.kv_cache_data_type(),
+                                &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
+                            ))
+                        }),
+                        prefix_token_positions: match &state {
+                            KVCacheLayerState::Full {
+                                ..
+                            } => Vec::with_capacity(max_prefix_length),
+                            KVCacheLayerState::Windowed {
+                                window_length,
+                                ..
+                            } => (0..*window_length).map(|_| INVALID_POSITION).collect(),
+                        },
+                        next_token_position: 0,
+                        max_suffix_length,
+                        compression_mode: layer_compression_mode,
+                        compressor: (!use_dense_windowed_sparse_value)
+                            .then(|| compression_factory.as_ref().map(|factory| factory(context, layer_index, shape)))
+                            .flatten(),
+                        sparse_value,
+                        sparse_value_pending_values,
+                        sparse_value_recent_values,
+                        triattention,
                     })
                 },
                 DecoderLayerType::StateSpace {
@@ -240,26 +357,68 @@ impl<B: Backend> CacheLayers<B> {
     pub fn clear(&mut self) {
         for layer in self.data.iter_mut() {
             match layer {
-                CacheLayer::Transformer(layer) => match &mut layer.state {
-                    KVCacheLayerState::Full {
-                        prefix_len,
-                    } => {
-                        *prefix_len = 0;
-                    },
-                    KVCacheLayerState::Windowed {
-                        ring_offset,
-                        ring_length,
-                        ..
-                    } => {
-                        *ring_offset = 0;
-                        *ring_length = 0;
-                    },
+                CacheLayer::Transformer(layer) => {
+                    match &mut layer.state {
+                        KVCacheLayerState::Full {
+                            prefix_len,
+                        } => {
+                            *prefix_len = 0;
+                            layer.prefix_token_positions.clear();
+                        },
+                        KVCacheLayerState::Windowed {
+                            ring_offset,
+                            ring_length,
+                            ..
+                        } => {
+                            *ring_offset = 0;
+                            *ring_length = 0;
+                            layer.prefix_token_positions.fill(INVALID_POSITION);
+                        },
+                    }
+                    layer.next_token_position = 0;
                 },
                 CacheLayer::StateSpace(layer) => layer.zero(),
                 CacheLayer::ShortConv(layer) => layer.zero(),
                 CacheLayer::DeltaNet(layer) => layer.zero(),
             }
+            if let Some(layer) = layer.as_transformer_mut() {
+                if let Some(triattention) = &mut layer.triattention {
+                    triattention.tokens_since_last_prune = 0;
+                    triattention.calibration.query_token_count = 0;
+                    triattention.calibration.query_sum.fill(0.0);
+                    triattention.calibration.query_norm_sum.fill(0.0);
+                }
+            }
         }
+    }
+
+    pub fn uses_compressed_transformer_layers(&self) -> bool {
+        self.data.iter().filter_map(|layer| layer.as_transformer()).any(|layer| layer.uses_compressed_storage())
+    }
+
+    pub fn uses_materialized_transformer_state(&self) -> bool {
+        self.data
+            .iter()
+            .filter_map(|layer| layer.as_transformer())
+            .any(|layer| layer.uses_materialized_transformer_state())
+    }
+
+    pub fn blocks_pre_encode_for_single_decode(&self) -> bool {
+        self.data
+            .iter()
+            .filter_map(|layer| layer.as_transformer())
+            .any(|layer| !layer.allows_pre_encode_for_single_decode())
+    }
+
+    pub fn requires_synchronous_acceptance_update(&self) -> bool {
+        self.data
+            .iter()
+            .filter_map(|layer| layer.as_transformer())
+            .any(|layer| layer.requires_synchronous_acceptance_update())
+    }
+
+    pub fn kv_storage_bytes(&self) -> usize {
+        self.data.iter().filter_map(|layer| layer.as_transformer()).map(|layer| layer.storage_bytes()).sum()
     }
 
     pub fn max_suffix_length(&self) -> usize {
@@ -270,8 +429,41 @@ impl<B: Backend> CacheLayers<B> {
         self.max_prefix_length
     }
 
+    pub fn fill_attention_bias(
+        &self,
+        dst: &mut HashMap<Option<usize>, Array<B>>,
+        suffix_token_positions: &[usize],
+        suffix_length: usize,
+        external_bias_fn: Option<&dyn Fn(usize, usize) -> bool>,
+    ) {
+        for layer in self.data.iter() {
+            if let CacheLayer::Transformer(layer) = layer {
+                if let Some(array) = dst.get_mut(&layer.window_length()) {
+                    layer.fill_attention_bias(array, suffix_token_positions, suffix_length, external_bias_fn);
+                }
+            }
+        }
+    }
+
+    pub fn fill_attention_bias_scratch(
+        &self,
+        dst: &HashMap<Option<usize>, RefCell<Array<B>>>,
+        suffix_token_positions: &[usize],
+        suffix_length: usize,
+        _context: &B::Context,
+    ) {
+        for layer in self.data.iter() {
+            if let CacheLayer::Transformer(layer) = layer {
+                if let Some(cell) = dst.get(&layer.window_length()) {
+                    layer.fill_attention_bias(&mut cell.borrow_mut(), suffix_token_positions, suffix_length, None);
+                }
+            }
+        }
+    }
+
     pub fn update_after_acceptance(
         &mut self,
+        context: &B::Context,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
         encoder: &mut Encoder<B>,
@@ -280,7 +472,15 @@ impl<B: Backend> CacheLayers<B> {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
+                layer.update_after_acceptance(
+                    context,
+                    accepted_suffix_indices,
+                    suffix_start,
+                    None,
+                    None,
+                    encoder,
+                    kv_cache_update,
+                );
             } else if let Some(layer) = layer.as_short_conv_mut() {
                 layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
             }
@@ -289,13 +489,48 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn register_accepted_tokens(
         &mut self,
-        number_of_accepted_tokens: usize,
+        number_of_tokens: usize,
     ) {
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.register_accepted_tokens(number_of_accepted_tokens);
+                layer.register_accepted_tokens(number_of_tokens);
             }
         }
+    }
+
+    pub fn reset_triattention_prune_counters(&mut self) {
+        for layer in self.data.iter_mut() {
+            if let Some(layer) = layer.as_transformer_mut() {
+                if let Some(triattention) = &mut layer.triattention {
+                    triattention.tokens_since_last_prune = 0;
+                }
+            }
+        }
+    }
+
+    pub fn prune_triattention_if_needed(
+        &mut self,
+        rope_cosines: &Array<B>,
+        rope_sines: &Array<B>,
+    ) {
+        for layer in self.data.iter_mut() {
+            if let CacheLayer::Transformer(layer) = layer {
+                layer.prune_triattention_if_needed(rope_cosines, rope_sines);
+            }
+        }
+    }
+
+    pub fn attention_bias_updates_after_acceptance(
+        &self,
+        accepted_len: usize,
+    ) -> Vec<AttentionBiasUpdate> {
+        self.data
+            .iter()
+            .filter_map(|layer| match layer {
+                CacheLayer::Transformer(kv) => kv.attention_bias_update_after_acceptance(accepted_len),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn slice(
@@ -325,13 +560,14 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn apply_slice(
         &mut self,
+        context: &B::Context,
         slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    kv.apply_slice(&s, range.clone());
+                    kv.apply_slice(context, &s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -351,44 +587,73 @@ impl<B: Backend> CacheLayers<B> {
             .enumerate()
             .map(|(layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
-                    let shape = layer.keys.shape().to_vec();
-                    let num_groups = shape[0];
-                    let head_dim = shape[2];
-                    let dtype = layer.keys.data_type();
+                    let num_groups = layer.shape[0];
+                    let head_dim = layer.shape[2];
+                    let dtype = layer.data_type;
                     let copy_rows = layer.prefix_segment_length();
 
-                    let new_total_len = copy_rows + self.max_suffix_length;
+                    let new_total_len = layer.shape[1];
                     if copy_rows > max_prefix_capacity_across_layers {
                         max_prefix_capacity_across_layers = copy_rows;
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.create_array_zeros(
+                    let mut new_keys = context.create_array(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                     );
-                    let mut new_values = context.create_array_zeros(
+                    let mut new_values = context.create_array(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
                     );
 
-                    if copy_rows > 0 {
-                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0);
-                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0);
-                    }
+                    layer.materialize_into(&mut new_keys, &mut new_values);
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: layer.state.clone(),
-                        keys: new_keys,
-                        values: new_values,
+                        shape: [num_groups, new_total_len, head_dim],
+                        data_type: dtype,
+                        keys: Some(RefCell::new(new_keys)),
+                        values: Some(RefCell::new(new_values)),
+                        prefix_token_positions: layer.prefix_token_positions.clone(),
+                        next_token_position: layer.next_token_position,
+                        max_suffix_length: layer.max_suffix_length,
+                        compression_mode: if layer.sparse_value.is_some() {
+                            KvCompressionMode::SparseValue
+                        } else {
+                            KvCompressionMode::None
+                        },
+                        compressor: None,
+                        sparse_value: layer.sparse_value.clone(),
+                        sparse_value_pending_values: layer.sparse_value_pending_values.as_ref().map(|pending_values| {
+                            let pending_values = pending_values.borrow();
+                            let mut new_pending_values = context.create_array(
+                                pending_values.shape(),
+                                pending_values.data_type(),
+                                &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}_sparse_pending"),
+                            );
+                            new_pending_values.copy_from_array(&pending_values);
+                            RefCell::new(new_pending_values)
+                        }),
+                        sparse_value_recent_values: layer.sparse_value_recent_values.as_ref().map(|recent_values| {
+                            let recent_values = recent_values.borrow();
+                            let mut new_recent_values = context.create_array(
+                                recent_values.shape(),
+                                recent_values.data_type(),
+                                &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}_sparse_recent"),
+                            );
+                            new_recent_values.copy_from_array(&recent_values);
+                            RefCell::new(new_recent_values)
+                        }),
+                        triattention: None,
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
                     let conv_shape = layer.conv_state.shape().to_vec();
                     let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array_uninitialized(
+                    let mut new_conv = context.create_array(
                         &conv_shape,
                         conv_dtype,
                         &format!("{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"),
@@ -397,7 +662,7 @@ impl<B: Backend> CacheLayers<B> {
 
                     let ssm_shape = layer.ssm_state.shape().to_vec();
                     let ssm_dtype = layer.ssm_state.data_type();
-                    let mut new_ssm = context.create_array_uninitialized(
+                    let mut new_ssm = context.create_array(
                         &ssm_shape,
                         ssm_dtype,
                         &format!("{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"),
@@ -412,7 +677,7 @@ impl<B: Backend> CacheLayers<B> {
                 CacheLayer::ShortConv(layer) => {
                     let conv_shape = layer.conv_state.shape().to_vec();
                     let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array_uninitialized(
+                    let mut new_conv = context.create_array(
                         &conv_shape,
                         conv_dtype,
                         &format!("{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"),
@@ -421,11 +686,12 @@ impl<B: Backend> CacheLayers<B> {
 
                     let suffix_shape = layer.suffix_state.shape().to_vec();
                     let suffix_dtype = layer.suffix_state.data_type();
-                    let new_suffix = context.create_array_zeros(
+                    let mut new_suffix = context.create_array(
                         &suffix_shape,
                         suffix_dtype,
                         &format!("{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"),
                     );
+                    new_suffix.as_bytes_mut().fill(0);
 
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: new_conv,
@@ -437,7 +703,7 @@ impl<B: Backend> CacheLayers<B> {
                 CacheLayer::DeltaNet(layer) => {
                     let conv_shape = layer.conv_state.shape().to_vec();
                     let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array_uninitialized(
+                    let mut new_conv = context.create_array(
                         &conv_shape,
                         conv_dtype,
                         &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
@@ -446,7 +712,7 @@ impl<B: Backend> CacheLayers<B> {
 
                     let ssm_shape = layer.ssm_state.shape().to_vec();
                     let ssm_dtype = layer.ssm_state.data_type();
-                    let mut new_ssm = context.create_array_uninitialized(
+                    let mut new_ssm = context.create_array(
                         &ssm_shape,
                         ssm_dtype,
                         &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),

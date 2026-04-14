@@ -1,6 +1,9 @@
 #![cfg(metal_backend)]
 
-use std::mem::size_of;
+use std::{
+    mem::size_of,
+    ops::{Deref, DerefMut},
+};
 
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
@@ -9,7 +12,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use test_tag::tag;
 
 use crate::{
-    DataType,
+    ArrayContextExt, DataType,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -750,6 +753,181 @@ fn test_single_pass_attention_gqa() {
     if let Err(e) = compare_results(&kernel_output, &reference_output, tolerance, "Single-pass attention GQA") {
         panic!("{}", e);
     }
+}
+
+#[test]
+fn test_single_pass_attention_gqa_with_distinct_value_stride() {
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
+
+    let batch_size = 1;
+    let num_heads = 8;
+    let num_kv_heads = 2;
+    let sequence_length = 65;
+    let key_capacity = 128;
+    let value_capacity = 96;
+    let head_dim = 64;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (full_queries, keys, values) =
+        create_test_data(batch_size, num_heads, num_kv_heads, sequence_length, head_dim, 1337);
+    let queries = full_queries.slice(s![.., .., sequence_length - 1..sequence_length, ..]).to_owned();
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
+
+    let query_buffer = create_query_buffer(&queries, &context);
+    let key_buffer = create_key_cache_buffer(&keys, key_capacity, &context);
+    let value_buffer = create_value_cache_buffer(&values, value_capacity, &context);
+    let mut output_buffer = context
+        .device
+        .new_buffer(num_heads * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
+        .expect("Failed to create buffer");
+
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::F32,
+        head_dim as u32,
+        false,
+        false,
+        false,
+        false,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        &query_buffer,
+        &key_buffer,
+        &value_buffer,
+        &mut output_buffer,
+        (num_heads / num_kv_heads) as u32,
+        sequence_length as u32,
+        (key_capacity * head_dim) as u32,
+        head_dim as u32,
+        (value_capacity * head_dim) as u32,
+        head_dim as u32,
+        None,
+        scale,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        num_heads as u32,
+        1,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
+    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * head_dim) };
+    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, 1, head_dim);
+
+    let max_diff = kernel_output
+        .iter()
+        .zip(reference_output.iter())
+        .map(|(left, right)| (left - right).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_diff < 1e-2, "Single-pass attention GQA with distinct value stride max diff {max_diff}");
+}
+
+#[test]
+fn test_single_pass_attention_gqa_with_distinct_value_stride_bf16() {
+    let context = <Metal as Backend>::Context::new().expect("Failed to create <Metal as Backend>::Context");
+
+    let batch_size = 1;
+    let num_heads = 8;
+    let num_kv_heads = 2;
+    let sequence_length = 65;
+    let key_capacity = 128;
+    let value_capacity = 96;
+    let head_dim = 64;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+
+    let (full_queries, keys, values) =
+        create_test_data(batch_size, num_heads, num_kv_heads, sequence_length, head_dim, 7331);
+    let queries = full_queries.slice(s![.., .., sequence_length - 1..sequence_length, ..]).to_owned();
+    let reference_output = reference_attention(&queries, &keys, &values, None, scale, false);
+
+    let query_array = context.create_array_from(
+        &[num_heads, 1, head_dim],
+        &queries.iter().map(|&value| half::bf16::from_f32(value)).collect::<Vec<_>>(),
+        "queries_bf16",
+    );
+    let mut key_array =
+        context.create_array_zeros(&[num_kv_heads, key_capacity, head_dim], DataType::BF16, "keys_bf16");
+    let mut value_array =
+        context.create_array_zeros(&[num_kv_heads, value_capacity, head_dim], DataType::BF16, "values_bf16");
+    let output_array = context.create_array_zeros(&[num_heads, 1, head_dim], DataType::BF16, "output_bf16");
+
+    {
+        let keys_dst = key_array.as_slice_mut::<half::bf16>();
+        let values_dst = value_array.as_slice_mut::<half::bf16>();
+        for kv_head in 0..num_kv_heads {
+            for token in 0..sequence_length {
+                let key_start = (kv_head * key_capacity + token) * head_dim;
+                let value_start = (kv_head * value_capacity + token) * head_dim;
+                for dim in 0..head_dim {
+                    keys_dst[key_start + dim] = half::bf16::from_f32(keys[[0, kv_head, token, dim]]);
+                    values_dst[value_start + dim] = half::bf16::from_f32(values[[0, kv_head, token, dim]]);
+                }
+            }
+        }
+    }
+
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
+        &context,
+        DataType::BF16,
+        head_dim as u32,
+        false,
+        false,
+        false,
+        false,
+        false,
+    )
+    .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::AttentionSinglePassKernel");
+
+    let query_buffer = query_array.buffer();
+    let query_buffer = query_buffer.borrow();
+    let key_buffer = key_array.buffer();
+    let key_buffer = key_buffer.borrow();
+    let value_buffer = value_array.buffer();
+    let value_buffer = value_buffer.borrow();
+    let output_buffer = output_array.buffer();
+    let mut output_buffer = output_buffer.borrow_mut();
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        query_buffer.deref(),
+        key_buffer.deref(),
+        value_buffer.deref(),
+        output_buffer.deref_mut(),
+        (num_heads / num_kv_heads) as u32,
+        sequence_length as u32,
+        (key_capacity * head_dim) as u32,
+        head_dim as u32,
+        (value_capacity * head_dim) as u32,
+        head_dim as u32,
+        None,
+        scale,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None,
+        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        num_heads as u32,
+        1,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    drop(output_buffer);
+    drop(value_buffer);
+    drop(key_buffer);
+    drop(query_buffer);
+
+    let output = output_array.as_slice::<half::bf16>().iter().map(|value| value.to_f32()).collect::<Vec<_>>();
+    let kernel_output = convert_kernel_output(&output, batch_size, num_heads, 1, head_dim);
+    let max_diff = kernel_output
+        .iter()
+        .zip(reference_output.iter())
+        .map(|(left, right)| (left - right).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_diff < 6e-2, "Single-pass attention GQA with distinct value stride bf16 max diff {max_diff}");
 }
 
 fn run_two_pass_attention(

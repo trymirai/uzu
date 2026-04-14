@@ -1,6 +1,6 @@
 use std::{os::raw::c_void, ptr::NonNull};
 
-use metal::{MTLBuffer, MTLResourceExt};
+use metal::{BufferExt, MTLBuffer, MTLResourceExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
@@ -26,5 +26,12 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
 
     fn length(&self) -> usize {
         (**self).length()
+    }
+
+    fn did_modify_range(
+        &self,
+        range: std::ops::Range<usize>,
+    ) {
+        (**self).did_modify_range(range);
     }
 }

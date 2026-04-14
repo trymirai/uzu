@@ -1,5 +1,8 @@
 use super::{decoder_support::*, *};
-use crate::{array::Array, backends::common::Buffer, session::types::TtsModelConfigError};
+use crate::{
+    array::Array, backends::common::Buffer, forward_pass::kv_compression::env_kv_compression_config,
+    session::types::TtsModelConfigError,
+};
 
 struct TokenDecoderLoadedModel<B: Backend> {
     shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -116,6 +119,7 @@ impl<B: Backend> TokenDecoderContext<B> {
             &model_shape,
             max_prefix_length,
             max_suffix_length,
+            env_kv_compression_config::<B>(),
         )));
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
         let kv_cache_update = KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
@@ -301,7 +305,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     .encode(&mut state, &encoding_parameters, &mut encoder)
                     .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
-            self.encode_cache_acceptance_update_on(&mut encoder, token_count);
+            self.encode_cache_acceptance_update_on(&mut encoder, &state, token_count);
 
             self.submit_and_wait_command_buffer(encoder)?;
             self.register_positions_and_advance(token_count);
@@ -446,7 +450,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             self.ctx.token_copy_results.encode(&*sampling_output_buffer, (&mut *results_buffer, 0), encoder);
         }
 
-        self.encode_cache_acceptance_update_on(encoder, initial_token_count);
+        self.encode_cache_acceptance_update_on(encoder, &state, initial_token_count);
         self.register_positions_and_advance(initial_token_count);
 
         if followup_count > 0 {
@@ -557,7 +561,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 );
             }
 
-            self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
+            self.encode_cache_acceptance_update_on(encoder, &state, 1);
             self.ctx.cache_layers.borrow_mut().register_accepted_tokens(1);
         }
         Ok(())
@@ -763,6 +767,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     fn encode_cache_acceptance_update_on(
         &mut self,
         encoder: &mut Encoder<B>,
+        state: &ForwardPassState<B>,
         token_count: usize,
     ) {
         let mut single_accepted = [0_usize; 1];
@@ -777,7 +782,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
             accepted_suffix_indices_storage = (0..token_count).collect::<Vec<_>>();
             accepted_suffix_indices_storage.as_slice()
         };
-        self.ctx.cache_layers.borrow_mut().update_after_acceptance(
+        state.update_cache_after_acceptance(
+            self.ctx.context.as_ref(),
             accepted_suffix_indices,
             None,
             encoder,
@@ -902,7 +908,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 pre_injection_encode,
                 None,
             )?;
-            self.encode_cache_acceptance_update_on(&mut encoder, token_count);
+            self.encode_cache_acceptance_update_on(&mut encoder, &state, token_count);
 
             self.submit_and_wait_command_buffer(encoder)?;
             let token = read_sampled_token_from_sampling_output(&state)?;
@@ -1082,7 +1088,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             self.ctx.token_copy_results.encode(&*sampling_output_buffer, (&mut *results_buffer, 0), encoder);
         }
 
-        self.encode_cache_acceptance_update_on(encoder, token_count);
+        self.encode_cache_acceptance_update_on(encoder, &state, token_count);
         // Do NOT submit -- the caller will submit.
         self.register_positions_and_advance(token_count);
         Ok(())

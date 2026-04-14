@@ -7,6 +7,8 @@ use crate::{
     backends::common::{Backend, Buffer, Context},
 };
 
+pub type ArrayCell<B> = RefCell<Array<B>>;
+
 #[derive(Debug)]
 pub struct Array<B: Backend> {
     buffer: Rc<RefCell<B::Buffer>>,
@@ -227,6 +229,17 @@ pub trait ArrayContextExt {
         data_type: DataType,
         label: &str,
     ) -> Array<Self::Backend>;
+
+    fn create_array(
+        &self,
+        shape: &[usize],
+        data_type: DataType,
+        label: &str,
+    ) -> Array<Self::Backend> {
+        let mut array = self.create_array_uninitialized(shape, data_type, label);
+        array.as_bytes_mut().fill(0);
+        array
+    }
 
     fn create_array_zeros(
         &self,

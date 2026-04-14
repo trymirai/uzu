@@ -8,14 +8,19 @@ use std::{
 
 use itertools::{Either, Itertools, izip};
 
+#[cfg(feature = "tracing")]
+use super::trace_debug::TraceDebugLayerSnapshot;
 use super::{
     gpu_capture::GpuCaptureManager,
     grammar::CompiledGrammar,
+    kv_debug::{KvDebugLayerSnapshot, KvDebugSnapshot},
     language_model_generator_context::LanguageModelGeneratorContext,
     result::{GenerateResult, PrefillResult},
     rng::PRng,
+    trace_debug::TraceDebugSnapshot,
 };
 use crate::{
+    array::ArrayContextExt,
     backends::common::{
         Backend, Buffer, CommandBuffer, Context, Encoder, Executable,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
@@ -72,6 +77,7 @@ pub struct LanguageModelGenerator<B: Backend> {
     pre_encoded_task: Option<(TaskEncodingKey, Executable<B>)>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager<B>,
+    last_trace_snapshot: Option<TraceDebugSnapshot>,
 }
 
 pub trait LanguageModelGeneratorTrait {
@@ -86,6 +92,12 @@ pub trait LanguageModelGeneratorTrait {
 
     fn generate(
         &mut self,
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error>;
+    fn generate_from_token_path(
+        &mut self,
+        continuation: &[u64],
         compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error>;
@@ -104,6 +116,11 @@ pub trait LanguageModelGeneratorTrait {
     fn clear_cache(&mut self);
     fn reset_state(&mut self);
     fn peak_memory_usage(&self) -> Option<usize>;
+    fn kv_storage_bytes(&self) -> usize;
+    fn uses_materialized_transformer_state(&self) -> bool;
+    fn kv_debug_snapshot(&self) -> KvDebugSnapshot;
+    fn trace_debug_snapshot(&self) -> TraceDebugSnapshot;
+    fn tokens(&self) -> &[u64];
 
     fn tokens_len(&self) -> usize;
     fn tokens_push(
@@ -284,7 +301,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 is_prefilling: !should_sample_after_step,
             };
 
-            let (state, run_time) = self.run_model(task, self.allow_pre_encode(), sampling_method)?;
+            let allow_pre_encode = self.allow_pre_encode(task.token_ids.len());
+            let (state, run_time) = self.run_model(task, allow_pre_encode, sampling_method)?;
 
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
@@ -299,7 +317,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             }
 
             if tokens_processed_this_step > 0 {
-                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, true)?;
+                self.update_cache_layers(&state, &(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, true)?;
 
                 self.context.cache_layers.borrow_mut().register_accepted_tokens(tokens_processed_this_step);
 
@@ -313,6 +331,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
         if !sample_suffix {
             self.sync_prefix();
+            self.context.cache_layers.borrow_mut().reset_triattention_prune_counters();
             return Ok(PrefillResult {
                 tokens: Vec::new(),
                 forwardpass_durations: run_times,
@@ -327,6 +346,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
 
         self.update_cache_layers(
+            &final_state,
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
             Some(last_suffix_start),
             false,
@@ -334,6 +354,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
+        self.context.cache_layers.borrow_mut().reset_triattention_prune_counters();
 
         Ok(PrefillResult {
             tokens: accepted_tokens,
@@ -357,79 +378,16 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &TrieCreationConfig::default(),
             suffix_length,
         );
+        self.generate_from_suffix_root(&suffix_root, compiled_grammar, sampling_method)
+    }
 
-        let flat_trie = suffix_root.linearize();
-        let active_row_count = flat_trie.len();
-
-        let token_ids =
-            flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
-
-        let token_subtrie_ranges = flat_trie
-            .token_subtrie_ranges()
-            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
-            .collect::<Box<[[u32; 3]]>>();
-
-        let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
-            let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
-            flat_trie
-                .token_masks()
-                .chain(repeat_n(None, suffix_length - active_row_count))
-                .map(|mask| match mask {
-                    Some(mask) => Either::Left(
-                        mask.iter()
-                            .copied()
-                            .take(single_token_bitmask_size)
-                            .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
-                    ),
-                    None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
-                })
-                .flatten()
-                .collect::<Box<[u32]>>()
-        });
-
-        let start_position = self.tokens.len() - 1;
-        let token_positions = flat_trie
-            .token_positions()
-            .map(|trie_position| start_position + trie_position)
-            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
-            .collect::<Box<[usize]>>();
-
-        let token_seeds =
-            flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
-
-        let task = Task {
-            token_ids: &token_ids,
-            token_subtrie_ranges: Some(&token_subtrie_ranges),
-            token_positions: &token_positions,
-            token_bitmask: token_bitmask.as_deref(),
-            token_seeds: &token_seeds,
-            expected_number_of_new_tokens: 1,
-            active_row_count,
-            sampling_start: 0,
-            sampling_length: active_row_count,
-            is_prefilling: false,
-        };
-
-        let (mut state, run_time) = self.run_model(task, self.allow_pre_encode(), sampling_method)?;
-
-        let sampled_tokens = self.read_sampling_output(&mut state)?;
-
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
-        let speculator_proposed = active_row_count.saturating_sub(1);
-        let speculator_accepted = accepted_tokens.len().saturating_sub(1);
-
-        self.update_cache_layers(&accepted_token_indices, None, false)?;
-
-        self.tokens.extend(accepted_tokens.clone());
-        self.sync_prefix();
-
-        Ok(GenerateResult {
-            tokens: accepted_tokens,
-            forwardpass_duration: run_time,
-            speculator_proposed,
-            speculator_accepted,
-        })
+    fn generate_from_token_path(
+        &mut self,
+        continuation: &[u64],
+        compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error> {
+        LanguageModelGenerator::generate_from_token_path(self, continuation, compiled_grammar, sampling_method)
     }
 
     /// Prepares async buffers for generation.
@@ -561,7 +519,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         );
 
         // Scatter + register for all transformer layers
-        self.context.cache_layers.borrow_mut().update_after_acceptance(
+        state.update_cache_after_acceptance(
+            self.context.context.as_ref(),
             &[0],
             None,
             &mut encoder,
@@ -604,6 +563,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.pre_encoded_task = None;
+        self.last_trace_snapshot = None;
         self.gpu_capture.reset();
 
         let seed = self.decoding_config.sampling_seed.resolve();
@@ -613,6 +573,32 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
     fn peak_memory_usage(&self) -> Option<usize> {
         self.context.context.peak_memory_usage()
+    }
+    fn kv_storage_bytes(&self) -> usize {
+        self.context.cache_layers.borrow().kv_storage_bytes()
+    }
+    fn uses_materialized_transformer_state(&self) -> bool {
+        self.context.cache_layers.borrow().uses_materialized_transformer_state()
+    }
+    fn kv_debug_snapshot(&self) -> KvDebugSnapshot {
+        let cache_layers = self.context.cache_layers.borrow();
+        let layers = cache_layers
+            .data
+            .iter()
+            .enumerate()
+            .filter_map(|(layer_index, layer)| {
+                layer.as_transformer().map(|layer| self.snapshot_transformer_layer(layer_index, layer))
+            })
+            .collect();
+        KvDebugSnapshot {
+            layers,
+        }
+    }
+    fn trace_debug_snapshot(&self) -> TraceDebugSnapshot {
+        self.last_trace_snapshot.clone().expect("trace debug snapshot must be captured by the last forward pass")
+    }
+    fn tokens(&self) -> &[u64] {
+        &self.tokens
     }
 
     fn tokens_len(&self) -> usize {
@@ -646,7 +632,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         range: Range<usize>,
     ) {
         let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
-        self.context.cache_layers.borrow_mut().apply_slice(slice, Some(range));
+        self.context.cache_layers.borrow_mut().apply_slice(self.context.context.as_ref(), slice, Some(range));
     }
 
     fn build_llm_context(&self) -> Box<dyn Any> {
@@ -666,11 +652,24 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             match (ctx_layer, gen_layer) {
                 (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
                     let copy_rows = src.prefix_segment_length();
-                    if copy_rows > 0 {
-                        dst.keys.copy_slice(&src.keys, 1, 0..copy_rows, 0);
-                        dst.values.copy_slice(&src.values, 1, 0..copy_rows, 0);
-                    }
                     dst.state = src.state.clone();
+                    dst.prefix_token_positions = src.prefix_token_positions.clone();
+                    dst.next_token_position = src.next_token_position;
+                    if let Some(triattention) = &mut dst.triattention {
+                        triattention.tokens_since_last_prune = 0;
+                    }
+
+                    let mut dense_keys =
+                        self.context.context.create_array(&dst.shape, dst.data_type, "reconfigure_keys");
+                    let mut dense_values =
+                        self.context.context.create_array(&dst.shape, dst.data_type, "reconfigure_values");
+                    if copy_rows > 0 {
+                        let src_keys = src.dense_keys().borrow();
+                        let src_values = src.dense_values().borrow();
+                        dense_keys.copy_slice(&src_keys, 1, 0..copy_rows, 0);
+                        dense_values.copy_slice(&src_values, 1, 0..copy_rows, 0);
+                    }
+                    dst.compress_from(&dense_keys, &dense_values);
                 },
                 (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
                     dst.conv_state.copy_from_array(&src.conv_state);
@@ -686,6 +685,174 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 }
 
 impl<B: Backend> LanguageModelGenerator<B> {
+    pub fn generate_from_token_path(
+        &mut self,
+        continuation: &[u64],
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error> {
+        let root_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
+        let suffix_root = TrieNode::from_token_path(
+            root_token,
+            continuation,
+            &self.context.seed,
+            self.tokens.len() - 1,
+            compiled_grammar.as_deref_mut(),
+        );
+
+        self.generate_from_suffix_root(&suffix_root, compiled_grammar, sampling_method)
+    }
+
+    pub fn generate_from_suffix_root(
+        &mut self,
+        suffix_root: &TrieNode,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+    ) -> Result<GenerateResult, Error> {
+        let flat_trie = suffix_root.linearize();
+        let active_row_count = flat_trie.len();
+        let suffix_length = self.decoding_config.generate_suffix_length().max(active_row_count);
+
+        let token_ids =
+            flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
+
+        let token_subtrie_ranges = flat_trie
+            .token_subtrie_ranges()
+            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
+            .collect::<Box<[[u32; 3]]>>();
+
+        let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
+            let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
+            flat_trie
+                .token_masks()
+                .chain(repeat_n(None, suffix_length - active_row_count))
+                .map(|mask| match mask {
+                    Some(mask) => Either::Left(
+                        mask.iter()
+                            .copied()
+                            .take(single_token_bitmask_size)
+                            .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
+                    ),
+                    None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
+                })
+                .flatten()
+                .collect::<Box<[u32]>>()
+        });
+
+        let start_position = self.tokens.len() - 1;
+        let token_positions = flat_trie
+            .token_positions()
+            .map(|trie_position| start_position + trie_position)
+            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
+            .collect::<Box<[usize]>>();
+
+        let token_seeds =
+            flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
+
+        let task = Task {
+            token_ids: &token_ids,
+            token_subtrie_ranges: Some(&token_subtrie_ranges),
+            token_positions: &token_positions,
+            token_bitmask: token_bitmask.as_deref(),
+            token_seeds: &token_seeds,
+            expected_number_of_new_tokens: 1,
+            active_row_count,
+            sampling_start: 0,
+            sampling_length: active_row_count,
+            is_prefilling: false,
+        };
+
+        let allow_pre_encode = self.allow_pre_encode(task.token_ids.len());
+        let (mut state, run_time) = self.run_model(task, allow_pre_encode, sampling_method)?;
+
+        let sampled_tokens = self.read_sampling_output(&mut state)?;
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let speculator_proposed = active_row_count.saturating_sub(1);
+        let speculator_accepted = accepted_tokens.len().saturating_sub(1);
+
+        self.update_cache_layers(&state, &accepted_token_indices, None, false)?;
+
+        self.tokens.extend(accepted_tokens.clone());
+        self.sync_prefix();
+        self.prune_triattention_if_needed();
+
+        Ok(GenerateResult {
+            tokens: accepted_tokens,
+            forwardpass_duration: run_time,
+            speculator_proposed,
+            speculator_accepted,
+        })
+    }
+
+    fn snapshot_transformer_layer(
+        &self,
+        layer_index: usize,
+        layer: &crate::forward_pass::kv_cache_layer::KVCacheLayer<B>,
+    ) -> KvDebugLayerSnapshot {
+        let (row_indices, positions) = match &layer.state {
+            crate::forward_pass::kv_cache_layer::KVCacheLayerState::Full {
+                prefix_len,
+            } => ((0..*prefix_len).collect::<Vec<_>>(), layer.prefix_token_positions[..*prefix_len].to_vec()),
+            crate::forward_pass::kv_cache_layer::KVCacheLayerState::Windowed {
+                ring_offset,
+                ring_length,
+                window_length,
+            } => {
+                let row_indices =
+                    (0..*ring_length).map(|offset| (ring_offset + offset) % window_length).collect::<Vec<_>>();
+                let positions =
+                    row_indices.iter().map(|&index| layer.prefix_token_positions[index]).collect::<Vec<_>>();
+                (row_indices, positions)
+            },
+        };
+
+        let mut keys = self.context.context.create_array(&layer.shape, layer.data_type, "kv_debug_keys");
+        let mut values = self.context.context.create_array(&layer.shape, layer.data_type, "kv_debug_values");
+        layer.materialize_into(&mut keys, &mut values);
+        let (sparse_recent_positions, sparse_recent_values) =
+            if let Some(recent_values) = &layer.sparse_value_recent_values {
+                let sparse_value =
+                    layer.sparse_value.as_ref().expect("SparseValue recent values require SparseValue state");
+                let recent_len = positions.len().min(sparse_value.hot_value_capacity);
+                let recent_start = positions.len() - recent_len;
+                let recent_positions = positions[recent_start..].to_vec();
+                let recent_row_indices = (recent_start..positions.len())
+                    .map(|row_index| row_index % sparse_value.hot_value_capacity)
+                    .collect::<Vec<_>>();
+                (Some(recent_positions), Some(flatten_rows_as_f32(&recent_values.borrow(), &recent_row_indices)))
+            } else {
+                (None, None)
+            };
+        let sparse_pending_length = layer.sparse_value.as_ref().map_or(0, |state| state.pending_suffix_len);
+        let sparse_pending_positions = (sparse_pending_length > 0).then(|| {
+            assert!(
+                sparse_pending_length <= positions.len(),
+                "SparseValue pending rows must fit inside the captured prefix positions",
+            );
+            positions[positions.len() - sparse_pending_length..].to_vec()
+        });
+        let sparse_pending_values =
+            layer.sparse_value_pending_values.as_ref().filter(|_| sparse_pending_length > 0).map(|pending_values| {
+                flatten_rows_as_f32(&pending_values.borrow(), &(0..sparse_pending_length).collect::<Vec<_>>())
+            });
+
+        KvDebugLayerSnapshot {
+            layer_index,
+            positions,
+            sparse_recent_positions,
+            sparse_pending_positions,
+            num_groups: layer.shape[0],
+            head_dim: layer.shape[2],
+            keys: flatten_rows_as_f32(&keys, &row_indices),
+            values: flatten_rows_as_f32(&values, &row_indices),
+            sparse_recent_values,
+            sparse_pending_length,
+            sparse_pending_values,
+            storage_bytes: layer.storage_bytes(),
+        }
+    }
+
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
@@ -702,6 +869,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             pre_encoded_task: None,
             registered_prefix_len: 0,
             gpu_capture,
+            last_trace_snapshot: None,
         })
     }
 
@@ -782,6 +950,10 @@ impl<B: Backend> LanguageModelGenerator<B> {
         }
 
         pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
+        {
+            self.last_trace_snapshot = Some(self.snapshot_trace_debug(&state));
+        }
 
         let run_time = run_start.elapsed().as_secs_f64();
 
@@ -836,37 +1008,46 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
     fn update_cache_layers(
         &mut self,
+        state: &ForwardPassState<B>,
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) -> Result<(), Error> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+        let must_wait =
+            wait_until_completed || self.context.cache_layers.borrow().requires_synchronous_acceptance_update();
 
-        {
-            let mut cache_layers = self.context.cache_layers.borrow_mut();
-            cache_layers.update_after_acceptance(
-                accepted_token_indices,
-                suffix_start,
-                &mut encoder,
-                &self.context.kv_cache_update,
-            );
-        }
+        state.update_cache_after_acceptance(
+            self.context.context.as_ref(),
+            accepted_token_indices,
+            suffix_start,
+            &mut encoder,
+            &self.context.kv_cache_update,
+        );
 
         let pending = encoder.end_encoding().submit();
 
-        if wait_until_completed {
+        if must_wait {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
         Ok(())
     }
 
-    fn allow_pre_encode(&self) -> bool {
-        let debug_active = self.context.context.debug_active();
+    fn allow_pre_encode(
+        &self,
+        batch_size: usize,
+    ) -> bool {
+        if !self.decoding_config.allow_pre_encode || self.context.context.debug_active() {
+            return false;
+        }
 
-        let result = self.decoding_config.allow_pre_encode && !debug_active;
+        let cache_layers = self.context.cache_layers.borrow();
+        if !cache_layers.uses_materialized_transformer_state() {
+            return true;
+        }
 
-        result
+        batch_size == 1 && !cache_layers.blocks_pre_encode_for_single_decode()
     }
 
     fn sync_prefix(&mut self) {
@@ -881,4 +1062,137 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.registered_prefix_len = desired_prefix_len;
         }
     }
+
+    fn prune_triattention_if_needed(&mut self) {
+        let has_triattention = self
+            .context
+            .cache_layers
+            .borrow()
+            .data
+            .iter()
+            .filter_map(|layer| layer.as_transformer())
+            .any(|layer| layer.triattention.is_some());
+        if !has_triattention {
+            return;
+        }
+
+        let shared_buffers = self.context.shared_buffers.borrow();
+        let global_rope = shared_buffers.global_rope.as_ref().expect("TriAttention requires global RoPE buffers");
+        self.context.cache_layers.borrow_mut().prune_triattention_if_needed(&global_rope.cosines, &global_rope.sines);
+    }
+
+    #[cfg(feature = "tracing")]
+    fn snapshot_trace_debug(
+        &self,
+        state: &ForwardPassState<B>,
+    ) -> TraceDebugSnapshot {
+        let active_rows = (0..state.active_row_count()).collect::<Vec<_>>();
+        let traces = state.traces().borrow();
+        let layers = traces
+            .layer_results
+            .iter()
+            .enumerate()
+            .map(|(layer_index, layer_traces)| {
+                let layer_traces = layer_traces.borrow();
+                TraceDebugLayerSnapshot {
+                    layer_index,
+                    model_dim: layer_traces.attention.shape()[1],
+                    active_row_count: active_rows.len(),
+                    sparse_value_single_decode_has_kv_cache: layer_traces.sparse_value_single_decode_has_kv_cache,
+                    sparse_value_single_decode_has_sparse_value: layer_traces
+                        .sparse_value_single_decode_has_sparse_value,
+                    sparse_value_single_decode_suffix_length: layer_traces.sparse_value_single_decode_suffix_length,
+                    sparse_value_single_decode_projection_step: layer_traces.sparse_value_single_decode_projection_step,
+                    sparse_value_single_decode_is_trie: layer_traces.sparse_value_single_decode_is_trie,
+                    sparse_value_single_decode_is_kv_cache_ring: layer_traces
+                        .sparse_value_single_decode_is_kv_cache_ring,
+                    attempted_sparse_value_single_decode: layer_traces.attempted_sparse_value_single_decode,
+                    used_sparse_value_single_decode: layer_traces.used_sparse_value_single_decode,
+                    pre_attention_norm: flatten_main_rows_as_f32(&layer_traces.pre_attention_norm, &active_rows),
+                    attention: flatten_main_rows_as_f32(&layer_traces.attention, &active_rows),
+                    sparse_expected_attention: layer_traces
+                        .has_sparse_expected_attention
+                        .then(|| flatten_main_rows_as_f32(&layer_traces.sparse_expected_attention, &active_rows)),
+                    outputs: flatten_main_rows_as_f32(&layer_traces.outputs, &active_rows),
+                }
+            })
+            .collect();
+        TraceDebugSnapshot {
+            layers,
+        }
+    }
+}
+
+fn flatten_rows_as_f32<B: Backend>(
+    array: &crate::Array<B>,
+    row_indices: &[usize],
+) -> Vec<f32> {
+    match array.data_type() {
+        crate::DataType::BF16 => flatten_rows_as_f32_typed::<B, half::bf16>(array, row_indices),
+        crate::DataType::F16 => flatten_rows_as_f32_typed::<B, half::f16>(array, row_indices),
+        crate::DataType::F32 => flatten_rows_as_f32_typed::<B, f32>(array, row_indices),
+        dtype => panic!("KV debug snapshot does not support dtype {dtype:?}"),
+    }
+}
+
+fn flatten_rows_as_f32_typed<B: Backend, T>(
+    array: &crate::Array<B>,
+    row_indices: &[usize],
+) -> Vec<f32>
+where
+    T: crate::ArrayElement + Copy,
+    f32: From<T>,
+{
+    let shape = array.shape();
+    let num_groups = shape[0];
+    let sequence_length = shape[1];
+    let head_dim = shape[2];
+    let data = array.as_slice::<T>();
+    let mut flat = Vec::with_capacity(num_groups * row_indices.len() * head_dim);
+
+    for group_index in 0..num_groups {
+        for &row_index in row_indices {
+            assert!(row_index < sequence_length, "KV debug row index out of bounds");
+            let start = (group_index * sequence_length + row_index) * head_dim;
+            let end = start + head_dim;
+            flat.extend(data[start..end].iter().copied().map(f32::from));
+        }
+    }
+
+    flat
+}
+
+#[cfg(feature = "tracing")]
+fn flatten_main_rows_as_f32<B: Backend>(
+    array: &crate::Array<B>,
+    row_indices: &[usize],
+) -> Vec<f32> {
+    match array.data_type() {
+        crate::DataType::BF16 => flatten_main_rows_as_f32_typed::<B, half::bf16>(array, row_indices),
+        crate::DataType::F16 => flatten_main_rows_as_f32_typed::<B, half::f16>(array, row_indices),
+        crate::DataType::F32 => flatten_main_rows_as_f32_typed::<B, f32>(array, row_indices),
+        dtype => panic!("trace debug snapshot does not support dtype {dtype:?}"),
+    }
+}
+
+#[cfg(feature = "tracing")]
+fn flatten_main_rows_as_f32_typed<B: Backend, T>(
+    array: &crate::Array<B>,
+    row_indices: &[usize],
+) -> Vec<f32>
+where
+    T: crate::ArrayElement + Copy,
+    f32: From<T>,
+{
+    let sequence_length = array.shape()[0];
+    let model_dim = array.shape()[1];
+    let data = array.as_slice::<T>();
+    let mut flat = Vec::with_capacity(row_indices.len() * model_dim);
+    for &row_index in row_indices {
+        assert!(row_index < sequence_length, "trace debug row index out of bounds");
+        let start = row_index * model_dim;
+        let end = start + model_dim;
+        flat.extend(data[start..end].iter().copied().map(f32::from));
+    }
+    flat
 }

@@ -176,6 +176,36 @@ impl TrieNode {
         root
     }
 
+    pub fn from_token_path(
+        root_token: u64,
+        continuation: &[u64],
+        seed: &PRng,
+        start_position: usize,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
+    ) -> Self {
+        let mask = compiled_grammar.as_deref_mut().and_then(|grammar| grammar.next_bitmask().unwrap());
+        let mut root = Self::new(root_token, mask, seed.derive(start_position as u64));
+        let mut current = &mut root;
+
+        for (offset, &token) in continuation.iter().enumerate() {
+            let mask = if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+                compiled_grammar.accept_token(token).unwrap();
+                compiled_grammar.next_bitmask().unwrap()
+            } else {
+                None
+            };
+
+            current.add(Self::new(token, mask, seed.derive((start_position + offset + 1) as u64))).unwrap();
+            current = current.get_mut(token).unwrap();
+        }
+
+        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+            compiled_grammar.rollback(continuation.len());
+        }
+
+        root
+    }
+
     pub fn linearize(&self) -> FlatTrie<'_> {
         let mut tokens = vec![FlatTrieNode::new(self, (0, 0), 0)];
 

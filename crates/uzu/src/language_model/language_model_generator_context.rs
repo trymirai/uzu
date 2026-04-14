@@ -14,7 +14,8 @@ use crate::{
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
     forward_pass::{
-        cache_layers::CacheLayers, model_shape::ModelShape, scratch_buffers::ScratchBuffers, state::SharedBuffers,
+        cache_layers::CacheLayers, kv_compression::env_kv_compression_config, model_shape::ModelShape,
+        scratch_buffers::ScratchBuffers, state::SharedBuffers,
     },
     language_model::rng::PRng,
     parameters::ParameterLoader,
@@ -171,6 +172,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             &model_shape,
             max_prefix_length,
             max_suffix_length,
+            env_kv_compression_config::<B>(),
         )));
 
         let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();

@@ -5,7 +5,7 @@ use std::{
 
 use sysinfo::System;
 use uzu::{
-    VERSION,
+    ConfigDataType, VERSION,
     session::{
         ChatSession,
         config::{DecodingConfig, RunConfig},
@@ -16,7 +16,7 @@ use uzu::{
 
 use crate::runner::{
     helpers::get_memory_usage,
-    types::{Device, Result as TaskResult, Task},
+    types::{BenchRunMode, Device, Result as TaskResult, Task},
 };
 
 pub struct Runner {
@@ -54,79 +54,155 @@ impl Runner {
 
     pub fn run<F>(
         &self,
-        mut progress: Option<F>,
+        progress: Option<F>,
     ) -> Result<Vec<TaskResult>, Box<dyn std::error::Error>>
     where
         F: FnMut(f64),
     {
         let context_length = self.minimal_context_length()?;
-
-        let mut decoding_config = DecodingConfig::default().with_context_length(ContextLength::Custom(context_length));
-        if let Some(prefill_step_size) = self.prefill_step_size {
-            decoding_config = decoding_config.with_prefill_step_size(PrefillStepSize::Custom(prefill_step_size));
+        let device = self.get_device_info();
+        let input = Input::Messages(self.task.messages.clone());
+        match self.task.run_mode {
+            BenchRunMode::WarmedProcess => self.run_warmed_process(context_length, device, input, progress),
+            BenchRunMode::FreshSession => self.run_fresh_session(context_length, device, input, progress),
+            BenchRunMode::FreshProcess => {
+                panic!("FreshProcess must be orchestrated by the CLI handler, not Runner")
+            },
         }
+    }
+}
 
-        let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), decoding_config)?;
-
+impl Runner {
+    fn run_warmed_process<F>(
+        &self,
+        context_length: usize,
+        device: Device,
+        input: Input,
+        mut progress: Option<F>,
+    ) -> Result<Vec<TaskResult>, Box<dyn std::error::Error>>
+    where
+        F: FnMut(f64),
+    {
+        let mut session = self.new_session(context_length)?;
+        if self.task.warmup_tokens > 0 {
+            let warmup_config = RunConfig::default().tokens_limit(self.task.warmup_tokens);
+            session.run(input.clone(), warmup_config, Some(|_: Output| true))?;
+        }
         let precision = session
             .model_metadata
             .model_config
             .as_language_model()
             .map(|config| config.model_config.transformer_config.output_norm_config.scale_precision);
-
-        let device = self.get_device_info();
-
-        let input = Input::Messages(self.task.messages.clone());
-
-        let warmup_config = RunConfig::default().tokens_limit(1);
-        session.run(input.clone(), warmup_config, Some(|_: Output| true))?;
-
-        let mut results: Vec<TaskResult> = Vec::new();
+        let mut results = Vec::with_capacity(self.task.number_of_runs as usize);
         for run_index in 0..self.task.number_of_runs {
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-            let mut run_config = RunConfig::default().tokens_limit(self.task.tokens_limit);
-            if self.task.greedy {
-                run_config = run_config.sampling_policy(SamplingPolicy::Custom {
-                    value: SamplingMethod::Greedy,
-                });
+            let result = self.run_once(&mut session, &device, precision, &input)?;
+            results.push(result);
+            if let Some(progress) = progress.as_mut() {
+                progress((run_index + 1) as f64 / self.task.number_of_runs as f64);
             }
-            let output = session.run(
+        }
+        Ok(results)
+    }
+
+    fn run_fresh_session<F>(
+        &self,
+        context_length: usize,
+        device: Device,
+        input: Input,
+        mut progress: Option<F>,
+    ) -> Result<Vec<TaskResult>, Box<dyn std::error::Error>>
+    where
+        F: FnMut(f64),
+    {
+        let mut results = Vec::with_capacity(self.task.number_of_runs as usize);
+        for run_index in 0..self.task.number_of_runs {
+            let mut session = self.new_session(context_length)?;
+            if self.task.warmup_tokens > 0 {
+                let warmup_config = RunConfig::default().tokens_limit(self.task.warmup_tokens);
+                session.run(input.clone(), warmup_config, Some(|_: Output| true))?;
+            }
+            let precision = session
+                .model_metadata
+                .model_config
+                .as_language_model()
+                .map(|config| config.model_config.transformer_config.output_norm_config.scale_precision);
+            let result = self.run_once(&mut session, &device, precision, &input)?;
+            results.push(result);
+            if let Some(progress) = progress.as_mut() {
+                progress((run_index + 1) as f64 / self.task.number_of_runs as f64);
+            }
+        }
+        Ok(results)
+    }
+
+    fn new_session(
+        &self,
+        context_length: usize,
+    ) -> Result<ChatSession, Box<dyn std::error::Error>> {
+        let mut decoding_config = DecodingConfig::default().with_context_length(ContextLength::Custom(context_length));
+        if let Some(prefill_step_size) = self.prefill_step_size {
+            decoding_config = decoding_config.with_prefill_step_size(PrefillStepSize::Custom(prefill_step_size));
+        }
+        Ok(ChatSession::new(PathBuf::from(self.model_path.clone()), decoding_config)?)
+    }
+
+    fn run_once(
+        &self,
+        session: &mut ChatSession,
+        device: &Device,
+        precision: Option<ConfigDataType>,
+        input: &Input,
+    ) -> Result<TaskResult, Box<dyn std::error::Error>> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let mut run_config = RunConfig::default().tokens_limit(self.task.tokens_limit);
+        if self.task.greedy {
+            run_config = run_config.sampling_policy(SamplingPolicy::Custom {
+                value: SamplingMethod::Greedy,
+            });
+        }
+        let output = if let Some(forced_token_path) = self.task.forced_token_path.as_deref() {
+            session.run_forced_token_path(
+                input.clone(),
+                run_config,
+                forced_token_path,
+                Some(|_: Output| {
+                    return true;
+                }),
+            )?
+        } else {
+            session.run(
                 input.clone(),
                 run_config,
                 Some(|_: Output| {
                     return true;
                 }),
-            )?;
-
-            let memory_used = get_memory_usage();
-
-            let result = TaskResult {
-                task: self.task.clone(),
-                device: device.clone(),
-                engine_version: VERSION.to_string(),
-                timestamp,
-                precision,
-                memory_used,
-                tokens_count_input: output.stats.total_stats.tokens_count_input,
-                tokens_count_output: output.stats.total_stats.tokens_count_output,
-                time_to_first_token: output.stats.prefill_stats.duration,
-                prompt_tokens_per_second: output.stats.prefill_stats.processed_tokens_per_second,
-                generate_tokens_per_second: output.stats.generate_stats.map(|stats| stats.tokens_per_second),
-                text: output.text.original,
-            };
-            results.push(result);
-
-            if let Some(progress) = progress.as_mut() {
-                progress((run_index + 1) as f64 / self.task.number_of_runs as f64);
-            }
-        }
-
-        Ok(results)
+            )?
+        };
+        let text = output.text.original.clone();
+        let text_blake3 = blake3::hash(text.as_bytes()).to_hex().to_string();
+        Ok(TaskResult {
+            task: self.task.clone(),
+            device: device.clone(),
+            engine_version: VERSION.to_string(),
+            timestamp,
+            precision,
+            memory_used: get_memory_usage(),
+            kv_storage_bytes: session.kv_storage_bytes(),
+            tokens_count_input: output.stats.total_stats.tokens_count_input,
+            tokens_count_output: output.stats.total_stats.tokens_count_output,
+            time_to_first_token: output.stats.prefill_stats.duration,
+            prompt_tokens_per_second: output.stats.prefill_stats.processed_tokens_per_second,
+            generate_tokens_per_second: output.stats.generate_stats.map(|stats| stats.tokens_per_second),
+            text_blake3: text_blake3.clone(),
+            matches_reference_output: self
+                .task
+                .reference_text_blake3
+                .as_ref()
+                .map(|reference| *reference == text_blake3),
+            text,
+        })
     }
-}
 
-impl Runner {
     fn get_device_info(&self) -> Device {
         let mut system_info = System::new_all();
         system_info.refresh_all();

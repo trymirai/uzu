@@ -116,8 +116,10 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         // Matrix-matrix
         let aligned_n_64 = configuration.output_dim % 64 == 0;
         let is_bf16 = configuration.data_type == DataType::BF16;
+        let is_zero_point = configuration.quantization_type == QuantizedMatmulType::ZeroPoint;
 
-        let matrix_matrix = if aligned_n_64 && is_bf16 && matches!(configuration.group_size, 64 | 128) {
+        let matrix_matrix = if aligned_n_64 && is_bf16 && is_zero_point && matches!(configuration.group_size, 64 | 128)
+        {
             MatrixMatrixKernel::QmmTransposed64x64(
                 <B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel::new(
                     context,
@@ -129,7 +131,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )
-        } else if aligned_n_64 && is_bf16 {
+        } else if aligned_n_64 && is_bf16 && is_zero_point {
             MatrixMatrixKernel::QmmTransposedWide(
                 <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel::new(
                     context,
