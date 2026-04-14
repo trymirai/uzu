@@ -1,2 +1,5 @@
 [env]
 RUST_TEST_THREADS = "1"
+
+[target.wasm32-wasip1-threads]
+runner = ["wasmtime", "-W", "threads=y,shared-memory=y", "-S", "threads=y", "--"]
