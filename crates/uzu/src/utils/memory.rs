@@ -21,7 +21,7 @@ pub fn get_free_swap() -> u64 {
     use sysinfo::System;
     let mut sys = System::new();
     sys.refresh_memory();
-    sys.total_memory() - sys.used_memory()
+    sys.total_swap() - sys.used_swap()
 }
 
 #[cfg(target_arch = "wasm32")]
