@@ -4,6 +4,7 @@ mod attention;
 mod audio;
 mod delta_net;
 mod embedding;
+mod hadamard_transform;
 mod kv_cache_update;
 mod layer_norm;
 

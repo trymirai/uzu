@@ -15,8 +15,9 @@ use super::{
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
-    common::{caching, codegen::write_tokens, compiler::Compiler, envs, kernel::Kernel},
+    common::{caching, codegen::write_tokens, compiler::Compiler, envs, gpu_types::GpuTypes, kernel::Kernel},
     debug_log,
+    metal::gpu_types::gpu_type_gen,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -83,25 +84,29 @@ fn objects_hash<'a>(objects: impl IntoIterator<Item = &'a ObjectInfo>) -> anyhow
 #[derive(Debug)]
 pub struct MetalCompiler {
     src_dir: PathBuf,
+    gpu_types_dir: PathBuf,
     build_dir: PathBuf,
     out_dir: PathBuf,
     toolchain: MetalToolchain,
 }
 
 impl MetalCompiler {
-    pub fn new_with_include_dir(include_dir: PathBuf) -> anyhow::Result<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
             .join("src/backends/metal/kernel");
+
+        let gpu_types_dir = src_dir.join("generated");
 
         let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
         let build_dir = out_dir.join("metal");
         fs::create_dir_all(&build_dir).with_context(|| format!("cannot create {}", build_dir.display()))?;
 
-        let toolchain =
-            MetalToolchain::from_env_with_include_dir(Some(include_dir)).context("cannot create toolchain")?;
+        let toolchain = MetalToolchain::from_env_with_include_dir(Some(gpu_types_dir.clone()))
+            .context("cannot create toolchain")?;
 
         Ok(Self {
             src_dir,
+            gpu_types_dir,
             build_dir,
             out_dir,
             toolchain,
@@ -313,7 +318,12 @@ impl MetalCompiler {
 
 #[async_trait]
 impl Compiler for MetalCompiler {
-    async fn build(&self) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+    async fn build(
+        &self,
+        gpu_types: &GpuTypes,
+    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+        gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
+
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|e| e.ok())

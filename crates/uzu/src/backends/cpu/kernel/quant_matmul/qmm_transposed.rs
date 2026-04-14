@@ -88,20 +88,48 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
 #[variants(T, f32, f16, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qmm_transposed<T: ArrayElement + Float, const GROUP_SIZE: u32, const BITS: u32>(
+#[variants(BM, 8, 32, 64)]
+#[variants(BK, 32, 64)]
+#[variants(BN, 32, 64)]
+#[variants(WM, 1, 2)]
+#[variants(WN, 1, 2)]
+#[constraint(
+    (BM == 8  && BK == 32 && BN == 32 && WM == 1 && WN == 1) ||
+    (BM == 32 && BK == 32 && BN == 32 && WM == 2 && WN == 2) ||
+    (BM == 32 && BK == 64 && BN == 32 && WM == 2 && WN == 2) ||
+    (BM == 64 && BK == 32 && BN == 64 && WM == 2 && WN == 2) ||
+    (BM == 64 && BK == 64 && BN == 64 && WM == 2 && WN == 2))]
+#[constraint(BK <= GROUP_SIZE)]
+#[constraint(T != "f32" || BK < 64)]
+pub fn quantized_matmul_qmm_transposed<
+    T: ArrayElement + Float,
+    const GROUP_SIZE: u32,
+    const BITS: u32,
+    const BM: u32,
+    const BK: u32,
+    const BN: u32,
+    const WM: u32,
+    const WN: u32,
+>(
     weights: *const u32,
     scales: *const T,
     #[optional(use_zero_points)] zero_points: Option<*const u8>,
     #[optional(use_mlx_quant)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
+    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     in_vec_size: u32,
     out_vec_size: u32,
     batch_size: u32,
     #[specialize] use_zero_points: bool,
     #[specialize] use_mlx_quant: bool,
+    #[specialize] use_hadamard: bool,
     #[specialize] aligned_n: bool,
 ) {
+    let _ = (BM, BK, BN, WM, WN); // tile params unused in tile-agnostic CPU reference
+    if use_hadamard {
+        unimplemented!("not supported yet");
+    }
     qmm_transposed::<T>(
         weights,
         scales,

@@ -34,7 +34,7 @@ impl Default for TextDecoderRuntimeConfig {
     }
 }
 
-#[cfg(all(feature = "audio-runtime", metal_backend))]
+#[cfg(metal_backend)]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TtsSessionOptions {
     pub text_decoder: TextDecoderRuntimeConfig,

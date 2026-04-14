@@ -1,8 +1,13 @@
+#![cfg(grammar_xgrammar)]
+
 use std::iter::repeat_n;
 
-use xgrammar::{DLDataType, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
+use xgrammar::{
+    DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher,
+    TokenizerInfo,
+};
 
-use crate::session::{config::GrammarConfig, types::Error};
+use crate::{DataType, language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig};
 
 enum CompiledGrammarEngagementState {
     Always,
@@ -60,13 +65,13 @@ impl CompiledGrammarEngagementState {
     }
 }
 
-pub struct CompiledGrammar {
+pub struct CompiledXGrammar {
     vocab_size: usize,
     matcher: GrammarMatcher,
     engagement_state: CompiledGrammarEngagementState,
 }
 
-impl CompiledGrammar {
+impl CompiledXGrammar {
     pub fn from_config(
         config: &GrammarConfig,
         trigger_token_id: Option<u64>,
@@ -115,8 +120,10 @@ impl CompiledGrammar {
             engagement_state,
         })
     }
+}
 
-    pub fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error> {
+impl CompiledGrammar for CompiledXGrammar {
+    fn next_bitmask(&mut self) -> Result<Option<Box<[u32]>>, Error> {
         if self.engagement_state.is_engaged() {
             let mut cpu_mask = repeat_n(0, self.vocab_size.div_ceil(32)).collect::<Box<[u32]>>();
             let batch_mask_slice = &mut cpu_mask;
@@ -149,7 +156,7 @@ impl CompiledGrammar {
         }
     }
 
-    pub fn accept_token(
+    fn accept_token(
         &mut self,
         token_id: u64,
     ) -> Result<(), Error> {
@@ -167,7 +174,7 @@ impl CompiledGrammar {
         Ok(())
     }
 
-    pub fn rollback(
+    fn rollback(
         &mut self,
         num_tokens: usize,
     ) {
@@ -178,7 +185,32 @@ impl CompiledGrammar {
         }
     }
 
-    pub fn is_terminated(&self) -> bool {
+    fn is_terminated(&self) -> bool {
         self.matcher.is_terminated()
+    }
+}
+
+trait DLDataTypeCodeProvider {
+    fn dl_data_type_code(self) -> DLDataTypeCode;
+}
+
+impl DLDataTypeCodeProvider for DataType {
+    fn dl_data_type_code(self) -> DLDataTypeCode {
+        match self {
+            DataType::BF16 => DLDataTypeCode::kDLBfloat,
+            DataType::F16 | DataType::F32 | DataType::F64 => DLDataTypeCode::kDLFloat,
+            DataType::I4 | DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64 => DLDataTypeCode::kDLInt,
+            DataType::U4 | DataType::U8 | DataType::U16 | DataType::U32 | DataType::U64 => DLDataTypeCode::kDLUInt,
+        }
+    }
+}
+
+impl From<DataType> for DLDataType {
+    fn from(data_type: DataType) -> Self {
+        Self {
+            code: data_type.dl_data_type_code() as u8,
+            bits: data_type.size_in_bits() as u8,
+            lanes: 1,
+        }
     }
 }

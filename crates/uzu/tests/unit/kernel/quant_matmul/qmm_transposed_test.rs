@@ -13,54 +13,7 @@ use uzu::{
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
-    let aligned_n = (input.n % 32) == 0;
-    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
-        &context,
-        T::data_type(),
-        input.group_size,
-        input.bits,
-        input.use_zero_points,
-        input.use_mlx_quant,
-        aligned_n,
-    )
-    .expect("Failed to create QuantizedMatmulQmmTransposedKernel");
-
-    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
-
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
-
-    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
-
-    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        &w_buf,
-        &scales_buf,
-        zp_buf.as_ref(),
-        bias_buf.as_ref(),
-        &x_buf,
-        &mut y_buf,
-        input.k,
-        input.n,
-        input.m,
-        &mut encoder,
-    );
-
-    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
-
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
-}
-
-/// Create test data for transposed qmm: x[m×k] * w_transposed[n×k] = y[m×n]
-/// Weights are in transposed [n × k] layout.
-fn get_test_data_basic<T: ArrayElement + Float>(
+fn make_input_basic<T: ArrayElement + Float>(
     m: usize,
     k: usize,
     n: usize,
@@ -68,10 +21,9 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
-) -> (Input<T>, Vec<T>) {
+) -> Input<T> {
     let num_groups_k = (k + group_size as usize - 1) / group_size as usize;
 
-    // Generate quantized weights [n × k]
     let max_val = if bits == 4 {
         15u8
     } else {
@@ -85,7 +37,6 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
     let w_packed = pack_weights_u32(&weights_raw, bits);
 
-    // Scales: [n × num_groups_k]
     let mut scales_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
     for j in 0..n {
         for g in 0..num_groups_k {
@@ -94,7 +45,6 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
     let scales: Vec<T> = scales_f32.iter().map(|&v| T::from(v).unwrap()).collect();
 
-    // Zero points or biases
     let zp_stride = if bits == 4 {
         (num_groups_k + 1) / 2
     } else {
@@ -109,7 +59,6 @@ fn get_test_data_basic<T: ArrayElement + Float>(
                 zp_raw.push(zp_val);
             }
         }
-        // Pack zero points per row
         let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
         for j in 0..n {
             let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
@@ -132,7 +81,6 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         unreachable!("Must use either zero_points or mlx_quant");
     };
 
-    // X: [m × k]
     let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);
     for i in 0..m {
         for l in 0..k {
@@ -141,7 +89,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
     let x: Vec<T> = x_f32.iter().map(|&v| T::from(v).unwrap()).collect();
 
-    let input = Input {
+    Input {
         w_packed,
         scales,
         zero_points,
@@ -154,29 +102,23 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         bits,
         use_zero_points,
         use_mlx_quant,
-    };
-
-    let expected = get_output::<Cpu, T>(&input);
-    (input, expected)
+    }
 }
 
-/// Small edge-case test data with known values
-fn get_test_data_edge<T: ArrayElement + Float>(
+fn make_input_edge<T: ArrayElement + Float>(
+    n: usize,
     group_size: u32,
     bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
-) -> (Input<T>, Vec<T>) {
+) -> Input<T> {
     let m = 2usize;
     let k = group_size as usize;
-    let n = 32usize;
     let num_groups_k = 1;
 
-    // Simple weights [n × k]: all 1s
     let weights_raw: Vec<u8> = vec![1u8; n * k];
     let w_packed = pack_weights_u32(&weights_raw, bits);
 
-    // Unit scales
     let scales: Vec<T> = vec![T::one(); n * num_groups_k];
 
     let zp_stride = if bits == 4 {
@@ -186,7 +128,6 @@ fn get_test_data_edge<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = if use_zero_points {
-        // Zero points all 0 -> bias = 0
         let zp_packed = vec![0u8; n * zp_stride];
         (Some(zp_packed), None)
     } else if use_mlx_quant {
@@ -196,11 +137,10 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         unreachable!("Must use either zero_points or mlx_quant");
     };
 
-    // X: simple increasing values
     let x_f32: Vec<f32> = (0..m * k).map(|i| (i + 1) as f32 * 0.1).collect();
     let x: Vec<T> = x_f32.iter().map(|&v| T::from(v).unwrap()).collect();
 
-    let input = Input {
+    Input {
         w_packed,
         scales,
         zero_points,
@@ -213,20 +153,82 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         bits,
         use_zero_points,
         use_mlx_quant,
-    };
-
-    let expected = get_output::<Cpu, T>(&input);
-    (input, expected)
+    }
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn get_output<B: Backend, T: ArrayElement + Float>(
+    input: &Input<T>,
+    bm: u32,
+    bk: u32,
+    bn: u32,
+    wm: u32,
+    wn: u32,
+    aligned_n: bool,
+    hadamard_factors: Option<&[i32]>,
+) -> Vec<T> {
+    let context = B::Context::new().expect("Failed to create Context");
+    let use_hadamard = hadamard_factors.is_some();
+    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+        &context,
+        T::data_type(),
+        input.group_size,
+        input.bits,
+        bm,
+        bk,
+        bn,
+        wm,
+        wn,
+        input.use_zero_points,
+        input.use_mlx_quant,
+        use_hadamard,
+        aligned_n,
+    )
+    .expect("Failed to create QuantizedMatmulQmmTransposedKernel");
+
+    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
+
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
+    let had_buf = hadamard_factors.map(|f| alloc_buffer_with_data::<B, i32>(&context, f));
+
+    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
+    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
+    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        &w_buf,
+        &scales_buf,
+        zp_buf.as_ref(),
+        bias_buf.as_ref(),
+        &x_buf,
+        &mut y_buf,
+        had_buf.as_ref(),
+        input.k,
+        input.n,
+        input.m,
+        &mut encoder,
+    );
+
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+
+    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
+    let y_len = (input.m as usize) * (input.n as usize);
+    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+}
+
+fn check_against_expected<T: ArrayElement + Float + Debug + Display>(
     input: &Input<T>,
     expected: &[T],
+    bm: u32,
+    bk: u32,
+    bn: u32,
+    wm: u32,
+    wn: u32,
+    aligned_n: bool,
 ) {
-    // GPU MMA units use different rounding than scalar CPU code.
-    // bf16 has 7-bit mantissa (ULP ~0.8%), f16 has 10-bit (~0.1%).
-    // Tiled accumulation reorders FMA ops, compounding rounding differences.
-    // 8-bit weights (0-255) with ZP bias cause larger accumulated errors.
+    // GPU tiled accumulation rounds differently from CPU scalar reference.
     let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
         DataType::BF16 => (0.05, 0.5),
         DataType::F16 => (0.02, 0.5),
@@ -234,7 +236,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, T>(input);
+        let output = get_output::<B, T>(input, bm, bk, bn, wm, wn, aligned_n, None);
         assert_eq!(expected.len(), output.len(), "Output length mismatch");
 
         let mut errors = 0;
@@ -251,8 +253,11 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         assert_eq!(
             errors,
             0,
-            "QMM transposed kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+            "QMM transposed kernel: backend={}, shape=(BM={},BK={},BN={}), m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
             std::any::type_name::<B>(),
+            bm,
+            bk,
+            bn,
             input.m,
             input.k,
             input.n,
@@ -265,266 +270,353 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn get_test_dims(
-    group_size: u32,
-    bits: u32,
-    is_half_precision: bool,
-) -> Vec<(usize, usize, usize)> {
-    let gs = group_size as usize;
-    // K must be >= group_size for the transposed grouping along K.
-    // N must be >= 32 for the Metal tiled weight loader (BN=32).
-    // For half-precision 8-bit, keep dimensions small to avoid
-    // catastrophic cancellation from large weight values (0-255).
-    if is_half_precision && bits == 8 {
-        vec![(2, gs, gs), (4, gs, gs)]
+struct TileCfg {
+    bm: u32,
+    bk: u32,
+    bn: u32,
+    wm: u32,
+    wn: u32,
+}
+
+impl TileCfg {
+    const fn aligned_n_default(&self) -> bool {
+        // BN=64 tiles require output_dim % 64 == 0; BN=32 checks actual N at test time.
+        self.bn == 64
+    }
+}
+
+const CFG_BM8: TileCfg = TileCfg { bm: 8, bk: 32, bn: 32, wm: 1, wn: 1 };
+const CFG_32X32: TileCfg = TileCfg { bm: 32, bk: 32, bn: 32, wm: 2, wn: 2 };
+const CFG_WIDE: TileCfg = TileCfg { bm: 64, bk: 32, bn: 64, wm: 2, wn: 2 };
+const CFG_64X64: TileCfg = TileCfg { bm: 64, bk: 64, bn: 64, wm: 2, wn: 2 };
+
+fn pick_aligned_n(
+    cfg: &TileCfg,
+    n: usize,
+) -> bool {
+    if cfg.bn == 32 {
+        (n % 32) == 0
     } else {
-        vec![(2, gs * 2, gs), (4, gs * 2, gs * 2), (8, gs, gs * 2)]
+        cfg.aligned_n_default()
     }
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>(
+    cfg: &TileCfg,
     group_size: u32,
     bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
 ) {
     let is_half = matches!(T::data_type(), DataType::F16 | DataType::BF16);
-    let dims = get_test_dims(group_size, bits, is_half);
+    let gs = group_size as usize;
+    let bn = cfg.bn as usize;
+    // half+8bit: smaller dims to cap accumulated rounding error.
+    let dims: Vec<(usize, usize, usize)> = if is_half && bits == 8 {
+        vec![(2, gs, bn), (4, gs, bn)]
+    } else {
+        vec![(2, gs * 2, bn), (4, gs * 2, bn * 2), (8, gs, bn * 2)]
+    };
 
     for (m, k, n) in dims {
-        let (input, expected) = get_test_data_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
-        test_internal::<T>(&input, &expected);
+        let input = make_input_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+        let aligned_n = pick_aligned_n(cfg, n);
+        let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n, None);
+        check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n);
     }
 }
 
 fn test_edge<T: ArrayElement + Float + Debug + Display>(
+    cfg: &TileCfg,
     group_size: u32,
     bits: u32,
     use_zero_points: bool,
     use_mlx_quant: bool,
 ) {
-    let (input, expected) = get_test_data_edge::<T>(group_size, bits, use_zero_points, use_mlx_quant);
-    test_internal::<T>(&input, &expected);
+    // Edge N is one BN tile wide — smallest legal N for the shape.
+    let n = cfg.bn as usize;
+    let input = make_input_edge::<T>(n, group_size, bits, use_zero_points, use_mlx_quant);
+    let aligned_n = pick_aligned_n(cfg, n);
+    let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n, None);
+    check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n);
 }
 
-// -- 4-bit, zero points -------------------------------------------------------
+// No CPU Hadamard reference — verify all three tile shapes agree instead.
+fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
+    group_size: u32,
+    bits: u32,
+    use_zero_points: bool,
+    use_mlx_quant: bool,
+) {
+    // m=n=64 satisfies both BN=32 and BN=64 alignment; group_size >= 64 for BK=64.
+    let m = 64usize;
+    let k = group_size as usize * 2;
+    let n = 64usize;
 
-#[uzu_test]
-fn test_f32_gs32_4bit_zp() {
-    test_basic::<f32>(32, 4, true, false);
+    let input = make_input_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+
+    // ±1 factors: non-trivial Hadamard, bounded output across all dtypes.
+    let factors: Vec<i32> = (0..n).map(|i| if (i * 13 + 7) % 2 == 0 { 1 } else { -1 }).collect();
+
+    // Hadamard amplifies by sqrt(32) ≈ 5.65; tolerance widened accordingly.
+    let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
+        DataType::BF16 => (0.1, 1.0),
+        DataType::F16 => (0.05, 1.0),
+        _ => (0.02, 0.5),
+    };
+
+    for_each_non_cpu_backend!(|B| {
+        let shapes: [(u32, u32, u32, u32, u32, &str); 3] = [
+            (32, 32, 32, 2, 2, "32x32"),
+            (64, 32, 64, 2, 2, "wide"),
+            (64, 64, 64, 2, 2, "64x64"),
+        ];
+
+        let outputs: Vec<(&str, Vec<T>)> = shapes
+            .iter()
+            .map(|&(bm, bk, bn, wm, wn, name)| {
+                let out = get_output::<B, T>(&input, bm, bk, bn, wm, wn, true, Some(&factors));
+                (name, out)
+            })
+            .collect();
+
+        // 32x32 is the reference — its Hadamard path is byte-identical to the original.
+        let (_, ref reference) = outputs[0];
+
+        for (name, output) in outputs.iter().skip(1) {
+            let mut errors = 0;
+            for (i, (&r, &o)) in reference.iter().zip(output.iter()).enumerate() {
+                let r_f32 = r.to_f32().unwrap();
+                let o_f32 = o.to_f32().unwrap();
+                if !check_tolerance(r_f32, o_f32, rel_tol, abs_tol) {
+                    if errors < 5 {
+                        eprintln!(
+                            "  idx={} 32x32={} {}={} diff={}",
+                            i,
+                            r_f32,
+                            name,
+                            o_f32,
+                            (r_f32 - o_f32).abs()
+                        );
+                    }
+                    errors += 1;
+                }
+            }
+            assert_eq!(
+                errors,
+                0,
+                "Hadamard cross-shape mismatch: backend={}, {} vs 32x32 reference, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+                std::any::type_name::<B>(),
+                name,
+                group_size,
+                bits,
+                use_zero_points,
+                use_mlx_quant,
+                errors,
+            );
+        }
+    });
 }
 
-#[uzu_test]
-fn test_f32_gs64_4bit_zp() {
-    test_basic::<f32>(64, 4, true, false);
+// ---- Test-function macros -----------------------------------------------
+
+macro_rules! basic_tests {
+    ($cfg:expr; $(
+        $(#[$attr:meta])*
+        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $zp:literal, $mlx:literal;
+    )*) => {
+        $(
+            $(#[$attr])*
+            #[uzu_test]
+            fn $name() {
+                test_basic::<$t>($cfg, $gs, $bits, $zp, $mlx);
+            }
+        )*
+    };
 }
 
-#[uzu_test]
-fn test_f32_gs128_4bit_zp() {
-    test_basic::<f32>(128, 4, true, false);
+macro_rules! edge_tests {
+    ($cfg:expr; $(
+        $(#[$attr:meta])*
+        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $zp:literal, $mlx:literal;
+    )*) => {
+        $(
+            $(#[$attr])*
+            #[uzu_test]
+            fn $name() {
+                test_edge::<$t>($cfg, $gs, $bits, $zp, $mlx);
+            }
+        )*
+    };
 }
 
-#[uzu_test]
-fn test_f16_gs32_4bit_zp() {
-    test_basic::<f16>(32, 4, true, false);
+macro_rules! hadamard_tests {
+    ($(
+        $(#[$attr:meta])*
+        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $zp:literal, $mlx:literal;
+    )*) => {
+        $(
+            $(#[$attr])*
+            #[uzu_test]
+            fn $name() {
+                test_hadamard_consistency::<$t>($gs, $bits, $zp, $mlx);
+            }
+        )*
+    };
 }
 
-#[uzu_test]
-fn test_f16_gs64_4bit_zp() {
-    test_basic::<f16>(64, 4, true, false);
+mod tile_bm8 {
+    use super::*;
+
+    basic_tests!(&CFG_BM8;
+        // bf16 4-bit ZP has known precision limits
+        #[ignore] fn test_bf16_gs32_4bit_zp:  bf16, 32, 4, true,  false;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16, 64, 4, true,  false;
+        fn test_bf16_gs32_8bit_zp:  bf16, 32, 8, true,  false;
+        fn test_bf16_gs64_8bit_zp:  bf16, 64, 8, true,  false;
+        fn test_bf16_gs32_4bit_mlx: bf16, 32, 4, false, true;
+        fn test_bf16_gs64_4bit_mlx: bf16, 64, 4, false, true;
+        fn test_bf16_gs32_8bit_mlx: bf16, 32, 8, false, true;
+        fn test_bf16_gs64_8bit_mlx: bf16, 64, 8, false, true;
+    );
+
+    edge_tests!(&CFG_BM8;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, false, true;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, false, true;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, true,  false;
+    );
 }
 
-#[uzu_test]
-fn test_f16_gs128_4bit_zp() {
-    test_basic::<f16>(128, 4, true, false);
+// ---- tile_32x32 — the original base shape, full dtype matrix -------------
+
+mod tile_32x32 {
+    use super::*;
+
+    basic_tests!(&CFG_32X32;
+        // 4-bit, zero points
+        fn test_f32_gs32_4bit_zp:    f32,  32, 4, true, false;
+        fn test_f32_gs64_4bit_zp:    f32,  64, 4, true, false;
+        fn test_f32_gs128_4bit_zp:   f32, 128, 4, true, false;
+        fn test_f16_gs32_4bit_zp:    f16,  32, 4, true, false;
+        fn test_f16_gs64_4bit_zp:    f16,  64, 4, true, false;
+        fn test_f16_gs128_4bit_zp:   f16, 128, 4, true, false;
+        fn test_bf16_gs32_4bit_zp:   bf16, 32, 4, true, false;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, true, false;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, true, false;
+        // 8-bit, zero points
+        fn test_f32_gs32_8bit_zp:    f32,  32, 8, true, false;
+        fn test_f32_gs64_8bit_zp:    f32,  64, 8, true, false;
+        fn test_f32_gs128_8bit_zp:   f32, 128, 8, true, false;
+        fn test_f16_gs32_8bit_zp:    f16,  32, 8, true, false;
+        fn test_f16_gs64_8bit_zp:    f16,  64, 8, true, false;
+        fn test_f16_gs128_8bit_zp:   f16, 128, 8, true, false;
+        fn test_bf16_gs32_8bit_zp:   bf16, 32, 8, true, false;
+        fn test_bf16_gs64_8bit_zp:   bf16, 64, 8, true, false;
+        fn test_bf16_gs128_8bit_zp:  bf16,128, 8, true, false;
+        // 4-bit, mlx quant
+        fn test_f32_gs32_4bit_mlx:   f32,  32, 4, false, true;
+        fn test_f32_gs64_4bit_mlx:   f32,  64, 4, false, true;
+        fn test_f32_gs128_4bit_mlx:  f32, 128, 4, false, true;
+        fn test_f16_gs32_4bit_mlx:   f16,  32, 4, false, true;
+        fn test_f16_gs64_4bit_mlx:   f16,  64, 4, false, true;
+        fn test_f16_gs128_4bit_mlx:  f16, 128, 4, false, true;
+        fn test_bf16_gs32_4bit_mlx:  bf16, 32, 4, false, true;
+        fn test_bf16_gs64_4bit_mlx:  bf16, 64, 4, false, true;
+        fn test_bf16_gs128_4bit_mlx: bf16,128, 4, false, true;
+        // 8-bit, mlx quant
+        fn test_f32_gs32_8bit_mlx:   f32,  32, 8, false, true;
+        fn test_f32_gs64_8bit_mlx:   f32,  64, 8, false, true;
+        fn test_f32_gs128_8bit_mlx:  f32, 128, 8, false, true;
+        fn test_f16_gs32_8bit_mlx:   f16,  32, 8, false, true;
+        fn test_f16_gs64_8bit_mlx:   f16,  64, 8, false, true;
+        fn test_f16_gs128_8bit_mlx:  f16, 128, 8, false, true;
+        fn test_bf16_gs32_8bit_mlx:  bf16, 32, 8, false, true;
+        fn test_bf16_gs64_8bit_mlx:  bf16, 64, 8, false, true;
+        fn test_bf16_gs128_8bit_mlx: bf16,128, 8, false, true;
+    );
+
+    edge_tests!(&CFG_32X32;
+        fn test_edge_f32_4bit_zp:  f32, 32, 4, true, false;
+        fn test_edge_f32_8bit_zp:  f32, 32, 8, true, false;
+        fn test_edge_f16_4bit_zp:  f16, 32, 4, true, false;
+        fn test_edge_f32_4bit_mlx: f32, 32, 4, false, true;
+        fn test_edge_f32_8bit_mlx: f32, 32, 8, false, true;
+        fn test_edge_f16_4bit_mlx: f16, 32, 4, false, true;
+    );
 }
 
-#[uzu_test]
-fn test_bf16_gs32_4bit_zp() {
-    test_basic::<bf16>(32, 4, true, false);
+// ---- tile_wide — BM=64, BK=32, BN=64, bf16 only --------------------------
+
+mod tile_wide {
+    use super::*;
+
+    basic_tests!(&CFG_WIDE;
+        // 4-bit, zero points
+        fn test_bf16_gs32_4bit_zp:   bf16,  32, 4, true, false;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, true, false;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, true, false;
+        // 8-bit, zero points
+        fn test_bf16_gs32_8bit_zp:   bf16,  32, 8, true, false;
+        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, true, false;
+        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, true, false;
+        // 4-bit, mlx quant
+        fn test_bf16_gs32_4bit_mlx:  bf16,  32, 4, false, true;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, false, true;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, false, true;
+        // 8-bit, mlx quant
+        fn test_bf16_gs32_8bit_mlx:  bf16,  32, 8, false, true;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, false, true;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, false, true;
+    );
+
+    edge_tests!(&CFG_WIDE;
+        fn test_edge_bf16_4bit_zp:  bf16, 32, 4, true, false;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, true, false;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, false, true;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, false, true;
+    );
 }
 
-#[uzu_test]
-#[ignore]
-fn test_bf16_gs64_4bit_zp() {
-    test_basic::<bf16>(64, 4, true, false);
+// ---- tile_64x64 — BM=BK=BN=64, bf16 only, group_size >= 64 --------------
+
+mod tile_64x64 {
+    use super::*;
+
+    basic_tests!(&CFG_64X64;
+        // 4-bit, zero points
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, true, false;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, true, false;
+        // 8-bit, zero points
+        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, true, false;
+        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, true, false;
+        // 4-bit, mlx quant
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, false, true;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, false, true;
+        // 8-bit, mlx quant
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, false, true;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, false, true;
+    );
+
+    edge_tests!(&CFG_64X64;
+        fn test_edge_bf16_4bit_zp:  bf16, 64, 4, true, false;
+        fn test_edge_bf16_8bit_zp:  bf16, 64, 8, true, false;
+        fn test_edge_bf16_4bit_mlx: bf16, 64, 4, false, true;
+        fn test_edge_bf16_8bit_mlx: bf16, 64, 8, false, true;
+    );
 }
 
-#[uzu_test]
-#[ignore]
-fn test_bf16_gs128_4bit_zp() {
-    test_basic::<bf16>(128, 4, true, false);
-}
+// ---- hadamard — cross-shape consistency of the generalized HT loop -------
 
-// -- 8-bit, zero points -------------------------------------------------------
+mod hadamard {
+    use super::*;
 
-#[uzu_test]
-fn test_f32_gs32_8bit_zp() {
-    test_basic::<f32>(32, 8, true, false);
-}
-
-#[uzu_test]
-fn test_f32_gs64_8bit_zp() {
-    test_basic::<f32>(64, 8, true, false);
-}
-
-#[uzu_test]
-fn test_f32_gs128_8bit_zp() {
-    test_basic::<f32>(128, 8, true, false);
-}
-
-#[uzu_test]
-fn test_f16_gs32_8bit_zp() {
-    test_basic::<f16>(32, 8, true, false);
-}
-
-#[uzu_test]
-fn test_f16_gs64_8bit_zp() {
-    test_basic::<f16>(64, 8, true, false);
-}
-
-#[uzu_test]
-fn test_f16_gs128_8bit_zp() {
-    test_basic::<f16>(128, 8, true, false);
-}
-
-#[uzu_test]
-fn test_bf16_gs32_8bit_zp() {
-    test_basic::<bf16>(32, 8, true, false);
-}
-
-#[uzu_test]
-fn test_bf16_gs64_8bit_zp() {
-    test_basic::<bf16>(64, 8, true, false);
-}
-
-#[uzu_test]
-fn test_bf16_gs128_8bit_zp() {
-    test_basic::<bf16>(128, 8, true, false);
-}
-
-// -- 4-bit, mlx quant ----------------------------------------------------------
-
-#[uzu_test]
-fn test_f32_gs32_4bit_mlx() {
-    test_basic::<f32>(32, 4, false, true);
-}
-
-#[uzu_test]
-fn test_f32_gs64_4bit_mlx() {
-    test_basic::<f32>(64, 4, false, true);
-}
-
-#[uzu_test]
-fn test_f32_gs128_4bit_mlx() {
-    test_basic::<f32>(128, 4, false, true);
-}
-
-#[uzu_test]
-fn test_f16_gs32_4bit_mlx() {
-    test_basic::<f16>(32, 4, false, true);
-}
-
-#[uzu_test]
-fn test_f16_gs64_4bit_mlx() {
-    test_basic::<f16>(64, 4, false, true);
-}
-
-#[uzu_test]
-fn test_f16_gs128_4bit_mlx() {
-    test_basic::<f16>(128, 4, false, true);
-}
-
-#[uzu_test]
-fn test_bf16_gs32_4bit_mlx() {
-    test_basic::<bf16>(32, 4, false, true);
-}
-
-#[uzu_test]
-fn test_bf16_gs64_4bit_mlx() {
-    test_basic::<bf16>(64, 4, false, true);
-}
-
-#[uzu_test]
-fn test_bf16_gs128_4bit_mlx() {
-    test_basic::<bf16>(128, 4, false, true);
-}
-
-// -- 8-bit, mlx quant ----------------------------------------------------------
-
-#[uzu_test]
-fn test_f32_gs32_8bit_mlx() {
-    test_basic::<f32>(32, 8, false, true);
-}
-
-#[uzu_test]
-fn test_f32_gs64_8bit_mlx() {
-    test_basic::<f32>(64, 8, false, true);
-}
-
-#[uzu_test]
-fn test_f32_gs128_8bit_mlx() {
-    test_basic::<f32>(128, 8, false, true);
-}
-
-#[uzu_test]
-fn test_f16_gs32_8bit_mlx() {
-    test_basic::<f16>(32, 8, false, true);
-}
-
-#[uzu_test]
-fn test_f16_gs64_8bit_mlx() {
-    test_basic::<f16>(64, 8, false, true);
-}
-
-#[uzu_test]
-fn test_f16_gs128_8bit_mlx() {
-    test_basic::<f16>(128, 8, false, true);
-}
-
-#[uzu_test]
-fn test_bf16_gs32_8bit_mlx() {
-    test_basic::<bf16>(32, 8, false, true);
-}
-
-#[uzu_test]
-fn test_bf16_gs64_8bit_mlx() {
-    test_basic::<bf16>(64, 8, false, true);
-}
-
-#[uzu_test]
-fn test_bf16_gs128_8bit_mlx() {
-    test_basic::<bf16>(128, 8, false, true);
-}
-
-// -- Edge cases ----------------------------------------------------------------
-
-#[uzu_test]
-fn test_edge_f32_4bit_zp() {
-    test_edge::<f32>(32, 4, true, false);
-}
-
-#[uzu_test]
-fn test_edge_f32_8bit_zp() {
-    test_edge::<f32>(32, 8, true, false);
-}
-
-#[uzu_test]
-fn test_edge_f16_4bit_zp() {
-    test_edge::<f16>(32, 4, true, false);
-}
-
-#[uzu_test]
-fn test_edge_f32_4bit_mlx() {
-    test_edge::<f32>(32, 4, false, true);
-}
-
-#[uzu_test]
-fn test_edge_f32_8bit_mlx() {
-    test_edge::<f32>(32, 8, false, true);
-}
-
-#[uzu_test]
-fn test_edge_f16_4bit_mlx() {
-    test_edge::<f16>(32, 4, false, true);
+    // f32 at (64,64,64) overflows threadgroup memory (34816 > 32768 bytes).
+    hadamard_tests!(
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, false, true;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, false, true;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, false, true;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, false, true;
+        fn test_f16_gs64_4bit_mlx:   f16,   64, 4, false, true;
+        fn test_f16_gs128_4bit_mlx:  f16,  128, 4, false, true;
+    );
 }

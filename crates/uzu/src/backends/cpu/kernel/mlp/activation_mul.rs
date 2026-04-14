@@ -9,10 +9,15 @@ use crate::ArrayElement;
 pub fn mlp_gate_act_mul<T: ArrayElement + Float>(
     fused_up: *const T,
     hidden: *mut T,
+    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     h: i32,
     m: i32,
     act_type: crate::backends::common::gpu_types::activation_type::ActivationType,
+    #[specialize] use_hadamard: bool,
 ) {
+    if use_hadamard {
+        unimplemented!("not supported yet");
+    }
     for j in 0..h {
         for row in 0..m {
             let base = row * 2 * h;

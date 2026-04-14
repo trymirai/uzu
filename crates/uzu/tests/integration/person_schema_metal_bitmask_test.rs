@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(all(metal_backend, grammar_xgrammar))]
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 

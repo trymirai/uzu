@@ -85,6 +85,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
+        output_quantized_hadamard_factors: Option<B::Buffer>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
@@ -98,6 +99,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             parameter_tree,
             input_array_id,
             output_array_id,
+            output_quantized_hadamard_factors,
         )?;
         let adapter_kernel =
             RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);

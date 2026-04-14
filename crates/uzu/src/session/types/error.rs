@@ -224,6 +224,8 @@ pub enum Error {
     SamplingFailed,
     #[error("Grammar error: {0}")]
     GrammarError(String),
+    #[error("No grammar backend available")]
+    GrammarNoBackendAvailable,
     #[error("Grammar rejected the token")]
     GrammarReject,
     #[error("Token {0} out of grammar vocabulary range (0..{1})")]

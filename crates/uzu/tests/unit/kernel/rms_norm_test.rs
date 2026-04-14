@@ -121,7 +121,7 @@ fn get_output<
     AccumT: ArrayElement + Float,
 >(
     input: &Input<InputT, ScaleT, OutputT>
-) -> (Vec<OutputT>, f64, Option<Duration>) {
+) -> (Vec<OutputT>, f64, Duration) {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
         &context,
@@ -131,6 +131,7 @@ fn get_output<
         AccumT::data_type(),
         input.in_place,
         input.full_layer,
+        false,
         false,
         false,
     )
@@ -155,6 +156,7 @@ fn get_output<
         scales_array.buffer().borrow().deref(),
         output_array.buffer().borrow_mut().deref_mut(),
         None::<&mut B::Buffer>,
+        None::<&B::Buffer>,
         input.batch_size,
         input.element_count,
         input.epsilon,
@@ -407,6 +409,7 @@ fn bench_rms_norm(c: &mut Criterion) {
             false,
             false,
             false,
+            false,
         )
         .unwrap();
 
@@ -453,6 +456,7 @@ fn bench_rms_norm(c: &mut Criterion) {
                             &scales_buffer,
                             &mut output_buffer,
                             None::<&mut <B as Backend>::Buffer>,
+                            None::<&<B as Backend>::Buffer>,
                             batch_size as u32,
                             model_dim as u32,
                             epsilon,
@@ -461,7 +465,7 @@ fn bench_rms_norm(c: &mut Criterion) {
                         );
                     }
 
-                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time().unwrap()
+                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
                 })
             });
         }

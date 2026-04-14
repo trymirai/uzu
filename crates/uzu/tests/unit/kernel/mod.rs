@@ -8,6 +8,7 @@ mod attention;
 mod audio;
 mod delta_net_test;
 mod embedding;
+mod hadamard_transform_test;
 mod kv_cache_update_test;
 mod layer_norm_test;
 mod matmul;

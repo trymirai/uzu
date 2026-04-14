@@ -1,6 +1,9 @@
 #![cfg(metal_backend)]
 
-use std::{ops::{Deref, DerefMut}, rc::Rc};
+use std::{
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
@@ -41,18 +44,10 @@ fn get_test_data(
     ab_scale: f32,
     accumulate: bool,
 ) -> Input {
-    let left: Vec<bf16> = (0..batch_dim * input_dim)
-        .map(|i| bf16::from_f32(((i % 13) as f32) * 0.1 - 0.6))
-        .collect();
-    let right: Vec<bf16> = (0..output_dim * input_dim)
-        .map(|i| bf16::from_f32(((i % 17) as f32) * 0.1 - 0.8))
-        .collect();
+    let left: Vec<bf16> = (0..batch_dim * input_dim).map(|i| bf16::from_f32(((i % 13) as f32) * 0.1 - 0.6)).collect();
+    let right: Vec<bf16> = (0..output_dim * input_dim).map(|i| bf16::from_f32(((i % 17) as f32) * 0.1 - 0.8)).collect();
     let destination_prefill = if accumulate {
-        Some(
-            (0..batch_dim * output_dim)
-                .map(|i| bf16::from_f32(((i % 7) as f32) * 0.03 - 0.09))
-                .collect(),
-        )
+        Some((0..batch_dim * output_dim).map(|i| bf16::from_f32(((i % 7) as f32) * 0.03 - 0.09)).collect())
     } else {
         None
     };
@@ -168,14 +163,11 @@ fn get_mpp_output(
 }
 
 fn create_metal_context_and_matmul_kernel()
-    -> (Rc<MetalContext>, <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel)
-{
+-> (Rc<MetalContext>, <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel) {
     let metal_context = MetalContext::new().expect("Metal context");
-    let matmul_kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
-        &metal_context,
-        bf16::data_type(),
-    )
-    .expect("MatmulKernel");
+    let matmul_kernel =
+        <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&metal_context, bf16::data_type())
+            .expect("MatmulKernel");
     (metal_context, matmul_kernel)
 }
 
@@ -249,12 +241,8 @@ fn test_bf16_scale_and_accumulate() {
 
 // Benchmarks
 
-const BENCHMARK_SHAPES: &[(usize, usize, usize)] = &[
-    (128, 2048, 8192),
-    (128, 4096, 14336),
-    (256, 4096, 4096),
-    (512, 8192, 2048),
-];
+const BENCHMARK_SHAPES: &[(usize, usize, usize)] =
+    &[(128, 2048, 8192), (128, 4096, 14336), (256, 4096, 4096), (512, 8192, 2048)];
 
 #[uzu_bench]
 fn bench_gemm_mpp(criterion: &mut Criterion) {
@@ -263,21 +251,16 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
         return;
     }
 
-    let mut matmul_kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
-        &metal_context,
-        bf16::data_type(),
-    )
-    .expect("MatmulKernel");
+    let mut matmul_kernel =
+        <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&metal_context, bf16::data_type())
+            .expect("MatmulKernel");
 
-    let mut benchmark_group = criterion.benchmark_group(
-        format!("{}/Kernel/Matmul/GEMM_MPP", type_short_name::<Metal>()),
-    );
+    let mut benchmark_group =
+        criterion.benchmark_group(format!("{}/Kernel/Matmul/GEMM_MPP", type_short_name::<Metal>()));
 
     for &(batch_dim, input_dim, output_dim) in BENCHMARK_SHAPES {
-        let left_array =
-            metal_context.create_array_uninitialized(&[batch_dim, input_dim], bf16::data_type(), "");
-        let right_array =
-            metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
+        let left_array = metal_context.create_array_uninitialized(&[batch_dim, input_dim], bf16::data_type(), "");
+        let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
         let destination_array =
             metal_context.create_array_uninitialized(&[batch_dim, output_dim], bf16::data_type(), "");
 
@@ -316,13 +299,7 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
                         );
                     }
 
-                    encoder
-                        .end_encoding()
-                        .submit()
-                        .wait_until_completed()
-                        .unwrap()
-                        .gpu_execution_time()
-                        .unwrap()
+                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
                 })
             },
         );
