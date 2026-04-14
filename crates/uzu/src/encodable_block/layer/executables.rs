@@ -330,7 +330,7 @@ impl<B: Backend> LayerExecutables<B> {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
         }
 
-        self.mlp.encode(state, command_buffer)?;
+        self.mlp.encode(state, parameters, command_buffer)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             state.encode_copy_array(command_buffer, ArrayId::Main, layer_traces.borrow().mlp.clone());

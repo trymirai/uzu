@@ -6,6 +6,9 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "tracing")]
+use crate::array::Array;
+use half::{bf16, f16};
 use itertools::{Either, Itertools, izip};
 
 use super::{
@@ -16,6 +19,7 @@ use super::{
     rng::PRng,
 };
 use crate::{
+    DataType,
     backends::common::{
         Backend, Buffer, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial,
         CommandBufferPending, Context,
@@ -25,7 +29,7 @@ use crate::{
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{AttentionBiasUpdate, INVALID_POSITION},
-        state::ForwardPassState,
+        state::{ArrayId, ForwardPassState},
     },
     session::{
         config::DecodingConfig,
@@ -60,6 +64,31 @@ struct TaskEncodingKey {
     sampling_len: usize,
     has_bitmask: bool,
     is_prefilling: bool,
+}
+
+#[cfg(feature = "tracing")]
+#[derive(Debug, Clone)]
+pub struct PrefillMlpLayerTrace {
+    pub layer_index: usize,
+    pub rows: usize,
+    pub cols: usize,
+    pub pre_mlp_norm: Vec<f32>,
+    pub mlp: Vec<f32>,
+}
+
+#[cfg(feature = "tracing")]
+#[derive(Debug, Clone)]
+pub struct PrefillLogitsTrace {
+    pub rows: usize,
+    pub cols: usize,
+    pub logits: Vec<f32>,
+}
+
+#[cfg(feature = "tracing")]
+#[derive(Debug, Clone)]
+pub struct PrefillTraceDump {
+    pub layers: Vec<PrefillMlpLayerTrace>,
+    pub logits: PrefillLogitsTrace,
 }
 
 pub struct LanguageModelGenerator<B: Backend> {
@@ -134,196 +163,12 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     fn prefill(
         &mut self,
         tokens: Vec<u64>,
-        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        compiled_grammar: Option<&mut CompiledGrammar>,
         sampling_method: SamplingMethod,
         prefix_offset: usize,
         sample_suffix: bool,
     ) -> Result<PrefillResult, Error> {
-        assert!(!tokens.is_empty());
-
-        self.tokens.extend(tokens.clone());
-
-        let tokens_length = tokens.len();
-
-        let prefill_step_size = self.decoding_config.prefill_step_size.resolve(&self.context.model_config);
-        let prefill_steps = tokens_length.div_ceil(prefill_step_size);
-        let prefill_size = prefill_steps * prefill_step_size;
-
-        let speculator = &self.decoding_config.speculator_config.speculator;
-
-        let suffix_length = if sample_suffix {
-            self.decoding_config.generate_suffix_length().saturating_sub(1)
-        } else {
-            prefill_size - tokens_length
-        };
-        let suffix_root = TrieNode::from_speculator(
-            &tokens,
-            &self.context.seed,
-            compiled_grammar.as_deref_mut(),
-            speculator.as_ref(),
-            &TrieCreationConfig::default(),
-            suffix_length + 1,
-        );
-        let flat_trie = suffix_root.linearize();
-
-        let has_grammar = compiled_grammar.is_some();
-
-        let token_ids =
-            tokens.iter().copied().take(tokens_length - 1).chain(flat_trie.token_ids()).chunks(prefill_step_size);
-
-        let token_positions = (prefix_offset..prefix_offset + tokens_length - 1)
-            .chain(flat_trie.token_positions().map(|trie_position| prefix_offset + tokens_length - 1 + trie_position))
-            .chunks(prefill_step_size);
-
-        let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
-        let token_bitmasks = repeat_n(None, tokens_length - 1).chain(flat_trie.token_masks()).chunks(prefill_step_size);
-
-        let token_seeds = repeat_n(0, tokens_length - 1).chain(flat_trie.token_seeds()).chunks(prefill_step_size);
-
-        let mut last_state: Option<ForwardPassState<B>> = None;
-        let mut run_times: Vec<f64> = Vec::new();
-
-        // Process each prefill step and update the KV cache.
-        for (step, (step_token_ids, step_token_positions, step_token_bitmasks, step_token_seeds)) in
-            izip!(&token_ids, &token_positions, &token_bitmasks, &token_seeds).enumerate()
-        {
-            let tokens_start_index = step * prefill_step_size;
-            let tokens_end_index = tokens_start_index + prefill_step_size;
-
-            let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
-            let step_token_positions = step_token_positions.collect::<Box<[usize]>>();
-            let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
-
-            let active_suffix_length = step_token_positions.len();
-            let is_last_prefill_step = step == prefill_steps - 1;
-            let should_sample_after_step = sample_suffix && is_last_prefill_step;
-
-            // If we sample on the last prefill step, we only need logits/sampling
-            // for tokens that are beyond the prompt prefix (i.e. starting at the
-            // suffix-root token, which is the last prompt token).
-            let (sampling_start, sampling_length) = if should_sample_after_step {
-                let suffix_root_index_in_step = (tokens_length - 1).saturating_sub(tokens_start_index);
-                let sampling_length = active_suffix_length.saturating_sub(suffix_root_index_in_step);
-                debug_assert!(sampling_length > 0, "Expected at least one token to sample on the last prefill step");
-                (suffix_root_index_in_step, sampling_length)
-            } else {
-                (0, 0)
-            };
-
-            let step_token_bitmask: Option<Box<[u32]>> = if has_grammar && sampling_length > 0 {
-                Some(
-                    step_token_bitmasks
-                        .map(|mask| match mask {
-                            Some(mask) => Either::Left(
-                                mask.iter()
-                                    .copied()
-                                    .take(single_token_bitmask_size)
-                                    .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
-                            ),
-                            None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
-                        })
-                        .flatten()
-                        .collect::<Box<[u32]>>(),
-                )
-            } else {
-                // Drain the chunk iterator to keep the other chunked iterators aligned.
-                let _ = step_token_bitmasks.count();
-                None
-            };
-
-            let should_capture = self.gpu_capture.should_capture_prefill(step == 0);
-
-            if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
-            }
-
-            objc2::rc::autoreleasepool(|_pool| {
-                let _ = last_state.take();
-            });
-
-            let task = Task {
-                token_ids: &step_token_ids,
-                token_positions: &step_token_positions,
-                token_bitmask: step_token_bitmask.as_deref(),
-                token_seeds: &step_token_seeds,
-                expected_number_of_new_tokens: step_token_ids.len(),
-                active_suffix_length,
-                sampling_start,
-                sampling_length,
-                is_prefilling: !should_sample_after_step,
-            };
-
-            let (state, run_time) = self.run_model(
-                task,
-                false,
-                self.allow_pre_encode(),
-                sampling_method,
-                self.should_fill_attention_bias(),
-            )?;
-
-            if should_capture {
-                self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
-            }
-
-            // Register the accepted prompt tokens from this step.
-            let step_end_token_index = std::cmp::min(tokens_end_index, tokens_length);
-            let tokens_processed_this_step = step_end_token_index - tokens_start_index;
-
-            if tokens_processed_this_step > 0 {
-                let mut positions_for_step: Vec<usize> =
-                    (tokens_start_index..step_end_token_index).map(|idx| idx + prefix_offset).collect();
-                if step == prefill_steps - 1 && sample_suffix {
-                    // Exclude the last token because it belongs to the suffix for sampling.
-                    positions_for_step.pop();
-                }
-
-                if !positions_for_step.is_empty() {
-                    let accept_indices_for_step: Vec<usize> = (0..positions_for_step.len()).collect();
-                    if !accept_indices_for_step.is_empty() {
-                        self.update_cache_layers(&accept_indices_for_step, None, true)?;
-                    }
-
-                    self.context.cache_layers.borrow_mut().register_accepted_tokens(&positions_for_step);
-
-                    if let Some(&last_idx) = positions_for_step.last() {
-                        self.registered_prefix_len = last_idx + 1;
-                    }
-                }
-            }
-
-            last_state = Some(state);
-            run_times.push(run_time);
-        }
-
-        let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
-        if !sample_suffix {
-            self.sync_prefix();
-            return Ok(PrefillResult {
-                tokens: Vec::new(),
-                forwardpass_durations: run_times,
-            });
-        }
-        let sampled_tokens = self.read_sampling_output(&mut final_state)?;
-
-        let last_suffix_start = prefill_step_size * (prefill_steps - 1);
-        let suffix_root_index = (tokens_length - last_suffix_start) - 1;
-
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
-
-        self.update_cache_layers(
-            &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
-            Some(last_suffix_start),
-            false,
-        )?;
-
-        self.tokens.extend(accepted_tokens.clone());
-        self.sync_prefix();
-
-        Ok(PrefillResult {
-            tokens: accepted_tokens,
-            forwardpass_durations: run_times,
-        })
+        Ok(self.prefill_impl(tokens, compiled_grammar, sampling_method, prefix_offset, sample_suffix, false)?.0)
     }
 
     fn generate(
@@ -748,6 +593,265 @@ impl<B: Backend> LanguageModelGenerator<B> {
         Ok(generator)
     }
 
+    pub fn probe_prefill_logits(
+        &mut self,
+        tokens: Vec<u64>,
+        sampling_method: SamplingMethod,
+    ) -> Result<Vec<f32>, Error> {
+        let (_, sampled_logits) = self.prefill_impl(tokens, None, sampling_method, 0, true, true)?;
+        Ok(sampled_logits.expect("sampled prefill logits must be present"))
+    }
+
+    #[cfg(feature = "tracing")]
+    pub fn probe_prefill_mlp_traces(
+        &mut self,
+        tokens: Vec<u64>,
+    ) -> Result<Vec<PrefillMlpLayerTrace>, Error> {
+        Ok(self.probe_prefill_trace_dump(tokens)?.layers)
+    }
+
+    #[cfg(feature = "tracing")]
+    pub fn probe_prefill_trace_dump(
+        &mut self,
+        tokens: Vec<u64>,
+    ) -> Result<PrefillTraceDump, Error> {
+        assert!(!tokens.is_empty(), "prefill trace probe requires at least one token");
+        let prefill_step_size = self.decoding_config.prefill_step_size.resolve(&self.context.model_config);
+        assert!(tokens.len() <= prefill_step_size, "prefill trace probe only supports single-step prompts");
+
+        <Self as LanguageModelGeneratorTrait>::reset_state(self);
+        self.tokens.extend(tokens.iter().copied());
+
+        let token_positions = (0..tokens.len()).collect::<Vec<_>>();
+        let token_seeds = vec![0; tokens.len()];
+        let task = Task {
+            token_ids: &tokens,
+            token_positions: &token_positions,
+            token_bitmask: None,
+            token_seeds: &token_seeds,
+            expected_number_of_new_tokens: tokens.len(),
+            active_suffix_length: tokens.len(),
+            sampling_start: 0,
+            sampling_length: 0,
+            is_prefilling: true,
+        };
+        let (mut state, _) = self.run_model(
+            task,
+            false,
+            self.allow_pre_encode(),
+            SamplingMethod::Greedy,
+            self.should_fill_attention_bias(),
+        )?;
+        self.encode_prefill_trace_logits(&mut state)?;
+        let traces = PrefillTraceDump {
+            layers: self.read_prefill_mlp_traces(&state),
+            logits: self.read_prefill_logits_trace(&state),
+        };
+        <Self as LanguageModelGeneratorTrait>::reset_state(self);
+        Ok(traces)
+    }
+
+    #[cfg(feature = "tracing")]
+    fn encode_prefill_trace_logits(
+        &self,
+        state: &mut ForwardPassState<B>,
+    ) -> Result<(), Error> {
+        state.set_sampling_window(0, state.active_suffix_length(), false);
+        self.run_stage(|command_buffer| {
+            self.context
+                .executables
+                .norm
+                .encode(state, command_buffer)
+                .map_err(|error| Error::EncodeFailed(Box::new(error)))?;
+            let traces = state.traces().clone();
+            state.encode_copy_array(command_buffer, ArrayId::Main, traces.borrow().output_norm.clone());
+            self.context
+                .executables
+                .embed
+                .encode_readout(state, command_buffer)
+                .map_err(|error| Error::EncodeFailed(Box::new(error)))?;
+            let traces = state.traces().clone();
+            state.encode_copy_array(command_buffer, ArrayId::Logits, traces.borrow().logits.clone());
+            Ok(())
+        })
+    }
+
+    fn prefill_impl(
+        &mut self,
+        tokens: Vec<u64>,
+        mut compiled_grammar: Option<&mut CompiledGrammar>,
+        sampling_method: SamplingMethod,
+        prefix_offset: usize,
+        sample_suffix: bool,
+        capture_sampled_logits: bool,
+    ) -> Result<(PrefillResult, Option<Vec<f32>>), Error> {
+        assert!(!tokens.is_empty());
+
+        self.tokens.extend(tokens.clone());
+        let tokens_length = tokens.len();
+        let prefill_step_size = self.decoding_config.prefill_step_size.resolve(&self.context.model_config);
+        let prefill_steps = tokens_length.div_ceil(prefill_step_size);
+        let prefill_size = prefill_steps * prefill_step_size;
+        let speculator = &self.decoding_config.speculator_config.speculator;
+        let suffix_length = if sample_suffix {
+            self.decoding_config.generate_suffix_length().saturating_sub(1)
+        } else {
+            prefill_size - tokens_length
+        };
+        let suffix_root = TrieNode::from_speculator(
+            &tokens,
+            &self.context.seed,
+            compiled_grammar.as_deref_mut(),
+            speculator.as_ref(),
+            &TrieCreationConfig::default(),
+            suffix_length + 1,
+        );
+        let flat_trie = suffix_root.linearize();
+        let has_grammar = compiled_grammar.is_some();
+        let token_ids =
+            tokens.iter().copied().take(tokens_length - 1).chain(flat_trie.token_ids()).chunks(prefill_step_size);
+        let token_positions = (prefix_offset..prefix_offset + tokens_length - 1)
+            .chain(flat_trie.token_positions().map(|trie_position| prefix_offset + tokens_length - 1 + trie_position))
+            .chunks(prefill_step_size);
+        let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
+        let token_bitmasks = repeat_n(None, tokens_length - 1).chain(flat_trie.token_masks()).chunks(prefill_step_size);
+        let token_seeds = repeat_n(0, tokens_length - 1).chain(flat_trie.token_seeds()).chunks(prefill_step_size);
+
+        let mut last_state: Option<ForwardPassState<B>> = None;
+        let mut run_times: Vec<f64> = Vec::new();
+
+        for (step, (step_token_ids, step_token_positions, step_token_bitmasks, step_token_seeds)) in
+            izip!(&token_ids, &token_positions, &token_bitmasks, &token_seeds).enumerate()
+        {
+            let tokens_start_index = step * prefill_step_size;
+            let tokens_end_index = tokens_start_index + prefill_step_size;
+            let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
+            let step_token_positions = step_token_positions.collect::<Box<[usize]>>();
+            let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
+            let active_suffix_length = step_token_positions.len();
+            let is_last_prefill_step = step == prefill_steps - 1;
+            let should_sample_after_step = sample_suffix && is_last_prefill_step;
+            let (sampling_start, sampling_length) = if should_sample_after_step {
+                let suffix_root_index_in_step = (tokens_length - 1).saturating_sub(tokens_start_index);
+                let sampling_length = active_suffix_length.saturating_sub(suffix_root_index_in_step);
+                debug_assert!(sampling_length > 0, "Expected at least one token to sample on the last prefill step");
+                (suffix_root_index_in_step, sampling_length)
+            } else {
+                (0, 0)
+            };
+
+            let step_token_bitmask: Option<Box<[u32]>> = if has_grammar && sampling_length > 0 {
+                Some(
+                    step_token_bitmasks
+                        .map(|mask| match mask {
+                            Some(mask) => Either::Left(
+                                mask.iter()
+                                    .copied()
+                                    .take(single_token_bitmask_size)
+                                    .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
+                            ),
+                            None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
+                        })
+                        .flatten()
+                        .collect::<Box<[u32]>>(),
+                )
+            } else {
+                let _ = step_token_bitmasks.count();
+                None
+            };
+
+            let should_capture = self.gpu_capture.should_capture_prefill(step == 0);
+            if should_capture {
+                let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
+            }
+
+            objc2::rc::autoreleasepool(|_pool| {
+                let _ = last_state.take();
+            });
+
+            let task = Task {
+                token_ids: &step_token_ids,
+                token_positions: &step_token_positions,
+                token_bitmask: step_token_bitmask.as_deref(),
+                token_seeds: &step_token_seeds,
+                expected_number_of_new_tokens: step_token_ids.len(),
+                active_suffix_length,
+                sampling_start,
+                sampling_length,
+                is_prefilling: !should_sample_after_step,
+            };
+
+            let (state, run_time) = self.run_model(
+                task,
+                false,
+                self.allow_pre_encode(),
+                sampling_method,
+                self.should_fill_attention_bias(),
+            )?;
+
+            if should_capture {
+                self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
+            }
+
+            let step_end_token_index = std::cmp::min(tokens_end_index, tokens_length);
+            let tokens_processed_this_step = step_end_token_index - tokens_start_index;
+            if tokens_processed_this_step > 0 {
+                let mut positions_for_step: Vec<usize> =
+                    (tokens_start_index..step_end_token_index).map(|idx| idx + prefix_offset).collect();
+                if step == prefill_steps - 1 && sample_suffix {
+                    positions_for_step.pop();
+                }
+                if !positions_for_step.is_empty() {
+                    let accept_indices_for_step: Vec<usize> = (0..positions_for_step.len()).collect();
+                    self.update_cache_layers(&accept_indices_for_step, None, true)?;
+                    self.context.cache_layers.borrow_mut().register_accepted_tokens(&positions_for_step);
+                    if let Some(&last_idx) = positions_for_step.last() {
+                        self.registered_prefix_len = last_idx + 1;
+                    }
+                }
+            }
+
+            last_state = Some(state);
+            run_times.push(run_time);
+        }
+
+        let mut final_state = last_state.ok_or(Error::PrefillFailed)?;
+        if !sample_suffix {
+            self.sync_prefix();
+            return Ok((
+                PrefillResult {
+                    tokens: Vec::new(),
+                    forwardpass_durations: run_times,
+                },
+                None,
+            ));
+        }
+
+        let sampled_logits = capture_sampled_logits.then(|| self.read_sampling_logits(&final_state));
+        let sampled_tokens = self.read_sampling_output(&mut final_state)?;
+        let last_suffix_start = prefill_step_size * (prefill_steps - 1);
+        let suffix_root_index = (tokens_length - last_suffix_start) - 1;
+        let (accepted_tokens, accepted_token_indices) =
+            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+
+        self.update_cache_layers(
+            &accepted_token_indices.into_iter().map(|position| suffix_root_index + position).collect::<Box<[usize]>>(),
+            Some(last_suffix_start),
+            false,
+        )?;
+
+        self.tokens.extend(accepted_tokens.clone());
+        self.sync_prefix();
+
+        Ok((
+            PrefillResult {
+                tokens: accepted_tokens,
+                forwardpass_durations: run_times,
+            },
+            sampled_logits,
+        ))
+    }
+
     fn warmup(
         &mut self,
         suffix_length: usize,
@@ -864,6 +968,25 @@ impl<B: Backend> LanguageModelGenerator<B> {
         })
     }
 
+    fn run_stage(
+        &self,
+        encode: impl FnOnce(&mut <B::CommandBuffer as CommandBuffer>::Encoding) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let mut command_buffer = self
+            .context
+            .context
+            .create_command_buffer()
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?
+            .start_encoding();
+        encode(&mut command_buffer)?;
+        command_buffer
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        Ok(())
+    }
+
     fn encode_forward_pass(
         &self,
         state: &mut ForwardPassState<B>,
@@ -912,6 +1035,92 @@ impl<B: Backend> LanguageModelGenerator<B> {
         }
 
         Ok(result)
+    }
+
+    fn read_sampling_logits(
+        &self,
+        state: &ForwardPassState<B>,
+    ) -> Vec<f32> {
+        let logits = state.arrays(&[ArrayId::Logits]);
+        let logits = logits[0].borrow();
+        let row_index = state.sampling_start();
+        let vocab_size = logits.shape()[1];
+        match logits.data_type() {
+            DataType::BF16 => logits
+                .as_slice::<bf16>()
+                .chunks_exact(vocab_size)
+                .nth(row_index)
+                .expect("bf16 logits row")
+                .iter()
+                .map(|&value| f32::from(value))
+                .collect(),
+            DataType::F16 => logits
+                .as_slice::<f16>()
+                .chunks_exact(vocab_size)
+                .nth(row_index)
+                .expect("f16 logits row")
+                .iter()
+                .map(|&value| f32::from(value))
+                .collect(),
+            DataType::F32 => {
+                logits.as_slice::<f32>().chunks_exact(vocab_size).nth(row_index).expect("f32 logits row").to_vec()
+            },
+            dtype => panic!("Unsupported logits dtype: {dtype:?}"),
+        }
+    }
+
+    #[cfg(feature = "tracing")]
+    fn read_prefill_mlp_traces(
+        &self,
+        state: &ForwardPassState<B>,
+    ) -> Vec<PrefillMlpLayerTrace> {
+        let traces = state.traces().borrow();
+        traces
+            .layer_results
+            .iter()
+            .enumerate()
+            .map(|(layer_index, layer)| {
+                let layer = layer.borrow();
+                let pre_mlp_norm = layer.pre_mlp_norm.borrow();
+                let mlp = layer.mlp.borrow();
+                let shape = pre_mlp_norm.shape().to_vec();
+                assert_eq!(shape.len(), 2, "expected 2D pre-MLP trace");
+                assert_eq!(mlp.shape(), shape.as_slice(), "MLP trace shape must match pre-MLP trace");
+                PrefillMlpLayerTrace {
+                    layer_index,
+                    rows: shape[0],
+                    cols: shape[1],
+                    pre_mlp_norm: Self::array_to_f32_vec(&pre_mlp_norm),
+                    mlp: Self::array_to_f32_vec(&mlp),
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "tracing")]
+    fn read_prefill_logits_trace(
+        &self,
+        state: &ForwardPassState<B>,
+    ) -> PrefillLogitsTrace {
+        let traces = state.traces().borrow();
+        let logits = traces.logits.borrow();
+        let shape = logits.shape().to_vec();
+        assert_eq!(shape.len(), 2, "expected 2D logits trace");
+        PrefillLogitsTrace {
+            rows: shape[0],
+            cols: shape[1],
+            logits: Self::array_to_f32_vec(&logits),
+        }
+    }
+
+    #[cfg(feature = "tracing")]
+    fn array_to_f32_vec(array: &Array<B>) -> Vec<f32> {
+        match array.data_type() {
+            DataType::BF16 => array.as_slice::<bf16>().iter().map(|&value| f32::from(value)).collect(),
+            DataType::F16 => array.as_slice::<f16>().iter().map(|&value| f32::from(value)).collect(),
+            DataType::F32 => array.as_slice::<f32>().to_vec(),
+            dtype => panic!("Unsupported trace dtype: {dtype:?}"),
+        }
     }
 
     fn update_cache_layers(

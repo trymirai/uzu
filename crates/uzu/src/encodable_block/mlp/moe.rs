@@ -22,7 +22,7 @@ use crate::{
             },
         },
     },
-    encodable_block::mlp::Mlp,
+    encodable_block::{EncodingParameters, mlp::Mlp},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -192,6 +192,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
         state: &mut ForwardPassState<B>,
+        _parameters: &EncodingParameters,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let suffix_length = state.active_suffix_length();

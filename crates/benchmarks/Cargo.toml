@@ -3,9 +3,16 @@ name = "benchmarks"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["metal-backend"]
+tracing = ["uzu/tracing"]
+metal-backend = ["uzu/metal"]
+
 [dependencies]
+anyhow.workspace = true
+clap.workspace = true
 metal.workspace = true
-uzu.workspace = true
+uzu = { path = "../uzu", version = "0.1.8", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sysinfo.workspace = true
@@ -13,3 +20,4 @@ libc.workspace = true
 mach2.workspace = true
 half.workspace = true
 objc2.workspace = true
+tokenizers.workspace = true
