@@ -1,8 +1,9 @@
+#![cfg(target_arch = "aarch64")]
+
 use std::time::Instant;
 
 use super::*;
 
-#[cfg(target_arch = "aarch64")]
 #[test]
 fn test_neon_argmax_correctness() {
     // Single deterministic 64k array test with random values
@@ -31,7 +32,6 @@ fn test_neon_argmax_correctness() {
     assert_eq!(expected, 42_000, "Expected max should be at index 42_000");
 }
 
-#[cfg(target_arch = "aarch64")]
 #[test]
 fn test_neon_performance_128k() {
     const SEQ_LEN: usize = 128 * 1024;

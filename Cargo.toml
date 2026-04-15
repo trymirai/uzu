@@ -67,14 +67,14 @@ inquire = "0.9"
 console = "0.16"
 rocket = { version = "0.5", features = ["json"] }
 uuid = { version = "1.20", features = ["v4"] }
-comfy-table = "7.2"
+comfy-table = { version = "7.2", default-features = false }
 autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
 test-tag = "0.1"
-proptest = "1.10"
-criterion = "0.8.2"
+proptest = { version = "1.10", default-features = false, features = ["std"] }
+criterion = { version = "0.8.2", default-features = false }
 criterion-macro = "0.4.0"
 rustix = "1.1.4"
 
