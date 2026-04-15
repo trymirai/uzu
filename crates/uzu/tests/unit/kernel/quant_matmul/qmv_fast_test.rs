@@ -328,7 +328,11 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
         256
     };
 
-    for (m, n, k) in iproduct!([1, 2, 3, 4], [2048, 4096, 14336], [2048, 4096, 8192, 14336]) {
+    for (m, n, k) in iproduct!(
+        [1, 2, 3, 4],
+        [1024, 2048, 4096, 14336, 65536],
+        [1024, 2048, 4096, 8192, 14336]
+    ) {
         if n % 8 != 0 || k % block_size != 0 {
             continue;
         }
@@ -413,5 +417,6 @@ fn bench_qmv_fast(c: &mut Criterion) {
         let context = <B as Backend>::Context::new().unwrap();
         bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, false, true);
         bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, true, false);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, true, false);
     });
 }
