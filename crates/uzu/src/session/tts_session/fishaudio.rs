@@ -6,6 +6,7 @@ use super::*;
 use crate::{
     backends::common::{Allocation, Buffer},
     config::TtsMessageProcessorConfig,
+    encodable_block::SamplingInputs,
     session::types::{TtsModelConfigError, TtsPromptConfigError},
 };
 
@@ -637,8 +638,15 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let context = Rc::clone(self.fast_runner.context());
         let mut shared_encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
-        let total_fast_count =
-            self.encode_fast_passes_on(&mut shared_encoder, first_code, fast_vocab_limit, followup_count, sampling)?;
+        let mut pending_sampling_inputs = Vec::new();
+        let total_fast_count = self.encode_fast_passes_on(
+            &mut shared_encoder,
+            first_code,
+            fast_vocab_limit,
+            followup_count,
+            sampling,
+            &mut pending_sampling_inputs,
+        )?;
         self.encode_slow_pass_on(
             &mut shared_encoder,
             current_semantic_token,
@@ -646,9 +654,9 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             post_scale,
             sampling,
             by_codebook,
+            &mut pending_sampling_inputs,
         )?;
         let submit_result = self.slow_runner.submit_and_wait_command_buffer(shared_encoder);
-        self.fast_runner.clear_pending_sampling_inputs();
         submit_result?;
 
         for pass in 0..total_fast_count {
@@ -673,6 +681,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         fast_vocab_limit: usize,
         followup_count: usize,
         sampling: &mut TextSamplingState,
+        pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
     ) -> Result<usize, Error> {
         let (slow_runner, fast_runner, semantic_bridge) =
             (&mut self.slow_runner, &mut self.fast_runner, &mut self.semantic_bridge);
@@ -702,6 +711,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             followup_count,
             Some(fast_vocab_limit),
             sampling,
+            pending_sampling_inputs,
         )
     }
 
@@ -714,6 +724,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         post_scale: Option<f32>,
         sampling: &mut TextSamplingState,
         by_codebook: &[Vec<u32>],
+        pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
     ) -> Result<(), Error> {
         let (slow_runner, fast_runner, semantic_bridge) =
             (&mut self.slow_runner, &mut self.fast_runner, &mut self.semantic_bridge);
@@ -757,6 +768,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             slow_sampling_mask,
             true, // capture_hidden
             Some(&mut pre_codebook_sum),
+            pending_sampling_inputs,
         )
     }
 

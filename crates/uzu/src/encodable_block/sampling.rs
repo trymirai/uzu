@@ -1,9 +1,11 @@
 //! Sampling kernel encodable.
 
+use ndarray::ArrayView2;
+
 use crate::{
     DataType,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, Encoder, allocation_helpers,
         kernel::sampling::{SamplingError, SamplingKernel},
     },
     session::parameter::SamplingMethod,
@@ -32,6 +34,44 @@ pub(crate) struct SamplingInputs<B: Backend> {
 }
 
 impl<B: Backend> SamplingInputs<B> {
+    pub(crate) fn bitmask_allocation_from_slice(
+        context: &B::Context,
+        row_count: usize,
+        token_bitmask: &[u32],
+        bitmask_row_len: usize,
+    ) -> Allocation<B> {
+        let mut allocation =
+            allocation_helpers::create_zeroed_allocation(context, &[row_count, bitmask_row_len], DataType::U32);
+        let source =
+            ArrayView2::from_shape((row_count, bitmask_row_len), token_bitmask).expect("Invalid token bitmask shape");
+        allocation_helpers::copy_view_to_allocation(&mut allocation, source);
+        allocation
+    }
+
+    pub(crate) fn from_slices(
+        context: &B::Context,
+        token_seeds: &[u64],
+        token_bitmask: Option<&[u32]>,
+        bitmask_row_len: Option<usize>,
+    ) -> Self {
+        let mut seeds = allocation_helpers::create_allocation(context, &[token_seeds.len()], DataType::U64);
+        allocation_helpers::copy_slice_to_allocation(&mut seeds, token_seeds);
+
+        let bitmask = match (token_bitmask, bitmask_row_len) {
+            (Some(token_bitmask), Some(bitmask_row_len)) => {
+                Some(Self::bitmask_allocation_from_slice(context, token_seeds.len(), token_bitmask, bitmask_row_len))
+            },
+            (None, None) => None,
+            _ => panic!("bitmask data and row length must either both exist or both be absent"),
+        };
+
+        Self {
+            seeds,
+            bitmask,
+            bitmask_row_len,
+        }
+    }
+
     pub(crate) fn bitmask_offset(
         &self,
         sampling_start: usize,

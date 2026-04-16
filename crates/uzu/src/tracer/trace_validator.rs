@@ -241,7 +241,7 @@ impl<B: Backend> TraceValidator<B> {
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
         let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
-        let mut state = ForwardPassState::new_llm(
+        let state = ForwardPassState::new_llm(
             ctx.context.clone(),
             &ctx.model_shape,
             ctx.cache_layers.clone(),
@@ -260,7 +260,11 @@ impl<B: Backend> TraceValidator<B> {
 
         let mut encoder =
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-        let logits = state.take_logits().expect("Decoder readout requires logits allocation");
+        let logits = allocation_helpers::create_allocation(
+            ctx.context.as_ref(),
+            &ctx.model_shape.logits_shape(token_ids.len()),
+            ctx.model_shape.activation_data_type(),
+        );
         {
             let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
             ctx.executables

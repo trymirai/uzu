@@ -280,60 +280,32 @@ impl<B: Backend> Decoder<B> {
             #[cfg(feature = "tracing")]
             let layer_trace = trace.and_then(|trace| trace.layer_results.get(layer.layer_index));
 
-            main = if let Some(cache_layers) = cache_layers.as_deref_mut() {
-                let cache_layer = &mut cache_layers.data[layer.layer_index];
-                layer
-                    .encode(
-                        LayerArguments {
-                            context,
-                            batch_dim,
-                            token_positions,
-                            token_parents,
-                            token_subtrie_ranges,
-                            attention_sinks,
-                            rope_cosines,
-                            rope_sines,
-                            rope_max_sequence_length,
-                            rope_dim,
-                            sampling_start,
-                            sampling_length,
-                            cache_layer: Some(cache_layer),
-                            #[cfg(feature = "tracing")]
-                            trace: layer_trace,
-                        },
-                        parameters,
-                        main,
-                        &mut shortcut,
-                        encoder,
-                    )
-                    .map_err(DecoderError::BackendError)?
-            } else {
-                layer
-                    .encode(
-                        LayerArguments {
-                            context,
-                            batch_dim,
-                            token_positions,
-                            token_parents,
-                            token_subtrie_ranges,
-                            attention_sinks,
-                            rope_cosines,
-                            rope_sines,
-                            rope_max_sequence_length,
-                            rope_dim,
-                            sampling_start,
-                            sampling_length,
-                            cache_layer: None,
-                            #[cfg(feature = "tracing")]
-                            trace: layer_trace,
-                        },
-                        parameters,
-                        main,
-                        &mut shortcut,
-                        encoder,
-                    )
-                    .map_err(DecoderError::BackendError)?
-            };
+            let cache_layer = cache_layers.as_deref_mut().map(|cache_layers| &mut cache_layers.data[layer.layer_index]);
+            main = layer
+                .encode(
+                    LayerArguments {
+                        context,
+                        batch_dim,
+                        token_positions,
+                        token_parents,
+                        token_subtrie_ranges,
+                        attention_sinks,
+                        rope_cosines,
+                        rope_sines,
+                        rope_max_sequence_length,
+                        rope_dim,
+                        sampling_start,
+                        sampling_length,
+                        cache_layer,
+                        #[cfg(feature = "tracing")]
+                        trace: layer_trace,
+                    },
+                    parameters,
+                    main,
+                    &mut shortcut,
+                    encoder,
+                )
+                .map_err(DecoderError::BackendError)?;
         }
 
         Ok((main, shortcut))

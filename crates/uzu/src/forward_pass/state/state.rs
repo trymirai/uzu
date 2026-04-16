@@ -16,23 +16,18 @@ use crate::{
 
 pub enum ForwardPassMode<B: Backend> {
     LanguageModelGenerator(LanguageModelGeneratorModeState<B>),
-    Classifier(ClassifierModeState<B>),
+    Classifier {
+        active_row_count: usize,
+    },
 }
 
 pub struct LanguageModelGeneratorModeState<B: Backend> {
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub logits: Option<Allocation<B>>,
-    pub sampling_output: Option<Allocation<B>>,
     pub sampling_method: Option<SamplingMethod>,
     pub active_row_count: usize,
     pub sampling_start: usize,
     pub sampling_length: usize,
     pub is_prefilling: bool,
-}
-
-pub struct ClassifierModeState<B: Backend> {
-    pub active_row_count: usize,
-    _backend: std::marker::PhantomData<B>,
 }
 
 pub struct ForwardPassState<B: Backend> {
@@ -154,20 +149,8 @@ impl<B: Backend> ForwardPassState<B> {
         let token_parents_allocation =
             Self::init_token_parents(context.as_ref(), token_positions, sampling_start, sampling_length);
 
-        let logits = (sampling_length > 0).then(|| {
-            allocation_helpers::create_allocation(
-                context.as_ref(),
-                &model_shape.logits_shape(suffix_length),
-                model_shape.activation_data_type(),
-            )
-        });
-        let sampling_output = (sampling_length > 0)
-            .then(|| allocation_helpers::create_allocation(context.as_ref(), &[sampling_length], DataType::U32));
-
         let mode = ForwardPassMode::LanguageModelGenerator(LanguageModelGeneratorModeState {
             cache_layers,
-            logits,
-            sampling_output,
             sampling_method: None,
             active_row_count,
             sampling_start,
@@ -194,7 +177,6 @@ impl<B: Backend> ForwardPassState<B> {
         shared_buffers: Rc<SharedBuffers<B>>,
         token_ids: &[u64],
         token_positions: &[usize],
-        _num_labels: usize,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len());
@@ -211,10 +193,9 @@ impl<B: Backend> ForwardPassState<B> {
             token_positions: token_positions_allocation,
             token_parents: token_parents_allocation,
             shared_buffers,
-            mode: ForwardPassMode::Classifier(ClassifierModeState {
+            mode: ForwardPassMode::Classifier {
                 active_row_count: suffix_length,
-                _backend: std::marker::PhantomData,
-            }),
+            },
         }
     }
 
@@ -244,47 +225,6 @@ impl<B: Backend> ForwardPassState<B> {
 
     pub fn token_subtrie_ranges(&self) -> Option<&Allocation<B>> {
         self.token_subtrie_ranges.as_ref()
-    }
-
-    pub fn sampling_output(&self) -> Option<&Allocation<B>> {
-        match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.as_ref(),
-            ForwardPassMode::Classifier(_) => None,
-        }
-    }
-
-    pub fn take_sampling_output(&mut self) -> Option<Allocation<B>> {
-        match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.take(),
-            ForwardPassMode::Classifier(_) => None,
-        }
-    }
-
-    pub fn put_sampling_output(
-        &mut self,
-        sampling_output: Allocation<B>,
-    ) {
-        match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output = Some(sampling_output),
-            ForwardPassMode::Classifier(_) => panic!("Not in LLM mode"),
-        }
-    }
-
-    pub fn take_logits(&mut self) -> Option<Allocation<B>> {
-        match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.logits.take(),
-            ForwardPassMode::Classifier(_) => None,
-        }
-    }
-
-    pub fn put_logits(
-        &mut self,
-        logits: Allocation<B>,
-    ) {
-        match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.logits = Some(logits),
-            ForwardPassMode::Classifier(_) => panic!("Not in LLM mode"),
-        }
     }
 
     pub fn rope_cosines(
@@ -329,7 +269,9 @@ impl<B: Backend> ForwardPassState<B> {
     pub fn active_row_count(&self) -> usize {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.active_row_count,
-            ForwardPassMode::Classifier(state) => state.active_row_count,
+            ForwardPassMode::Classifier {
+                active_row_count,
+            } => *active_row_count,
         }
     }
 
@@ -339,35 +281,45 @@ impl<B: Backend> ForwardPassState<B> {
     ) {
         match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.active_row_count = active_row_count,
-            ForwardPassMode::Classifier(state) => state.active_row_count = active_row_count,
+            ForwardPassMode::Classifier {
+                active_row_count: state_active_row_count,
+            } => *state_active_row_count = active_row_count,
         }
     }
 
     pub fn sampling_start(&self) -> usize {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_start,
-            ForwardPassMode::Classifier(_) => 0,
+            ForwardPassMode::Classifier {
+                ..
+            } => 0,
         }
     }
 
     pub fn sampling_length(&self) -> usize {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_length,
-            ForwardPassMode::Classifier(_) => self.token_count(),
+            ForwardPassMode::Classifier {
+                ..
+            } => self.token_count(),
         }
     }
 
     pub fn is_prefilling(&self) -> bool {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.is_prefilling,
-            ForwardPassMode::Classifier(_) => true,
+            ForwardPassMode::Classifier {
+                ..
+            } => true,
         }
     }
 
     pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers<B>>>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => Some(&state.cache_layers),
-            ForwardPassMode::Classifier(_) => None,
+            ForwardPassMode::Classifier {
+                ..
+            } => None,
         }
     }
 
@@ -382,27 +334,21 @@ impl<B: Backend> ForwardPassState<B> {
         f(&cache.data[layer_index])
     }
 
-    pub fn with_cache_layer_mut<R>(
-        &self,
-        layer_index: usize,
-        f: impl FnOnce(&mut crate::forward_pass::cache_layers::CacheLayer<B>) -> R,
-    ) -> R {
-        let cache_layers = self.cache_layers().expect("Cache layers are only available in LLM mode");
-        let mut cache = cache_layers.borrow_mut();
-        f(&mut cache.data[layer_index])
-    }
-
     pub fn sampling_method_mut(&mut self) -> Option<&mut Option<SamplingMethod>> {
         match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => Some(&mut state.sampling_method),
-            ForwardPassMode::Classifier(_) => None,
+            ForwardPassMode::Classifier {
+                ..
+            } => None,
         }
     }
 
     pub fn sampling_method(&self) -> Option<SamplingMethod> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_method,
-            ForwardPassMode::Classifier(_) => None,
+            ForwardPassMode::Classifier {
+                ..
+            } => None,
         }
     }
 

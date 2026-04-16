@@ -32,10 +32,6 @@ impl<B: Backend> ClassifierTrait for Classifier<B> {
     ) -> Result<ClassificationOutput, Error> {
         let run_start = Instant::now();
 
-        #[cfg(feature = "tracing")]
-        let (logits, _traces) = self.forward_pass_with_traces(&token_ids, &token_positions)?;
-
-        #[cfg(not(feature = "tracing"))]
         let logits = self.forward_pass(&token_ids, &token_positions)?;
 
         let forward_duration = run_start.elapsed().as_secs_f64();
@@ -85,7 +81,15 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<(Box<[f32]>, ActivationTrace<B>), Error> {
-        self.forward_pass(token_ids, token_positions)
+        let num_labels = self.context.model_config.model_config.num_labels;
+        let traces = ActivationTrace::new_classifier(
+            self.context.context.as_ref(),
+            &self.context.model_shape,
+            token_ids.len(),
+            num_labels,
+        );
+        let logits = self.forward_pass_impl(token_ids, token_positions, Some(&traces))?;
+        Ok((logits, traces))
     }
 
     #[cfg(feature = "tracing")]
@@ -93,21 +97,23 @@ impl<B: Backend> Classifier<B> {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, ActivationTrace<B>), Error> {
-        let num_labels = self.context.model_config.model_config.num_labels;
+    ) -> Result<Box<[f32]>, Error> {
+        self.forward_pass_impl(token_ids, token_positions, None)
+    }
+
+    #[cfg(feature = "tracing")]
+    fn forward_pass_impl(
+        &mut self,
+        token_ids: &[u64],
+        token_positions: &[usize],
+        trace: Option<&ActivationTrace<B>>,
+    ) -> Result<Box<[f32]>, Error> {
         let mut state = ForwardPassState::new_classifier(
             self.context.context.clone(),
             &self.context.model_shape,
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
-            num_labels,
-        );
-        let traces = ActivationTrace::new_classifier(
-            self.context.context.as_ref(),
-            &self.context.model_shape,
-            token_ids.len(),
-            num_labels,
         );
 
         let encoding_params = EncodingParameters::new();
@@ -130,12 +136,11 @@ impl<B: Backend> Classifier<B> {
             .embedding_norm
             .encode(&main, 0, state.active_row_count(), &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        #[cfg(feature = "tracing")]
-        {
+        if let Some(trace) = trace {
             crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 &mut encoder,
                 &main,
-                traces.embedding_norm(),
+                trace.embedding_norm(),
             );
         }
 
@@ -159,7 +164,7 @@ impl<B: Backend> Classifier<B> {
                         sampling_length: state.sampling_length(),
                         cache_layer: None,
                         #[cfg(feature = "tracing")]
-                        trace: traces.layer_results.get(layer_index),
+                        trace: trace.and_then(|trace| trace.layer_results.get(layer_index)),
                     },
                     &encoding_params,
                     main,
@@ -173,41 +178,36 @@ impl<B: Backend> Classifier<B> {
             .output_norm
             .encode(&main, 0, state.active_row_count(), &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        #[cfg(feature = "tracing")]
-        {
+        if let Some(trace) = trace {
             crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 &mut encoder,
                 &main,
-                &traces.output_norm,
+                &trace.output_norm,
             );
         }
-
         let pooling = self
             .context
             .pooling
             .encode(state.active_row_count(), &main, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        #[cfg(feature = "tracing")]
-        {
+        if let Some(trace) = trace {
             crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 &mut encoder,
                 &pooling,
-                traces.output_pooling(),
+                trace.output_pooling(),
             );
         }
         state.set_active_row_count(1);
-
         let logits = self
             .context
             .prediction_head
             .encode(state.context(), &pooling, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        #[cfg(feature = "tracing")]
-        {
+        if let Some(trace) = trace {
             crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 &mut encoder,
                 &logits,
-                &traces.logits,
+                &trace.logits,
             );
         }
 
@@ -219,7 +219,7 @@ impl<B: Backend> Classifier<B> {
 
         let logits = self.copy_logits_from_allocation(&logits)?;
 
-        Ok((logits, traces))
+        Ok(logits)
     }
 
     #[cfg(not(feature = "tracing"))]
@@ -228,14 +228,12 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<Box<[f32]>, Error> {
-        let num_labels = self.context.model_config.model_config.num_labels;
         let mut state = ForwardPassState::new_classifier(
             self.context.context.clone(),
             &self.context.model_shape,
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
-            num_labels,
         );
 
         let encoding_params = EncodingParameters::new();
@@ -310,9 +308,7 @@ impl<B: Backend> Classifier<B> {
             .wait_until_completed()
             .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-        let logits = self.copy_logits_from_allocation(&logits)?;
-
-        Ok(logits)
+        self.copy_logits_from_allocation(&logits)
     }
 
     fn copy_logits_from_allocation(

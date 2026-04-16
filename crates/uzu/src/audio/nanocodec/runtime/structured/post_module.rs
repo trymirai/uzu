@@ -320,61 +320,36 @@ impl StructuredAudioCodecGraph {
             let rope_type = layer.rope_type();
             let rope_cosines = rope_type.map(|rope_type| state.rope_cosines(rope_type));
             let rope_sines = rope_type.map(|rope_type| state.rope_sines(rope_type));
-            main = if state.cache_layers().is_some() {
-                state
-                    .with_cache_layer_mut(layer.layer_index, |cache_layer| {
-                        layer.encode(
-                            crate::encodable_block::LayerArguments {
-                                context: state.context(),
-                                batch_dim: state.active_row_count(),
-                                token_positions: state.token_positions(),
-                                token_parents: state.token_parents(),
-                                token_subtrie_ranges: state.token_subtrie_ranges(),
-                                attention_sinks: state.attention_sinks(layer.layer_index),
-                                rope_cosines,
-                                rope_sines,
-                                rope_max_sequence_length: state.rope_max_sequence_length(),
-                                rope_dim: state.rope_dim(),
-                                sampling_start: state.sampling_start(),
-                                sampling_length: state.sampling_length(),
-                                cache_layer: Some(cache_layer),
-                                #[cfg(feature = "tracing")]
-                                trace: None,
-                            },
-                            &encoding_parameters,
-                            main,
-                            &mut shortcut,
-                            encoder,
-                        )
-                    })
-                    .map_err(|err| AudioError::Runtime(format!("post_module layer encode failed: {err}")))?
-            } else {
-                layer
-                    .encode(
-                        crate::encodable_block::LayerArguments {
-                            context: state.context(),
-                            batch_dim: state.active_row_count(),
-                            token_positions: state.token_positions(),
-                            token_parents: state.token_parents(),
-                            token_subtrie_ranges: state.token_subtrie_ranges(),
-                            attention_sinks: state.attention_sinks(layer.layer_index),
-                            rope_cosines,
-                            rope_sines,
-                            rope_max_sequence_length: state.rope_max_sequence_length(),
-                            rope_dim: state.rope_dim(),
-                            sampling_start: state.sampling_start(),
-                            sampling_length: state.sampling_length(),
-                            cache_layer: None,
-                            #[cfg(feature = "tracing")]
-                            trace: None,
-                        },
-                        &encoding_parameters,
-                        main,
-                        &mut shortcut,
-                        encoder,
-                    )
-                    .map_err(|err| AudioError::Runtime(format!("post_module layer encode failed: {err}")))?
-            };
+            let mut cache_layer = state.cache_layers().map(|cache_layers| {
+                std::cell::RefMut::map(cache_layers.borrow_mut(), |cache_layers| {
+                    &mut cache_layers.data[layer.layer_index]
+                })
+            });
+            main = layer
+                .encode(
+                    crate::encodable_block::LayerArguments {
+                        context: state.context(),
+                        batch_dim: state.active_row_count(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        attention_sinks: state.attention_sinks(layer.layer_index),
+                        rope_cosines,
+                        rope_sines,
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        cache_layer: cache_layer.as_deref_mut(),
+                        #[cfg(feature = "tracing")]
+                        trace: None,
+                    },
+                    &encoding_parameters,
+                    main,
+                    &mut shortcut,
+                    encoder,
+                )
+                .map_err(|err| AudioError::Runtime(format!("post_module layer encode failed: {err}")))?;
         }
         runtime
             .output_norm
@@ -410,7 +385,6 @@ impl StructuredAudioCodecGraph {
             runtime.shared_buffers.clone(),
             &token_ids,
             &token_positions,
-            1,
         );
 
         let main_shape = runtime.model_shape.main_shape(frames);
@@ -490,7 +464,6 @@ impl StructuredAudioCodecGraph {
                 runtime.shared_buffers.clone(),
                 &token_ids,
                 &token_positions,
-                1,
             );
 
             let main_shape = runtime.model_shape.main_shape(active_len);
