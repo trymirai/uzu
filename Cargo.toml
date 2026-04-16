@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dsl",
+    "crates/bindings",
     "crates/json-transform",
     "crates/benchmarks",
     "crates/uzu",
@@ -18,6 +19,7 @@ repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
+bindings = { path = "crates/bindings" }
 json-transform = { path = "crates/json-transform" }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
