@@ -126,20 +126,19 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
-        let mut output = self.base_linear.encode(context, input, batch_dim, encoder)?;
+        let output = self.base_linear.encode(context, input, batch_dim, encoder)?;
 
         let mut adapter_kernel = self.adapter_kernel.borrow_mut();
-        let mut intermediate =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
+        let intermediate = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
 
         adapter_kernel.encode(
             context,
             MatmulArguments {
-                a: input,
-                b: &self.adapter_down,
+                a: input.clone(),
+                b: self.adapter_down.clone(),
                 ab_scale: 1.0,
                 c: MatmulArgumentC::None,
-                d: &mut intermediate,
+                d: intermediate.clone(),
                 batch_dim: batch_dim as u32,
                 input_dim: self.input_dim as u32,
                 output_dim: self.lora_rank as u32,
@@ -150,11 +149,11 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         adapter_kernel.encode(
             context,
             MatmulArguments {
-                a: &intermediate,
-                b: &self.adapter_up,
+                a: intermediate.clone(),
+                b: self.adapter_up.clone(),
                 ab_scale: self.lora_scale,
                 c: MatmulArgumentC::Accumulate,
-                d: &mut output,
+                d: output.clone(),
                 batch_dim: batch_dim as u32,
                 input_dim: self.lora_rank as u32,
                 output_dim: self.output_dim as u32,

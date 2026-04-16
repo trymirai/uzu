@@ -4,7 +4,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Expr, Ident, Lifetime, LitInt, Type, fold::Fold};
+use syn::{Expr, Ident, LitInt, Type, fold::Fold};
 
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},

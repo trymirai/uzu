@@ -592,11 +592,11 @@ impl<B: Backend> Embedding<B> {
                 readout.borrow_mut().encode(
                     context,
                     MatmulArguments {
-                        a: input_allocation,
-                        b: weights,
+                        a: input_allocation.clone(),
+                        b: weights.clone(),
                         ab_scale: 1.0,
                         c: MatmulArgumentC::None,
-                        d: output_allocation,
+                        d: output_allocation.clone(),
                         batch_dim: batch_dim as u32,
                         input_dim: input_dim as u32,
                         output_dim: output_dim as u32,
@@ -628,11 +628,11 @@ impl<B: Backend> Embedding<B> {
                     .encode(
                         encoder,
                         QuantizedMatmulArguments {
-                            a: input_allocation,
-                            b: weights,
-                            scales,
-                            zero_points_or_biases: biases,
-                            output: output_allocation,
+                            a: input_allocation.clone(),
+                            b: weights.clone(),
+                            scales: scales.clone(),
+                            zero_points_or_biases: biases.clone(),
+                            output: output_allocation.clone(),
                             hadamard_factors: None,
                             batch_dim,
                         },

@@ -36,13 +36,13 @@ pub struct QuantizedMatmulConfiguration {
     pub use_hadamard: bool,
 }
 
-pub struct QuantizedMatmulArguments<'a, 'input, 'output, B: Backend> {
-    pub a: &'input Allocation<B>,
-    pub b: &'a Allocation<B>,
-    pub scales: &'a Allocation<B>,
-    pub zero_points_or_biases: &'a Allocation<B>,
-    pub output: &'output mut Allocation<B>,
-    pub hadamard_factors: Option<&'a Allocation<B>>,
+pub struct QuantizedMatmulArguments<B: Backend> {
+    pub a: Allocation<B>,
+    pub b: Allocation<B>,
+    pub scales: Allocation<B>,
+    pub zero_points_or_biases: Allocation<B>,
+    pub output: Allocation<B>,
+    pub hadamard_factors: Option<Allocation<B>>,
     pub batch_dim: usize,
 }
 
@@ -204,17 +204,17 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         })
     }
 
-    pub fn encode<'a, 'input, 'output>(
+    pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: QuantizedMatmulArguments<'a, 'input, 'output, B>,
+        arguments: QuantizedMatmulArguments<B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
         let QuantizedMatmulArguments {
             a,
             b,
             scales,
             zero_points_or_biases,
-            output,
+            mut output,
             hadamard_factors,
             batch_dim,
         } = arguments;
@@ -227,13 +227,13 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         macro_rules! encode_kernel {
             ($kernel:expr $(, $hadamard:expr)?) => {
                 $kernel.encode(
-                    b,
-                    scales,
-                    zero_points,
-                    biases,
-                    a,
-                    output,
-                    $($hadamard,)?
+                    &b,
+                    &scales,
+                    zero_points.as_ref(),
+                    biases.as_ref(),
+                    &a,
+                    &mut output,
+                    $($hadamard.as_ref(),)?
                     self.input_dim as u32,
                     self.output_dim as u32,
                     batch_dim as u32,

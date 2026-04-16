@@ -170,14 +170,8 @@ impl<B: Backend> dyn Linear<B> {
                 Ok((inner_linear, Some(input_factors)))
             },
             other => {
-                let linear = Self::new(
-                    other,
-                    _has_biases,
-                    input_dimension,
-                    output_dimensions,
-                    context,
-                    parameter_tree,
-                )?;
+                let linear =
+                    Self::new(other, _has_biases, input_dimension, output_dimensions, context, parameter_tree)?;
                 Ok((linear, None))
             },
         }

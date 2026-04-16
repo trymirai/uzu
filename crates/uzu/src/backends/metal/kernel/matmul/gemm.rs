@@ -127,7 +127,7 @@ impl GemmSpecialization {
         batch_dim: u32,
         input_dim: u32,
         output_dim: u32,
-        c: &MatmulArgumentC<'_, Metal>,
+        c: &MatmulArgumentC<Metal>,
     ) -> Self {
         let overall_work_elements = batch_dim * output_dim;
         let is_float32 = matches!(data_type, DataType::F32);

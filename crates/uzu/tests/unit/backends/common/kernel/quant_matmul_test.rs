@@ -353,7 +353,7 @@ fn execute_quantized_matmul<B: Backend>(
         QuantizedMatmulType::Mlx => allocation_from_quantized_f32_slice::<B>(ctx, data_type, &params.biases),
     };
     let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
-    let mut y_buf = ctx
+    let y_buf = ctx
         .create_allocation(batch * output_dim * data_type.size_in_bytes(), AllocationType::Global)
         .expect("Failed to create allocation");
 
@@ -378,11 +378,11 @@ fn execute_quantized_matmul<B: Backend>(
     if iterations > 1 {
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
-                a: &x_buf,
-                b: &w_buf,
-                scales: &s_buf,
-                zero_points_or_biases: &b_buf,
-                output: &mut y_buf,
+                a: x_buf.clone(),
+                b: w_buf.clone(),
+                scales: s_buf.clone(),
+                zero_points_or_biases: b_buf.clone(),
+                output: y_buf.clone(),
                 hadamard_factors: None,
                 batch_dim: batch,
             };
@@ -395,11 +395,11 @@ fn execute_quantized_matmul<B: Backend>(
     let start = Instant::now();
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
-            a: &x_buf,
-            b: &w_buf,
-            scales: &s_buf,
-            zero_points_or_biases: &b_buf,
-            output: &mut y_buf,
+            a: x_buf.clone(),
+            b: w_buf.clone(),
+            scales: s_buf.clone(),
+            zero_points_or_biases: b_buf.clone(),
+            output: y_buf.clone(),
             hadamard_factors: None,
             batch_dim: batch,
         };

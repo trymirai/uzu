@@ -13,27 +13,27 @@ pub enum MatmulError<B: Backend> {
     BackendError(#[source] B::Error),
 }
 
-#[derive(Clone, Copy)]
-pub enum MatmulArgumentC<'a, B: Backend> {
+#[derive(Clone)]
+pub enum MatmulArgumentC<B: Backend> {
     None,
     /// Accumulate: [M, N]
     Accumulate,
     /// Bias: [N] (broadcasted across M/batch)
-    Bias(&'a Allocation<B>),
+    Bias(Allocation<B>),
 }
 
 // D = ab_scale * (A @ B.T) + C
-pub struct MatmulArguments<'a, 'input, 'output, B: Backend> {
+pub struct MatmulArguments<B: Backend> {
     /// A: [M, K]
-    pub a: &'input Allocation<B>,
+    pub a: Allocation<B>,
     /// B: [N, K]
-    pub b: &'a Allocation<B>,
+    pub b: Allocation<B>,
     /// AB scale: also known as alpha
     pub ab_scale: f32,
     /// C: behavior depends on enum variant
-    pub c: MatmulArgumentC<'a, B>,
+    pub c: MatmulArgumentC<B>,
     /// D: [M, N]
-    pub d: &'output mut Allocation<B>,
+    pub d: Allocation<B>,
     /// M dimension: usually batch/number of tokens (rows of A, rows of C)
     pub batch_dim: u32,
     /// K dimension: usually input_dim/reduction dimension (cols of A, rows of B)
@@ -50,10 +50,10 @@ pub trait MatmulKernel: Sized {
         data_type: DataType,
     ) -> Result<Self, MatmulError<Self::Backend>>;
 
-    fn encode<'a, 'input, 'output>(
+    fn encode(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        arguments: MatmulArguments<'a, 'input, 'output, Self::Backend>,
+        arguments: MatmulArguments<Self::Backend>,
         encoder: &mut Encoder<Self::Backend>,
     );
 }

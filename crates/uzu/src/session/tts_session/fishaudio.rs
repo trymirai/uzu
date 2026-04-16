@@ -523,11 +523,11 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             semantic_bridge.projection.encode(
                 context,
                 MatmulArguments {
-                    a: slow_hidden_capture,
-                    b: weights,
+                    a: slow_hidden_capture.clone(),
+                    b: weights.clone(),
                     ab_scale: 1.0,
                     c: MatmulArgumentC::None,
-                    d: output_embedding,
+                    d: output_embedding.clone(),
                     batch_dim: 1,
                     input_dim: slow_model_dim as u32,
                     output_dim: fast_model_dim as u32,

@@ -74,13 +74,7 @@ impl<B: Backend> dyn Mlp<B> {
             .map_err(MlpBlockError::BackendError)?;
 
             return Ok((
-                Box::new(DenseMlp::new(
-                    up_projection,
-                    gate,
-                    down_projection,
-                    hidden_dimension,
-                    data_type,
-                )),
+                Box::new(DenseMlp::new(up_projection, gate, down_projection, hidden_dimension, data_type)),
                 up_input_hadamard_factors,
             ));
         }

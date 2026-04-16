@@ -31,33 +31,42 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode<'a, 'input, 'output>(
+    fn encode(
         &mut self,
         _context: &CpuContext,
-        arguments: MatmulArguments<'a, 'input, 'output, Cpu>,
+        arguments: MatmulArguments<Cpu>,
         encoder: &mut Encoder<Cpu>,
     ) {
+        let MatmulArguments {
+            a,
+            b,
+            ab_scale,
+            c,
+            d,
+            batch_dim,
+            input_dim,
+            output_dim,
+        } = arguments;
         let command_buffer = encoder.as_command_buffer_mut();
-        let m = arguments.batch_dim as usize;
-        let n = arguments.output_dim as usize;
-        let k = arguments.input_dim as usize;
+        let m = batch_dim as usize;
+        let n = output_dim as usize;
+        let k = input_dim as usize;
         let lda = k;
         let ldb = k;
         let ldd = n;
         let data_type = self.data_type;
-        let (a, a_range) = arguments.a.as_buffer_range();
-        let (b, b_range) = arguments.b.as_buffer_range();
-        let (d, d_range) = arguments.d.as_buffer_range();
+        let (a, a_range) = a.as_buffer_range();
+        let (b, b_range) = b.as_buffer_range();
+        let (d, d_range) = d.as_buffer_range();
         let a_offset = a_range.start;
         let b_offset = b_range.start;
         let d_offset = d_range.start;
 
         let a_ptr = SendPtr(unsafe { &*a.get() }.as_ptr().wrapping_byte_add(a_offset));
         let b_ptr = SendPtr(unsafe { &*b.get() }.as_ptr().wrapping_byte_add(b_offset));
-        let ab_scale = arguments.ab_scale;
         let d_ptr = SendPtrMut(unsafe { (&*d.get()).as_ptr().wrapping_byte_add(d_offset) as *mut u8 });
 
-        let (is_accumulate, bias_ptr) = match arguments.c {
+        let (is_accumulate, bias_ptr) = match c {
             MatmulArgumentC::Accumulate => (true, None),
             MatmulArgumentC::Bias(bias) => {
                 let (bias, bias_range) = bias.as_buffer_range();
