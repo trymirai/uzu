@@ -3,8 +3,7 @@ use half::{bf16, f16};
 use super::RopeBuffers;
 use crate::{
     DataType,
-    array::{Array, ArrayContextExt},
-    backends::common::Backend,
+    backends::common::{Allocation, Backend, Buffer},
     config::DecoderConfig,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
@@ -13,7 +12,7 @@ use crate::{
 pub struct SharedBuffers<B: Backend> {
     pub global_rope: Option<RopeBuffers<B>>,
     pub local_rope: Option<RopeBuffers<B>>,
-    pub attention_sinks: Option<Vec<Array<B>>>,
+    pub attention_sinks: Option<Vec<Allocation<B>>>,
 }
 
 impl<B: Backend> SharedBuffers<B> {
@@ -29,9 +28,7 @@ impl<B: Backend> SharedBuffers<B> {
         let attention_sinks = decoder_config.layer_config.attention_config().is_some_and(|c| c.has_sinks).then(|| {
             let num_heads = decoder_config.num_heads;
             (0..decoder_config.num_layers)
-                .map(|_| {
-                    context.create_array_uninitialized(&[num_heads], DataType::F32, "shared_buffers_attention_sinks")
-                })
+                .map(|_| super::allocation_helpers::create_allocation(context, &[num_heads], DataType::F32))
                 .collect()
         });
 
@@ -60,7 +57,13 @@ impl<B: Backend> SharedBuffers<B> {
                 let layer_tree = transformer_tree.subtree(&format!("layers.{}", layer_idx)).unwrap();
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf_array("sinks").unwrap();
-                let dst_slice = sink_cell.as_slice_mut::<f32>();
+                let dst_slice = unsafe {
+                    let (buffer, range) = sink_cell.as_buffer_range();
+                    std::slice::from_raw_parts_mut(
+                        (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start) as *mut f32,
+                        range.len() / std::mem::size_of::<f32>(),
+                    )
+                };
 
                 match sinks_arr.data_type() {
                     DataType::F32 => {

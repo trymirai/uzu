@@ -1,10 +1,7 @@
 use crate::{
     DataType,
     backends::{
-        common::{
-            Context,
-            kernel::matmul::{MatmulArgumentC, MatmulArguments},
-        },
+        common::{Context, kernel::matmul::MatmulArgumentC},
         metal::{Metal, context::MetalContext},
     },
 };
@@ -127,16 +124,19 @@ impl GemmSpecialization {
     pub fn select(
         context: &MetalContext,
         data_type: DataType,
-        arguments: &MatmulArguments<Metal>,
+        batch_dim: u32,
+        input_dim: u32,
+        output_dim: u32,
+        c: &MatmulArgumentC<'_, Metal>,
     ) -> Self {
-        let overall_work_elements = arguments.batch_dim * arguments.output_dim;
+        let overall_work_elements = batch_dim * output_dim;
         let is_float32 = matches!(data_type, DataType::F32);
         let prefer_half_or_tf32 = !is_float32 || MetalContext::tf32_enabled();
 
         let (block_rows, block_cols, block_depth, simdgroups_per_row, simdgroups_per_column) =
             if context.is_high_performance() && overall_work_elements >= (1 << 20) {
                 if prefer_half_or_tf32 {
-                    if 2 * std::cmp::max(arguments.batch_dim, arguments.output_dim) > arguments.input_dim {
+                    if 2 * std::cmp::max(batch_dim, output_dim) > input_dim {
                         (64, 64, 16, 2, 2)
                     } else {
                         (64, 32, 32, 2, 2)
@@ -156,9 +156,9 @@ impl GemmSpecialization {
             block_depth,
             simdgroups_per_row,
             simdgroups_per_column,
-            align_mn: (arguments.batch_dim % block_rows) == 0 && (arguments.output_dim % block_cols) == 0,
-            align_k: (arguments.input_dim % block_depth) == 0,
-            is_accumulate: matches!(arguments.c, MatmulArgumentC::Accumulate),
+            align_mn: (batch_dim % block_rows) == 0 && (output_dim % block_cols) == 0,
+            align_k: (input_dim % block_depth) == 0,
+            is_accumulate: matches!(c, MatmulArgumentC::Accumulate),
         }
     }
 }

@@ -1,21 +1,17 @@
 //! RMS Normalization encodable.
 
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, RMSNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -30,11 +26,10 @@ pub enum RMSNormError<B: Backend> {
 pub struct RMSNorm<B: Backend> {
     kernel: <B::Kernels as Kernels>::RMSNormKernel,
     config: NormalizationConfig,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-    shortcut_array_id: Option<ArrayId>,
     scales_buffer: Rc<RefCell<B::Buffer>>,
-    use_sampling_range: bool,
+    element_count: usize,
+    input_data_type: DataType,
+    output_data_type: DataType,
 }
 
 impl<B: Backend> RMSNorm<B> {
@@ -42,13 +37,12 @@ impl<B: Backend> RMSNorm<B> {
         context: &B::Context,
         intermediate_data_type: DataType,
         config: NormalizationConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
-        shortcut_array_id: Option<ArrayId>,
+        use_shortcut: bool,
         residual_add: bool,
     ) -> Result<Self, RMSNormError<B>> {
         let scales = parameter_tree.leaf_array("scales").map_err(RMSNormError::ParameterError)?;
+        let element_count = scales.shape()[0];
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
@@ -64,9 +58,9 @@ impl<B: Backend> RMSNorm<B> {
             scales_type,
             output_type,
             accumulation_data_type,
-            input_array_id == output_array_id,
+            false,
             config.upcast_mode == UpcastMode::FullLayer,
-            shortcut_array_id.is_some(),
+            use_shortcut,
             residual_add,
         )
         .map_err(RMSNormError::BackendError)?;
@@ -74,69 +68,35 @@ impl<B: Backend> RMSNorm<B> {
         Ok(Self {
             kernel,
             config,
-            input_array_id,
-            output_array_id,
-            shortcut_array_id,
             scales_buffer: scales.buffer(),
-            use_sampling_range: false,
+            element_count,
+            input_data_type: input_type,
+            output_data_type: output_type,
         })
-    }
-
-    /// When enabled, this RMSNorm only runs on `state.sampling_start()..+state.sampling_length()`.
-    /// This is useful for the final output norm before readout/sampling in prefill.
-    pub fn with_sampling_range(mut self) -> Self {
-        self.use_sampling_range = true;
-        self
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: &Allocation<B>,
+        row_offset: usize,
+        row_count: usize,
+        shortcut: Option<&mut Allocation<B>>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
-
-        let suffix_length = input_array.shape()[0];
-        let element_count = input_array.shape()[1];
-
-        let input_elem_size = input_array.data_type().size_in_bytes();
-        let output_elem_size = output_array.data_type().size_in_bytes();
-
-        let (batch_start, batch_len) = if self.use_sampling_range {
-            (state.sampling_start(), state.sampling_length())
-        } else {
-            (0, state.active_row_count())
-        };
-
-        let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
-        if batch_len == 0 {
-            return Ok(());
-        }
-
-        let row_size_in_bytes = element_count * input_elem_size;
-        let input_offset = batch_start * row_size_in_bytes;
-
-        let output_row_size_in_bytes = element_count * output_elem_size;
-        let output_offset = batch_start * output_row_size_in_bytes;
-
-        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
-        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
-
-        let shortcut_rc = self.shortcut_array_id.map(|id| state.array(id).buffer());
-        let mut shortcut_borrow = shortcut_rc.as_ref().map(|rc| rc.borrow_mut());
-
+    ) -> Result<Allocation<B>, B::Error> {
+        let input_offset = row_offset * self.element_count * self.input_data_type.size_in_bytes();
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
         self.kernel.encode(
-            input_buffer_borrow.as_deref().map(|b| (b, input_offset)),
+            Some((input, input_offset)),
             self.scales_buffer.borrow().deref(),
-            (output_array.buffer().borrow_mut().deref_mut(), output_offset),
-            shortcut_borrow.as_deref_mut().map(|b| (b, input_offset)),
-            batch_len as u32,
-            element_count as u32,
+            (&mut output, 0),
+            shortcut.map(|shortcut| (shortcut, input_offset)),
+            row_count as u32,
+            self.element_count as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             encoder,
         );
-        Ok(())
+        Ok(output)
     }
 }

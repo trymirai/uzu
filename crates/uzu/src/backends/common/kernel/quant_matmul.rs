@@ -1,7 +1,7 @@
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::QuantizationMode,
         kernel::{
             QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
@@ -36,13 +36,12 @@ pub struct QuantizedMatmulConfiguration {
     pub quantization_type: QuantizedMatmulType,
 }
 
-pub struct QuantizedMatmulArguments<'a, B: Backend> {
-    pub a_buffer: &'a B::Buffer,
-    pub a_offset: usize,
+pub struct QuantizedMatmulArguments<'a, 'input, 'output, B: Backend> {
+    pub a: &'input Allocation<B>,
     pub b_buffer: &'a B::Buffer,
     pub scales_buffer: &'a B::Buffer,
     pub zero_points_or_biases_buffer: &'a B::Buffer,
-    pub output_buffer: &'a mut B::Buffer,
+    pub output: &'output mut Allocation<B>,
     pub batch_dim: usize,
 }
 
@@ -166,34 +165,47 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         })
     }
 
-    pub fn encode(
+    pub fn encode<'a, 'input, 'output>(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: QuantizedMatmulArguments<B>,
+        arguments: QuantizedMatmulArguments<'a, 'input, 'output, B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
+        let QuantizedMatmulArguments {
+            a,
+            b_buffer,
+            scales_buffer,
+            zero_points_or_biases_buffer,
+            output,
+            batch_dim,
+        } = arguments;
+        let (a_buffer, a_range) = a.as_buffer_range();
+        let (output_buffer, output_range) = output.as_buffer_range();
+        let a_offset = a_range.start;
+        let output_offset = output_range.start;
+
         let (zero_points, biases) = match self.quantization_type {
-            QuantizedMatmulType::ZeroPoint => (Some(arguments.zero_points_or_biases_buffer), None),
-            QuantizedMatmulType::Mlx => (None, Some(arguments.zero_points_or_biases_buffer)),
+            QuantizedMatmulType::ZeroPoint => (Some(zero_points_or_biases_buffer), None),
+            QuantizedMatmulType::Mlx => (None, Some(zero_points_or_biases_buffer)),
         };
 
         macro_rules! encode_kernel {
             ($kernel:expr) => {
                 $kernel.encode(
-                    arguments.b_buffer,
-                    arguments.scales_buffer,
+                    b_buffer,
+                    scales_buffer,
                     zero_points,
                     biases,
-                    (arguments.a_buffer, arguments.a_offset),
-                    arguments.output_buffer,
+                    (a_buffer, a_offset),
+                    (output_buffer, output_offset),
                     self.input_dim as u32,
                     self.output_dim as u32,
-                    arguments.batch_dim as u32,
+                    batch_dim as u32,
                     encoder,
                 )
             };
         }
 
-        if arguments.batch_dim < 32 || self.output_dim == 1 {
+        if batch_dim < 32 || self.output_dim == 1 {
             match &self.matrix_vector {
                 MatrixVectorKernel::Qmv(k) => encode_kernel!(k),
                 MatrixVectorKernel::QmvFast(k) => encode_kernel!(k),

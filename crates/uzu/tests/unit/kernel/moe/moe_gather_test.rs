@@ -1,10 +1,8 @@
-use std::ops::{Deref, DerefMut};
-
 use half::bf16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use uzu::{
-    ArrayContextExt, ArrayElement,
+    ArrayElement,
     backends::{
         common::{
             Backend, Encoder,
@@ -15,7 +13,10 @@ use uzu::{
 };
 
 use crate::{
-    common::{assert::assert_eq_float, helpers::create_context},
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context},
+    },
     uzu_test,
 };
 
@@ -30,11 +31,11 @@ struct Input<T: ArrayElement + Float> {
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = create_context::<B>();
 
-    let x_array = context.create_array_from(&[input.x.len()], &input.x, "");
-    let ids_array = context.create_array_from(&[input.bucket_ids.len()], &input.bucket_ids, "");
     let sumk_data: [u32; 1] = [input.sum_k as u32];
-    let sumk_array = context.create_array_from(&[1], &sumk_data, "");
-    let x_perm_array = context.create_array_uninitialized(&[input.sum_k * input.d_model], T::data_type(), "");
+    let x_allocation = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let ids_allocation = alloc_allocation_with_data::<B, i32>(&context, &input.bucket_ids);
+    let sumk_allocation = alloc_allocation_with_data::<B, u32>(&context, &sumk_data);
+    let mut x_perm_allocation = alloc_allocation::<B, T>(&context, input.sum_k * input.d_model);
 
     let gather = MoeGatherKernels::<B>::new(&context).expect("MoeGatherKernel::new");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -42,10 +43,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         &mut encoder,
         T::data_type(),
         MoeGatherArguments {
-            x_buffer: &x_array.buffer().borrow().deref(),
-            bucketed_ids_buffer: &ids_array.buffer().borrow().deref(),
-            x_perm_buffer: x_perm_array.buffer().borrow_mut().deref_mut(),
-            sumk_buffer: &sumk_array.buffer().borrow().deref(),
+            x: &x_allocation,
+            bucketed_ids: &ids_allocation,
+            x_perm: &mut x_perm_allocation,
+            sumk: &sumk_allocation,
             t: input.t,
             k: input.sum_k / input.t, // Decompose sum_k into k per token
             d_model: input.d_model,
@@ -53,7 +54,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    x_perm_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&x_perm_allocation)
 }
 
 fn test_gather_internal(

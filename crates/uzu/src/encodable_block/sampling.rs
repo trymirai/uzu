@@ -1,18 +1,28 @@
 //! Sampling kernel encodable.
 
-use std::ops::{Deref, DerefMut};
-
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::sampling::{SamplingError, SamplingKernel},
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
+    session::parameter::SamplingMethod,
 };
 
 pub struct Sampling<B: Backend> {
     kernel: SamplingKernel<B>,
+}
+
+pub struct SamplingArguments<'a, B: Backend> {
+    pub logits: &'a mut Allocation<B>,
+    pub seeds: &'a Allocation<B>,
+    pub seeds_offset: usize,
+    pub bitmask: Option<&'a Allocation<B>>,
+    pub bitmask_offset: usize,
+    pub output: &'a mut Allocation<B>,
+    pub sampling_method: SamplingMethod,
+    pub batch_size: usize,
+    pub vocab_size: usize,
 }
 
 impl<B: Backend> Sampling<B> {
@@ -30,38 +40,20 @@ impl<B: Backend> Sampling<B> {
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        args: SamplingArguments<'_, B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let batch_dim = state.sampling_length();
-        let sampling_start = state.sampling_start();
-        let sampling_method = state.sampling_method().unwrap();
-
-        let logits = state.array(ArrayId::Logits);
-        let seeds = state.array(ArrayId::TokenSeeds);
-        let output = state.sampling_output().unwrap();
-
-        let vocab_size = logits.shape()[1];
-        let seeds_offset = seeds.offset() + sampling_start * std::mem::size_of::<u64>();
-
-        let (bitmask_buffer, bitmask_offset) = state.token_bitmask().map_or((None, 0usize), |bitmask| {
-            let bitmask_row_len = bitmask.shape()[1];
-            let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
-            (Some(bitmask.buffer()), bitmask_offset)
-        });
-        let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
-
         self.kernel
             .encode(
-                logits.buffer().borrow_mut().deref_mut(),
-                seeds.buffer().borrow().deref(),
-                seeds_offset,
-                bitmask_borrow.as_deref(),
-                bitmask_offset,
-                output.buffer().borrow_mut().deref_mut(),
-                sampling_method,
-                batch_dim,
-                vocab_size,
+                args.logits,
+                args.seeds,
+                args.seeds_offset,
+                args.bitmask,
+                args.bitmask_offset,
+                args.output,
+                args.sampling_method,
+                args.batch_size,
+                args.vocab_size,
                 encoder,
             )
             .expect("Sampling encoding failed");

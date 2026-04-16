@@ -1,11 +1,8 @@
 //! Prediction head encodable for classification output.
 
-#[cfg(feature = "tracing")]
-use crate::forward_pass::state::ArrayId;
 use crate::{
-    backends::common::{Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder},
     encodable_block::{Activation, Normalization, linear::Linear},
-    forward_pass::state::ForwardPassState,
 };
 
 pub struct ClassifierPredictionHead<B: Backend> {
@@ -13,6 +10,7 @@ pub struct ClassifierPredictionHead<B: Backend> {
     activation: Activation<B>,
     norm: Normalization<B>,
     readout: Box<dyn Linear<B>>,
+    hidden_dim: usize,
     #[allow(dead_code)]
     num_labels: usize,
 }
@@ -23,6 +21,7 @@ impl<B: Backend> ClassifierPredictionHead<B> {
         activation: Activation<B>,
         norm: Normalization<B>,
         readout: Box<dyn Linear<B>>,
+        hidden_dim: usize,
         num_labels: usize,
     ) -> Self {
         Self {
@@ -30,26 +29,21 @@ impl<B: Backend> ClassifierPredictionHead<B> {
             activation,
             norm,
             readout,
+            hidden_dim,
             num_labels,
         }
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        context: &B::Context,
+        input: &Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.dense.encode(state, encoder)?;
-        self.activation.encode(state, encoder)?;
-        self.norm.encode(state, encoder)?;
-        self.readout.encode(state, encoder)?;
-
-        #[cfg(feature = "tracing")]
-        {
-            let traces = state.traces().clone();
-            state.encode_copy_array(encoder, ArrayId::ClassifierPredictionHeadLogits, traces.borrow().logits.clone());
-        }
-
-        Ok(())
+    ) -> Result<Allocation<B>, B::Error> {
+        let batch_dim = 1;
+        let dense = self.dense.encode(context, input, batch_dim, encoder)?;
+        let activated = self.activation.encode(&dense, self.hidden_dim, encoder)?;
+        let normalized = self.norm.encode(&activated, 0, batch_dim, encoder)?;
+        self.readout.encode(context, &normalized, batch_dim, encoder)
     }
 }

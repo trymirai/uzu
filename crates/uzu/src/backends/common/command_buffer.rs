@@ -74,13 +74,13 @@ pub trait CommandBufferEncoding {
         &mut self,
         src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
         src_range: Range<usize>,
-        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
         dst_range: Range<usize>,
     );
 
     fn encode_fill(
         &mut self,
-        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
         range: Range<usize>,
         value: u8,
     );

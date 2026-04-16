@@ -122,7 +122,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         src: &Retained<ProtocolObject<dyn MTLBuffer>>,
         src_range: std::ops::Range<usize>,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
+        dst: &Retained<ProtocolObject<dyn MTLBuffer>>,
         dst_range: std::ops::Range<usize>,
     ) {
         let size = src_range.end - src_range.start;
@@ -134,7 +134,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_fill(
         &mut self,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
+        dst: &Retained<ProtocolObject<dyn MTLBuffer>>,
         range: std::ops::Range<usize>,
         value: u8,
     ) {
@@ -149,6 +149,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
+        self.ensure_none();
     }
 
     fn encode_wait_for_event(

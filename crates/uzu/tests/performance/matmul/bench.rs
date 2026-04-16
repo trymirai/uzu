@@ -6,7 +6,7 @@ use uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -39,9 +39,9 @@ fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     shape: &TestShape,
-    a_buffer: &Buf,
+    a_buffer: &uzu::backends::common::Allocation<Metal>,
     b_buffer: &Buf,
-    d_buffer: &mut Buf,
+    d_buffer: &mut uzu::backends::common::Allocation<Metal>,
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
@@ -49,7 +49,6 @@ fn encode_and_run(
         context,
         MatmulArguments {
             a: a_buffer,
-            a_offset: 0,
             b: b_buffer,
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
@@ -79,16 +78,17 @@ fn run_benchmark(
     let b_byte_count = shape.output_dim * shape.input_dim * elem_size;
     let d_byte_count = shape.batch * shape.output_dim * elem_size;
 
-    let (a_buffer, b_buffer, mut d_buffer) = match (
-        context.device.new_buffer(a_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-        context.device.new_buffer(b_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-        context.device.new_buffer(d_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-    ) {
-        (Some(a), Some(b), Some(d)) => (a, b, d),
-        _ => return Err(BenchError::BufferAllocation),
-    };
+    let a_buffer =
+        context.create_allocation(a_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
+    let b_buffer = context
+        .device
+        .new_buffer(b_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED)
+        .ok_or(BenchError::BufferAllocation)?;
+    let mut d_buffer =
+        context.create_allocation(d_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
 
-    fill_buffer_random(&a_buffer, a_byte_count);
+    let (a_raw, _) = a_buffer.as_buffer_range();
+    fill_buffer_random(a_raw, a_byte_count);
     fill_buffer_random(&b_buffer, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {

@@ -7,10 +7,10 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder},
     config::ModelMetadata,
-    encodable_block::EncodingParameters,
-    forward_pass::state::{ArrayId, ForwardPassState},
+    encodable_block::{EncodingParameters, LayerArguments},
+    forward_pass::state::ForwardPassState,
     session::types::Error,
 };
 
@@ -100,7 +100,6 @@ impl<B: Backend> Classifier<B> {
         let mut state = ForwardPassState::new_classifier(
             self.context.context.clone(),
             &self.context.model_shape,
-            &self.context.scratch_buffers,
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
@@ -112,31 +111,97 @@ impl<B: Backend> Classifier<B> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
-        self.context.embed.encode_lookup(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context.embedding_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let mut main = self
+            .context
+            .embed
+            .encode_lookup(
+                state.token_ids(),
+                state.active_row_count(),
+                state.model_shape().activation_data_type(),
+                &mut encoder,
+            )
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        main = self
+            .context
+            .embedding_norm
+            .encode(&main, 0, state.active_row_count(), &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(&mut encoder, ArrayId::Main, traces.borrow().embedding_norm().clone());
+            state.encode_copy_allocation(&mut encoder, &main, traces.borrow().embedding_norm().clone());
         }
 
-        for layer in self.context.layers.iter() {
-            layer.encode(&mut state, &encoding_params, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let mut shortcut =
+            encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        for (layer_index, layer) in self.context.layers.iter().enumerate() {
+            main = layer
+                .encode(
+                    LayerArguments {
+                        context: state.context(),
+                        batch_dim: state.active_row_count(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        attention_sinks: state.attention_sinks(layer_index),
+                        rope_cosines: Some(state.rope_cosines(layer.rope_type())),
+                        rope_sines: Some(state.rope_sines(layer.rope_type())),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        cache_layer: None,
+                        #[cfg(feature = "tracing")]
+                        trace: state.traces().borrow().layer_results.get(layer_index).cloned(),
+                    },
+                    &encoding_params,
+                    main,
+                    &mut shortcut,
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
-        self.context.output_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        main = self
+            .context
+            .output_norm
+            .encode(&main, 0, state.active_row_count(), &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
             let traces = state.traces().clone();
-            state.encode_copy_array(&mut encoder, ArrayId::Main, traces.borrow().output_norm.clone());
+            state.encode_copy_allocation(&mut encoder, &main, traces.borrow().output_norm.clone());
         }
 
-        self.context.pooling.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let pooling = self
+            .context
+            .pooling
+            .encode(state.active_row_count(), &main, &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
+        {
+            let output_pooling_trace = state.traces().borrow().output_pooling().clone();
+            state.encode_copy_allocation(&mut encoder, &pooling, output_pooling_trace);
+        }
+        state.set_active_row_count(1);
 
-        self.context.prediction_head.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let logits = self
+            .context
+            .prediction_head
+            .encode(state.context(), &pooling, &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
+        {
+            let traces = state.traces().clone();
+            state.encode_copy_allocation(&mut encoder, &logits, traces.borrow().logits.clone());
+        }
 
-        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let _completed = encoder
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-        let logits = self.copy_logits_from_state(&state)?;
+        let logits = self.copy_logits_from_allocation(&logits)?;
 
         let traces = state.traces().clone();
         Ok((logits, traces))
@@ -152,7 +217,6 @@ impl<B: Backend> Classifier<B> {
         let mut state = ForwardPassState::new_classifier(
             self.context.context.clone(),
             &self.context.model_shape,
-            &self.context.scratch_buffers,
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
@@ -164,33 +228,108 @@ impl<B: Backend> Classifier<B> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
-        self.context.embed.encode_lookup(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context.embedding_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        for layer in self.context.layers.iter() {
-            layer.encode(&mut state, &encoding_params, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let mut main = self
+            .context
+            .embed
+            .encode_lookup(
+                state.token_ids(),
+                state.active_row_count(),
+                state.model_shape().activation_data_type(),
+                &mut encoder,
+            )
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        main = self
+            .context
+            .embedding_norm
+            .encode(&main, 0, state.active_row_count(), &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let mut shortcut =
+            encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        for (layer_index, layer) in self.context.layers.iter().enumerate() {
+            main = layer
+                .encode(
+                    LayerArguments {
+                        context: state.context(),
+                        batch_dim: state.active_row_count(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        attention_sinks: state.attention_sinks(layer_index),
+                        rope_cosines: Some(state.rope_cosines(layer.rope_type())),
+                        rope_sines: Some(state.rope_sines(layer.rope_type())),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        cache_layer: None,
+                        #[cfg(feature = "tracing")]
+                        trace: None,
+                    },
+                    &encoding_params,
+                    main,
+                    &mut shortcut,
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
-        self.context.output_norm.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context.pooling.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        self.context.prediction_head.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        main = self
+            .context
+            .output_norm
+            .encode(&main, 0, state.active_row_count(), &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let pooling = self
+            .context
+            .pooling
+            .encode(state.active_row_count(), &main, &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        state.set_active_row_count(1);
+        let logits = self
+            .context
+            .prediction_head
+            .encode(state.context(), &pooling, &mut encoder)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let _completed = encoder
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-        let logits = self.copy_logits_from_state(&state)?;
+        let logits = self.copy_logits_from_allocation(&logits)?;
 
         Ok(logits)
     }
 
-    fn copy_logits_from_state(
+    fn copy_logits_from_allocation(
         &self,
-        state: &ForwardPassState<B>,
+        logits: &Allocation<B>,
     ) -> Result<Box<[f32]>, Error> {
         let num_labels = self.context.model_config.model_config.num_labels;
-        let logits = state.array(ArrayId::ClassifierPredictionHeadLogits).view(&[num_labels]);
+        let logits_data_type: DataType =
+            self.context.model_config.model_config.prediction_head_config.readout_config.activation_precision().into();
 
-        match logits.data_type() {
-            DataType::F32 => Ok(logits.as_slice::<f32>().into()),
-            DataType::F16 => Ok(logits.as_slice::<half::f16>().iter().map(|&x| x.to_f32()).collect::<Box<[_]>>()),
-            DataType::BF16 => Ok(logits.as_slice::<half::bf16>().iter().map(|&x| x.to_f32()).collect::<Box<[_]>>()),
+        match logits_data_type {
+            DataType::F32 => {
+                Ok(crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f32, B>(logits)
+                    .iter()
+                    .take(num_labels)
+                    .copied()
+                    .collect())
+            },
+            DataType::F16 => {
+                Ok(crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<half::f16, B>(logits)
+                    .iter()
+                    .take(num_labels)
+                    .map(|&x| x.to_f32())
+                    .collect::<Box<[_]>>())
+            },
+            DataType::BF16 => {
+                Ok(crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<half::bf16, B>(logits)
+                    .iter()
+                    .take(num_labels)
+                    .map(|&x| x.to_f32())
+                    .collect::<Box<[_]>>())
+            },
             _ => Err(Error::UnableToDecodeText),
         }
     }

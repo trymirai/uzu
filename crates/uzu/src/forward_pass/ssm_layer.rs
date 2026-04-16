@@ -1,16 +1,20 @@
-use bytemuck::fill_zeroes;
+use crate::{
+    DataType,
+    backends::common::{Allocation, Backend},
+    forward_pass::state::allocation_helpers,
+};
 
-use crate::{array::Array, backends::common::Backend};
-
-#[derive(Debug)]
 pub struct SSMLayer<B: Backend> {
-    pub conv_state: Array<B>,
-    pub ssm_state: Array<B>,
+    pub conv_state: Allocation<B>,
+    pub conv_shape: [usize; 2],
+    pub ssm_state: Allocation<B>,
+    pub ssm_shape: [usize; 3],
+    pub data_type: DataType,
 }
 
 impl<B: Backend> SSMLayer<B> {
     pub fn zero(&mut self) {
-        fill_zeroes(self.conv_state.as_bytes_mut());
-        fill_zeroes(self.ssm_state.as_bytes_mut());
+        allocation_helpers::fill_allocation(&mut self.conv_state, 0);
+        allocation_helpers::fill_allocation(&mut self.ssm_state, 0);
     }
 }

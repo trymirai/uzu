@@ -1,15 +1,17 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
+    ops::Deref,
+    ptr,
 };
 
+use bytemuck;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            Allocation, AllocationType, Backend, Buffer, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -27,6 +29,21 @@ struct Input<T: ArrayElement + Float> {
     m: usize,
     k: usize,
     n: usize,
+}
+
+fn allocation_from_slice<T: ArrayElement, B: Backend>(
+    context: &B::Context,
+    data: &[T],
+) -> Allocation<B> {
+    let allocation = context
+        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let bytes = bytemuck::cast_slice(data);
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len());
+    }
+    allocation
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -56,16 +73,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
     let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
+    let a_allocation = allocation_from_slice::<T, B>(&context, &input.a);
+    let mut d_allocation = context
+        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
     let b_buf = b_array.buffer();
     let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
 
     let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
@@ -74,12 +89,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f
     kernel.encode(
         &context,
         MatmulArguments {
-            a: a_ref.deref(),
-            a_offset: 0,
+            a: &a_allocation,
             b: b_ref.deref(),
             ab_scale,
             c: MatmulArgumentC::None,
-            d: d_ref.deref_mut(),
+            d: &mut d_allocation,
             batch_dim: m,
             input_dim: k,
             output_dim: n,
@@ -87,9 +101,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(d_ref);
-    d_array.as_slice().to_vec()
+    let (buffer, range) = d_allocation.as_buffer_range();
+    let bytes = unsafe {
+        std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
+    };
+    bytemuck::cast_slice(bytes).to_vec()
 }
 
 fn test<T: ArrayElement + Float + Debug + Display>(

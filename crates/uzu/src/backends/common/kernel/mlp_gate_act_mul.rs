@@ -1,7 +1,7 @@
 use crate::{
     DataType,
     backends::common::{
-        ActivationConfig, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel,
+        ActivationConfig, Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel,
     },
 };
 
@@ -29,8 +29,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        fused_up: &B::Buffer,
-        hidden: &mut B::Buffer,
+        fused_up: &Allocation<B>,
+        hidden: &mut Allocation<B>,
         m: i32,
     ) -> Result<(), B::Error> {
         if self.activation.act_type() == ActivationType::IDENTITY {
@@ -38,5 +38,9 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         }
         self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, self.activation.act_type(), encoder);
         Ok(())
+    }
+
+    pub fn hidden_dim(&self) -> usize {
+        self.hidden_dim
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
@@ -138,6 +138,32 @@ fn create_test_data(
     let values = Array4::from_shape_fn((batch_size, num_kv_heads, seq_len, head_dim), |_| rng.random_range(-0.5..0.5));
 
     (queries, keys, values)
+}
+
+fn allocation_from_slice(
+    context: &<Metal as Backend>::Context,
+    data: &[f32],
+) -> Allocation<Metal> {
+    let allocation = context
+        .create_allocation(data.len() * size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let (buffer, range) = allocation.as_buffer_range();
+    let bytes = bytemuck::cast_slice(data);
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+    }
+    allocation
+}
+
+fn allocation_to_vec(allocation: &Allocation<Metal>) -> Vec<f32> {
+    let (buffer, range) = allocation.as_buffer_range();
+    let byte_len = range.end - range.start;
+    unsafe {
+        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+        let bytes = std::slice::from_raw_parts(src, byte_len);
+        bytemuck::cast_slice(bytes).to_vec()
+    }
 }
 
 /// Convert ndarray to Metal buffer layout expected by our kernel
@@ -371,25 +397,39 @@ fn run_gemm_attention(
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
     let query_buffer = create_query_buffer(queries, context);
+    let query_allocation = allocation_from_slice(context, unsafe {
+        std::slice::from_raw_parts(query_buffer.contents().as_ptr() as *const f32, num_heads * seq_len * head_dim)
+    });
     let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
+    let key_allocation = allocation_from_slice(context, unsafe {
+        std::slice::from_raw_parts(
+            key_cache_buffer.contents().as_ptr() as *const f32,
+            num_kv_heads * seq_len * head_dim,
+        )
+    });
     let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
+    let value_allocation = allocation_from_slice(context, unsafe {
+        std::slice::from_raw_parts(
+            value_cache_buffer.contents().as_ptr() as *const f32,
+            num_kv_heads * seq_len * head_dim,
+        )
+    });
 
-    let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
+    let sinks_allocation = sinks.map(|s| allocation_from_slice(context, s));
 
-    let mut output_buffer = context
-        .device
-        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut output_allocation = context
+        .create_allocation(num_heads * seq_len * head_dim * size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let args = AttentionGemmArguments {
-        queries_buffer: &query_buffer,
-        keys_buffer: &key_cache_buffer,
-        values_buffer: &value_cache_buffer,
-        output_buffer: &mut output_buffer,
+        queries_buffer: &query_allocation,
+        keys_buffer: &key_allocation,
+        values_buffer: &value_allocation,
+        output_buffer: &mut output_allocation,
         trie_buffer: None,
-        sinks_buffer: sinks_buffer.as_ref(),
+        sinks_buffer: sinks_allocation.as_ref(),
         num_heads,
         num_groups: num_kv_heads,
         suffix_length: seq_len,
@@ -406,10 +446,9 @@ fn run_gemm_attention(
     kernel.encode(context, &mut encoder, args)?;
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
+    let output = allocation_to_vec(&output_allocation);
 
-    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
+    let kernel_output = convert_kernel_output(&output, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }

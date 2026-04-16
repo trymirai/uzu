@@ -8,18 +8,19 @@ pub use quantized::{QuantizedLinear, QuantizedLinearError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder},
     config::LinearConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
 pub trait Linear<B: Backend> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        context: &B::Context,
+        input: &Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error>;
+    ) -> Result<Allocation<B>, B::Error>;
 }
 
 #[derive(Debug, Error)]
@@ -40,8 +41,6 @@ impl<B: Backend> dyn Linear<B> {
         output_dimensions: [usize; N],
         context: &B::Context,
         parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
@@ -52,8 +51,6 @@ impl<B: Backend> dyn Linear<B> {
                     input_dimension,
                     output_dimension_sum,
                     parameter_tree,
-                    input_array_id,
-                    output_array_id,
                 )?;
                 Ok(Box::new(block))
             },
@@ -66,8 +63,6 @@ impl<B: Backend> dyn Linear<B> {
                     input_dimension,
                     output_dimension_sum,
                     parameter_tree,
-                    input_array_id,
-                    output_array_id,
                 )?;
                 Ok(Box::new(block))
             },
@@ -84,8 +79,6 @@ impl<B: Backend> dyn Linear<B> {
                     input_dimension,
                     output_dimension_sum,
                     parameter_tree,
-                    input_array_id,
-                    output_array_id,
                 )?;
                 Ok(Box::new(block))
             },

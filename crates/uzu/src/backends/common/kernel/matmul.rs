@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder, kernel::ManualKernels},
+    backends::common::{Allocation, Backend, Encoder, kernel::ManualKernels},
 };
 
 #[derive(Debug, Error)]
@@ -13,7 +13,7 @@ pub enum MatmulError<B: Backend> {
     BackendError(#[source] B::Error),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum MatmulArgumentC<'a, B: Backend> {
     None,
     /// Accumulate: [M, N]
@@ -23,11 +23,9 @@ pub enum MatmulArgumentC<'a, B: Backend> {
 }
 
 // D = ab_scale * (A @ B.T) + C
-#[derive(Debug)]
-pub struct MatmulArguments<'a, B: Backend> {
+pub struct MatmulArguments<'a, 'input, 'output, B: Backend> {
     /// A: [M, K]
-    pub a: &'a B::Buffer,
-    pub a_offset: u64,
+    pub a: &'input Allocation<B>,
     /// B: [N, K]
     pub b: &'a B::Buffer,
     /// AB scale: also known as alpha
@@ -35,7 +33,7 @@ pub struct MatmulArguments<'a, B: Backend> {
     /// C: behavior depends on enum variant
     pub c: MatmulArgumentC<'a, B>,
     /// D: [M, N]
-    pub d: &'a mut B::Buffer,
+    pub d: &'output mut Allocation<B>,
     /// M dimension: usually batch/number of tokens (rows of A, rows of C)
     pub batch_dim: u32,
     /// K dimension: usually input_dim/reduction dimension (cols of A, rows of B)
@@ -52,10 +50,10 @@ pub trait MatmulKernel: Sized {
         data_type: DataType,
     ) -> Result<Self, MatmulError<Self::Backend>>;
 
-    fn encode(
+    fn encode<'a, 'input, 'output>(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        arguments: MatmulArguments<Self::Backend>,
+        arguments: MatmulArguments<'a, 'input, 'output, Self::Backend>,
         encoder: &mut Encoder<Self::Backend>,
     );
 }

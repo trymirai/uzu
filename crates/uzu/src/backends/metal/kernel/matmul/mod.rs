@@ -132,35 +132,46 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn encode_gemv(
+    fn encode_gemv<'a, 'input, 'output>(
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, 'input, 'output, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let (is_accumulate, output_bias) = match arguments.c {
+        let MatmulArguments {
+            a,
+            b,
+            ab_scale,
+            c,
+            d,
+            batch_dim,
+            input_dim,
+            output_dim,
+        } = arguments;
+        let (a, a_range) = a.as_buffer_range();
+        let (d, d_range) = d.as_buffer_range();
+        let a_offset = a_range.start;
+        let d_offset = d_range.start;
+
+        let (is_accumulate, output_bias) = match c {
             MatmulArgumentC::Accumulate => (true, None),
             MatmulArgumentC::Bias(bias) => (false, Some(bias)),
             MatmulArgumentC::None => (false, None),
         };
 
-        let specialization = gemv::GemvSpecialization::select(
-            arguments.input_dim,
-            arguments.output_dim,
-            is_accumulate,
-            output_bias.is_some(),
-        );
+        let specialization =
+            gemv::GemvSpecialization::select(input_dim, output_dim, is_accumulate, output_bias.is_some());
 
         self.get_or_create_gemv(context, specialization)?.encode(
-            arguments.b,
-            (arguments.a, arguments.a_offset as usize),
+            b,
+            (a, a_offset),
             output_bias,
-            arguments.d,
-            arguments.input_dim,
-            arguments.output_dim,
-            arguments.input_dim,
-            arguments.ab_scale,
-            arguments.batch_dim,
+            (d, d_offset),
+            input_dim,
+            output_dim,
+            input_dim,
+            ab_scale,
+            batch_dim,
             specialization.output_rows_per_threadgroup(),
             encoder,
         );
@@ -168,51 +179,67 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_gemm(
+    fn encode_gemm<'a, 'input, 'output>(
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, 'input, 'output, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let specialization = gemm::GemmSpecialization::select(context, self.data_type, &arguments);
+        let MatmulArguments {
+            a,
+            b,
+            ab_scale,
+            c,
+            d,
+            batch_dim,
+            input_dim,
+            output_dim,
+        } = arguments;
+        let (a, a_range) = a.as_buffer_range();
+        let (d, d_range) = d.as_buffer_range();
+        let a_offset = a_range.start;
+        let d_offset = d_range.start;
 
-        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
+        let specialization =
+            gemm::GemmSpecialization::select(context, self.data_type, batch_dim, input_dim, output_dim, &c);
+
+        let threadgroups_per_row = output_dim.div_ceil(specialization.block_cols);
+        let threadgroups_per_column = batch_dim.div_ceil(specialization.block_rows);
 
         let params = GemmParams {
-            M: arguments.batch_dim,
-            N: arguments.output_dim,
-            K: arguments.input_dim,
-            leading_dimension_a: arguments.input_dim,
-            leading_dimension_b: arguments.input_dim,
-            leading_dimension_d: arguments.output_dim,
+            M: batch_dim,
+            N: output_dim,
+            K: input_dim,
+            leading_dimension_a: input_dim,
+            leading_dimension_b: input_dim,
+            leading_dimension_d: output_dim,
             threadgroups_per_row,
             threadgroups_per_column,
             swizzle_log: 0,
-            aligned_inner_iterations: arguments.input_dim / specialization.block_depth,
+            aligned_inner_iterations: input_dim / specialization.block_depth,
             use_morton: false,
         };
 
         let kernel = self.get_or_create_gemm(context, specialization)?;
 
         kernel.encode(
-            (arguments.a, arguments.a_offset as usize),
-            arguments.b,
-            &mut *arguments.d,
+            (a, a_offset),
+            b,
+            (d, d_offset),
             std::slice::from_ref(&params),
             threadgroups_per_row,
             threadgroups_per_column,
-            arguments.ab_scale,
+            ab_scale,
             encoder,
         );
 
-        if let MatmulArgumentC::Bias(bias) = arguments.c {
+        if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(
                 None::<&<Metal as crate::backends::common::Backend>::Buffer>,
                 bias,
-                arguments.d,
-                arguments.output_dim,
-                arguments.batch_dim * arguments.output_dim,
+                (d, d_offset),
+                output_dim,
+                batch_dim * output_dim,
                 encoder,
             );
         }
@@ -220,18 +247,31 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_gemm_mpp(
+    fn encode_gemm_mpp<'a, 'input, 'output>(
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, 'input, 'output, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let is_accumulate = matches!(arguments.c, MatmulArgumentC::Accumulate);
-        let specialization =
-            gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim, arguments.output_dim, is_accumulate);
+        let MatmulArguments {
+            a,
+            b,
+            ab_scale,
+            c,
+            d,
+            batch_dim,
+            input_dim,
+            output_dim,
+        } = arguments;
+        let (a, a_range) = a.as_buffer_range();
+        let (d, d_range) = d.as_buffer_range();
+        let a_offset = a_range.start;
+        let d_offset = d_range.start;
+        let is_accumulate = matches!(c, MatmulArgumentC::Accumulate);
+        let specialization = gemm_mpp::GemmMppSpecialization::select(batch_dim, output_dim, is_accumulate);
 
-        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
+        let threadgroups_per_row = output_dim.div_ceil(specialization.block_cols);
+        let threadgroups_per_column = batch_dim.div_ceil(specialization.block_rows);
 
         let max_threadgroups_per_dim = threadgroups_per_row.max(threadgroups_per_column);
         let min_threadgroups_per_dim = threadgroups_per_row.min(threadgroups_per_column);
@@ -243,12 +283,12 @@ impl MatmulMetalKernel {
         let use_morton = min_threadgroups_per_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
 
         let params = GemmParams {
-            M: arguments.batch_dim,
-            N: arguments.output_dim,
-            K: arguments.input_dim,
-            leading_dimension_a: arguments.input_dim,
-            leading_dimension_b: arguments.input_dim,
-            leading_dimension_d: arguments.output_dim,
+            M: batch_dim,
+            N: output_dim,
+            K: input_dim,
+            leading_dimension_a: input_dim,
+            leading_dimension_b: input_dim,
+            leading_dimension_d: output_dim,
             threadgroups_per_row,
             threadgroups_per_column,
             swizzle_log: 0,
@@ -264,23 +304,23 @@ impl MatmulMetalKernel {
 
         let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
         kernel.encode(
-            (arguments.a, arguments.a_offset as usize),
-            arguments.b,
-            &mut *arguments.d,
+            (a, a_offset),
+            b,
+            (d, d_offset),
             std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
-            arguments.ab_scale,
+            ab_scale,
             encoder,
         );
 
-        if let MatmulArgumentC::Bias(bias) = arguments.c {
+        if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(
                 None::<&<Metal as crate::backends::common::Backend>::Buffer>,
                 bias,
-                arguments.d,
-                arguments.output_dim,
-                arguments.batch_dim * arguments.output_dim,
+                (d, d_offset),
+                output_dim,
+                batch_dim * output_dim,
                 encoder,
             );
         }
@@ -299,10 +339,10 @@ pub enum MatmulDispatchPath {
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path(
+    pub fn encode_with_path<'a, 'input, 'output>(
         &mut self,
         context: &MetalContext,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, 'input, 'output, Metal>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) {
@@ -353,10 +393,10 @@ impl MatmulKernel for MatmulMetalKernel {
         Ok(kernel)
     }
 
-    fn encode(
+    fn encode<'a, 'input, 'output>(
         &mut self,
         context: &MetalContext,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, 'input, 'output, Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
         if arguments.batch_dim <= max_gemv_batch_threshold() {

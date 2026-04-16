@@ -2,8 +2,10 @@ use std::{
     collections::HashSet,
     fmt::{Debug, Display},
     ops::{Deref, DerefMut},
+    ptr,
 };
 
+use bytemuck;
 use half::{bf16, f16};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
@@ -11,7 +13,7 @@ use uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
             kernel::{TopPKernel, sampling::SamplingKernel},
         },
         cpu::Cpu,
@@ -22,6 +24,21 @@ use uzu::{
 use crate::uzu_test;
 
 const TEST_SAMPLING_SEED: u64 = 42;
+
+fn allocation_from_slice<T: ArrayElement, B: Backend>(
+    context: &B::Context,
+    data: &[T],
+) -> Allocation<B> {
+    let allocation = context
+        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let bytes = bytemuck::cast_slice(data);
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len());
+    }
+    allocation
+}
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
@@ -271,25 +288,27 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
         })
         .collect();
 
-    let output_array = context.create_array_uninitialized(&[batch_size], DataType::U32, "");
+    let mut output_allocation = context
+        .create_allocation(batch_size * std::mem::size_of::<u32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let num_samples = 1000;
     let mut counter = vec![0i32; batch_size * vocab_size];
 
     for draw in 0..num_samples {
-        let logits_array = context.create_array_from(&[batch_size * vocab_size], &logits, "");
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
-        let seeds_array = context.create_array_from(&[batch_size], &seeds, "");
+        let mut logits_allocation = allocation_from_slice::<f32, B>(&context, &logits);
+        let seeds_allocation = allocation_from_slice::<u64, B>(&context, &seeds);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel
             .encode(
-                logits_array.buffer().borrow_mut().deref_mut(),
-                seeds_array.buffer().borrow().deref(),
+                &mut logits_allocation,
+                &seeds_allocation,
                 0,
                 None,
                 0,
-                output_array.buffer().borrow_mut().deref_mut(),
+                &mut output_allocation,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -304,7 +323,11 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
             .expect("encode");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let sampled_ids: &[u32] = output_array.as_slice();
+        let (buffer, range) = output_allocation.as_buffer_range();
+        let bytes = unsafe {
+            std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
+        };
+        let sampled_ids = bytemuck::cast_slice::<u8, u32>(bytes);
 
         for (i, &sampled_id) in sampled_ids.iter().enumerate() {
             assert!((sampled_id as usize) < vocab_size, "Sampled token out of range");
@@ -377,24 +400,26 @@ fn test_topp_sampling_statistical_large() {
             probs[b * VOCAB..(b + 1) * VOCAB].copy_from_slice(&dist);
         }
 
-        let output_array = context.create_array_uninitialized(&[BATCH], DataType::U32, "");
+        let mut output_allocation = context
+            .create_allocation(BATCH * std::mem::size_of::<u32>(), AllocationType::Global)
+            .expect("Failed to create allocation");
         let mut counters = vec![0u32; BATCH * VOCAB];
 
         for draw in 0..NUM_DRAWS {
-            let logits_array = context.create_array_from(&[BATCH * VOCAB], &logits, "");
             let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; BATCH];
-            let seeds_array = context.create_array_from(&[BATCH], &seeds, "");
+            let mut logits_allocation = allocation_from_slice::<f32, B>(&context, &logits);
+            let seeds_allocation = allocation_from_slice::<u64, B>(&context, &seeds);
 
             let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
             kernel
                 .encode(
-                    logits_array.buffer().borrow_mut().deref_mut(),
-                    seeds_array.buffer().borrow().deref(),
+                    &mut logits_allocation,
+                    &seeds_allocation,
                     0,
                     None,
                     0,
-                    output_array.buffer().borrow_mut().deref_mut(),
+                    &mut output_allocation,
                     SamplingMethod::Stochastic {
                         temperature: None,
                         top_k: None,
@@ -409,7 +434,11 @@ fn test_topp_sampling_statistical_large() {
                 .expect("encode");
             encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-            let sample_ids: &[u32] = output_array.as_slice();
+            let (buffer, range) = output_allocation.as_buffer_range();
+            let bytes = unsafe {
+                std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
+            };
+            let sample_ids = bytemuck::cast_slice::<u8, u32>(bytes);
             for (b, &tok) in sample_ids.iter().enumerate() {
                 counters[b * VOCAB + tok as usize] += 1;
             }
@@ -457,21 +486,23 @@ fn perf_topp_128k_vocab() {
             *x = rng.random_range(-6.0f32..6.0f32);
         }
 
-        let logits_array = context.create_array_from(&[BATCH * VOCAB], &logits, "");
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-        let seeds_array = context.create_array_from(&[BATCH], &seeds, "");
-        let output_array = context.create_array_uninitialized(&[BATCH], DataType::U32, "");
+        let mut logits_allocation = allocation_from_slice::<f32, B>(&context, &logits);
+        let seeds_allocation = allocation_from_slice::<u64, B>(&context, &seeds);
+        let mut output_allocation = context
+            .create_allocation(BATCH * std::mem::size_of::<u32>(), AllocationType::Global)
+            .expect("Failed to create allocation");
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
         kernel
             .encode(
-                logits_array.buffer().borrow_mut().deref_mut(),
-                seeds_array.buffer().borrow().deref(),
+                &mut logits_allocation,
+                &seeds_allocation,
                 0,
                 None,
                 0,
-                output_array.buffer().borrow_mut().deref_mut(),
+                &mut output_allocation,
                 SamplingMethod::Stochastic {
                     temperature: None,
                     top_k: None,
@@ -499,7 +530,11 @@ fn perf_topp_128k_vocab() {
             host_elapsed_ms
         );
 
-        let sample_ids: &[u32] = output_array.as_slice();
+        let (buffer, range) = output_allocation.as_buffer_range();
+        let bytes = unsafe {
+            std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
+        };
+        let sample_ids = bytemuck::cast_slice::<u8, u32>(bytes);
         for &tok in sample_ids {
             assert!((tok as usize) < VOCAB, "Sampled id out of range");
         }

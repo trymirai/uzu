@@ -1,7 +1,6 @@
 use std::cell::Cell;
 
 use crate::{
-    array::ArrayContextExt,
     backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
@@ -10,10 +9,10 @@ use crate::{
         model_shape::ModelShape,
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
+        state::allocation_helpers,
     },
 };
 
-#[derive(Debug)]
 pub enum CacheLayer<B: Backend> {
     Transformer(KVCacheLayer<B>),
     StateSpace(SSMLayer<B>),
@@ -28,15 +27,6 @@ pub enum CacheLayerSlice<B: Backend> {
     ShortConv,
     DeltaNet,
 }
-
-const ARRAY_TRANSFORMER_KEYS_LABEL: &str = "cache_layers_transformer_keys";
-const ARRAY_TRANSFORMER_VALUES_LABEL: &str = "cache_layers_transformer_values";
-const ARRAY_STATE_SPACE_CONV_STATE_LABEL: &str = "cache_layers_state_space_conv_state";
-const ARRAY_STATE_SPACE_SSM_STATE_LABEL: &str = "cache_layers_state_space_ssm_state";
-const ARRAY_SHORT_CONV_CONV_STATE_LABEL: &str = "cache_layers_short_conv_conv_state";
-const ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL: &str = "cache_layers_short_conv_suffix_state";
-const ARRAY_DELTA_NET_CONV_STATE_LABEL: &str = "cache_layers_delta_net_conv_state";
-const ARRAY_DELTA_NET_SSM_STATE_LABEL: &str = "cache_layers_delta_net_ssm_state";
 
 impl<B: Backend> CacheLayer<B> {
     pub fn as_transformer(&self) -> Option<&KVCacheLayer<B>> {
@@ -142,16 +132,18 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: context.create_array_zeros(
+                        keys: allocation_helpers::create_zeroed_allocation(
+                            context,
                             &shape,
                             model_shape.kv_cache_data_type(),
-                            &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                         ),
-                        values: context.create_array_zeros(
+                        values: allocation_helpers::create_zeroed_allocation(
+                            context,
                             &shape,
                             model_shape.kv_cache_data_type(),
-                            &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
                         ),
+                        shape,
+                        data_type: model_shape.kv_cache_data_type(),
                     })
                 },
                 DecoderLayerType::StateSpace {
@@ -167,16 +159,11 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: context.create_array_zeros(
-                            &conv_shape,
-                            dtype,
-                            &format!("{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"),
-                        ),
-                        ssm_state: context.create_array_zeros(
-                            &ssm_shape,
-                            dtype,
-                            &format!("{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"),
-                        ),
+                        conv_state: allocation_helpers::create_zeroed_allocation(context, &conv_shape, dtype),
+                        conv_shape,
+                        ssm_state: allocation_helpers::create_zeroed_allocation(context, &ssm_shape, dtype),
+                        ssm_shape,
+                        data_type: dtype,
                     })
                 },
                 DecoderLayerType::ShortConv {
@@ -188,16 +175,11 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::ShortConv(ShortConvLayer {
-                        conv_state: context.create_array_zeros(
-                            &conv_shape,
-                            dtype,
-                            &format!("{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"),
-                        ),
-                        suffix_state: context.create_array_zeros(
-                            &suffix_state_shape,
-                            dtype,
-                            &format!("{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"),
-                        ),
+                        conv_state: allocation_helpers::create_zeroed_allocation(context, &conv_shape, dtype),
+                        conv_shape,
+                        suffix_state: allocation_helpers::create_zeroed_allocation(context, &suffix_state_shape, dtype),
+                        suffix_shape: suffix_state_shape,
+                        data_type: dtype,
                         suffix_state_valid_start: Cell::new(0),
                         suffix_state_valid_len: Cell::new(0),
                     })
@@ -215,16 +197,11 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
-                        conv_state: context.create_array_zeros(
-                            &conv_shape,
-                            dtype,
-                            &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
-                        ),
-                        ssm_state: context.create_array_zeros(
-                            &ssm_shape,
-                            dtype,
-                            &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),
-                        ),
+                        conv_state: allocation_helpers::create_zeroed_allocation(context, &conv_shape, dtype),
+                        conv_shape,
+                        ssm_state: allocation_helpers::create_zeroed_allocation(context, &ssm_shape, dtype),
+                        ssm_shape,
+                        data_type: dtype,
                     })
                 },
             })
@@ -244,6 +221,8 @@ impl<B: Backend> CacheLayers<B> {
                     KVCacheLayerState::Full {
                         prefix_len,
                     } => {
+                        allocation_helpers::fill_allocation(&mut layer.keys, 0);
+                        allocation_helpers::fill_allocation(&mut layer.values, 0);
                         *prefix_len = 0;
                     },
                     KVCacheLayerState::Windowed {
@@ -251,6 +230,8 @@ impl<B: Backend> CacheLayers<B> {
                         ring_length,
                         ..
                     } => {
+                        allocation_helpers::fill_allocation(&mut layer.keys, 0);
+                        allocation_helpers::fill_allocation(&mut layer.values, 0);
                         *ring_offset = 0;
                         *ring_length = 0;
                     },
@@ -349,12 +330,11 @@ impl<B: Backend> CacheLayers<B> {
             .data
             .iter()
             .enumerate()
-            .map(|(layer_index, layer)| match layer {
+            .map(|(_layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
-                    let shape = layer.keys.shape().to_vec();
-                    let num_groups = shape[0];
-                    let head_dim = shape[2];
-                    let dtype = layer.keys.data_type();
+                    let shape = layer.shape;
+                    let [num_groups, _, head_dim] = shape;
+                    let dtype = layer.data_type;
                     let copy_rows = layer.prefix_segment_length();
 
                     let new_total_len = copy_rows + self.max_suffix_length;
@@ -363,99 +343,76 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.create_array_zeros(
-                        &new_shape,
-                        dtype,
-                        &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
-                    );
-                    let mut new_values = context.create_array_zeros(
-                        &new_shape,
-                        dtype,
-                        &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
-                    );
+                    let mut new_keys = allocation_helpers::create_zeroed_allocation(context, &new_shape, dtype);
+                    let mut new_values = allocation_helpers::create_zeroed_allocation(context, &new_shape, dtype);
 
                     if copy_rows > 0 {
-                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0);
-                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0);
+                        let slice = layer.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
+                        let mut new_layer = KVCacheLayer {
+                            state: layer.state.clone(),
+                            keys: new_keys,
+                            values: new_values,
+                            shape: new_shape,
+                            data_type: dtype,
+                        };
+                        new_layer.apply_slice(&slice, None);
+                        new_keys = new_layer.keys;
+                        new_values = new_layer.values;
                     }
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: layer.state.clone(),
                         keys: new_keys,
                         values: new_values,
+                        shape: new_shape,
+                        data_type: dtype,
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
-                    let conv_shape = layer.conv_state.shape().to_vec();
-                    let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array_uninitialized(
-                        &conv_shape,
-                        conv_dtype,
-                        &format!("{ARRAY_STATE_SPACE_CONV_STATE_LABEL}_{layer_index}"),
-                    );
-                    new_conv.copy_from_array(&layer.conv_state);
-
-                    let ssm_shape = layer.ssm_state.shape().to_vec();
-                    let ssm_dtype = layer.ssm_state.data_type();
-                    let mut new_ssm = context.create_array_uninitialized(
-                        &ssm_shape,
-                        ssm_dtype,
-                        &format!("{ARRAY_STATE_SPACE_SSM_STATE_LABEL}_{layer_index}"),
-                    );
-                    new_ssm.copy_from_array(&layer.ssm_state);
+                    let mut new_conv =
+                        allocation_helpers::create_allocation(context, &layer.conv_shape, layer.data_type);
+                    allocation_helpers::copy_allocation_to_allocation(&mut new_conv, &layer.conv_state);
+                    let mut new_ssm = allocation_helpers::create_allocation(context, &layer.ssm_shape, layer.data_type);
+                    allocation_helpers::copy_allocation_to_allocation(&mut new_ssm, &layer.ssm_state);
 
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: new_conv,
+                        conv_shape: layer.conv_shape,
                         ssm_state: new_ssm,
+                        ssm_shape: layer.ssm_shape,
+                        data_type: layer.data_type,
                     })
                 },
                 CacheLayer::ShortConv(layer) => {
-                    let conv_shape = layer.conv_state.shape().to_vec();
-                    let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array_uninitialized(
-                        &conv_shape,
-                        conv_dtype,
-                        &format!("{ARRAY_SHORT_CONV_CONV_STATE_LABEL}_{layer_index}"),
-                    );
-                    new_conv.copy_from_array(&layer.conv_state);
-
-                    let suffix_shape = layer.suffix_state.shape().to_vec();
-                    let suffix_dtype = layer.suffix_state.data_type();
-                    let new_suffix = context.create_array_zeros(
-                        &suffix_shape,
-                        suffix_dtype,
-                        &format!("{ARRAY_SHORT_CONV_SUFFIX_STATE_LABEL}_{layer_index}"),
-                    );
+                    let mut new_conv =
+                        allocation_helpers::create_allocation(context, &layer.conv_shape, layer.data_type);
+                    allocation_helpers::copy_allocation_to_allocation(&mut new_conv, &layer.conv_state);
+                    let new_suffix =
+                        allocation_helpers::create_zeroed_allocation(context, &layer.suffix_shape, layer.data_type);
 
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: new_conv,
+                        conv_shape: layer.conv_shape,
                         suffix_state: new_suffix,
+                        suffix_shape: layer.suffix_shape,
+                        data_type: layer.data_type,
                         suffix_state_valid_start: Cell::new(0),
                         suffix_state_valid_len: Cell::new(0),
                     })
                 },
                 CacheLayer::DeltaNet(layer) => {
-                    let conv_shape = layer.conv_state.shape().to_vec();
-                    let conv_dtype = layer.conv_state.data_type();
-                    let mut new_conv = context.create_array_uninitialized(
-                        &conv_shape,
-                        conv_dtype,
-                        &format!("{ARRAY_DELTA_NET_CONV_STATE_LABEL}_{layer_index}"),
-                    );
-                    new_conv.copy_from_array(&layer.conv_state);
-
-                    let ssm_shape = layer.ssm_state.shape().to_vec();
-                    let ssm_dtype = layer.ssm_state.data_type();
-                    let mut new_ssm = context.create_array_uninitialized(
-                        &ssm_shape,
-                        ssm_dtype,
-                        &format!("{ARRAY_DELTA_NET_SSM_STATE_LABEL}_{layer_index}"),
-                    );
-                    new_ssm.copy_from_array(&layer.ssm_state);
+                    let mut new_conv =
+                        allocation_helpers::create_allocation(context, &layer.conv_shape, layer.data_type);
+                    allocation_helpers::copy_allocation_to_allocation(&mut new_conv, &layer.conv_state);
+                    let mut new_ssm = allocation_helpers::create_allocation(context, &layer.ssm_shape, layer.data_type);
+                    allocation_helpers::copy_allocation_to_allocation(&mut new_ssm, &layer.ssm_state);
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
                         conv_state: new_conv,
+                        conv_shape: layer.conv_shape,
                         ssm_state: new_ssm,
+                        ssm_shape: layer.ssm_shape,
+                        data_type: layer.data_type,
                     })
                 },
             })

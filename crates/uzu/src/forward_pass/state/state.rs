@@ -1,23 +1,23 @@
 #[cfg(feature = "tracing")]
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::{cell::RefCell, rc::Rc};
 
 use ndarray::ArrayView2;
 
+#[cfg(feature = "tracing")]
+use crate::array::Array;
 #[cfg(feature = "tracing")]
 use crate::backends::common::Encoder;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
-    array::Array,
-    backends::common::{Backend, Context},
-    config::DecoderConfig,
+    array::size_for_shape,
+    backends::common::{Allocation, Backend},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers,
-        state::{ArrayId, CommonAuxBuffers, LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers},
+        state::{RopeType, SharedBuffers},
     },
     session::parameter::SamplingMethod,
 };
@@ -29,9 +29,9 @@ pub enum ForwardPassMode<B: Backend> {
 
 pub struct LanguageModelGeneratorModeState<B: Backend> {
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub token_seeds: Array<B>,
-    pub logits: Array<B>,
-    pub sampling_output: Option<Array<B>>,
+    pub token_seeds: Allocation<B>,
+    pub logits: Option<Allocation<B>>,
+    pub sampling_output: Option<Allocation<B>>,
     pub sampling_method: Option<SamplingMethod>,
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace<B>>>,
@@ -42,111 +42,168 @@ pub struct LanguageModelGeneratorModeState<B: Backend> {
 }
 
 pub struct ClassifierModeState<B: Backend> {
-    pub pooling: Array<B>,
-    pub dense: Array<B>,
-    pub norm: Array<B>,
-    pub classifier_logits: Array<B>,
     pub active_row_count: usize,
     #[cfg(feature = "tracing")]
     pub traces: Rc<RefCell<ActivationTrace<B>>>,
+    #[cfg(not(feature = "tracing"))]
+    _backend: std::marker::PhantomData<B>,
 }
 
 pub struct ForwardPassState<B: Backend> {
     context: Rc<B::Context>,
-    token_ids: Array<B>,
-    pub token_subtrie_ranges: Option<Array<B>>,
-    token_positions: Array<B>,
-    token_parents: Array<B>,
-    token_bitmask: Option<Array<B>>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
-    pub common_aux: CommonAuxBuffers<B>,
-    pub llm_aux: Option<LanguageModelGeneratorAuxBuffers<B>>,
+    model_shape: ModelShape,
+    token_ids: Allocation<B>,
+    pub token_subtrie_ranges: Option<Allocation<B>>,
+    token_positions: Allocation<B>,
+    token_parents: Allocation<B>,
+    token_bitmask: Option<Allocation<B>>,
+    pub shared_buffers: Rc<SharedBuffers<B>>,
     mode: ForwardPassMode<B>,
 }
 
 impl<B: Backend> ForwardPassState<B> {
-    // ========================================================================
-    // Common initialization helpers
-    // ========================================================================
-
     fn init_token_ids(
-        scratch: &ScratchBuffers<B>,
+        context: &B::Context,
         token_ids: &[u64],
-    ) -> Array<B> {
-        let suffix_length = token_ids.len();
-        let mut token_ids_array = scratch.token_ids.view(&[suffix_length]);
-        token_ids_array.copy_from_view(token_ids.into());
-        token_ids_array
+        skip_token_ids_copy: bool,
+    ) -> Allocation<B> {
+        let mut allocation = super::allocation_helpers::create_allocation(context, &[token_ids.len()], DataType::U64);
+        if !skip_token_ids_copy {
+            super::allocation_helpers::copy_slice_to_allocation(&mut allocation, token_ids);
+        }
+        allocation
     }
 
     fn init_token_positions(
-        scratch: &ScratchBuffers<B>,
+        context: &B::Context,
         token_positions: &[usize],
-    ) -> Array<B> {
-        let suffix_length = token_positions.len();
-        let mut token_positions_array = scratch.token_positions.view(&[suffix_length]);
-        let token_positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
-        token_positions_array.copy_from_view(token_positions_i32.as_ref().into());
-        token_positions_array
+    ) -> Allocation<B> {
+        let positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
+        let mut allocation =
+            super::allocation_helpers::create_allocation(context, &[token_positions.len()], DataType::I32);
+        super::allocation_helpers::copy_slice_to_allocation(&mut allocation, positions_i32.as_ref());
+        allocation
+    }
+
+    fn init_token_positions_from_buffer(
+        context: &B::Context,
+        suffix_length: usize,
+        buffer: &B::Buffer,
+        offset: usize,
+    ) -> Allocation<B> {
+        let mut allocation = super::allocation_helpers::create_allocation(context, &[suffix_length], DataType::I32);
+        super::allocation_helpers::copy_buffer_bytes_to_allocation(
+            &mut allocation,
+            buffer,
+            offset * std::mem::size_of::<i32>(),
+            suffix_length * std::mem::size_of::<i32>(),
+        );
+        allocation
     }
 
     fn init_token_parents(
-        scratch: &ScratchBuffers<B>,
+        context: &B::Context,
         token_positions: &[usize],
         sampling_start: usize,
         sampling_length: usize,
-    ) -> Array<B> {
+    ) -> Allocation<B> {
         let suffix_length = token_positions.len();
-        let mut token_parents_array = scratch.token_parents.view(&[suffix_length]);
-        {
-            let parents = token_parents_array.as_slice_mut::<i32>();
-            parents.fill(-1);
+        let mut parents = vec![-1i32; suffix_length];
 
-            if sampling_length > 0 {
-                let root_pos = token_positions.get(sampling_start).copied().unwrap_or(0);
+        if sampling_length > 0 {
+            let root_pos = token_positions.get(sampling_start).copied().unwrap_or(0);
+            let mut stack: Vec<usize> = Vec::new();
 
-                let mut stack: Vec<usize> = Vec::new();
+            for local_idx in 0..sampling_length {
+                let abs_idx = sampling_start + local_idx;
+                let Some(&pos) = token_positions.get(abs_idx) else {
+                    break;
+                };
+                let depth = pos.saturating_sub(root_pos);
+                let parent_local = if depth == 0 {
+                    -1
+                } else if let Some(&p) = stack.get(depth - 1) {
+                    p as i32
+                } else {
+                    debug_assert!(false, "invalid trie depth ordering: depth={depth}, stack_len={}", stack.len());
+                    -1
+                };
+                parents[abs_idx] = parent_local;
 
-                for local_idx in 0..sampling_length {
-                    let abs_idx = sampling_start + local_idx;
-                    let Some(&pos) = token_positions.get(abs_idx) else {
-                        break;
-                    };
-                    let depth = pos.saturating_sub(root_pos);
-
-                    let parent_local: i32 = if depth == 0 {
-                        -1
-                    } else if let Some(&p) = stack.get(depth - 1) {
-                        p as i32
-                    } else {
-                        debug_assert!(false, "invalid trie depth ordering: depth={depth}, stack_len={}", stack.len());
-                        -1
-                    };
-                    parents[abs_idx] = parent_local;
-
-                    if stack.len() <= depth {
-                        stack.resize(depth + 1, 0);
-                    }
-                    stack[depth] = local_idx;
-                    stack.truncate(depth + 1);
+                if stack.len() <= depth {
+                    stack.resize(depth + 1, 0);
                 }
+                stack[depth] = local_idx;
+                stack.truncate(depth + 1);
             }
         }
-        token_parents_array
+
+        let mut allocation = super::allocation_helpers::create_allocation(context, &[suffix_length], DataType::I32);
+        super::allocation_helpers::copy_slice_to_allocation(&mut allocation, &parents);
+        allocation
     }
 
-    // ========================================================================
-    // LLM Constructor
-    // ========================================================================
+    fn init_token_bitmask(
+        context: &B::Context,
+        model_shape: &ModelShape,
+        suffix_length: usize,
+        token_bitmask: &[u32],
+    ) -> Allocation<B> {
+        let shape = model_shape.bitmask_shape(suffix_length);
+        let mut allocation = super::allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
+        let source = ArrayView2::from_shape((shape[0], shape[1]), token_bitmask).expect("Invalid token bitmask shape");
+        super::allocation_helpers::copy_view_to_allocation(&mut allocation, source);
+        allocation
+    }
+
+    fn init_token_subtrie_ranges(
+        context: &B::Context,
+        model_shape: &ModelShape,
+        suffix_length: usize,
+        token_subtrie_ranges: &[[u32; 3]],
+    ) -> Allocation<B> {
+        let shape = model_shape.subtrie_ranges_shape(suffix_length);
+        let mut allocation = super::allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
+        let source = ArrayView2::from_shape(
+            (token_subtrie_ranges.len(), 3),
+            bytemuck::cast_slice::<_, u32>(token_subtrie_ranges),
+        )
+        .unwrap();
+        super::allocation_helpers::copy_view_to_allocation(&mut allocation, source);
+        allocation
+    }
+
+    fn init_token_seeds(
+        context: &B::Context,
+        token_seeds: &[u64],
+    ) -> Allocation<B> {
+        let mut allocation = super::allocation_helpers::create_allocation(context, &[token_seeds.len()], DataType::U64);
+        super::allocation_helpers::copy_slice_to_allocation(&mut allocation, token_seeds);
+        allocation
+    }
+
+    fn init_token_seeds_from_buffer(
+        context: &B::Context,
+        suffix_length: usize,
+        buffer: &B::Buffer,
+        offset: usize,
+    ) -> Allocation<B> {
+        let mut allocation = super::allocation_helpers::create_allocation(context, &[suffix_length], DataType::U64);
+        super::allocation_helpers::copy_buffer_bytes_to_allocation(
+            &mut allocation,
+            buffer,
+            offset * std::mem::size_of::<u64>(),
+            suffix_length * std::mem::size_of::<u64>(),
+        );
+        allocation
+    }
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_llm(
         context: Rc<B::Context>,
-        decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<B>,
         cache_layers: Rc<RefCell<CacheLayers<B>>>,
-        shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+        shared_buffers: Rc<SharedBuffers<B>>,
         token_ids: &[u64],
         token_subtrie_ranges: Option<&[[u32; 3]]>,
         token_positions: &[usize],
@@ -164,78 +221,47 @@ impl<B: Backend> ForwardPassState<B> {
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
         assert!(suffix_length <= cache_layers.borrow().max_suffix_length(), "Suffix length exceeds KV cache capacity");
 
-        // Token IDs - optionally skip copy for async path
-        let token_ids_cell = if skip_token_ids_copy {
-            scratch.token_ids.view(&[suffix_length])
-        } else {
-            Self::init_token_ids(scratch, token_ids)
-        };
-
-        // Token subtrie ranges
-        let token_subtrie_ranges_cell = token_subtrie_ranges.map(|subtrie_ranges| {
-            let subtrie_ranges_shape = model_shape.subtrie_ranges_shape(suffix_length);
-            let mut subtrie_ranges_array = scratch.token_subtrie_ranges.view(&subtrie_ranges_shape);
-            subtrie_ranges_array.as_slice_mut::<u32>().fill(0);
-            subtrie_ranges_array.copy_from_view(
-                ArrayView2::from_shape((subtrie_ranges.len(), 3), bytemuck::cast_slice::<_, u32>(subtrie_ranges))
-                    .unwrap(),
-            );
-            subtrie_ranges_array
-        });
-
-        // Token positions - use async buffer if provided
-        let token_positions_cell = if let Some((async_buf, offset)) = async_positions {
-            unsafe {
-                Array::from_parts(async_buf, offset * std::mem::size_of::<i32>(), &[suffix_length], DataType::I32)
+        let token_ids_allocation = Self::init_token_ids(context.as_ref(), token_ids, skip_token_ids_copy);
+        let token_subtrie_ranges_allocation = token_subtrie_ranges
+            .map(|ranges| Self::init_token_subtrie_ranges(context.as_ref(), model_shape, suffix_length, ranges));
+        let token_positions_allocation = if let Some((buffer, offset)) = async_positions {
+            {
+                let buffer = buffer.borrow();
+                Self::init_token_positions_from_buffer(context.as_ref(), suffix_length, &*buffer, offset)
             }
         } else {
-            Self::init_token_positions(scratch, token_positions)
+            Self::init_token_positions(context.as_ref(), token_positions)
         };
-
-        // Trie parent indices (relative, within the sampling segment).
-        // Only meaningful when sampling_length > 0.
-        let token_parents_cell = Self::init_token_parents(scratch, token_positions, sampling_start, sampling_length);
-
-        // Token bitmask
-        let token_bitmask_cell = token_bitmask.map(|bitmask| {
-            let bitmask_shape = model_shape.bitmask_shape(suffix_length);
-            let mut bitmask_array = scratch.token_bitmask.view(&bitmask_shape);
-            bitmask_array.as_slice_mut::<u32>().fill(0);
-            bitmask_array.copy_from_view(bitmask.into());
-            bitmask_array
-        });
-
-        // Token seeds - use async buffer if provided
-        let token_seeds_cell = if let Some((async_buf, offset)) = async_seeds {
-            unsafe {
-                Array::from_parts(async_buf, offset * std::mem::size_of::<u64>(), &[suffix_length], DataType::U64)
+        let token_parents_allocation =
+            Self::init_token_parents(context.as_ref(), token_positions, sampling_start, sampling_length);
+        let token_bitmask_allocation =
+            token_bitmask.map(|mask| Self::init_token_bitmask(context.as_ref(), model_shape, suffix_length, mask));
+        let token_seeds_allocation = if let Some((buffer, offset)) = async_seeds {
+            {
+                let buffer = buffer.borrow();
+                Self::init_token_seeds_from_buffer(context.as_ref(), suffix_length, &*buffer, offset)
             }
         } else {
-            let mut token_seeds_array = scratch.token_seeds.view(&[suffix_length]);
-            token_seeds_array.copy_from_view(token_seeds.into());
-            token_seeds_array
+            Self::init_token_seeds(context.as_ref(), token_seeds)
         };
 
-        // Logits
-        let logits_cell = scratch.logits.view(&model_shape.logits_shape(suffix_length));
+        let logits = (sampling_length > 0).then(|| {
+            super::allocation_helpers::create_allocation(
+                context.as_ref(),
+                &model_shape.logits_shape(suffix_length),
+                model_shape.activation_data_type(),
+            )
+        });
+        let sampling_output = (sampling_length > 0)
+            .then(|| super::allocation_helpers::create_allocation(context.as_ref(), &[sampling_length], DataType::U32));
 
-        // Sampling output
-        let sampling_output = Some(scratch.sampling_output.view(&[suffix_length]));
-
-        // Common aux buffers
-        let common_aux = CommonAuxBuffers::new(scratch, model_shape, suffix_length);
-
-        // LLM-specific aux buffers
-        let llm_aux = Some(LanguageModelGeneratorAuxBuffers::new(scratch, decoder_config, model_shape, suffix_length));
-
-        // Traces
         #[cfg(feature = "tracing")]
         let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(context.as_ref(), model_shape, suffix_length)));
 
         let mode = ForwardPassMode::LanguageModelGenerator(LanguageModelGeneratorModeState {
             cache_layers,
-            token_seeds: token_seeds_cell,
-            logits: logits_cell,
+            token_seeds: token_seeds_allocation,
+            logits,
             sampling_output,
             sampling_method: None,
             #[cfg(feature = "tracing")]
@@ -245,30 +271,25 @@ impl<B: Backend> ForwardPassState<B> {
             sampling_length,
             is_prefilling,
         });
+
         Self {
             context,
-            token_ids: token_ids_cell,
-            token_subtrie_ranges: token_subtrie_ranges_cell,
-            token_positions: token_positions_cell,
-            token_parents: token_parents_cell,
-            token_bitmask: token_bitmask_cell,
+            model_shape: model_shape.clone(),
+            token_ids: token_ids_allocation,
+            token_subtrie_ranges: token_subtrie_ranges_allocation,
+            token_positions: token_positions_allocation,
+            token_parents: token_parents_allocation,
+            token_bitmask: token_bitmask_allocation,
             shared_buffers,
-            common_aux,
-            llm_aux,
             mode,
         }
     }
-
-    // ========================================================================
-    // Classifier Constructor
-    // ========================================================================
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_classifier(
         context: Rc<B::Context>,
         model_shape: &ModelShape,
-        scratch: &ScratchBuffers<B>,
-        shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+        shared_buffers: Rc<SharedBuffers<B>>,
         token_ids: &[u64],
         token_positions: &[usize],
         num_labels: usize,
@@ -276,31 +297,21 @@ impl<B: Backend> ForwardPassState<B> {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len());
 
-        let token_ids_cell = Self::init_token_ids(scratch, token_ids);
-        let token_positions_cell = Self::init_token_positions(scratch, token_positions);
-        let token_parents_cell = Self::init_token_parents(scratch, token_positions, 0, 0);
-
-        // Common aux buffers
-        let common_aux = CommonAuxBuffers::new(scratch, model_shape, suffix_length);
-
-        // Classifier-specific buffers
-        let model_dim = model_shape.main_shape(1)[1];
-        let classifier_state =
-            Self::init_classifier_buffers(context.as_ref(), model_shape, model_dim, num_labels, suffix_length);
-
-        let mode = ForwardPassMode::Classifier(classifier_state);
+        let token_ids_allocation = Self::init_token_ids(context.as_ref(), token_ids, false);
+        let token_positions_allocation = Self::init_token_positions(context.as_ref(), token_positions);
+        let token_parents_allocation = Self::init_token_parents(context.as_ref(), token_positions, 0, 0);
+        let classifier_state = Self::init_classifier_buffers(context.as_ref(), model_shape, num_labels, suffix_length);
 
         Self {
             context,
-            token_ids: token_ids_cell,
+            model_shape: model_shape.clone(),
+            token_ids: token_ids_allocation,
             token_subtrie_ranges: None,
-            token_positions: token_positions_cell,
-            token_parents: token_parents_cell,
+            token_positions: token_positions_allocation,
+            token_parents: token_parents_allocation,
             token_bitmask: None,
             shared_buffers,
-            common_aux,
-            llm_aux: None,
-            mode,
+            mode: ForwardPassMode::Classifier(classifier_state),
         }
     }
 
@@ -308,28 +319,10 @@ impl<B: Backend> ForwardPassState<B> {
     fn init_classifier_buffers(
         context: &B::Context,
         model_shape: &ModelShape,
-        model_dim: usize,
         num_labels: usize,
         suffix_length: usize,
     ) -> ClassifierModeState<B> {
-        let data_type = model_shape.activation_data_type();
-        let batch_dim = 1;
-
-        let create_buffer = |size: usize| -> Array<B> {
-            let buffer_size = size * data_type.size_in_bytes();
-            let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_dim, size / batch_dim], data_type) }
-        };
-
         ClassifierModeState {
-            pooling: create_buffer(batch_dim * model_dim),
-            dense: create_buffer(batch_dim * model_dim),
-            norm: create_buffer(batch_dim * model_dim),
-            classifier_logits: {
-                let buffer_size = batch_dim * num_labels * data_type.size_in_bytes();
-                let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-                unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_dim, num_labels], data_type) }
-            },
             active_row_count: suffix_length,
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,
@@ -342,260 +335,139 @@ impl<B: Backend> ForwardPassState<B> {
 
     #[cfg(not(feature = "tracing"))]
     fn init_classifier_buffers(
-        context: &B::Context,
-        model_shape: &ModelShape,
-        model_dim: usize,
-        num_labels: usize,
+        _context: &B::Context,
+        _model_shape: &ModelShape,
+        _num_labels: usize,
         suffix_length: usize,
     ) -> ClassifierModeState<B> {
-        let data_type = model_shape.activation_data_type();
-        let batch_dim = 1;
-
-        let create_buffer = |dims: &[usize]| -> Array<B> {
-            let size: usize = dims.iter().product();
-            let buffer_size = size * data_type.size_in_bytes();
-            let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) }
-        };
-
         ClassifierModeState {
-            pooling: create_buffer(&[batch_dim, model_dim]),
-            dense: create_buffer(&[batch_dim, model_dim]),
-            norm: create_buffer(&[batch_dim, model_dim]),
-            classifier_logits: create_buffer(&[batch_dim, num_labels]),
             active_row_count: suffix_length,
+            _backend: std::marker::PhantomData,
         }
     }
-
-    // ========================================================================
-    // Accessors
-    // ========================================================================
 
     pub fn context(&self) -> &B::Context {
         self.context.as_ref()
     }
 
-    pub fn aux_buffers_suffix_length(&self) -> usize {
-        self.common_aux.suffix_length
+    pub fn model_shape(&self) -> &ModelShape {
+        &self.model_shape
     }
 
-    pub fn token_bitmask(&self) -> Option<&Array<B>> {
+    pub fn token_ids(&self) -> &Allocation<B> {
+        &self.token_ids
+    }
+
+    pub fn token_ids_mut(&mut self) -> &mut Allocation<B> {
+        &mut self.token_ids
+    }
+
+    pub fn token_positions(&self) -> &Allocation<B> {
+        &self.token_positions
+    }
+
+    pub fn token_parents(&self) -> &Allocation<B> {
+        &self.token_parents
+    }
+
+    pub fn token_subtrie_ranges(&self) -> Option<&Allocation<B>> {
+        self.token_subtrie_ranges.as_ref()
+    }
+
+    pub fn token_bitmask(&self) -> Option<&Allocation<B>> {
         self.token_bitmask.as_ref()
     }
 
-    pub fn llm_state(&self) -> &LanguageModelGeneratorModeState<B> {
+    pub fn token_bitmask_row_len(&self) -> Option<usize> {
+        self.token_bitmask.as_ref().map(|_| self.model_shape.bitmask_shape(self.token_count())[1])
+    }
+
+    pub fn sampling_output(&self) -> Option<&Allocation<B>> {
         match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state,
-            _ => panic!("Not in LLM mode"),
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.as_ref(),
+            ForwardPassMode::Classifier(_) => None,
         }
     }
 
-    pub fn classifier_state(&self) -> &ClassifierModeState<B> {
+    pub fn take_sampling_output(&mut self) -> Option<Allocation<B>> {
+        match &mut self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.take(),
+            ForwardPassMode::Classifier(_) => None,
+        }
+    }
+
+    pub fn put_sampling_output(
+        &mut self,
+        sampling_output: Allocation<B>,
+    ) {
+        match &mut self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output = Some(sampling_output),
+            ForwardPassMode::Classifier(_) => panic!("Not in LLM mode"),
+        }
+    }
+
+    pub fn token_seeds(&self) -> Option<&Allocation<B>> {
         match &self.mode {
-            ForwardPassMode::Classifier(state) => state,
-            _ => panic!("Not in classifier mode"),
+            ForwardPassMode::LanguageModelGenerator(state) => Some(&state.token_seeds),
+            ForwardPassMode::Classifier(_) => None,
         }
     }
 
-    pub fn array(
+    pub fn take_logits(&mut self) -> Option<Allocation<B>> {
+        match &mut self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => state.logits.take(),
+            ForwardPassMode::Classifier(_) => None,
+        }
+    }
+
+    pub fn put_logits(
+        &mut self,
+        logits: Allocation<B>,
+    ) {
+        match &mut self.mode {
+            ForwardPassMode::LanguageModelGenerator(state) => state.logits = Some(logits),
+            ForwardPassMode::Classifier(_) => panic!("Not in LLM mode"),
+        }
+    }
+
+    pub fn rope_cosines(
         &self,
-        id: ArrayId,
-    ) -> Array<B> {
-        match id {
-            // Common arrays
-            ArrayId::TokenIds => self.token_ids.clone(),
-            ArrayId::TokenPositions => self.token_positions.clone(),
-            ArrayId::TokenParents => self.token_parents.clone(),
-            ArrayId::TokenBitmask => self.token_bitmask.clone().expect("Token bitmask not available"),
-            ArrayId::Main => self.common_aux.main.clone(),
-            ArrayId::Shortcut => self.common_aux.shortcut.clone(),
-            ArrayId::QKV => self.common_aux.qkv.clone(),
-            ArrayId::Gate => self.common_aux.gate.clone().expect("Gate buffer not available"),
-            ArrayId::AttentionOutput => self.common_aux.attention_output.clone(),
-            ArrayId::MlpFusedUp => self.common_aux.mlp_fused_up.clone(),
-            ArrayId::MlpHidden => self.common_aux.mlp_hidden.clone(),
-            ArrayId::RotatedQueries => self.common_aux.rotated_queries.clone(),
-            ArrayId::RotatedKeys => self.common_aux.rotated_keys.clone(),
-            ArrayId::ExtractedValues => self.common_aux.extracted_values.clone(),
-            ArrayId::AttentionPartials => self.common_aux.attention_partials.clone(),
-            ArrayId::AttentionSums => self.common_aux.attention_sums.clone(),
-            ArrayId::AttentionMaxs => self.common_aux.attention_maxs.clone(),
-
-            // Shared buffer arrays
-            ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => {
-                self.shared_buffer_array(id).expect("Shared buffer array should be available")
-            },
-
-            // LLM-specific arrays
-            ArrayId::Logits => self.llm_state().logits.clone(),
-            ArrayId::TokenSeeds => self.llm_state().token_seeds.clone(),
-            ArrayId::Keys(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_transformer().expect("Expected transformer layer").keys.clone()
-            },
-            ArrayId::Values(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_transformer().expect("Expected transformer layer").values.clone()
-            },
-            ArrayId::AttentionSinks(layer_index) => {
-                self.shared_buffers.borrow().attention_sinks.as_ref().expect("Attention sinks not initialized")
-                    [layer_index]
-                    .clone()
-            },
-
-            // SSM arrays (LLM only)
-            ArrayId::SsmInProj => {
-                self.llm_aux.as_ref().and_then(|aux| aux.ssm_inproj.clone()).expect("SSM inproj not initialized")
-            },
-            ArrayId::SsmPacked(_) => {
-                self.llm_aux.as_ref().and_then(|aux| aux.ssm_packed.clone()).expect("SSM packed not initialized")
-            },
-            ArrayId::SsmConvState(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_state_space().expect("Expected SSM layer").conv_state.clone()
-            },
-            ArrayId::SsmState(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_state_space().expect("Expected SSM layer").ssm_state.clone()
-            },
-            ArrayId::SsmX(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_x.clone()).expect("SSM x not initialized"),
-            ArrayId::SsmB(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_b.clone()).expect("SSM b not initialized"),
-            ArrayId::SsmC(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_c.clone()).expect("SSM c not initialized"),
-            ArrayId::SsmDt(_) => {
-                self.llm_aux.as_ref().and_then(|aux| aux.ssm_dt.clone()).expect("SSM dt not initialized")
-            },
-            ArrayId::SsmZ(_) => self.llm_aux.as_ref().and_then(|aux| aux.ssm_z.clone()).expect("SSM z not initialized"),
-            ArrayId::ShortConvState(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").conv_state.clone()
-            },
-            ArrayId::ShortConvSuffixState(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_short_conv().expect("Expected ShortConv layer").suffix_state.clone()
-            },
-            ArrayId::DeltaNetConvState(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").conv_state.clone()
-            },
-            ArrayId::DeltaNetSsmState(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_delta_net().expect("Expected DeltaNet layer").ssm_state.clone()
-            },
-
-            // MoE arrays (LLM only)
-            ArrayId::MoeTopkIds => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_topk_ids.clone()).expect("MoE topk_ids not initialized")
-            },
-            ArrayId::MoeTopkProbs => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_topk_probs.clone())
-                .expect("MoE topk_probs not initialized"),
-            ArrayId::MoeOffsets => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_offsets.clone()).expect("MoE offsets not initialized")
-            },
-            ArrayId::MoeSumK => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_sumk.clone()).expect("MoE sumk not initialized")
-            },
-            ArrayId::MoeBucketedTokenIds => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_bucketed_token_ids.clone())
-                .expect("MoE bucketed_token_ids not initialized"),
-            ArrayId::MoeBucketedProbs => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_bucketed_probs.clone())
-                .expect("MoE bucketed_probs not initialized"),
-            ArrayId::MoeXPerm => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_x_perm.clone()).expect("MoE x_perm not initialized")
-            },
-            ArrayId::MoeTok2Row => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_tok2row.clone()).expect("MoE tok2row not initialized")
-            },
-            ArrayId::MoeYPartial => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_y_partial.clone()).expect("MoE y_partial not initialized")
-            },
-            ArrayId::MoeHidden => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_hidden.clone()).expect("MoE hidden not initialized")
-            },
-            ArrayId::MoeTwoPassRowExpertMap => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_two_pass_row_expert_map.clone())
-                .expect("MoE two_pass_row_expert_map not initialized"),
-            ArrayId::MoeTileCounts => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_tile_counts.clone())
-                .expect("MoE tile_counts not initialized"),
-            ArrayId::MoeTileOffsets => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_tile_offsets.clone())
-                .expect("MoE tile_offsets not initialized"),
-            ArrayId::MoeTileMap => {
-                self.llm_aux.as_ref().and_then(|aux| aux.moe_tile_map.clone()).expect("MoE tile_map not initialized")
-            },
-            ArrayId::MoeTotalTiles => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_total_tiles.clone())
-                .expect("MoE total_tiles not initialized"),
-            ArrayId::MoeDispatchArgs => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_dispatch_args.clone())
-                .expect("MoE dispatch_args not initialized"),
-            ArrayId::MoeScatterPartials => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_scatter_partials.clone())
-                .expect("MoE scatter_partials not initialized"),
-            ArrayId::MoeScatterBlockBases => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_scatter_block_bases.clone())
-                .expect("MoE scatter_block_bases not initialized"),
-            ArrayId::MoeBlockAlloc => self
-                .llm_aux
-                .as_ref()
-                .and_then(|aux| aux.moe_block_alloc.clone())
-                .expect("MoE block_alloc not initialized"),
-
-            // Classifier-specific arrays
-            ArrayId::ClassifierPooling => self.classifier_state().pooling.clone(),
-            ArrayId::ClassifierPredictionHeadDense => self.classifier_state().dense.clone(),
-            ArrayId::ClassifierPredictionHeadNorm => self.classifier_state().norm.clone(),
-            ArrayId::ClassifierPredictionHeadLogits => self.classifier_state().classifier_logits.clone(),
+        rope_type: RopeType,
+    ) -> &Allocation<B> {
+        match rope_type {
+            RopeType::Global => &self.shared_buffers.global_rope.as_ref().expect("Global rope not initialized").cosines,
+            RopeType::Local => &self.shared_buffers.local_rope.as_ref().expect("Local rope not initialized").cosines,
         }
     }
 
-    fn shared_buffer_array(
+    pub fn rope_sines(
         &self,
-        id: ArrayId,
-    ) -> Option<Array<B>> {
-        let shared = self.shared_buffers.borrow();
-        match id {
-            ArrayId::RopeCosines(rope_type) => Some(match rope_type {
-                RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").cosines.clone(),
-                RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").cosines.clone(),
-            }),
-            ArrayId::RopeSines(rope_type) => Some(match rope_type {
-                RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").sines.clone(),
-                RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").sines.clone(),
-            }),
-            _ => None,
+        rope_type: RopeType,
+    ) -> &Allocation<B> {
+        match rope_type {
+            RopeType::Global => &self.shared_buffers.global_rope.as_ref().expect("Global rope not initialized").sines,
+            RopeType::Local => &self.shared_buffers.local_rope.as_ref().expect("Local rope not initialized").sines,
         }
     }
 
-    pub fn conv_padded_buffer(&self) -> Option<Array<B>> {
-        self.llm_aux.as_ref().and_then(|aux| aux.ssm_conv_padded.clone())
+    pub fn rope_max_sequence_length(&self) -> usize {
+        self.model_shape.context_length()
     }
 
-    // ========================================================================
-    // Public API Methods (formerly trait methods)
-    // ========================================================================
+    pub fn rope_dim(&self) -> usize {
+        self.model_shape.rope_dim()
+    }
+
+    pub fn attention_sinks(
+        &self,
+        layer_index: usize,
+    ) -> Option<&Allocation<B>> {
+        self.shared_buffers.attention_sinks.as_ref().map(|sinks| &sinks[layer_index])
+    }
+
+    pub fn vocab_size(&self) -> usize {
+        self.model_shape.logits_shape(self.token_count())[1]
+    }
 
     pub fn active_row_count(&self) -> usize {
         match &self.mode {
@@ -614,7 +486,6 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    /// Start index (within the suffix batch) for which we need logits/sampling.
     pub fn sampling_start(&self) -> usize {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_start,
@@ -622,11 +493,10 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    /// Number of batch items for which we need logits/sampling.
     pub fn sampling_length(&self) -> usize {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_length,
-            ForwardPassMode::Classifier(_) => self.common_aux.suffix_length,
+            ForwardPassMode::Classifier(_) => self.token_count(),
         }
     }
 
@@ -644,11 +514,25 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn sampling_output(&self) -> Option<&Array<B>> {
-        match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.as_ref(),
-            ForwardPassMode::Classifier(_) => None,
-        }
+    #[cfg(feature = "tracing")]
+    pub fn with_cache_layer<R>(
+        &self,
+        layer_index: usize,
+        f: impl FnOnce(&crate::forward_pass::cache_layers::CacheLayer<B>) -> R,
+    ) -> R {
+        let cache_layers = self.cache_layers().expect("Cache layers are only available in LLM mode");
+        let cache = cache_layers.borrow();
+        f(&cache.data[layer_index])
+    }
+
+    pub fn with_cache_layer_mut<R>(
+        &self,
+        layer_index: usize,
+        f: impl FnOnce(&mut crate::forward_pass::cache_layers::CacheLayer<B>) -> R,
+    ) -> R {
+        let cache_layers = self.cache_layers().expect("Cache layers are only available in LLM mode");
+        let mut cache = cache_layers.borrow_mut();
+        f(&mut cache.data[layer_index])
     }
 
     #[cfg(feature = "tracing")]
@@ -674,25 +558,20 @@ impl<B: Backend> ForwardPassState<B> {
     }
 
     #[cfg(feature = "tracing")]
-    pub fn encode_copy_array(
+    pub fn encode_copy_allocation(
         &self,
         encoder: &mut Encoder<B>,
-        source_array_id: ArrayId,
+        source: &Allocation<B>,
         destination_array: Array<B>,
     ) {
-        let source_array = self.array(source_array_id);
-
-        let src_buf_rc = source_array.buffer();
+        let (src_buffer, src_range) = source.as_buffer_range();
         let dst_buf_rc = destination_array.buffer();
+        debug_assert_eq!(destination_array.size(), src_range.end - src_range.start);
 
-        let copy_size_bytes = destination_array.size();
-        debug_assert_eq!(destination_array.size(), source_array.size());
+        encoder.encode_copy(src_buffer, src_range, dst_buf_rc.borrow_mut().deref_mut(), 0..destination_array.size());
+    }
 
-        encoder.encode_copy(
-            src_buf_rc.borrow().deref(),
-            0..copy_size_bytes,
-            dst_buf_rc.borrow_mut().deref_mut(),
-            0..copy_size_bytes,
-        );
+    fn token_count(&self) -> usize {
+        self.token_ids.as_buffer_range().1.len() / size_for_shape(&[1], DataType::U64)
     }
 }

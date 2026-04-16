@@ -9,7 +9,7 @@ use half::{bf16, f16};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Buffer, Context, Encoder,
+        Allocation, AllocationType, Backend, Context, Encoder,
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
@@ -282,6 +282,32 @@ fn buffer_from_f32_slice<B: Backend>(
     }
 }
 
+fn allocation_from_f32_slice<B: Backend>(
+    ctx: &B::Context,
+    dtype: DataType,
+    values: &[f32],
+) -> Allocation<B> {
+    let byte_len = values.len() * dtype.size_in_bytes();
+    let mut allocation = ctx.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation");
+
+    match dtype {
+        DataType::F16 => {
+            let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
+            crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data.as_slice());
+        },
+        DataType::BF16 => {
+            let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
+            crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data.as_slice());
+        },
+        DataType::F32 => {
+            crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, values);
+        },
+        other => panic!("Unsupported dtype for allocation_from_f32_slice: {:?}", other),
+    }
+
+    allocation
+}
+
 fn execute_quantized_matmul<B: Backend>(
     ctx: &B::Context,
     batch: usize,
@@ -326,8 +352,10 @@ fn execute_quantized_matmul<B: Backend>(
         QuantizedMatmulType::ZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
         QuantizedMatmulType::Mlx => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
-    let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
-    let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
+    let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
+    let mut y_buf = ctx
+        .create_allocation(batch * output_dim * data_type.size_in_bytes(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let kernel = QuantizedMatmulKernelEncodable::<B>::new(
         &ctx,
@@ -349,12 +377,11 @@ fn execute_quantized_matmul<B: Backend>(
     if iterations > 1 {
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
-                a_buffer: &x_buf,
-                a_offset: 0,
+                a: &x_buf,
                 b_buffer: &w_buf,
                 scales_buffer: &s_buf,
                 zero_points_or_biases_buffer: &b_buf,
-                output_buffer: &mut y_buf,
+                output: &mut y_buf,
                 batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
@@ -366,12 +393,11 @@ fn execute_quantized_matmul<B: Backend>(
     let start = Instant::now();
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
-            a_buffer: &x_buf,
-            a_offset: 0,
+            a: &x_buf,
             b_buffer: &w_buf,
             scales_buffer: &s_buf,
             zero_points_or_biases_buffer: &b_buf,
-            output_buffer: &mut y_buf,
+            output: &mut y_buf,
             batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
@@ -399,19 +425,15 @@ fn execute_quantized_matmul<B: Backend>(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
+                let y_out = crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f16, B>(&y_buf);
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const bf16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
+                let y_out = crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<bf16, B>(&y_buf);
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f32;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
-                y_out.to_vec()
+                crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f32, B>(&y_buf).to_vec()
             },
             other => panic!("Unsupported dtype for validation: {:?}", other),
         };

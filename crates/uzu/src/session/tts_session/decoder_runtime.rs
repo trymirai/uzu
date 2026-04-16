@@ -1,8 +1,8 @@
 use super::{decoder_support::*, *};
-use crate::{array::Array, backends::common::Buffer, session::types::TtsModelConfigError};
+use crate::{backends::common::Buffer, encodable_block::DecoderArguments, session::types::TtsModelConfigError};
 
 struct TokenDecoderLoadedModel<B: Backend> {
-    shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    shared_buffers: Rc<SharedBuffers<B>>,
     scratch_buffers: ScratchBuffers<B>,
     executables: Decoder<B>,
     sampler: GpuSampling<B>,
@@ -33,7 +33,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             &root_loader_view,
             transformer_subtree,
         )?;
-        let scratch_buffers = ScratchBuffers::new(context.as_ref(), decoder_config, model_shape, max_suffix_length);
+        let scratch_buffers = ScratchBuffers::new(context.as_ref(), model_shape, max_suffix_length);
         let executables = Decoder::new_with_embedding_and_readout_subtrees(
             context.as_ref(),
             &decoder_config,
@@ -65,7 +65,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
 struct TokenDecoderContext<B: Backend> {
     context: Rc<B::Context>,
     cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    shared_buffers: Rc<SharedBuffers<B>>,
     scratch_buffers: ScratchBuffers<B>,
     model_shape: ModelShape,
     decoder_config: Rc<crate::config::DecoderConfig>,
@@ -149,18 +149,16 @@ impl<B: Backend> TokenDecoderContext<B> {
         model_shape: &ModelShape,
         root_loader_view: &crate::parameters::ParameterTree<B::Context>,
         transformer_subtree: &str,
-    ) -> Result<Rc<RefCell<SharedBuffers<B>>>, Error> {
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), decoder_config, model_shape)));
+    ) -> Result<Rc<SharedBuffers<B>>, Error> {
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), decoder_config, model_shape);
         let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
-        let mut shared_buffers_borrow = shared_buffers.borrow_mut();
-        if let Some(global_rope) = &mut shared_buffers_borrow.global_rope {
+        if let Some(global_rope) = &mut shared_buffers.global_rope {
             global_rope.update_data(&transformer_tree, "global_rope");
         }
-        if let Some(local_rope) = &mut shared_buffers_borrow.local_rope {
+        if let Some(local_rope) = &mut shared_buffers.local_rope {
             local_rope.update_data(&transformer_tree, "local_rope");
         }
-        drop(shared_buffers_borrow);
-        Ok(shared_buffers)
+        Ok(Rc::new(shared_buffers))
     }
 
     fn build_async_chain_buffers(
@@ -188,8 +186,8 @@ impl<B: Backend> TokenDecoderContext<B> {
 
 pub(super) struct TokenDecoderRunner<B: Backend> {
     ctx: TokenDecoderContext<B>,
-    pub(super) single_hidden_capture: Array<B>,
-    pub(super) single_override_embedding: Array<B>,
+    pub(super) single_hidden_capture: crate::backends::common::Allocation<B>,
+    pub(super) single_override_embedding: crate::backends::common::Allocation<B>,
     tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
     tensor_add_scale: <B::Kernels as Kernels>::TensorAddScaleKernel,
     single_token_vocab_masks: HashMap<usize, Box<[u32]>>,
@@ -199,6 +197,10 @@ pub(super) struct TokenDecoderRunner<B: Backend> {
 }
 
 impl<B: Backend> TokenDecoderRunner<B> {
+    pub(super) fn activation_data_type(&self) -> DataType {
+        self.ctx.model_shape.activation_data_type()
+    }
+
     pub(super) fn context(&self) -> &Rc<B::Context> {
         self.ctx.context()
     }
@@ -228,10 +230,16 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let tensor_add_scale =
             <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(unable_to_create_context)?;
-        let single_hidden_capture =
-            context.create_array_zeros(&[1, model_dim], activation_data_type, "tts_single_hidden_capture");
-        let single_override_embedding =
-            context.create_array_zeros(&[1, model_dim], activation_data_type, "tts_single_override_embedding");
+        let single_hidden_capture = crate::forward_pass::state::allocation_helpers::create_allocation(
+            context.as_ref(),
+            &[1, model_dim],
+            activation_data_type,
+        );
+        let single_override_embedding = crate::forward_pass::state::allocation_helpers::create_allocation(
+            context.as_ref(),
+            &[1, model_dim],
+            activation_data_type,
+        );
 
         Ok(Self {
             ctx,
@@ -265,11 +273,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let positions: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
             let token_seeds = vec![0_u64; token_count];
 
-            let mut state = ForwardPassState::new_llm(
+            let state = ForwardPassState::new_llm(
                 self.ctx.context.clone(),
-                &self.ctx.decoder_config,
                 &self.ctx.model_shape,
-                &self.ctx.scratch_buffers,
                 self.ctx.cache_layers.clone(),
                 self.ctx.shared_buffers.clone(),
                 token_ids,
@@ -291,16 +297,32 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let context = Rc::clone(&self.ctx.context);
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
-            self.ctx
+            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            let _ = self
+                .ctx
                 .executables
-                .embed
-                .encode_lookup(&mut state, &mut encoder)
+                .encode_prefill(
+                    DecoderArguments {
+                        context: state.context(),
+                        activation_data_type: state.model_shape().activation_data_type(),
+                        token_ids: state.token_ids(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        shared_buffers: self.ctx.shared_buffers.as_ref(),
+                        cache_layers: cache_layers.as_deref_mut(),
+                        batch_dim: state.active_row_count(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        #[cfg(feature = "tracing")]
+                        trace: Some(state.traces().clone()),
+                    },
+                    &encoding_parameters,
+                    &mut encoder,
+                )
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            for layer in self.ctx.executables.layers.iter() {
-                layer
-                    .encode(&mut state, &encoding_parameters, &mut encoder)
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-            }
             self.encode_cache_acceptance_update_on(&mut encoder, token_count);
 
             self.submit_and_wait_command_buffer(encoder)?;
@@ -434,16 +456,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
         // Copy the sampled token for chaining and into results[0].
         {
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-            let sampling_output_buffer = sampling_output.buffer();
             let token_ids_buffer = self.ctx.scratch_buffers.token_ids.buffer();
-
-            let sampling_output_buffer = sampling_output_buffer.borrow();
             let mut token_ids_buffer = token_ids_buffer.borrow_mut();
             if followup_count > 0 {
-                self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, encoder);
+                self.ctx.token_copy_sampled.encode(sampling_output, &mut *token_ids_buffer, encoder);
             }
             let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
-            self.ctx.token_copy_results.encode(&*sampling_output_buffer, (&mut *results_buffer, 0), encoder);
+            self.ctx.token_copy_results.encode(sampling_output, (&mut *results_buffer, 0), encoder);
         }
 
         self.encode_cache_acceptance_update_on(encoder, initial_token_count);
@@ -492,9 +511,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }];
             let mut state = ForwardPassState::new_llm(
                 context_rc.clone(),
-                &self.ctx.decoder_config,
                 &self.ctx.model_shape,
-                &self.ctx.scratch_buffers,
                 cache_layers_rc.clone(),
                 shared_buffers_rc.clone(),
                 &token_ids,
@@ -514,47 +531,85 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 *method = Some(sampling_method);
             }
 
+            if pass > 0 || results_offset_slots > 0 {
+                let token_ids_buffer = self.ctx.scratch_buffers.token_ids.buffer();
+                crate::forward_pass::state::allocation_helpers::encode_copy_buffer_bytes_to_allocation(
+                    encoder,
+                    state.token_ids_mut(),
+                    &*token_ids_buffer.borrow(),
+                    0,
+                    std::mem::size_of::<u64>(),
+                );
+            }
+
             {
-                self.ctx
-                    .executables
-                    .embed
-                    .encode_lookup(&mut state, encoder)
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                for layer in self.ctx.executables.layers.iter() {
-                    layer
-                        .encode(&mut state, &encoding_parameters, encoder)
-                        .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                }
-                self.ctx
-                    .executables
-                    .norm
-                    .encode(&mut state, encoder)
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                self.ctx
-                    .executables
-                    .embed
-                    .encode_readout(&mut state, encoder)
-                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-                self.ctx.sampler.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+                let decoder_logits = state.take_logits().expect("Sampling requires logits allocation");
+                let mut logits = {
+                    let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+                    self.ctx
+                        .executables
+                        .encode_decode(
+                            DecoderArguments {
+                                context: state.context(),
+                                activation_data_type: state.model_shape().activation_data_type(),
+                                token_ids: state.token_ids(),
+                                token_positions: state.token_positions(),
+                                token_parents: state.token_parents(),
+                                token_subtrie_ranges: state.token_subtrie_ranges(),
+                                shared_buffers: self.ctx.shared_buffers.as_ref(),
+                                cache_layers: cache_layers.as_deref_mut(),
+                                batch_dim: state.active_row_count(),
+                                sampling_start: state.sampling_start(),
+                                sampling_length: state.sampling_length(),
+                                rope_max_sequence_length: state.rope_max_sequence_length(),
+                                rope_dim: state.rope_dim(),
+                                #[cfg(feature = "tracing")]
+                                trace: Some(state.traces().clone()),
+                            },
+                            decoder_logits,
+                            &encoding_parameters,
+                            encoder,
+                        )
+                        .map_err(|err| Error::EncodeFailed(Box::new(err)))?
+                };
+                let mut sampling_output = state.take_sampling_output().expect("Sampling requires output allocation");
+                let sampling_start = state.sampling_start();
+                let seeds_offset = sampling_start * std::mem::size_of::<u64>();
+                let bitmask = state.token_bitmask();
+                let bitmask_offset = bitmask.map_or(0, |_| {
+                    let row_len = state.token_bitmask_row_len().expect("Token bitmask row length not available");
+                    sampling_start * row_len * std::mem::size_of::<u32>()
+                });
+                let sampling_result = self.ctx.sampler.encode(
+                    crate::encodable_block::SamplingArguments {
+                        logits: &mut logits,
+                        seeds: state.token_seeds().expect("Sampling requires token seeds"),
+                        seeds_offset,
+                        bitmask,
+                        bitmask_offset,
+                        output: &mut sampling_output,
+                        sampling_method,
+                        batch_size: state.sampling_length(),
+                        vocab_size: state.vocab_size(),
+                    },
+                    encoder,
+                );
+                state.put_sampling_output(sampling_output);
+                state.put_logits(logits);
+                sampling_result.map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             }
 
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-            let sampling_output_buffer = sampling_output.buffer();
             let token_ids_buffer = self.ctx.scratch_buffers.token_ids.buffer();
 
             {
-                let sampling_output_buffer = sampling_output_buffer.borrow();
                 let mut token_ids_buffer = token_ids_buffer.borrow_mut();
                 if pass + 1 < followup_count {
-                    self.ctx.token_copy_sampled.encode(&*sampling_output_buffer, &mut *token_ids_buffer, encoder);
+                    self.ctx.token_copy_sampled.encode(sampling_output, &mut *token_ids_buffer, encoder);
                 }
                 let results_offset = results_slot * std::mem::size_of::<u32>();
                 let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
-                self.ctx.token_copy_results.encode(
-                    &*sampling_output_buffer,
-                    (&mut *results_buffer, results_offset),
-                    encoder,
-                );
+                self.ctx.token_copy_results.encode(sampling_output, (&mut *results_buffer, results_offset), encoder);
             }
 
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
@@ -694,9 +749,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
         let mut state = ForwardPassState::new_llm(
             self.ctx.context.clone(),
-            &self.ctx.decoder_config,
             &self.ctx.model_shape,
-            &self.ctx.scratch_buffers,
             self.ctx.cache_layers.clone(),
             self.ctx.shared_buffers.clone(),
             token_ids,
@@ -717,10 +770,16 @@ impl<B: Backend> TokenDecoderRunner<B> {
         }
 
         let encoding_parameters = EncodingParameters::new();
-        self.ctx
+        let main = self
+            .ctx
             .executables
             .embed
-            .encode_lookup(&mut state, encoder)
+            .encode_lookup(
+                state.token_ids(),
+                state.active_row_count(),
+                state.model_shape().activation_data_type(),
+                encoder,
+            )
             .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         if let Some(pre_encode) = pre_injection_encode.as_mut() {
             pre_encode(self, &state, encoder)?;
@@ -730,28 +789,71 @@ impl<B: Backend> TokenDecoderRunner<B> {
             EmbeddingInjection::AddPreloaded {
                 post_scale,
             } => {
-                self.encode_add_scale_from_single_bias_on(encoder, &state, token_count, post_scale.unwrap_or(1.0))?;
+                self.encode_add_scale_from_single_bias_on(encoder, &main, token_count, post_scale.unwrap_or(1.0))?;
             },
             EmbeddingInjection::OverrideFirstRowInternal => {
-                self.encode_override_first_row_from_device_on(encoder, &state, &self.single_override_embedding)?;
+                self.encode_override_first_row_from_device_on(encoder, &main, &self.single_override_embedding)?;
             },
         }
-        for layer in self.ctx.executables.layers.iter() {
-            layer
-                .encode(&mut state, &encoding_parameters, encoder)
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-        }
-        self.ctx.executables.norm.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        let decoder_logits = state.take_logits().expect("Sampling requires logits allocation");
+        let (mut logits, shortcut) = {
+            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            self.ctx
+                .executables
+                .encode_decode_from_embeddings(
+                    DecoderArguments {
+                        context: state.context(),
+                        activation_data_type: state.model_shape().activation_data_type(),
+                        token_ids: state.token_ids(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        shared_buffers: self.ctx.shared_buffers.as_ref(),
+                        cache_layers: cache_layers.as_deref_mut(),
+                        batch_dim: state.active_row_count(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        #[cfg(feature = "tracing")]
+                        trace: Some(state.traces().clone()),
+                    },
+                    main,
+                    decoder_logits,
+                    &encoding_parameters,
+                    encoder,
+                )
+                .map_err(|err| Error::EncodeFailed(Box::new(err)))?
+        };
         if capture_hidden {
             // After output norm with residual_add, Shortcut holds the un-normalized full residual
-            self.encode_capture_last_hidden_into_single_buffer_on(encoder, &state, token_count)?;
+            self.encode_capture_last_hidden_into_single_buffer_on(encoder, &shortcut, token_count)?;
         }
-        self.ctx
-            .executables
-            .embed
-            .encode_readout(&mut state, encoder)
-            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
-        self.ctx.sampler.encode(&mut state, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        let mut sampling_output = state.take_sampling_output().expect("Sampling requires output allocation");
+        let sampling_start = state.sampling_start();
+        let seeds_offset = sampling_start * std::mem::size_of::<u64>();
+        let bitmask = state.token_bitmask();
+        let bitmask_offset = bitmask.map_or(0, |_| {
+            let row_len = state.token_bitmask_row_len().expect("Token bitmask row length not available");
+            sampling_start * row_len * std::mem::size_of::<u32>()
+        });
+        let sampling_result = self.ctx.sampler.encode(
+            crate::encodable_block::SamplingArguments {
+                logits: &mut logits,
+                seeds: state.token_seeds().expect("Sampling requires token seeds"),
+                seeds_offset,
+                bitmask,
+                bitmask_offset,
+                output: &mut sampling_output,
+                sampling_method: sampling.method(),
+                batch_size: state.sampling_length(),
+                vocab_size: state.vocab_size(),
+            },
+            encoder,
+        );
+        state.put_sampling_output(sampling_output);
+        state.put_logits(logits);
+        sampling_result.map_err(|err| Error::EncodeFailed(Box::new(err)))?;
 
         Ok(state)
     }
@@ -910,7 +1012,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     fn encode_capture_last_hidden_into_single_buffer_on(
         &self,
         encoder: &mut Encoder<B>,
-        state: &ForwardPassState<B>,
+        shortcut: &crate::backends::common::Allocation<B>,
         token_count: usize,
     ) -> Result<(), Error> {
         if token_count == 0 {
@@ -920,8 +1022,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;
-        let shortcut = state.array(ArrayId::Shortcut);
-        let bytes_per_element = shortcut.data_type().size_in_bytes();
+        let bytes_per_element = self.ctx.model_shape.activation_data_type().size_in_bytes();
         let row_offset = (token_count - 1)
             .checked_mul(model_dim)
             .and_then(|value| value.checked_mul(bytes_per_element))
@@ -929,65 +1030,34 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 token_count,
                 model_dim,
             })?;
-        let src_offset =
-            shortcut.offset().checked_add(row_offset).ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
-        let capture = &self.single_hidden_capture;
-        if capture.shape() != [1, model_dim] || capture.data_type() != shortcut.data_type() {
-            return Err(TtsModelConfigError::HiddenCaptureTensorMismatch {
-                expected_shape: [1, model_dim].into(),
-                expected_data_type: shortcut.data_type(),
-                actual_shape: capture.shape().into(),
-                actual_data_type: capture.data_type(),
-            }
-            .into());
-        }
-
-        let shortcut_buffer = shortcut.buffer();
-        let shortcut_buffer = shortcut_buffer.borrow();
-        let capture_buffer = capture.buffer();
-        let mut capture_buffer = capture_buffer.borrow_mut();
-        self.tensor_copy.encode((&*shortcut_buffer, src_offset), &mut *capture_buffer, model_dim_u32, encoder);
+        let src_offset = shortcut
+            .as_buffer_range()
+            .1
+            .start
+            .checked_add(row_offset)
+            .ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
+        self.tensor_copy.encode((shortcut, src_offset), &self.single_hidden_capture, model_dim_u32, encoder);
         Ok(())
     }
 
     fn encode_override_first_row_from_device_on(
         &self,
         encoder: &mut Encoder<B>,
-        state: &ForwardPassState<B>,
-        override_embedding: &Array<B>,
+        main: &crate::backends::common::Allocation<B>,
+        override_embedding: &crate::backends::common::Allocation<B>,
     ) -> Result<(), Error> {
         let model_dim = self.ctx.decoder_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;
-        let main = state.array(ArrayId::Main);
-        if override_embedding.shape() != [1, model_dim] || override_embedding.data_type() != main.data_type() {
-            return Err(TtsModelConfigError::OverrideEmbeddingTensorMismatch {
-                expected_shape: [1, model_dim].into(),
-                expected_data_type: main.data_type(),
-                actual_shape: override_embedding.shape().into(),
-                actual_data_type: override_embedding.data_type(),
-            }
-            .into());
-        }
-
-        let override_buffer = override_embedding.buffer();
-        let override_buffer = override_buffer.borrow();
-        let main_buffer = main.buffer();
-        let mut main_buffer = main_buffer.borrow_mut();
-        self.tensor_copy.encode(
-            (&*override_buffer, override_embedding.offset()),
-            (&mut *main_buffer, main.offset()),
-            model_dim_u32,
-            encoder,
-        );
+        self.tensor_copy.encode(override_embedding, (main, main.as_buffer_range().1.start), model_dim_u32, encoder);
         Ok(())
     }
 
     fn encode_add_scale_from_single_bias_on(
         &self,
         encoder: &mut Encoder<B>,
-        state: &ForwardPassState<B>,
+        main: &crate::backends::common::Allocation<B>,
         token_count: usize,
         scale: f32,
     ) -> Result<(), Error> {
@@ -1007,28 +1077,10 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 total_len,
             })?;
 
-        let main = state.array(ArrayId::Main);
-        let bias = &self.single_override_embedding;
-        if bias.shape() != [1, model_dim] || bias.data_type() != main.data_type() {
-            return Err(TtsModelConfigError::AddScaleBiasTensorMismatch {
-                expected_shape: [1, model_dim].into(),
-                expected_data_type: main.data_type(),
-                actual_shape: bias.shape().into(),
-                actual_data_type: bias.data_type(),
-            }
-            .into());
-        }
-
-        let bias_buffer = bias.buffer();
-        let bias_buffer = bias_buffer.borrow();
-        let main_output_buffer = main.buffer();
-        let mut main_output_buffer = main_output_buffer.borrow_mut();
-        // TensorAddScale is elementwise, so in-place read/write aliasing is valid here.
-        let main_input_buffer: &B::Buffer = unsafe { &*(&*main_output_buffer as *const B::Buffer) };
         self.tensor_add_scale.encode(
-            (main_input_buffer, main.offset()),
-            &*bias_buffer,
-            (&mut *main_output_buffer, main.offset()),
+            (main, main.as_buffer_range().1.start),
+            &self.single_override_embedding,
+            (main, main.as_buffer_range().1.start),
             model_dim_u32,
             total_len_u32,
             scale,
@@ -1071,11 +1123,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
         // read it after the eventual submit.
         {
             let sampling_output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-            let sampling_output_buffer = sampling_output.buffer();
-
-            let sampling_output_buffer = sampling_output_buffer.borrow();
             let mut results_buffer = self.ctx.async_chain_results.borrow_mut();
-            self.ctx.token_copy_results.encode(&*sampling_output_buffer, (&mut *results_buffer, 0), encoder);
+            self.ctx.token_copy_results.encode(sampling_output, (&mut *results_buffer, 0), encoder);
         }
 
         self.encode_cache_acceptance_update_on(encoder, token_count);
@@ -1147,7 +1196,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
 fn read_sampled_token_from_sampling_output<B: Backend>(state: &ForwardPassState<B>) -> Result<u64, Error> {
     let output = state.sampling_output().ok_or(Error::SamplingFailed)?;
-    let tokens = output.as_slice::<u32>();
+    let tokens = crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<u32, B>(output);
     let token = tokens.first().copied().ok_or(Error::SamplingFailed)?;
     Ok(u64::from(token))
 }

@@ -1,16 +1,13 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
 use super::Linear;
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
@@ -20,7 +17,6 @@ use crate::{
         },
     },
     config::QuantizationConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -93,8 +89,7 @@ pub struct QuantizedLinear<B: Backend> {
     scales_buffer: Rc<RefCell<B::Buffer>>,
     zero_points_or_biases_buffer: Rc<RefCell<B::Buffer>>,
     output_dim: usize,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
+    output_data_type: DataType,
 }
 
 impl<B: Backend> QuantizedLinear<B> {
@@ -104,8 +99,6 @@ impl<B: Backend> QuantizedLinear<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
     ) -> Result<Self, QuantizedLinearError<B>> {
         let kernel_data_type: DataType = config.activation_precision.into();
         if !matches!(kernel_data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
@@ -232,8 +225,7 @@ impl<B: Backend> QuantizedLinear<B> {
             scales_buffer: scales.buffer(),
             zero_points_or_biases_buffer,
             output_dim,
-            input_array_id,
-            output_array_id,
+            output_data_type: kernel_data_type,
         })
     }
 }
@@ -241,26 +233,23 @@ impl<B: Backend> QuantizedLinear<B> {
 impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        _context: &B::Context,
+        input: &Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let batch_dim = state.active_row_count();
-
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
-        let output_buf_rc = output_array.buffer();
-        let mut output_buf_borrow = output_buf_rc.borrow_mut();
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         self.kernel
             .encode(
                 encoder,
                 QuantizedMatmulArguments {
-                    a_buffer: input_array.buffer().borrow().deref(),
-                    a_offset: 0,
+                    a: input,
                     b_buffer: self.weights_buffer.borrow().deref(),
                     scales_buffer: self.scales_buffer.borrow().deref(),
                     zero_points_or_biases_buffer: self.zero_points_or_biases_buffer.borrow().deref(),
-                    output_buffer: output_buf_borrow.deref_mut(),
+                    output: &mut output,
                     batch_dim,
                 },
             )
@@ -271,12 +260,13 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
             bias_add_kernel.encode(
                 None::<&B::Buffer>,
                 biases_buffer.borrow().deref(),
-                output_buf_borrow.deref_mut(),
+                &mut output,
                 self.output_dim as u32,
                 total_length as u32,
                 encoder,
             );
         }
-        Ok(())
+
+        Ok(output)
     }
 }

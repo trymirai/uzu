@@ -18,14 +18,14 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
-    encodable_block::{EncodingParameters, Sampling},
+    encodable_block::{DecoderArguments, EncodingParameters, Sampling},
     forward_pass::{
         cache_layers::CacheLayers,
         scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState},
+        state::{ForwardPassState, allocation_helpers},
         traces::ActivationTrace,
     },
     language_model::{
@@ -250,9 +250,7 @@ impl<B: Backend> TraceValidator<B> {
 
         let mut state = ForwardPassState::new_llm(
             ctx.context.clone(),
-            &ctx.decoder_config,
             &ctx.model_shape,
-            &ctx.scratch_buffers,
             ctx.cache_layers.clone(),
             ctx.shared_buffers.clone(),
             &token_ids,
@@ -271,10 +269,34 @@ impl<B: Backend> TraceValidator<B> {
 
         let mut encoder =
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-
-        ctx.executables
-            .encode(&mut state, &EncodingParameters::new(), &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let logits = state.take_logits().expect("Decoder readout requires logits allocation");
+        {
+            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            ctx.executables
+                .encode_decode(
+                    DecoderArguments {
+                        context: state.context(),
+                        activation_data_type: state.model_shape().activation_data_type(),
+                        token_ids: state.token_ids(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        shared_buffers: state.shared_buffers.as_ref(),
+                        cache_layers: cache_layers.as_deref_mut(),
+                        batch_dim: state.active_row_count(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        #[cfg(feature = "tracing")]
+                        trace: Some(state.traces().clone()),
+                    },
+                    logits,
+                    &EncodingParameters::new(),
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        }
         let pending = encoder.end_encoding().submit();
         pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
@@ -291,22 +313,35 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in transformer_layers {
-            let keys = state.array(ArrayId::Keys(index));
-            let values = state.array(ArrayId::Values(index));
+            state.with_cache_layer(index, |layer| {
+                let kv = layer.as_transformer().expect("Expected transformer layer");
 
-            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
-                results.push(TracerValidationResult {
-                    name: format!("updated_kv_cache.{}.keys", index),
-                    metrics: Self::validate_array(data_type, &expected, &keys, Some(ArrayTransform::KVCacheSlice)),
-                });
-            }
+                if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
+                    results.push(TracerValidationResult {
+                        name: format!("updated_kv_cache.{}.keys", index),
+                        metrics: Self::validate_allocation(
+                            data_type,
+                            &expected,
+                            &kv.keys,
+                            &kv.shape,
+                            Some(ArrayTransform::KVCacheSlice),
+                        ),
+                    });
+                }
 
-            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
-                results.push(TracerValidationResult {
-                    name: format!("updated_kv_cache.{}.values", index),
-                    metrics: Self::validate_array(data_type, &expected, &values, Some(ArrayTransform::KVCacheSlice)),
-                });
-            }
+                if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
+                    results.push(TracerValidationResult {
+                        name: format!("updated_kv_cache.{}.values", index),
+                        metrics: Self::validate_allocation(
+                            data_type,
+                            &expected,
+                            &kv.values,
+                            &kv.shape,
+                            Some(ArrayTransform::KVCacheSlice),
+                        ),
+                    });
+                }
+            });
         }
 
         // LLM-specific: SSM state validation
@@ -316,37 +351,45 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in ssm_layers {
-            let conv_state = state.array(ArrayId::SsmConvState(index));
-            let ssm_state = state.array(ArrayId::SsmState(index));
+            state.with_cache_layer(index, |layer| {
+                let ssm = layer.as_state_space().expect("Expected SSM layer");
 
-            for path in [
-                format!("updated_state.{}.conv_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_array(
-                            data_type,
-                            &expected,
-                            &conv_state,
-                            Some(ArrayTransform::SsmConvState),
-                        ),
-                    });
+                for path in [
+                    format!("updated_state.{}.conv_state", index),
+                    format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+                ] {
+                    if let Ok(expected) = traces_view.leaf_array(&path) {
+                        results.push(TracerValidationResult {
+                            name: path,
+                            metrics: Self::validate_allocation(
+                                data_type,
+                                &expected,
+                                &ssm.conv_state,
+                                &ssm.conv_shape,
+                                Some(ArrayTransform::SsmConvState),
+                            ),
+                        });
+                    }
                 }
-            }
 
-            for path in [
-                format!("updated_state.{}.ssm_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
-                    });
+                for path in [
+                    format!("updated_state.{}.ssm_state", index),
+                    format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+                ] {
+                    if let Ok(expected) = traces_view.leaf_array(&path) {
+                        results.push(TracerValidationResult {
+                            name: path,
+                            metrics: Self::validate_allocation(
+                                data_type,
+                                &expected,
+                                &ssm.ssm_state,
+                                &ssm.ssm_shape,
+                                None,
+                            ),
+                        });
+                    }
                 }
-            }
+            });
         }
 
         // LLM-specific: DeltaNet state validation
@@ -356,37 +399,45 @@ impl<B: Backend> TraceValidator<B> {
         };
 
         for index in delta_net_layers {
-            let conv_state = state.array(ArrayId::DeltaNetConvState(index));
-            let ssm_state = state.array(ArrayId::DeltaNetSsmState(index));
+            state.with_cache_layer(index, |layer| {
+                let delta = layer.as_delta_net().expect("Expected DeltaNet layer");
 
-            for path in [
-                format!("updated_state.{}.conv_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_array(
-                            data_type,
-                            &expected,
-                            &conv_state,
-                            Some(ArrayTransform::SsmConvState),
-                        ),
-                    });
+                for path in [
+                    format!("updated_state.{}.conv_state", index),
+                    format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+                ] {
+                    if let Ok(expected) = traces_view.leaf_array(&path) {
+                        results.push(TracerValidationResult {
+                            name: path,
+                            metrics: Self::validate_allocation(
+                                data_type,
+                                &expected,
+                                &delta.conv_state,
+                                &delta.conv_shape,
+                                Some(ArrayTransform::SsmConvState),
+                            ),
+                        });
+                    }
                 }
-            }
 
-            for path in [
-                format!("updated_state.{}.ssm_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
-                    });
+                for path in [
+                    format!("updated_state.{}.ssm_state", index),
+                    format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+                ] {
+                    if let Ok(expected) = traces_view.leaf_array(&path) {
+                        results.push(TracerValidationResult {
+                            name: path,
+                            metrics: Self::validate_allocation(
+                                data_type,
+                                &expected,
+                                &delta.ssm_state,
+                                &delta.ssm_shape,
+                                None,
+                            ),
+                        });
+                    }
                 }
-            }
+            });
         }
 
         // LLM-specific: Token comparison
@@ -617,6 +668,30 @@ impl<B: Backend> TraceValidator<B> {
         }
     }
 
+    fn validate_allocation(
+        data_type: DataType,
+        expected_array: &Array<B>,
+        produced_allocation: &Allocation<B>,
+        produced_shape: &[usize],
+        transform: Option<ArrayTransform>,
+    ) -> TracerValidationMetrics {
+        match data_type {
+            DataType::F16 => {
+                Self::validate_allocation_of_type::<f16>(expected_array, produced_allocation, produced_shape, transform)
+            },
+            DataType::BF16 => Self::validate_allocation_of_type::<bf16>(
+                expected_array,
+                produced_allocation,
+                produced_shape,
+                transform,
+            ),
+            DataType::F32 => {
+                Self::validate_allocation_of_type::<f32>(expected_array, produced_allocation, produced_shape, transform)
+            },
+            _ => panic!("Unsupported data type: {:?}", data_type),
+        }
+    }
+
     fn validate_array_with_name(
         data_type: DataType,
         traces_view: &ParameterTree<B::Context>,
@@ -700,6 +775,98 @@ impl<B: Backend> TraceValidator<B> {
 
         let reference: Vec<f32> = expected_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
 
+        let result: Vec<f32> = produced_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
+
+        let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
+            DataType::BF16 => (0.04, 0.06, 0.03),
+            _ => (0.01, 0.03, 0.01),
+        };
+
+        Self::compare_arrays(
+            &reference,
+            expected_data.shape().to_vec(),
+            &result,
+            produced_data.shape().to_vec(),
+            atol,
+            rtol,
+            allowed_voilations_tol,
+        )
+    }
+
+    fn validate_allocation_of_type<Precision: ArrayElement>(
+        expected_array: &Array<B>,
+        produced_allocation: &Allocation<B>,
+        produced_shape: &[usize],
+        transform: Option<ArrayTransform>,
+    ) -> TracerValidationMetrics {
+        let expected_view = expected_array.as_view::<Precision>();
+        let produced_slice = allocation_helpers::copy_allocation_to_slice::<Precision, B>(produced_allocation);
+        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), produced_slice)
+            .expect("Failed to reshape allocation");
+
+        let (mut expected_data, mut produced_data) = match transform {
+            Some(ArrayTransform::KVCacheSlice) => {
+                let permuted = produced_view.permuted_axes(IxDyn(&[1, 0, 2]));
+                let total_tokens = permuted.shape()[0];
+                let expected_tokens = expected_view.shape()[1];
+                let start = total_tokens.saturating_sub(expected_tokens);
+                let sliced = permuted.slice(s![start.., .., ..]);
+                let reshaped = sliced
+                    .into_owned()
+                    .to_shape(IxDyn(&[1, expected_tokens, permuted.shape()[1], permuted.shape()[2]]))
+                    .expect("Failed to reshape KV cache slice")
+                    .to_owned();
+                (expected_view.to_owned(), reshaped)
+            },
+            Some(ArrayTransform::SsmConvState) => {
+                let produced_shape = produced_view.shape();
+                let history_len = produced_shape[1];
+                let dim = produced_shape[0];
+
+                let permuted = expected_view.permuted_axes(IxDyn(&[0, 2, 1]));
+                let total_time = permuted.shape()[2];
+                let start = total_time.saturating_sub(history_len);
+                let sliced = permuted.slice(s![.., .., start..]);
+
+                let reshaped_expected = sliced
+                    .into_owned()
+                    .to_shape(IxDyn(&[dim, history_len]))
+                    .expect("Failed to reshape SSM conv state slice")
+                    .to_owned();
+
+                (reshaped_expected, produced_view.to_owned())
+            },
+            None => (expected_view.to_owned(), produced_view.to_owned()),
+        };
+
+        let expected_shape = expected_data.shape().to_vec();
+        let produced_shape = produced_data.shape().to_vec();
+
+        if expected_shape != produced_shape {
+            if expected_shape.len() == produced_shape.len() + 1
+                && expected_shape.get(0) == Some(&1)
+                && expected_shape[1..] == produced_shape[..]
+            {
+                expected_data =
+                    expected_data.to_shape(IxDyn(&produced_shape)).expect("Failed to reshape expected data").to_owned();
+            } else if produced_shape.len() == expected_shape.len() + 1
+                && produced_shape.get(0) == Some(&1)
+                && produced_shape[1..] == expected_shape[..]
+            {
+                produced_data =
+                    produced_data.to_shape(IxDyn(&expected_shape)).expect("Failed to reshape produced data").to_owned();
+            }
+        }
+
+        if expected_data.shape() != produced_data.shape() {
+            panic!(
+                "Shape mismatch after alignment: expected {:?}, produced {:?}",
+                expected_data.shape(),
+                produced_data.shape()
+            );
+        }
+
+        let reference: Vec<f32> = expected_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
         let result: Vec<f32> = produced_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
 
         let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
@@ -848,9 +1015,8 @@ impl<B: Backend> TraceValidator<B> {
             return;
         }
 
-        let decoder_config = &context.decoder_config;
         context.scratch_buffers =
-            ScratchBuffers::new(context.context.as_ref(), decoder_config, &context.model_shape, desired_suffix_length);
+            ScratchBuffers::new(context.context.as_ref(), &context.model_shape, desired_suffix_length);
 
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.context.as_ref(),
@@ -859,6 +1025,7 @@ impl<B: Backend> TraceValidator<B> {
             desired_suffix_length,
         )));
 
+        let decoder_config = context.model_config.decoder_config().expect("Failed to resolve decoder config");
         let intermediate_dtype: DataType = decoder_config.output_norm_config.scale_precision.into();
 
         context.kv_cache_update = Box::new(

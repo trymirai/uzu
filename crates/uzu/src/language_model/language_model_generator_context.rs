@@ -11,7 +11,7 @@ use crate::{
         Backend, Buffer, Context, Kernels,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
-    config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
+    config::{LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
     forward_pass::{
         cache_layers::CacheLayers, model_shape::ModelShape, scratch_buffers::ScratchBuffers, state::SharedBuffers,
@@ -114,11 +114,10 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    pub shared_buffers: Rc<SharedBuffers<B>>,
     pub scratch_buffers: ScratchBuffers<B>,
 
     pub model_config: LanguageModelConfig,
-    pub decoder_config: DecoderConfig,
     pub model_shape: ModelShape,
     pub executables: Decoder<B>,
     pub kv_cache_update: Box<KVCacheUpdate<B>>,
@@ -159,10 +158,11 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
-        shared_buffers.borrow_mut().update_data(&root_loader_view);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        shared_buffers.update_data(&root_loader_view);
+        let shared_buffers = Rc::new(shared_buffers);
 
-        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_suffix_length);
+        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &model_shape, max_suffix_length);
 
         let executables = Decoder::new(context.as_ref(), &decoder_config, &root_loader_view);
 
@@ -199,7 +199,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             shared_buffers,
             scratch_buffers,
             model_config: language_model_config.clone(),
-            decoder_config,
             model_shape,
             executables,
             kv_cache_update,

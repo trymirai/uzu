@@ -1,16 +1,16 @@
-use std::{cell::RefCell, mem::size_of, ops::DerefMut, rc::Rc};
+use std::mem::size_of;
 
 use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
+    backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
 };
 
-pub struct KVLayerData<B: Backend> {
-    pub key_buffer: Rc<RefCell<B::Buffer>>,
+pub struct KVLayerData<'a, B: Backend> {
+    pub key_allocation: &'a mut Allocation<B>,
     pub key_shape: [usize; 3],
-    pub value_buffer: Rc<RefCell<B::Buffer>>,
+    pub value_allocation: &'a mut Allocation<B>,
     pub value_shape: [usize; 3],
 }
 
@@ -55,7 +55,7 @@ impl<B: Backend> KVCacheUpdate<B> {
     /// Encode the KV cache update operation using a provided command buffer
     pub fn encode(
         &self,
-        in_place_data: &[KVLayerData<B>],
+        in_place_data: &mut [KVLayerData<'_, B>],
         source_indices: &[usize],
         destination_indices: &[usize],
         encoder: &mut Encoder<B>,
@@ -80,8 +80,8 @@ impl<B: Backend> KVCacheUpdate<B> {
             // non-inline is not supported yet (and is broken anyways due to a data race)
             for swaps_chunk in swaps.chunks(max_inline_swaps) {
                 self.kernel.encode(
-                    layer_data.key_buffer.borrow_mut().deref_mut(),
-                    layer_data.value_buffer.borrow_mut().deref_mut(),
+                    &mut *layer_data.key_allocation,
+                    &mut *layer_data.value_allocation,
                     swaps_chunk,
                     swaps_chunk.len() as u32,
                     num_heads as u32,

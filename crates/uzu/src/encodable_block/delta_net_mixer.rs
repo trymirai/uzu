@@ -1,11 +1,10 @@
-use std::ops::{Deref, DerefMut};
-
 use thiserror::Error;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{
             Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel, DeltaNetNormGateKernel,
             DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
@@ -13,7 +12,7 @@ use crate::{
     },
     config::DeltaNetAttentionConfig,
     encodable_block::linear::{Linear, LinearBlockError},
-    forward_pass::state::{ArrayId, ForwardPassState},
+    forward_pass::delta_net_layer::DeltaNetLayer,
     parameters::{ParameterLoaderError, ParameterTree, resolve_subtree},
 };
 
@@ -30,7 +29,6 @@ pub enum DeltaNetMixerError<B: Backend> {
 }
 
 pub(crate) struct DeltaNetMixer<B: Backend> {
-    layer_index: usize,
     config: DeltaNetAttentionConfig,
     in_projection: Box<dyn Linear<B>>,
     out_projection: Box<dyn Linear<B>>,
@@ -49,13 +47,20 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
     a_log: B::Buffer,
     dt_bias: B::Buffer,
     norm_weight: B::Buffer,
+    data_type: DataType,
+}
+
+pub(crate) struct DeltaNetArguments<'a, B: Backend> {
+    pub context: &'a B::Context,
+    pub active_row_count: usize,
+    pub layer: &'a mut DeltaNetLayer<B>,
 }
 
 impl<B: Backend> DeltaNetMixer<B> {
     pub(crate) fn new(
         context: &B::Context,
         config: DeltaNetAttentionConfig,
-        layer_index: usize,
+        _layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Result<Self, DeltaNetMixerError<B>> {
@@ -92,8 +97,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             [config.total_proj_dim()],
             context,
             &resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"]),
-            ArrayId::Main,
-            ArrayId::SsmInProj,
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
@@ -104,8 +107,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             [model_dim],
             context,
             &resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"]),
-            ArrayId::AttentionOutput,
-            ArrayId::Main,
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
@@ -141,7 +142,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             .map_err(DeltaNetMixerError::BackendError)?;
 
         Ok(Self {
-            layer_index,
             config,
             in_projection,
             out_projection,
@@ -157,24 +157,22 @@ impl<B: Backend> DeltaNetMixer<B> {
             a_log,
             dt_bias,
             norm_weight,
+            data_type,
         })
     }
 
     fn run_conv_update(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut DeltaNetLayer<B>,
+        in_proj: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
     ) {
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let conv_state = state.array(ArrayId::DeltaNetConvState(self.layer_index));
-
         let kernel_size = self.config.kernel_size;
-
         self.conv_update.encode(
             &self.conv_weight,
             self.conv_bias.as_ref(),
-            in_proj.buffer().borrow_mut().deref_mut(),
-            conv_state.buffer().borrow_mut().deref_mut(),
+            in_proj,
+            &mut layer.conv_state,
             kernel_size as u32,
             self.config.conv_dim() as u32,
             (kernel_size - 1) as u32,
@@ -184,7 +182,9 @@ impl<B: Backend> DeltaNetMixer<B> {
 
     fn run_conv_scan(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut DeltaNetLayer<B>,
+        in_proj: &mut Allocation<B>,
+        padded: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
@@ -193,15 +193,10 @@ impl<B: Backend> DeltaNetMixer<B> {
         let conv_dim = self.config.conv_dim();
         let total_proj_dim = self.config.total_proj_dim();
 
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let conv_state = state.array(ArrayId::DeltaNetConvState(self.layer_index));
-
-        let padded = state.conv_padded_buffer().expect("Missing conv padded buffer");
-
         self.conv_pack.encode(
-            conv_state.buffer().borrow().deref(),
-            in_proj.buffer().borrow().deref(),
-            padded.buffer().borrow_mut().deref_mut(),
+            &layer.conv_state,
+            &*in_proj,
+            &mut *padded,
             state_stride as u32,
             total_proj_dim as u32,
             suffix_length as u32,
@@ -210,11 +205,11 @@ impl<B: Backend> DeltaNetMixer<B> {
         );
 
         self.conv_scan.encode(
-            padded.buffer().borrow().deref(),
+            &*padded,
             &self.conv_weight,
             self.conv_bias.as_ref(),
-            in_proj.buffer().borrow_mut().deref_mut(),
-            conv_state.buffer().borrow_mut().deref_mut(),
+            in_proj,
+            &mut layer.conv_state,
             suffix_length as u32,
             kernel_size as u32,
             total_proj_dim as u32,
@@ -227,20 +222,18 @@ impl<B: Backend> DeltaNetMixer<B> {
 
     fn run_delta_rule(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut DeltaNetLayer<B>,
+        in_proj: &Allocation<B>,
+        out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
     ) {
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let ssm_state = state.array(ArrayId::DeltaNetSsmState(self.layer_index));
-        let out = state.array(ArrayId::AttentionOutput);
-
         self.delta_net_update.encode(
-            in_proj.buffer().borrow().deref(),
+            in_proj,
             &self.a_log,
             &self.dt_bias,
             &self.norm_weight,
-            ssm_state.buffer().borrow_mut().deref_mut(),
-            out.buffer().borrow_mut().deref_mut(),
+            &mut layer.ssm_state,
+            out,
             self.config.num_heads as u32,
             self.config.num_groups as u32,
             self.config.value_head_dim as u32,
@@ -253,30 +246,26 @@ impl<B: Backend> DeltaNetMixer<B> {
 
     fn run_delta_rule_prefill(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut DeltaNetLayer<B>,
+        in_proj: &Allocation<B>,
+        out: &mut Allocation<B>,
+        prep_q_norm: &mut Allocation<B>,
+        prep_k_norm: &mut Allocation<B>,
+        prep_beta: &mut Allocation<B>,
+        prep_decay: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
         let num_dv_groups = ((self.config.value_head_dim + 7) / 8) as u32;
 
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let ssm_state = state.array(ArrayId::DeltaNetSsmState(self.layer_index));
-        let out = state.array(ArrayId::AttentionOutput);
-
-        let aux = state.llm_aux.as_ref().expect("DeltaNet prep buffers not initialized");
-        let prep_q_norm = aux.delta_net_prep_q_norm.as_ref().expect("DeltaNet prep_q_norm not initialized");
-        let prep_k_norm = aux.delta_net_prep_k_norm.as_ref().expect("DeltaNet prep_k_norm not initialized");
-        let prep_beta = aux.delta_net_prep_beta.as_ref().expect("DeltaNet prep_beta not initialized");
-        let prep_decay = aux.delta_net_prep_decay.as_ref().expect("DeltaNet prep_decay not initialized");
-
         self.prefill_prep.encode(
-            in_proj.buffer().borrow().deref(),
+            in_proj,
             &self.a_log,
             &self.dt_bias,
-            prep_q_norm.buffer().borrow_mut().deref_mut(),
-            prep_k_norm.buffer().borrow_mut().deref_mut(),
-            prep_beta.buffer().borrow_mut().deref_mut(),
-            prep_decay.buffer().borrow_mut().deref_mut(),
+            &mut *prep_q_norm,
+            &mut *prep_k_norm,
+            &mut *prep_beta,
+            &mut *prep_decay,
             self.config.num_heads as u32,
             self.config.num_groups as u32,
             self.config.key_dim() as u32,
@@ -286,13 +275,13 @@ impl<B: Backend> DeltaNetMixer<B> {
         );
 
         self.delta_net_prefill.encode(
-            prep_q_norm.buffer().borrow().deref(),
-            prep_k_norm.buffer().borrow().deref(),
-            prep_beta.buffer().borrow().deref(),
-            prep_decay.buffer().borrow().deref(),
-            in_proj.buffer().borrow().deref(),
-            ssm_state.buffer().borrow_mut().deref_mut(),
-            out.buffer().borrow_mut().deref_mut(),
+            &*prep_q_norm,
+            &*prep_k_norm,
+            &*prep_beta,
+            &*prep_decay,
+            in_proj,
+            &mut layer.ssm_state,
+            &mut *out,
             self.config.num_heads as u32,
             self.config.num_groups as u32,
             self.config.value_head_dim as u32,
@@ -303,10 +292,9 @@ impl<B: Backend> DeltaNetMixer<B> {
             encoder,
         );
 
-        // Norm gate
         self.norm_gate.encode(
-            out.buffer().borrow_mut().deref_mut(),
-            in_proj.buffer().borrow().deref(),
+            out,
+            in_proj,
             &self.norm_weight,
             self.config.num_heads as u32,
             self.config.value_head_dim as u32,
@@ -321,25 +309,53 @@ impl<B: Backend> DeltaNetMixer<B> {
 
     pub(crate) fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        args: DeltaNetArguments<'_, B>,
+        input: &Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let active_row_count = state.active_row_count();
-        if active_row_count == 0 {
-            return Ok(());
-        }
+    ) -> Result<Allocation<B>, B::Error> {
+        let DeltaNetArguments {
+            context,
+            active_row_count,
+            layer,
+        } = args;
+        assert!(active_row_count > 0, "DeltaNet mixer requires at least one active row");
 
-        self.in_projection.encode(state, encoder)?;
+        let mut in_proj = self.in_projection.encode(context, input, active_row_count, encoder)?;
+        let mut delta_output =
+            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.config.value_dim()], self.data_type))?;
 
         if active_row_count == 1 {
-            self.run_conv_update(state, encoder);
-            self.run_delta_rule(state, encoder);
+            self.run_conv_update(layer, &mut in_proj, encoder);
+            self.run_delta_rule(layer, &in_proj, &mut delta_output, encoder);
         } else {
-            self.run_conv_scan(state, encoder, active_row_count);
-            self.run_delta_rule_prefill(state, encoder, active_row_count);
+            let state_stride = self.config.kernel_size.saturating_sub(1);
+            let mut padded = encoder.allocate_scratch(size_for_shape(
+                &[active_row_count + state_stride, self.config.total_proj_dim()],
+                self.data_type,
+            ))?;
+            self.run_conv_scan(layer, &mut in_proj, &mut padded, encoder, active_row_count);
+
+            let mut prep_q_norm =
+                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.key_dim()], DataType::F32))?;
+            let mut prep_k_norm =
+                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.key_dim()], DataType::F32))?;
+            let mut prep_beta =
+                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.num_heads], DataType::F32))?;
+            let mut prep_decay =
+                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.num_heads], DataType::F32))?;
+            self.run_delta_rule_prefill(
+                layer,
+                &in_proj,
+                &mut delta_output,
+                &mut prep_q_norm,
+                &mut prep_k_norm,
+                &mut prep_beta,
+                &mut prep_decay,
+                encoder,
+                active_row_count,
+            );
         }
 
-        self.out_projection.encode(state, encoder)?;
-        Ok(())
+        self.out_projection.encode(context, &delta_output, active_row_count, encoder)
     }
 }

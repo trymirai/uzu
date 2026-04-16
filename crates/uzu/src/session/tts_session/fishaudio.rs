@@ -303,8 +303,8 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
         runtime_config,
     )?;
 
-    let activation_data_type = slow_runner.single_hidden_capture.data_type();
-    let fast_data_type = fast_runner.single_override_embedding.data_type();
+    let activation_data_type = slow_runner.activation_data_type();
+    let fast_data_type = fast_runner.activation_data_type();
     if fast_data_type != activation_data_type {
         return Err(Error::UnableToLoadConfig);
     }
@@ -509,8 +509,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     fn encode_project_slow_hidden_to_fast_on(
         context: &B::Context,
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
-        slow_hidden_capture: &Array<B>,
-        output_embedding: &Array<B>,
+        slow_hidden_capture: &crate::backends::common::Allocation<B>,
+        output_embedding: &mut crate::backends::common::Allocation<B>,
         slow_model_dim: usize,
         fast_model_dim: usize,
         encoder: &mut Encoder<B>,
@@ -518,31 +518,21 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
 
         if let Some(weights) = semantic_bridge.projection_weights.as_ref() {
-            let hidden = slow_hidden_capture;
             let weights = weights;
-            let output = output_embedding;
-            if hidden.shape() != [1, slow_model_dim]
-                || output.shape() != [1, fast_model_dim]
-                || weights.shape() != [fast_model_dim, slow_model_dim]
-            {
+            if weights.shape() != [fast_model_dim, slow_model_dim] {
                 return Err(Error::GenerateFailed);
             }
 
-            let hidden_buffer = hidden.buffer();
             let weights_buffer = weights.buffer();
-            let output_buffer = output.buffer();
-            let hidden_buffer = hidden_buffer.borrow();
             let weights_buffer = weights_buffer.borrow();
-            let mut output_buffer = output_buffer.borrow_mut();
             semantic_bridge.projection.encode(
                 context,
                 MatmulArguments {
-                    a: &hidden_buffer,
-                    a_offset: hidden.offset() as u64,
+                    a: slow_hidden_capture,
                     b: &weights_buffer,
                     ab_scale: 1.0,
                     c: MatmulArgumentC::None,
-                    d: &mut output_buffer,
+                    d: output_embedding,
                     batch_dim: 1,
                     input_dim: slow_model_dim as u32,
                     output_dim: fast_model_dim as u32,
@@ -556,21 +546,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             return Err(Error::UnableToLoadConfig);
         }
 
-        let hidden = slow_hidden_capture;
-        let output = output_embedding;
-        if hidden.shape() != [1, slow_model_dim] || output.shape() != [1, fast_model_dim] {
-            return Err(Error::GenerateFailed);
-        }
-        let hidden_buffer = hidden.buffer();
-        let hidden_buffer = hidden_buffer.borrow();
-        let output_buffer = output.buffer();
-        let mut output_buffer = output_buffer.borrow_mut();
-        semantic_bridge.tensor_copy.encode(
-            (&*hidden_buffer, hidden.offset()),
-            (&mut *output_buffer, output.offset()),
-            model_dim_u32,
-            encoder,
-        );
+        semantic_bridge.tensor_copy.encode(slow_hidden_capture, output_embedding, model_dim_u32, encoder);
         Ok(())
     }
 
@@ -582,7 +558,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     /// `gpu_tokens_buffer` at the given byte offset.
     fn encode_slow_codebook_sum_from_gpu_tokens_on(
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
-        slow_sum_embedding: &Array<B>,
+        slow_sum_embedding: &crate::backends::common::Allocation<B>,
         first_code: u32,
         source_runner: &TokenDecoderRunner<B>,
         source_slot: usize,
@@ -627,11 +603,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 
         let codebook_token_indices = &semantic_bridge.codebook_token_indices;
         let codebook_embeddings = &semantic_bridge.codebook_embeddings;
-        let slow_sum = slow_sum_embedding;
         if codebook_token_indices.shape() != [num_codebooks]
             || codebook_embeddings.shape() != [total_vocab, slow_model_dim]
-            || slow_sum.shape() != [1, slow_model_dim]
-            || codebook_embeddings.data_type() != slow_sum.data_type()
         {
             return Err(Error::GenerateFailed);
         }
@@ -640,12 +613,10 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let codebook_token_indices_buffer = codebook_token_indices_buffer.borrow();
         let codebook_embeddings_buffer = codebook_embeddings.buffer();
         let codebook_embeddings_buffer = codebook_embeddings_buffer.borrow();
-        let slow_sum_buffer = slow_sum.buffer();
-        let mut slow_sum_buffer = slow_sum_buffer.borrow_mut();
         semantic_bridge.embedding_rows_sum.encode(
             (&*codebook_token_indices_buffer, codebook_token_indices.offset()),
             (&*codebook_embeddings_buffer, codebook_embeddings.offset()),
-            (&mut *slow_sum_buffer, slow_sum.offset()),
+            slow_sum_embedding,
             num_codebooks_u32,
             total_vocab_u32,
             slow_model_dim_u32,
@@ -719,12 +690,13 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let fast_model_dim = self.fast_model_dim;
 
         let mut pre_projection =
-            |runner: &TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
+            |runner: &mut TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
+                let runner_context = Rc::clone(runner.context());
                 Self::encode_project_slow_hidden_to_fast_on(
-                    runner.context().as_ref(),
+                    runner_context.as_ref(),
                     semantic_bridge,
                     slow_hidden_capture,
-                    &runner.single_override_embedding,
+                    &mut runner.single_override_embedding,
                     slow_model_dim,
                     fast_model_dim,
                     encoder,
@@ -770,7 +742,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         };
 
         let mut pre_codebook_sum =
-            |runner: &TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
+            |runner: &mut TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
                 Self::encode_slow_codebook_sum_from_gpu_tokens_on(
                     semantic_bridge,
                     &runner.single_override_embedding,

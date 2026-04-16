@@ -1,7 +1,7 @@
 use std::{
     any::Any,
     iter::repeat_n,
-    ops::{Deref, DerefMut, Range},
+    ops::{DerefMut, Range},
     path::Path,
     time::Instant,
 };
@@ -17,15 +17,15 @@ use super::{
 };
 use crate::{
     backends::common::{
-        Backend, Buffer, CommandBuffer, Context, Encoder, Executable,
+        Backend, Buffer, CommandBuffer, Context, Encoder, Executable, Pending,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
     config::ModelMetadata,
-    encodable_block::EncodingParameters,
+    encodable_block::{DecoderArguments, EncodingParameters, SamplingArguments},
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::INVALID_POSITION,
-        state::ForwardPassState,
+        state::{ForwardPassState, allocation_helpers},
     },
     session::{
         config::DecodingConfig,
@@ -70,6 +70,7 @@ pub struct LanguageModelGenerator<B: Backend> {
 
     pub context: LanguageModelGeneratorContext<B>,
     pre_encoded_task: Option<(TaskEncodingKey, Executable<B>)>,
+    async_in_flight: Vec<Option<(ForwardPassState<B>, Pending<B>)>>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager<B>,
 }
@@ -100,6 +101,10 @@ pub trait LanguageModelGeneratorTrait {
         sampling_method: SamplingMethod,
         on_complete: Box<dyn FnOnce(u64) + Send>,
     ) -> Result<(), Error>;
+    fn finish_async(
+        &mut self,
+        pass_idx: usize,
+    );
 
     fn clear_cache(&mut self);
     fn reset_state(&mut self);
@@ -443,6 +448,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.async_buffers.prepare_positions(prefill_count, tokens_to_generate);
         self.context.async_buffers.prepare_seeds(&self.context.seed, prefill_count, tokens_to_generate);
         self.context.async_buffers.reset_counter();
+        self.async_in_flight = (0..self.context.async_buffers.batch_size).map(|_| None).collect();
     }
 
     /// Submits a single async forward pass.
@@ -502,9 +508,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let mut state = ForwardPassState::new_llm(
             self.context.context.clone(),
-            &self.context.decoder_config,
             &self.context.model_shape,
-            &self.context.scratch_buffers,
             self.context.cache_layers.clone(),
             self.context.shared_buffers.clone(),
             &task.token_ids,
@@ -532,30 +536,82 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             encoder.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
-        self.context
-            .executables
-            .encode(&mut state, &EncodingParameters::new(), &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        if skip_token_ids_copy {
+            let token_ids_buffer = self.context.scratch_buffers.token_ids.buffer();
+            allocation_helpers::encode_copy_buffer_bytes_to_allocation(
+                &mut encoder,
+                state.token_ids_mut(),
+                &*token_ids_buffer.borrow(),
+                0,
+                std::mem::size_of::<u64>(),
+            );
+        }
+
+        let decoder_logits = state.take_logits().expect("Decoder readout requires logits allocation");
+        let mut logits = {
+            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            self.context
+                .executables
+                .encode_decode(
+                    DecoderArguments {
+                        context: state.context(),
+                        activation_data_type: state.model_shape().activation_data_type(),
+                        token_ids: state.token_ids(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        shared_buffers: state.shared_buffers.as_ref(),
+                        cache_layers: cache_layers.as_deref_mut(),
+                        batch_dim: state.active_row_count(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        #[cfg(feature = "tracing")]
+                        trace: Some(state.traces().clone()),
+                    },
+                    decoder_logits,
+                    &EncodingParameters::new(),
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?
+        };
 
         // Encode sampling
-        self.context.gpu_sampler.encode(&mut state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let mut sampling_output = state.take_sampling_output().expect("Sampling requires output allocation");
+        let sampling_start = state.sampling_start();
+        let seeds_offset = sampling_start * std::mem::size_of::<u64>();
+        let bitmask = state.token_bitmask();
+        let bitmask_offset = bitmask.map_or(0, |_| {
+            let row_len = state.token_bitmask_row_len().expect("Token bitmask row length not available");
+            sampling_start * row_len * std::mem::size_of::<u32>()
+        });
+        let sampling_result = self.context.gpu_sampler.encode(
+            SamplingArguments {
+                logits: &mut logits,
+                seeds: state.token_seeds().expect("Sampling requires token seeds"),
+                seeds_offset,
+                bitmask,
+                bitmask_offset,
+                output: &mut sampling_output,
+                sampling_method: state.sampling_method().unwrap(),
+                batch_size: state.sampling_length(),
+                vocab_size: state.vocab_size(),
+            },
+            &mut encoder,
+        );
+        state.put_sampling_output(sampling_output);
+        state.put_logits(logits);
+        sampling_result.map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
         // and sampling_output → results[slot] (for callback)
         let sampling_output = state.sampling_output().expect("sampling_output must exist after sampling encode");
-        let sampling_output_buf_rc = sampling_output.buffer();
-        let sampling_output_buf_borrow = sampling_output_buf_rc.borrow();
-        let token_ids_buf_rc = self.context.scratch_buffers.token_ids.buffer();
-        let mut token_ids_buf_borrow = token_ids_buf_rc.borrow_mut();
-
-        self.context.token_copy_sampled.encode(
-            sampling_output_buf_borrow.deref(),
-            token_ids_buf_borrow.deref_mut(),
-            &mut encoder,
-        );
+        let token_ids_buffer = self.context.scratch_buffers.token_ids.buffer();
+        self.context.token_copy_sampled.encode(sampling_output, &mut *token_ids_buffer.borrow_mut(), &mut encoder);
         let results_offset = slot * std::mem::size_of::<u32>();
         self.context.token_copy_results.encode(
-            sampling_output_buf_borrow.deref(),
+            sampling_output,
             (results_buffer.borrow_mut().deref_mut(), results_offset),
             &mut encoder,
         );
@@ -590,9 +646,20 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         if should_capture {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+        } else {
+            assert!(self.async_in_flight[slot].is_none(), "async slot {slot} still holds an in-flight state");
+            self.async_in_flight[slot] = Some((state, pending));
         }
 
         Ok(())
+    }
+
+    fn finish_async(
+        &mut self,
+        pass_idx: usize,
+    ) {
+        let slot = pass_idx % self.context.async_buffers.batch_size;
+        self.async_in_flight[slot] = None;
     }
 
     fn clear_cache(&mut self) {
@@ -604,6 +671,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.tokens.clear();
         self.registered_prefix_len = 0;
         self.pre_encoded_task = None;
+        self.async_in_flight.clear();
         self.gpu_capture.reset();
 
         let seed = self.decoding_config.sampling_seed.resolve();
@@ -667,14 +735,19 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
                     let copy_rows = src.prefix_segment_length();
                     if copy_rows > 0 {
-                        dst.keys.copy_slice(&src.keys, 1, 0..copy_rows, 0);
-                        dst.values.copy_slice(&src.values, 1, 0..copy_rows, 0);
+                        let slice =
+                            src.slice(&self.context.context, 0..copy_rows).expect("Failed to slice KV cache layer");
+                        dst.apply_slice(&slice, None);
                     }
                     dst.state = src.state.clone();
                 },
                 (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
-                    dst.conv_state.copy_from_array(&src.conv_state);
-                    dst.ssm_state.copy_from_array(&src.ssm_state);
+                    allocation_helpers::copy_allocation_to_allocation(&mut dst.conv_state, &src.conv_state);
+                    allocation_helpers::copy_allocation_to_allocation(&mut dst.ssm_state, &src.ssm_state);
+                },
+                (CacheLayer::DeltaNet(src), CacheLayer::DeltaNet(dst)) => {
+                    allocation_helpers::copy_allocation_to_allocation(&mut dst.conv_state, &src.conv_state);
+                    allocation_helpers::copy_allocation_to_allocation(&mut dst.ssm_state, &src.ssm_state);
                 },
                 _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
             }
@@ -700,6 +773,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             tokens: Vec::new(),
             context,
             pre_encoded_task: None,
+            async_in_flight: Vec::new(),
             registered_prefix_len: 0,
             gpu_capture,
         })
@@ -715,9 +789,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let mut state = ForwardPassState::new_llm(
             self.context.context.clone(),
-            &self.context.decoder_config,
             &self.context.model_shape,
-            &self.context.scratch_buffers,
             self.context.cache_layers.clone(),
             self.context.shared_buffers.clone(),
             task.token_ids,
@@ -801,13 +873,95 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
-        self.context
-            .executables
-            .encode(state, parameters, &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let maybe_logits = if state.is_prefilling() {
+            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            let _ = self
+                .context
+                .executables
+                .encode_prefill(
+                    DecoderArguments {
+                        context: state.context(),
+                        activation_data_type: state.model_shape().activation_data_type(),
+                        token_ids: state.token_ids(),
+                        token_positions: state.token_positions(),
+                        token_parents: state.token_parents(),
+                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        shared_buffers: state.shared_buffers.as_ref(),
+                        cache_layers: cache_layers.as_deref_mut(),
+                        batch_dim: state.active_row_count(),
+                        sampling_start: state.sampling_start(),
+                        sampling_length: state.sampling_length(),
+                        rope_max_sequence_length: state.rope_max_sequence_length(),
+                        rope_dim: state.rope_dim(),
+                        #[cfg(feature = "tracing")]
+                        trace: Some(state.traces().clone()),
+                    },
+                    parameters,
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            None
+        } else {
+            let decoder_logits = state.take_logits().expect("Decoder readout requires logits allocation");
+            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            Some(
+                self.context
+                    .executables
+                    .encode_decode(
+                        DecoderArguments {
+                            context: state.context(),
+                            activation_data_type: state.model_shape().activation_data_type(),
+                            token_ids: state.token_ids(),
+                            token_positions: state.token_positions(),
+                            token_parents: state.token_parents(),
+                            token_subtrie_ranges: state.token_subtrie_ranges(),
+                            shared_buffers: state.shared_buffers.as_ref(),
+                            cache_layers: cache_layers.as_deref_mut(),
+                            batch_dim: state.active_row_count(),
+                            sampling_start: state.sampling_start(),
+                            sampling_length: state.sampling_length(),
+                            rope_max_sequence_length: state.rope_max_sequence_length(),
+                            rope_dim: state.rope_dim(),
+                            #[cfg(feature = "tracing")]
+                            trace: Some(state.traces().clone()),
+                        },
+                        decoder_logits,
+                        parameters,
+                        &mut encoder,
+                    )
+                    .map_err(|e| Error::EncodeFailed(Box::new(e)))?,
+            )
+        };
 
         if sample {
-            self.context.gpu_sampler.encode(state, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            let mut logits = maybe_logits.expect("Sampling requires decoder logits allocation");
+            let mut sampling_output = state.take_sampling_output().expect("Sampling requires output allocation");
+            let sampling_start = state.sampling_start();
+            let seeds_offset = sampling_start * std::mem::size_of::<u64>();
+            let bitmask = state.token_bitmask();
+            let bitmask_offset = bitmask.map_or(0, |_| {
+                let row_len = state.token_bitmask_row_len().expect("Token bitmask row length not available");
+                sampling_start * row_len * std::mem::size_of::<u32>()
+            });
+            let sampling_result = self.context.gpu_sampler.encode(
+                SamplingArguments {
+                    logits: &mut logits,
+                    seeds: state.token_seeds().expect("Sampling requires token seeds"),
+                    seeds_offset,
+                    bitmask,
+                    bitmask_offset,
+                    output: &mut sampling_output,
+                    sampling_method: state.sampling_method().unwrap(),
+                    batch_size: state.sampling_length(),
+                    vocab_size: state.vocab_size(),
+                },
+                &mut encoder,
+            );
+            state.put_sampling_output(sampling_output);
+            state.put_logits(logits);
+            sampling_result.map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        } else if let Some(logits) = maybe_logits {
+            state.put_logits(logits);
         }
 
         let executable = encoder.end_encoding();
@@ -822,13 +976,12 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let sampling_output = state
             .sampling_output()
             .expect("Sampling output buffer not found - ensure sampling was encoded during forward pass");
-
-        let output_view = sampling_output.as_view::<u32>();
+        let output_view = allocation_helpers::copy_allocation_to_slice::<u32, B>(sampling_output);
         let batch_size = state.sampling_length();
 
         let mut result = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-            result.push(output_view[[i]] as u64);
+            result.push(output_view[i] as u64);
         }
 
         Ok(result)

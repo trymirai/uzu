@@ -6,10 +6,10 @@ use rand::seq::SliceRandom;
 
 // for Vec::shuffle
 use crate::{
-    DataType,
+    ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels,
+            Allocation, AllocationType, Backend, Context, Encoder, Kernels,
             kernel::{
                 MinPKernel, TemperatureKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
@@ -22,6 +22,30 @@ use crate::{
 
 // Constant seed for reproducible test results
 const TEST_SAMPLING_SEED: u64 = 42;
+
+fn allocation_from_slice<T: ArrayElement>(
+    context: &<Metal as Backend>::Context,
+    data: &[T],
+) -> Allocation<Metal> {
+    let mut allocation = context
+        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data);
+    allocation
+}
+
+fn empty_allocation<T: ArrayElement>(
+    context: &<Metal as Backend>::Context,
+    len: usize,
+) -> Allocation<Metal> {
+    context
+        .create_allocation(len * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation")
+}
+
+fn allocation_to_vec<T: ArrayElement>(allocation: &Allocation<Metal>) -> Vec<T> {
+    crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<T, Metal>(allocation).to_vec()
+}
 
 fn cpu_reference_min_p(
     row_logits: &[f32],
@@ -65,20 +89,9 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         0.1, 0.5, 2.5, 1.0, // batch 1
     ];
 
-    let mut logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&test_logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let seeds_buffer = context
-        .device
-        .new_buffer_with_data(&vec![0; 16], MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut output_buffer = context
-        .device
-        .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut logits_buffer = allocation_from_slice(context.as_ref(), &test_logits);
+    let seeds_buffer = allocation_from_slice(context.as_ref(), &[0_u64, 0_u64]);
+    let mut output_buffer = empty_allocation::<u32>(context.as_ref(), batch_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel
@@ -98,8 +111,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     // Check results
-    let result_ptr = output_buffer.contents().as_ptr() as *const u32;
-    let results = unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
+    let results = allocation_to_vec::<u32>(&output_buffer);
 
     assert_eq!(results[0], 1, "First batch should select token 1 (highest logit: 3.0)");
     assert_eq!(results[1], 2, "Second batch should select token 2 (highest logit: 2.5)");
@@ -153,21 +165,12 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let mut logits_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut logits_buf = allocation_from_slice(context.as_ref(), &logits);
 
     let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-    let seeds_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let seeds_buf = allocation_from_slice(context.as_ref(), &seeds);
 
-    let mut output_buf = context
-        .device
-        .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut output_buf = empty_allocation::<u32>(context.as_ref(), BATCH);
 
     // ---- Launch once and time ----
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -199,9 +202,8 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     );
 
     // Ensure the kernel produced *some* output (sanity).
-    let ptr = output_buf.contents().as_ptr() as *const u32;
-    let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
-    for &tok in sample_ids {
+    let sample_ids = allocation_to_vec::<u32>(&output_buf);
+    for &tok in &sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
     }
 
@@ -251,10 +253,7 @@ fn test_categorical_sampling() {
         0.0, 1.0, 0.0, 0.0, // batch 1
     ];
 
-    let mut output_buffer = context
-        .device
-        .new_buffer(batch_size * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut output_buffer = empty_allocation::<u32>(context.as_ref(), batch_size);
 
     // Run sampling multiple times to check distribution
     let num_samples = 1000;
@@ -262,16 +261,10 @@ fn test_categorical_sampling() {
 
     for sample_idx in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buffer = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&test_logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let mut logits_buffer = allocation_from_slice(context.as_ref(), &test_logits);
 
         let seeds_vec = vec![TEST_SAMPLING_SEED + sample_idx as u64; batch_size];
-        let seeds_buffer = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&seeds_vec), MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let seeds_buffer = allocation_from_slice(context.as_ref(), &seeds_vec);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -297,8 +290,7 @@ fn test_categorical_sampling() {
             .expect("Categorical sampling should succeed");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let result_ptr = output_buffer.contents().as_ptr() as *const u32;
-        let results = unsafe { std::slice::from_raw_parts(result_ptr, batch_size) };
+        let results = allocation_to_vec::<u32>(&output_buffer);
 
         for (batch_idx, &token) in results.iter().enumerate() {
             assert!(
@@ -389,26 +381,17 @@ fn test_categorical_sampling_statistical() {
         }
     }
 
-    let mut output_buffer = context
-        .device
-        .new_buffer(BATCH * std::mem::size_of::<u32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut output_buffer = empty_allocation::<u32>(context.as_ref(), BATCH);
 
     let mut counts = vec![0; BATCH * VOCAB];
 
     // Sample many times
     for sample_idx in 0..NUM_SAMPLES {
         // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buffer = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let mut logits_buffer = allocation_from_slice(context.as_ref(), &logits);
 
         let seeds_vec = vec![TEST_SAMPLING_SEED + sample_idx as u64; BATCH];
-        let seeds_buffer = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&seeds_vec), MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let seeds_buffer = allocation_from_slice(context.as_ref(), &seeds_vec);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -434,8 +417,7 @@ fn test_categorical_sampling_statistical() {
             .expect("encode");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let result_ptr = output_buffer.contents().as_ptr() as *const u32;
-        let results = unsafe { std::slice::from_raw_parts(result_ptr, BATCH) };
+        let results = allocation_to_vec::<u32>(&output_buffer);
 
         for (batch_idx, &token) in results.iter().enumerate() {
             counts[batch_idx * VOCAB + token as usize] += 1;
@@ -495,21 +477,12 @@ fn perf_categorical_128k_vocab() {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let mut logits_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut logits_buf = allocation_from_slice(context.as_ref(), &logits);
 
     let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-    let seeds_buf = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let seeds_buf = allocation_from_slice(context.as_ref(), &seeds);
 
-    let mut output_buf = context
-        .device
-        .new_buffer(BATCH * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut output_buf = empty_allocation::<u32>(context.as_ref(), BATCH);
 
     // Launch and time
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -546,9 +519,8 @@ fn perf_categorical_128k_vocab() {
     );
 
     // Sanity check
-    let ptr = output_buf.contents().as_ptr() as *const u32;
-    let sample_ids = unsafe { std::slice::from_raw_parts(ptr, BATCH) };
-    for &tok in sample_ids {
+    let sample_ids = allocation_to_vec::<u32>(&output_buf);
+    for &tok in &sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
     }
 
@@ -708,26 +680,17 @@ fn test_minp_sampling_exact_match(
         high_prob_token_sets.push(high_prob_tokens);
     }
 
-    let mut output_buf = context
-        .device
-        .new_buffer(batch_size * std::mem::size_of::<u32>(), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let mut output_buf = empty_allocation::<u32>(context.as_ref(), batch_size);
 
     let num_samples = 1000;
     let mut counter = vec![0i32; batch_size * vocab_size];
 
     for draw in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buf = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&logits), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let mut logits_buf = allocation_from_slice(context.as_ref(), &logits);
 
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
-        let seeds_buf = context
-            .device
-            .new_buffer_with_data(bytemuck::cast_slice(&seeds), metal::MTLResourceOptions::STORAGE_MODE_SHARED)
-            .expect("Failed to create buffer");
+        let seeds_buf = allocation_from_slice(context.as_ref(), &seeds);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel
@@ -752,8 +715,7 @@ fn test_minp_sampling_exact_match(
             .expect("encode");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let ptr = output_buf.contents().as_ptr() as *const u32;
-        let sampled_ids = unsafe { std::slice::from_raw_parts(ptr, batch_size) };
+        let sampled_ids = allocation_to_vec::<u32>(&output_buf);
 
         for (i, &sampled_id) in sampled_ids.iter().enumerate() {
             assert!((sampled_id as usize) < vocab_size, "Sampled token out of range");

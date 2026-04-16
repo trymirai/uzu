@@ -1,14 +1,11 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
@@ -19,7 +16,6 @@ use crate::{
         },
     },
     config::EmbeddingConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLeaf, ParameterLoaderError, ParameterTree},
 };
 
@@ -485,20 +481,15 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_lookup(
         &self,
-        state: &mut ForwardPassState<B>,
+        token_ids: &Allocation<B>,
+        batch_dim: usize,
+        activation_data_type: DataType,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), EmbeddingError<B>> {
-        let batch_dim = state.active_row_count() as u32;
-
-        let token_ids_array = state.array(ArrayId::TokenIds);
-        let token_ids_buffer_rc = token_ids_array.buffer();
-        let token_ids_buffer_borrow = token_ids_buffer_rc.borrow();
-        let token_ids = token_ids_buffer_borrow.deref();
-
-        let output_array = state.array(ArrayId::Main);
-        let output_buffer_rc = output_array.buffer();
-        let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
-        let output = output_buffer_borrow.deref_mut();
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        let mut output = encoder
+            .allocate_scratch(crate::array::size_for_shape(&[batch_dim, self.model_dim as usize], activation_data_type))
+            .map_err(EmbeddingError::BackendError)?;
+        let batch_dim = batch_dim as u32;
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -519,7 +510,7 @@ impl<B: Backend> Embedding<B> {
             } => lookup.encode(
                 token_ids,
                 weights,
-                output,
+                &mut output,
                 batch_dim,
                 self.vocab_size,
                 self.model_dim,
@@ -551,7 +542,7 @@ impl<B: Backend> Embedding<B> {
                     weights,
                     scales,
                     biases,
-                    output,
+                    &mut output,
                     batch_dim,
                     self.vocab_size,
                     self.model_dim,
@@ -561,31 +552,20 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
-        Ok(())
+        Ok(output)
     }
 
     pub fn encode_readout(
         &self,
-        state: &mut ForwardPassState<B>,
+        context: &B::Context,
+        batch_dim: usize,
+        input_allocation: &Allocation<B>,
+        output_allocation: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), EmbeddingError<B>> {
-        let batch_dim = state.sampling_length();
-
         if batch_dim == 0 {
             return Ok(());
         }
-
-        let input_array = state.array(ArrayId::Main);
-        let input_buffer_rc = input_array.buffer();
-        let input_buffer_borrow = input_buffer_rc.borrow();
-        let input = input_buffer_borrow.deref();
-
-        let output_array = state.array(ArrayId::Logits);
-        let output_buffer_rc = output_array.buffer();
-        let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
-        let output = output_buffer_borrow.deref_mut();
-
-        let input_offset = state.sampling_start() * self.model_dim as usize * input_array.data_type().size_in_bytes();
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -607,14 +587,13 @@ impl<B: Backend> Embedding<B> {
                 let input_dim = self.model_dim as usize;
                 let output_dim = self.vocab_size as usize;
                 readout.borrow_mut().encode(
-                    state.context(),
+                    context,
                     MatmulArguments {
-                        a: input,
-                        a_offset: input_offset as u64,
+                        a: input_allocation,
                         b: weights,
                         ab_scale: 1.0,
                         c: MatmulArgumentC::None,
-                        d: output,
+                        d: output_allocation,
                         batch_dim: batch_dim as u32,
                         input_dim: input_dim as u32,
                         output_dim: output_dim as u32,
@@ -642,18 +621,19 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
             } => {
-                readout.encode(
-                    encoder,
-                    QuantizedMatmulArguments {
-                        a_buffer: input,
-                        a_offset: input_offset,
-                        b_buffer: weights,
-                        scales_buffer: scales,
-                        zero_points_or_biases_buffer: biases,
-                        output_buffer: output,
-                        batch_dim,
-                    },
-                )?;
+                readout
+                    .encode(
+                        encoder,
+                        QuantizedMatmulArguments {
+                            a: input_allocation,
+                            b_buffer: weights,
+                            scales_buffer: scales,
+                            zero_points_or_biases_buffer: biases,
+                            output: output_allocation,
+                            batch_dim,
+                        },
+                    )
+                    .expect("Failed to encode embedding readout quantized matmul");
             },
         };
 

@@ -8,18 +8,19 @@ use thiserror::Error;
 use super::linear::{Linear, LinearBlockError};
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
+    backends::common::{Allocation, Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
     config::MLPConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 pub trait Mlp<B: Backend> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        context: &B::Context,
+        input: &Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error>;
+    ) -> Result<Allocation<B>, B::Error>;
 }
 
 #[derive(Debug, Error)]
@@ -52,8 +53,6 @@ impl<B: Backend> dyn Mlp<B> {
                 [2 * hidden_dimension],
                 context,
                 &parameter_tree.subtree("up_projection")?,
-                ArrayId::Main,
-                ArrayId::MlpFusedUp,
             )?;
 
             let gate_activation =
@@ -67,11 +66,15 @@ impl<B: Backend> dyn Mlp<B> {
                 [model_dimension],
                 context,
                 &parameter_tree.subtree("down_projection")?,
-                ArrayId::MlpHidden,
-                ArrayId::Main,
             )?;
 
-            return Ok(Box::new(DenseMlp::new(up_projection, gate_activation, down_projection)));
+            return Ok(Box::new(DenseMlp::new(
+                up_projection,
+                gate_activation,
+                down_projection,
+                hidden_dimension,
+                data_type,
+            )));
         }
 
         if let MLPConfig::MixtureOfExperts(mixture_of_experts_config) = config {

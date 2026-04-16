@@ -28,8 +28,7 @@ use crate::{
     encodable_block::{Decoder, EncodingParameters, LayerExecutables, RMSNorm},
     forward_pass::{
         model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState, SharedBuffers},
+        state::{ForwardPassState, SharedBuffers},
     },
     parameters::ParameterLoader,
 };

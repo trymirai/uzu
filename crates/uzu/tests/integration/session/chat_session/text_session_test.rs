@@ -4,7 +4,7 @@ use test_tag::tag;
 use uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig},
-    parameter::SamplingSeed,
+    parameter::{AsyncBatchSize, SamplingSeed},
     types::{Input, Message, Output},
 };
 
@@ -22,6 +22,12 @@ fn build_default_text() -> String {
 #[test]
 fn test_text_session_base() {
     run(build_default_text(), build_decoding_config(), 128);
+}
+
+#[tag(heavy)]
+#[test]
+fn test_text_session_base_async_batch_1() {
+    run(build_default_text(), build_decoding_config().with_async_batch_size(AsyncBatchSize::Custom(1)), 128);
 }
 
 #[tag(heavy)]

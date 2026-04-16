@@ -8,7 +8,7 @@ use uzu::backends::common::Buffer;
 use crate::{
     ArrayContextExt, DataType,
     backends::common::{
-        Backend, Context, Encoder, Kernels,
+        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dScanKernel,
@@ -45,6 +45,21 @@ fn zero_buffer<B: Backend>(buf: &B::Buffer) {
     unsafe {
         std::ptr::write_bytes(buf.cpu_ptr().as_ptr(), 0, buf.length());
     }
+}
+
+fn allocation_from_f32_slice<B: Backend>(
+    ctx: &B::Context,
+    data: &[f32],
+) -> Allocation<B> {
+    let mut allocation = ctx
+        .create_allocation(data.len() * size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data);
+    allocation
+}
+
+fn read_allocation<B: Backend>(allocation: &Allocation<B>) -> Vec<f32> {
+    crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f32, B>(allocation).to_vec()
 }
 
 fn ssd_prefill_cpu_reference(
@@ -187,56 +202,29 @@ fn run_prefill_kernel_mode<B: Backend>(
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
-    let x_array = ctx.create_array_from(&[fixture.x_data.len()], &fixture.x_data, "");
-    let x_array_buf = x_array.buffer();
-    let x_array_buf_borrow = x_array_buf.borrow();
-    let x_buf = x_array_buf_borrow.deref();
-
-    let dt_array = ctx.create_array_from(&[fixture.dt_data.len()], &fixture.dt_data, "");
-    let dt_array_buf = dt_array.buffer();
-    let dt_array_buf_borrow = dt_array_buf.borrow();
-    let dt_buf = dt_array_buf_borrow.deref();
-
-    let b_array = ctx.create_array_from(&[fixture.b_data.len()], &fixture.b_data, "");
-    let b_array_buf = b_array.buffer();
-    let b_array_buf_borrow = b_array_buf.borrow();
-    let b_buf = b_array_buf_borrow.deref();
-
-    let c_array = ctx.create_array_from(&[fixture.c_data.len()], &fixture.c_data, "");
-    let c_array_buf = c_array.buffer();
-    let c_array_buf_borrow = c_array_buf.borrow();
-    let c_buf = c_array_buf_borrow.deref();
+    let x_buf = allocation_from_f32_slice(ctx, &fixture.x_data);
+    let dt_buf = allocation_from_f32_slice(ctx, &fixture.dt_data);
+    let b_buf = allocation_from_f32_slice(ctx, &fixture.b_data);
+    let c_buf = allocation_from_f32_slice(ctx, &fixture.c_data);
 
     let d_array = ctx.create_array_from(&[fixture.d_data.len()], &fixture.d_data, "");
     let d_array_buf = d_array.buffer();
     let d_array_buf_borrow = d_array_buf.borrow();
     let d_buf = d_array_buf_borrow.deref();
 
-    let z_array = ctx.create_array_from(&[fixture.z_data.len()], &fixture.z_data, "");
-    let z_array_buf = z_array.buffer();
-    let z_array_buf_borrow = z_array_buf.borrow();
-    let z_buf = z_array_buf_borrow.deref();
+    let z_buf = allocation_from_f32_slice(ctx, &fixture.z_data);
+    let mut state_buf = allocation_from_f32_slice(ctx, &fixture.state_init);
+    let mut y_buf = allocation_from_f32_slice(ctx, &vec![0f32; fixture.total_x]);
 
-    let state_array = ctx.create_array_from(&[fixture.state_init.len()], &fixture.state_init, "");
-    let state_array_buf = state_array.buffer();
-    let mut state_array_buf_borrow = state_array_buf.borrow_mut();
-    let state_buf = state_array_buf_borrow.deref_mut();
-
-    let y = vec![0f32; fixture.total_x];
-    let y_array = ctx.create_array_from(&[y.len()], &y, "");
-    let y_array_buf = y_array.buffer();
-    let mut y_array_buf_borrow = y_array_buf.borrow_mut();
-    let y_buf = y_array_buf_borrow.deref_mut();
-
-    let args = SSDPrefillArguments::<B> {
-        x: x_buf,
-        dt: dt_buf,
-        b: b_buf,
-        c: c_buf,
+    let args = SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        b: &b_buf,
+        c: &c_buf,
         d: d_buf,
-        z: z_buf,
-        state: state_buf,
-        y: y_buf,
+        z: &z_buf,
+        state: &mut state_buf,
+        y: &mut y_buf,
         suffix_len: fixture.suffix_len,
         group_size: fixture.group_size as u32,
         state_size: fixture.state_dim as u32,
@@ -252,8 +240,8 @@ fn run_prefill_kernel_mode<B: Backend>(
     kernel.encode(&mut encoder, args, mode);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = read_buffer::<B>(y_buf, fixture.total_x);
-    let state_vec = read_buffer::<B>(state_buf, fixture.total_state);
+    let y_vec = read_allocation::<B>(&y_buf);
+    let state_vec = read_allocation::<B>(&state_buf);
     (y_vec, state_vec, None)
 }
 

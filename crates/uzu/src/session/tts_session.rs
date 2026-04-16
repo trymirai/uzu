@@ -45,7 +45,7 @@ use crate::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState, SharedBuffers},
+        state::{ForwardPassState, SharedBuffers},
     },
     parameters::ParameterLoader,
     session::{

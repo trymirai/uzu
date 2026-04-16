@@ -60,7 +60,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self,
         src: &B::Buffer,
         src_range: Range<usize>,
-        dst: &mut B::Buffer,
+        dst: &B::Buffer,
         dst_range: Range<usize>,
     ) {
         let size = src_range.end - src_range.start;
@@ -80,7 +80,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn encode_fill(
         &mut self,
-        dst: &mut B::Buffer,
+        dst: &B::Buffer,
         range: Range<usize>,
         value: u8,
     ) {
