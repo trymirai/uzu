@@ -9,7 +9,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     kernel: <B::Kernels as Kernels>::MlpGateActMulKernel,
     activation: ActivationConfig,
     hidden_dim: usize,
-    hadamard_factors: Option<B::Buffer>,
+    hadamard_factors: Option<Allocation<B>>,
 }
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
@@ -18,7 +18,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         data_type: DataType,
         activation: ActivationConfig,
         hidden_dim: usize,
-        hadamard_factors: Option<B::Buffer>,
+        hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, B::Error> {
         let kernel = <B::Kernels as Kernels>::MlpGateActMulKernel::new(context, data_type, hadamard_factors.is_some())?;
         Ok(Self {
