@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
@@ -94,10 +94,21 @@ impl<B: Backend> MoeBlock<B> {
                 ..
             } => {
                 let weights_arr = router_tree.leaf_array("weights").map_err(MoeBlockError::ParameterLoaderError)?;
-                let biases_arr = router_tree.leaf_array("biases").map_err(MoeBlockError::ParameterLoaderError)?;
+                let biases_buf = if moe_config.router_has_biases {
+                    let biases_arr =
+                        router_tree.leaf_array("biases").map_err(MoeBlockError::ParameterLoaderError)?;
+                    biases_arr.buffer()
+                } else {
+                    // No router biases: allocate a zero-filled buffer of the expected shape
+                    // so the fused router+topk kernel can still read it (Metal shared buffers
+                    // are zero-initialized on allocation).
+                    let size = moe_config.num_routed_experts * router_data_type.size_in_bytes();
+                    let buf = context.create_buffer(size).map_err(MoeBlockError::BackendError)?;
+                    Rc::new(RefCell::new(buf))
+                };
                 RouterBlock {
                     weights_buf: weights_arr.buffer(),
-                    biases_buf: biases_arr.buffer(),
+                    biases_buf,
                 }
             },
             LinearConfig::QLoRA {
@@ -143,23 +154,41 @@ impl<B: Backend> MoeBlock<B> {
             .leaf_array("weights")
             .map_err(MoeBlockError::ParameterLoaderError)?;
 
-        let up_biases_arr = experts_tree
-            .subtree("up_projection")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+        let bias_dtype_size = data_type.size_in_bytes();
 
-        let down_biases_arr = experts_tree
-            .subtree("down_projection")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+        let up_biases_buf = if moe_config.expert_config.has_up_biases {
+            let arr = experts_tree
+                .subtree("up_projection")
+                .map_err(MoeBlockError::ParameterLoaderError)?
+                .leaf_array("biases")
+                .map_err(MoeBlockError::ParameterLoaderError)?;
+            arr.buffer()
+        } else {
+            // up_projection biases shape: [num_routed_experts, 2 * hidden_dim]
+            let size = moe_config.num_routed_experts * 2 * hidden_dim * bias_dtype_size;
+            let buf = context.create_buffer(size).map_err(MoeBlockError::BackendError)?;
+            Rc::new(RefCell::new(buf))
+        };
+
+        let down_biases_buf = if moe_config.expert_config.has_down_biases {
+            let arr = experts_tree
+                .subtree("down_projection")
+                .map_err(MoeBlockError::ParameterLoaderError)?
+                .leaf_array("biases")
+                .map_err(MoeBlockError::ParameterLoaderError)?;
+            arr.buffer()
+        } else {
+            // down_projection biases shape: [num_routed_experts, model_dim]
+            let size = moe_config.num_routed_experts * model_dim * bias_dtype_size;
+            let buf = context.create_buffer(size).map_err(MoeBlockError::BackendError)?;
+            Rc::new(RefCell::new(buf))
+        };
 
         let shared_weights = SharedMoeWeights {
             w13_buf: w13_arr.buffer(),
             w2_buf: w2_arr.buffer(),
-            up_biases_buf: up_biases_arr.buffer(),
-            down_biases_buf: down_biases_arr.buffer(),
+            up_biases_buf,
+            down_biases_buf,
         };
 
         Ok(Self {
@@ -345,10 +374,12 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let gating_code = Self::gating_code_from_activation(&self.moe_config.expert_config.activation.act_type());
 
         // Compute clipping values and alpha for expert kernels
-        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0].unwrap_or(f32::NEG_INFINITY);
-        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1].unwrap_or(f32::INFINITY);
-        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
-        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
+        let gate_clip = self.moe_config.expert_config.gate_clipping;
+        let up_clip = self.moe_config.expert_config.up_clipping;
+        let gate_clip_min = gate_clip.and_then(|c| c[0]).unwrap_or(f32::NEG_INFINITY);
+        let gate_clip_max = gate_clip.and_then(|c| c[1]).unwrap_or(f32::INFINITY);
+        let up_clip_min = up_clip.and_then(|c| c[0]).unwrap_or(f32::NEG_INFINITY);
+        let up_clip_max = up_clip.and_then(|c| c[1]).unwrap_or(f32::INFINITY);
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
 
         if suffix_length == 1 {

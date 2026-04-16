@@ -95,9 +95,12 @@ fn test_moe_mlp_config() {
             activation: ActivationConfig::silu_default(),
             has_up_biases: true,
             has_down_biases: true,
-            gate_clipping: [None, Some(7.0)],
-            up_clipping: [-6.0, 8.0],
+            gate_clipping: Some([None, Some(7.0)]),
+            up_clipping: Some([Some(-6.0), Some(8.0)]),
         },
+        num_shared_experts: None,
+        expert_hidden_dim: None,
+        gate_config: None,
     });
 
     let deserialized_config: MLPConfig = from_str(config_str).unwrap();
@@ -158,9 +161,12 @@ fn test_moe_mlp_config_with_additional_fields() {
             activation: ActivationConfig::silu_default(),
             has_up_biases: true,
             has_down_biases: true,
-            gate_clipping: [None, Some(7.0)],
-            up_clipping: [-6.0, 8.0],
+            gate_clipping: Some([None, Some(7.0)]),
+            up_clipping: Some([Some(-6.0), Some(8.0)]),
         },
+        num_shared_experts: Some(0),
+        expert_hidden_dim: Some(2880),
+        gate_config: None,
     });
 
     let deserialized_config: MLPConfig = from_str(config_str).unwrap();

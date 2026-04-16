@@ -39,6 +39,12 @@ pub struct MixtureOfExpertsConfig {
     pub router_config: LinearConfig,
     pub router_has_biases: bool,
     pub expert_config: MoeExpertConfig,
+    #[serde(default)]
+    pub num_shared_experts: Option<usize>,
+    #[serde(default)]
+    pub expert_hidden_dim: Option<usize>,
+    #[serde(default)]
+    pub gate_config: Option<LinearConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -54,8 +60,10 @@ pub struct MoeExpertConfig {
     pub activation: ActivationConfig,
     pub has_up_biases: bool,
     pub has_down_biases: bool,
-    pub gate_clipping: [Option<f32>; 2],
-    pub up_clipping: [f32; 2],
+    #[serde(default)]
+    pub gate_clipping: Option<[Option<f32>; 2]>,
+    #[serde(default)]
+    pub up_clipping: Option<[Option<f32>; 2]>,
 }
 
 #[cfg(test)]
