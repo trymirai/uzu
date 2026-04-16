@@ -20,7 +20,7 @@ fn test_data_path() -> PathBuf {
 }
 
 fn configs_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("configs")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("hanashi").join("configs")
 }
 
 pub struct TestData {

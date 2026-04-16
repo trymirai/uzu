@@ -4,6 +4,7 @@ members = [
     "crates/bindings",
     "crates/json-transform",
     "crates/token-stream-parser",
+    "crates/hanashi",
     "crates/download-manager",
     "crates/benchmarks",
     "crates/uzu",
@@ -23,6 +24,8 @@ repository = "https://github.com/trymirai/uzu"
 dsl = { path = "crates/dsl" }
 bindings = { path = "crates/bindings" }
 json-transform = { path = "crates/json-transform" }
+token-stream-parser = { path = "crates/token-stream-parser" }
+hanashi = { path = "crates/hanashi" }
 download-manager = { path = "crates/download-manager" }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
@@ -114,6 +117,16 @@ crc32c = "0.6.8"
 base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
+uniffi = "0.31.0"
+napi = { version = "3.8.3", features = ["napi10", "object_indexmap"] }
+napi-derive = "3.5.2"
+napi-build = "2.3.1"
+pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py38"] }
+wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
+serde-wasm-bindgen = "0.6.5"
+wasm-bindgen-futures = "0.4.64"
+tsify = { version = "0.5.6", features = ["js"] }
+openai-harmony = "0.0.8"
 
 [profile.dev.build-override]
 opt-level = 3

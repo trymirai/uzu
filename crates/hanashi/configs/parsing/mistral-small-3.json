@@ -1,0 +1,116 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "conversation",
+                "open_token": "<s>",
+                "close_tokens": [],
+                "groups": [
+                    {
+                        "type": "open",
+                        "name": "user_message",
+                        "open_token": "[INST]"
+                    },
+                    {
+                        "type": "bounded",
+                        "name": "assistant_message",
+                        "open_token": "[/INST]",
+                        "close_tokens": [
+                            "</s>"
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "conversation": [
+            {
+                "type": "get",
+                "key": "$value"
+            },
+            {
+                "type": "each",
+                "apply": [
+                    {
+                        "type": "call",
+                        "name": "normalize_message"
+                    }
+                ]
+            }
+        ],
+        "normalize_message": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "type"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "user_message"
+                        },
+                        "then": [
+                            {
+                                "type": "object",
+                                "fields": {
+                                    "role": [
+                                        {
+                                            "type": "literal",
+                                            "value": "user"
+                                        }
+                                    ],
+                                    "content": [
+                                        {
+                                            "type": "get",
+                                            "key": "value"
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "assistant_message"
+                        },
+                        "then": [
+                            {
+                                "type": "object",
+                                "fields": {
+                                    "role": [
+                                        {
+                                            "type": "literal",
+                                            "value": "assistant"
+                                        }
+                                    ],
+                                    "content": [
+                                        {
+                                            "type": "get",
+                                            "key": "value"
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "root": [
+            {
+                "type": "get",
+                "key": "$value"
+            },
+            {
+                "type": "first"
+            }
+        ]
+    }
+}

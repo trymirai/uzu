@@ -1,0 +1,17 @@
+{
+    "initial": [
+        "system",
+        "user"
+    ],
+    "transitions": {
+        "system": [
+            "user"
+        ],
+        "user": [
+            "assistant"
+        ],
+        "assistant": [
+            "user"
+        ]
+    }
+}

@@ -1,0 +1,21 @@
+{
+    "initial": [
+        "developer"
+    ],
+    "transitions": {
+        "developer": [
+            "user"
+        ],
+        "user": [
+            "assistant"
+        ],
+        "assistant": [
+            "tool",
+            "user"
+        ],
+        "tool": [
+            "tool",
+            "assistant"
+        ]
+    }
+}

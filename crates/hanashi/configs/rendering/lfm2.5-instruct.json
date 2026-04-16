@@ -1,0 +1,73 @@
+{
+    "jinja": {
+        "template": "{{- bos_token -}}\n{%- set keep_past_thinking = keep_past_thinking | default(false) -%}\n{%- set ns = namespace(system_prompt=\"\") -%}\n{%- if messages[0][\"role\"] == \"system\" -%}\n    {%- set ns.system_prompt = messages[0][\"content\"] -%}\n    {%- set messages = messages[1:] -%}\n{%- endif -%}\n{%- if tools -%}\n    {%- set ns.system_prompt = ns.system_prompt + (\"\\n\" if ns.system_prompt else \"\") + \"List of tools: [\" -%}\n    {%- for tool in tools -%}\n        {%- if tool is not string -%}\n            {%- set tool = tool | tojson -%}\n        {%- endif -%}\n        {%- set ns.system_prompt = ns.system_prompt + tool -%}\n        {%- if not loop.last -%}\n            {%- set ns.system_prompt = ns.system_prompt + \", \" -%}\n        {%- endif -%}\n    {%- endfor -%}\n    {%- set ns.system_prompt = ns.system_prompt + \"]\" -%}\n{%- endif -%}\n{%- if ns.system_prompt -%}\n    {{- \"<|im_start|>system\\n\" + ns.system_prompt + \"<|im_end|>\\n\" -}}\n{%- endif -%}\n{%- set ns.last_assistant_index = -1 -%}\n{%- for message in messages -%}\n    {%- if message[\"role\"] == \"assistant\" -%}\n        {%- set ns.last_assistant_index = loop.index0 -%}\n    {%- endif -%}\n{%- endfor -%}\n{%- for message in messages -%}\n    {{- \"<|im_start|>\" + message[\"role\"] + \"\\n\" -}}\n    {%- set content = message[\"content\"] -%}\n    {%- if content is not string -%}\n        {%- set content = content | tojson -%}\n    {%- endif -%}\n    {%- if message[\"role\"] == \"assistant\" and not keep_past_thinking and loop.index0 != ns.last_assistant_index -%}\n        {%- if \"</think>\" in content -%}\n            {%- set content = content.split(\"</think>\")[-1] | trim -%}\n        {%- endif -%}\n    {%- endif -%}\n    {{- content + \"<|im_end|>\\n\" -}}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n    {{- \"<|im_start|>assistant\\n\" -}}\n{%- endif -%}",
+        "required_functions": [],
+        "preamble_control_key": "add_generation_prompt",
+        "bos_token_key": "bos_token"
+    },
+    "canonization": {
+        "role_key": "role",
+        "type_key": "type",
+        "text_key": "text"
+    },
+    "rendering": {
+        "system": {
+            "role": "system",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "developer": {
+            "role": "developer",
+            "context": {
+                "tools": {
+                    "block": "tools"
+                }
+            }
+        },
+        "user": {
+            "role": "user",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "assistant": {
+            "role": "assistant",
+            "message": {
+                "content": {
+                    "blocks": [
+                        "text"
+                    ]
+                },
+                "tool_calls": {
+                    "blocks": [
+                        "tool_call",
+                        "tool_call_candidate"
+                    ]
+                }
+            }
+        },
+        "tool": {
+            "role": "tool",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "tool_call_result"
+                    ],
+                    "limit": 1
+                }
+            }
+        }
+    }
+}

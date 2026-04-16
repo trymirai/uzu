@@ -1,0 +1,60 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<start_of_turn>",
+                "close_tokens": [
+                    "<end_of_turn>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role",
+                        "capturing_limit": 1
+                    },
+                    {
+                        "type": "greedy",
+                        "name": "content",
+                        "groups": [
+                            {
+                                "type": "bounded",
+                                "name": "tool_call",
+                                "open_token": "<start_function_call>",
+                                "close_tokens": [
+                                    "<end_function_call>"
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "tool_call": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "regex_replace",
+                        "pattern": "call:(\\w+)\\{([\\s\\S]*)\\}",
+                        "template": "{\"name\": \"$1\", \"arguments\": {$2}}"
+                    },
+                    {
+                        "type": "regex_replace",
+                        "pattern": "<escape>",
+                        "template": "\""
+                    },
+                    {
+                        "type": "parse_json",
+                        "repair": true
+                    }
+                ]
+            }
+        ]
+    }
+}
