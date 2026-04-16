@@ -16,7 +16,7 @@ use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 use tracing_tree::HierarchicalLayer;
 
 fn test_data_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..").join("data")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("workspace").join("data")
 }
 
 fn configs_path() -> PathBuf {
