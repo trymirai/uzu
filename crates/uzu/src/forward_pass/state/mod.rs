@@ -1,4 +1,3 @@
-pub(crate) mod allocation_helpers;
 mod rope_type;
 
 mod rope_buffers;

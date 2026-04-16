@@ -3,7 +3,7 @@ use half::{bf16, f16};
 use super::RopeBuffers;
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Buffer},
+    backends::common::{Allocation, Backend, Buffer, allocation_helpers},
     config::DecoderConfig,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
@@ -28,7 +28,7 @@ impl<B: Backend> SharedBuffers<B> {
         let attention_sinks = decoder_config.layer_config.attention_config().is_some_and(|c| c.has_sinks).then(|| {
             let num_heads = decoder_config.num_heads;
             (0..decoder_config.num_layers)
-                .map(|_| super::allocation_helpers::create_allocation(context, &[num_heads], DataType::F32))
+                .map(|_| allocation_helpers::create_allocation(context, &[num_heads], DataType::F32))
                 .collect()
         });
 

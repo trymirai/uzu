@@ -23,10 +23,7 @@ use uzu::{
 use crate::encodable_block::mlp::moe::tests::{
     common::{
         assert::assert_eq_float,
-        helpers::{
-            alloc_allocation, alloc_allocation_with_data, alloc_buffer_with_data, allocation_prefix_to_vec,
-            create_context,
-        },
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
     },
     cpu_tile_counts, cpu_tile_scan,
 };
@@ -384,10 +381,10 @@ fn test_two_pass_decode_correctness() {
         let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
         let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
         let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &row_expert_map);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
         let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, sum_k * d_ff);
         let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, sum_k * d_model);
@@ -532,10 +529,10 @@ fn test_two_pass_decode_multi_token() {
         let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
         let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
         let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.down_biases);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
         let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, sum_k * d_ff);
         let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, sum_k * d_model);
 
@@ -634,10 +631,10 @@ fn test_two_pass_prefill_correctness() {
         let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
         let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
         let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.down_biases);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
         let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, sum_k * d_ff);
         let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, sum_k * d_model);
 
@@ -771,10 +768,10 @@ fn test_fused_single_token_decode() {
         let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
         let topk_ids_buf = alloc_allocation_with_data::<B, i32>(&ctx, &topk_ids);
         let topk_probs_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &topk_probs);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13_all);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2_all);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13_all);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_all);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
         let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, k * d_ff);
         let mut y_buf = alloc_allocation::<B, bf16>(&ctx, d_model);
 
@@ -898,10 +895,10 @@ fn test_fused_single_token_k4() {
         let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
         let topk_ids_buf = alloc_allocation_with_data::<B, i32>(&ctx, &topk_ids);
         let topk_probs_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &topk_probs);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13_all);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2_all);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13_all);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_all);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
         let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, k * d_ff);
         let mut y_buf = alloc_allocation::<B, bf16>(&ctx, d_model);
 

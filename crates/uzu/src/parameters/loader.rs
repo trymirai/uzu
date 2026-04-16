@@ -10,7 +10,7 @@ use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, Buffer, Context},
+    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
 };
 
 pub struct ParameterMetadata {
@@ -179,6 +179,22 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         )?;
         Ok(buffer)
     }
+
+    pub fn read_allocation(&self) -> Result<Allocation<C::Backend>, ParameterLoaderError<C::Backend>> {
+        let allocation = self
+            .loader
+            .context
+            .create_allocation(self.metadata.size, AllocationType::Global)
+            .map_err(ParameterLoaderError::BackendError)?;
+        let (buffer, range) = allocation.as_buffer_range();
+        self.loader.file.read_exact_at(
+            unsafe {
+                std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
+            },
+            self.metadata.offset as u64,
+        )?;
+        Ok(allocation)
+    }
 }
 
 pub struct ParameterTree<'loader, C: Context> {
@@ -233,6 +249,13 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
         name: &str,
     ) -> Result<ParameterLeaf<'loader, 'loader, 'leaf, C>, ParameterLoaderError<C::Backend>> {
         self.loader.get_leaf(&self.join_prefix(name))
+    }
+
+    pub fn leaf_allocation(
+        &self,
+        name: &str,
+    ) -> Result<Allocation<C::Backend>, ParameterLoaderError<C::Backend>> {
+        self.leaf(name)?.read_allocation()
     }
 
     pub fn read_extract_at(

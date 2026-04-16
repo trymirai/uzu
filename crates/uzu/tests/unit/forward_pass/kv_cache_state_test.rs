@@ -3,13 +3,10 @@
 use crate::{
     DataType,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+        common::{Allocation, Backend, Context, Encoder, allocation_helpers, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
-    forward_pass::{
-        kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
-        state::allocation_helpers,
-    },
+    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 
 #[derive(Debug)]

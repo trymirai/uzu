@@ -46,18 +46,23 @@ impl MatmulKernel for MatmulCpuKernel {
         let ldd = n;
         let data_type = self.data_type;
         let (a, a_range) = arguments.a.as_buffer_range();
+        let (b, b_range) = arguments.b.as_buffer_range();
         let (d, d_range) = arguments.d.as_buffer_range();
         let a_offset = a_range.start;
+        let b_offset = b_range.start;
         let d_offset = d_range.start;
 
         let a_ptr = SendPtr(unsafe { &*a.get() }.as_ptr().wrapping_byte_add(a_offset));
-        let b_ptr = SendPtr(unsafe { &*arguments.b.get() }.as_ptr());
+        let b_ptr = SendPtr(unsafe { &*b.get() }.as_ptr().wrapping_byte_add(b_offset));
         let ab_scale = arguments.ab_scale;
         let d_ptr = SendPtrMut(unsafe { (&*d.get()).as_ptr().wrapping_byte_add(d_offset) as *mut u8 });
 
         let (is_accumulate, bias_ptr) = match arguments.c {
             MatmulArgumentC::Accumulate => (true, None),
-            MatmulArgumentC::Bias(bias) => (false, Some(SendPtr(unsafe { &*bias.get() }.as_ptr()))),
+            MatmulArgumentC::Bias(bias) => {
+                let (bias, bias_range) = bias.as_buffer_range();
+                (false, Some(SendPtr(unsafe { &*bias.get() }.as_ptr().wrapping_byte_add(bias_range.start))))
+            },
             MatmulArgumentC::None => (false, None),
         };
 

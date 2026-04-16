@@ -42,8 +42,8 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: QuantizedLinear<B>,
     adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    adapter_down: B::Buffer,
-    adapter_up: B::Buffer,
+    adapter_down: Allocation<B>,
+    adapter_up: Allocation<B>,
     input_dim: usize,
     output_dim: usize,
     lora_rank: usize,
@@ -90,11 +90,11 @@ impl<B: Backend> QLoRALinearWrapper<B> {
 
         let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
         validate_tensor(&adapter_down_leaf, [lora_rank as usize, input_dim as usize], data_type)?;
-        let adapter_down = adapter_down_leaf.read_buffer()?;
+        let adapter_down = adapter_down_leaf.read_allocation()?;
 
         let adapter_up_leaf = parameter_tree.leaf("up_weights")?;
         validate_tensor(&adapter_up_leaf, [output_dim, lora_rank as usize], data_type)?;
-        let adapter_up = adapter_up_leaf.read_buffer()?;
+        let adapter_up = adapter_up_leaf.read_allocation()?;
 
         Ok(Self {
             base_linear,

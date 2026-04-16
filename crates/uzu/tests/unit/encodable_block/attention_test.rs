@@ -3,9 +3,7 @@
 use std::mem::size_of;
 
 use bytemuck;
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array4, s};
-use objc2::{rc::Retained, runtime::ProtocolObject};
 use test_tag::tag;
 
 use crate::{
@@ -166,14 +164,13 @@ fn allocation_to_vec(allocation: &Allocation<Metal>) -> Vec<f32> {
     }
 }
 
-/// Convert ndarray to Metal buffer layout expected by our kernel
+/// Convert ndarray to the allocation layout expected by our kernel.
 fn create_query_buffer(
     queries: &Array4<f32>,
     context: &<Metal as Backend>::Context,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+) -> Allocation<Metal> {
     let (_batch_size, num_heads, seq_len, head_dim) = queries.dim();
 
-    // Our kernel expects queries layout: [num_heads, seq_len, head_dim]
     let mut query_data = vec![0.0f32; num_heads * seq_len * head_dim];
 
     for h in 0..num_heads {
@@ -185,20 +182,16 @@ fn create_query_buffer(
         }
     }
 
-    context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&query_data), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer")
+    allocation_from_slice(context, &query_data)
 }
 
 fn create_key_cache_buffer(
     keys: &Array4<f32>,
     max_seq_len: usize,
     context: &<Metal as Backend>::Context,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+) -> Allocation<Metal> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
-    // Our kernel expects key cache layout: [num_kv_heads, max_seq_len, head_dim]
     let mut key_cache_data = vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
 
     for h in 0..num_kv_heads {
@@ -210,20 +203,16 @@ fn create_key_cache_buffer(
         }
     }
 
-    context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&key_cache_data), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer")
+    allocation_from_slice(context, &key_cache_data)
 }
 
 fn create_value_cache_buffer(
     values: &Array4<f32>,
     max_seq_len: usize,
     context: &<Metal as Backend>::Context,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+) -> Allocation<Metal> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
-    // Our kernel expects value cache layout: [num_kv_heads, max_seq_len, head_dim]
     let mut value_cache_data = vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
 
     for h in 0..num_kv_heads {
@@ -235,20 +224,14 @@ fn create_value_cache_buffer(
         }
     }
 
-    context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&value_cache_data), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer")
+    allocation_from_slice(context, &value_cache_data)
 }
 
 fn create_sinks_buffer(
     sinks: &[f32],
     context: &<Metal as Backend>::Context,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&sinks), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer")
+) -> Allocation<Metal> {
+    allocation_from_slice(context, sinks)
 }
 
 fn convert_kernel_output(
@@ -291,9 +274,8 @@ fn run_single_pass_attention(
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let mut output_buffer = context
-        .device
-        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(num_heads * seq_len * head_dim * size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
@@ -310,7 +292,7 @@ fn run_single_pass_attention(
         head_dim as u32,
         None,
         scale,
-        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None::<&Allocation<Metal>>,
         None,
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
@@ -319,10 +301,8 @@ fn run_single_pass_attention(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
-
-    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
+    let output_slice = allocation_to_vec(&output_buffer);
+    let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -347,9 +327,8 @@ fn run_single_pass_attention_with_is_causal(
     let sinks_buffer = sinks.map(|s| create_sinks_buffer(s, context));
 
     let mut output_buffer = context
-        .device
-        .new_buffer(num_heads * seq_len * head_dim * size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(num_heads * seq_len * head_dim * size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
@@ -366,7 +345,7 @@ fn run_single_pass_attention_with_is_causal(
         head_dim as u32,
         None,
         scale,
-        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None::<&Allocation<Metal>>,
         None,
         sinks_buffer.as_ref().map(|b| b),
         num_heads as u32,
@@ -375,10 +354,8 @@ fn run_single_pass_attention_with_is_causal(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
-
-    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
+    let output_slice = allocation_to_vec(&output_buffer);
+    let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -396,24 +373,9 @@ fn run_gemm_attention(
     let (batch_size, num_heads, seq_len, head_dim) = queries.dim();
     let (_batch_size, num_kv_heads, _seq_len, _head_dim) = keys.dim();
 
-    let query_buffer = create_query_buffer(queries, context);
-    let query_allocation = allocation_from_slice(context, unsafe {
-        std::slice::from_raw_parts(query_buffer.contents().as_ptr() as *const f32, num_heads * seq_len * head_dim)
-    });
-    let key_cache_buffer = create_key_cache_buffer(keys, seq_len, context);
-    let key_allocation = allocation_from_slice(context, unsafe {
-        std::slice::from_raw_parts(
-            key_cache_buffer.contents().as_ptr() as *const f32,
-            num_kv_heads * seq_len * head_dim,
-        )
-    });
-    let value_cache_buffer = create_value_cache_buffer(values, seq_len, context);
-    let value_allocation = allocation_from_slice(context, unsafe {
-        std::slice::from_raw_parts(
-            value_cache_buffer.contents().as_ptr() as *const f32,
-            num_kv_heads * seq_len * head_dim,
-        )
-    });
+    let query_allocation = create_query_buffer(queries, context);
+    let key_allocation = create_key_cache_buffer(keys, seq_len, context);
+    let value_allocation = create_value_cache_buffer(values, seq_len, context);
 
     let sinks_allocation = sinks.map(|s| allocation_from_slice(context, s));
 
@@ -814,27 +776,20 @@ fn run_two_pass_attention(
     let sums_maxs_size = num_heads * seq_len * total_blocks_count;
 
     let mut partials_buffer = context
-        .device
-        .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(partials_size * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut sums_buffer = context
-        .device
-        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(sums_maxs_size * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut maxs_buffer = context
-        .device
-        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(sums_maxs_size * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut output_buffer = context
-        .device
-        .new_buffer(
-            num_heads * seq_len * head_dim * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
-        .expect("Failed to create buffer");
+        .create_allocation(num_heads * seq_len * head_dim * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
@@ -855,7 +810,7 @@ fn run_two_pass_attention(
         scale,
         num_heads as u32,
         seq_len as u32,
-        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None::<&Allocation<Metal>>,
         None,
         sinks_buffer.as_ref().map(|b| b),
         &mut encoder,
@@ -871,10 +826,8 @@ fn run_two_pass_attention(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * seq_len * head_dim) };
-
-    let kernel_output = convert_kernel_output(output_slice, batch_size, num_heads, seq_len, head_dim);
+    let output_slice = allocation_to_vec(&output_buffer);
+    let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
 }
@@ -1027,29 +980,22 @@ fn perf_two_pass_attention() {
     let sums_maxs_size = num_heads * suffix_length * total_blocks_count;
 
     let mut partials_buffer = context
-        .device
-        .new_buffer(partials_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(partials_size * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
     let mut sums_buffer = context
-        .device
-        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(sums_maxs_size * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
     let mut maxs_buffer = context
-        .device
-        .new_buffer(sums_maxs_size * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+        .create_allocation(sums_maxs_size * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
     let mut output_buffer = context
-        .device
-        .new_buffer(
-            num_heads * suffix_length * head_dim * std::mem::size_of::<f32>(),
-            MTLResourceOptions::STORAGE_MODE_SHARED,
-        )
-        .expect("Failed to create buffer");
+        .create_allocation(num_heads * suffix_length * head_dim * std::mem::size_of::<f32>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     // ---- Launch and time ----
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-    let sinks_buffer: Option<Retained<ProtocolObject<dyn MTLBuffer>>> = None;
+    let sinks_buffer: Option<Allocation<Metal>> = None;
     kernel_pass1.encode(
         &queries_buffer,
         &keys_buffer,
@@ -1067,7 +1013,7 @@ fn perf_two_pass_attention() {
         scale,
         num_heads as u32,
         suffix_length as u32,
-        None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
+        None::<&Allocation<Metal>>,
         None,
         sinks_buffer.as_ref().map(|b| b),
         &mut encoder,
@@ -1098,8 +1044,7 @@ fn perf_two_pass_attention() {
     );
 
     // ---- Sanity check ----
-    let output_ptr = output_buffer.contents().as_ptr() as *const f32;
-    let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, num_heads * suffix_length * head_dim) };
+    let output_slice = allocation_to_vec(&output_buffer);
 
     // Check for NaN/Inf
     for &val in output_slice.iter().take(100) {

@@ -38,9 +38,9 @@ pub struct QuantizedMatmulConfiguration {
 
 pub struct QuantizedMatmulArguments<'a, 'input, 'output, B: Backend> {
     pub a: &'input Allocation<B>,
-    pub b_buffer: &'a B::Buffer,
-    pub scales_buffer: &'a B::Buffer,
-    pub zero_points_or_biases_buffer: &'a B::Buffer,
+    pub b: &'a Allocation<B>,
+    pub scales: &'a Allocation<B>,
+    pub zero_points_or_biases: &'a Allocation<B>,
     pub output: &'output mut Allocation<B>,
     pub batch_dim: usize,
 }
@@ -172,31 +172,27 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
     ) -> Result<(), QuantizedMatmulError<B>> {
         let QuantizedMatmulArguments {
             a,
-            b_buffer,
-            scales_buffer,
-            zero_points_or_biases_buffer,
+            b,
+            scales,
+            zero_points_or_biases,
             output,
             batch_dim,
         } = arguments;
-        let (a_buffer, a_range) = a.as_buffer_range();
-        let (output_buffer, output_range) = output.as_buffer_range();
-        let a_offset = a_range.start;
-        let output_offset = output_range.start;
 
         let (zero_points, biases) = match self.quantization_type {
-            QuantizedMatmulType::ZeroPoint => (Some(zero_points_or_biases_buffer), None),
-            QuantizedMatmulType::Mlx => (None, Some(zero_points_or_biases_buffer)),
+            QuantizedMatmulType::ZeroPoint => (Some(zero_points_or_biases), None),
+            QuantizedMatmulType::Mlx => (None, Some(zero_points_or_biases)),
         };
 
         macro_rules! encode_kernel {
             ($kernel:expr) => {
                 $kernel.encode(
-                    b_buffer,
-                    scales_buffer,
+                    b,
+                    scales,
                     zero_points,
                     biases,
-                    (a_buffer, a_offset),
-                    (output_buffer, output_offset),
+                    a,
+                    output,
                     self.input_dim as u32,
                     self.output_dim as u32,
                     batch_dim as u32,

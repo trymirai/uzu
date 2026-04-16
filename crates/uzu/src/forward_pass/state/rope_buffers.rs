@@ -20,12 +20,12 @@ impl<B: Backend> RopeBuffers<B> {
         let rope_max_sequence_length = model_shape.context_length();
 
         Self {
-            cosines: super::allocation_helpers::create_allocation(
+            cosines: crate::backends::common::allocation_helpers::create_allocation(
                 context,
                 &[rope_max_sequence_length, rope_dim],
                 model_shape.activation_data_type(),
             ),
-            sines: super::allocation_helpers::create_allocation(
+            sines: crate::backends::common::allocation_helpers::create_allocation(
                 context,
                 &[rope_max_sequence_length, rope_dim],
                 model_shape.activation_data_type(),
@@ -42,10 +42,7 @@ impl<B: Backend> RopeBuffers<B> {
             return;
         };
 
-        let cosines_view = rope_tree.leaf_array("cosines").unwrap();
-        super::allocation_helpers::copy_array_to_allocation(&mut self.cosines, &cosines_view);
-
-        let sines_view = rope_tree.leaf_array("sines").unwrap();
-        super::allocation_helpers::copy_array_to_allocation(&mut self.sines, &sines_view);
+        self.cosines = rope_tree.leaf_allocation("cosines").unwrap();
+        self.sines = rope_tree.leaf_allocation("sines").unwrap();
     }
 }

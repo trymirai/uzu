@@ -3,12 +3,9 @@
 use ndarray::{Array, Array3, s};
 
 use super::*;
-use crate::{
-    backends::{
-        common::{Context, Encoder},
-        metal::Metal,
-    },
-    forward_pass::state::allocation_helpers,
+use crate::backends::{
+    common::{Context, Encoder, allocation_helpers},
+    metal::Metal,
 };
 
 fn apply_swaps_3d<T: Clone>(

@@ -25,7 +25,6 @@ use tokenizers::Tokenizer;
 
 use crate::{
     DataType,
-    array::ArrayContextExt,
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
@@ -44,7 +43,6 @@ use crate::{
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers,
         state::{ForwardPassState, SharedBuffers},
     },
     parameters::ParameterLoader,

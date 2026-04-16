@@ -18,16 +18,11 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Allocation, Backend, Encoder, allocation_helpers, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{DecoderArguments, EncodingParameters, Sampling},
-    forward_pass::{
-        cache_layers::CacheLayers,
-        scratch_buffers::ScratchBuffers,
-        state::{ForwardPassState, allocation_helpers},
-        traces::ActivationTrace,
-    },
+    forward_pass::{cache_layers::CacheLayers, state::ForwardPassState, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -258,13 +253,13 @@ impl<B: Backend> TraceValidator<B> {
             &token_positions,
             None,
             &token_seeds,
+            None,
+            None,
+            None,
             token_ids.len(),
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
             false,
-            false,
-            None,
-            None,
         );
 
         let mut encoder =
@@ -1014,9 +1009,6 @@ impl<B: Backend> TraceValidator<B> {
         if desired_suffix_length <= current_suffix_length {
             return;
         }
-
-        context.scratch_buffers =
-            ScratchBuffers::new(context.context.as_ref(), &context.model_shape, desired_suffix_length);
 
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.context.as_ref(),

@@ -1,104 +1,81 @@
 use super::*;
 
-fn copy_array_into_allocation<B: Backend>(
-    encoder: &mut Encoder<B>,
-    source: &Array<B>,
-    destination: &mut crate::backends::common::Allocation<B>,
-) {
-    let source_buffer = source.buffer();
-    let source_buffer = source_buffer.borrow();
-    let (destination_buffer, destination_range) = destination.as_buffer_range();
-    encoder.encode_copy(
-        &source_buffer,
-        source.offset()..source.offset() + source.size(),
-        destination_buffer,
-        destination_range.start..destination_range.start + source.size(),
-    );
-}
-
-fn copy_allocation_into_array<B: Backend>(
-    encoder: &mut Encoder<B>,
-    source: &crate::backends::common::Allocation<B>,
-    destination: &Array<B>,
-) {
-    let (source_buffer, source_range) = source.as_buffer_range();
-    let destination_buffer = destination.buffer();
-    let mut destination_buffer = destination_buffer.borrow_mut();
-    encoder.encode_copy(
-        source_buffer,
-        source_range.start..source_range.start + destination.size(),
-        &mut destination_buffer,
-        destination.offset()..destination.offset() + destination.size(),
-    );
-}
-
 impl StructuredAudioCodecGraph {
     pub(super) fn apply_convnext_ncs_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         encoder: &mut Encoder<B>,
-        input: &Array<B>,
+        input: &crate::backends::common::Allocation<B>,
         layer: &StructuredAudioConvNeXt<B>,
         lengths: &[i32],
-        lengths_array: &Array<B>,
+        lengths_array: &crate::backends::common::Allocation<B>,
         batch_size: usize,
         channels: usize,
         seq_len: usize,
         kernels: &StructuredAudioKernelCache<B>,
-    ) -> AudioResult<Array<B>> {
+    ) -> AudioResult<crate::backends::common::Allocation<B>> {
         let ws = &resources.decode_workspace;
-        let ctx = resources.context();
-        let data_type = input.data_type();
+        let data_type = self.vocoder_data_type;
 
         let residual = input.clone();
+        let cnxt_dw = ws.next_scratch(encoder, &[batch_size, channels, seq_len], data_type);
         let x = causal_conv1d_grouped_enqueue(
             encoder,
             input,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_dw"),
+            cnxt_dw,
             &layer.depthwise_conv,
             SequenceLayout::Ncs,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
+            data_type,
             kernels,
         )?;
+        let cnxt_norm = ws.next_scratch(encoder, &[batch_size, channels, seq_len], data_type);
         let x = norm_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_norm"),
+            cnxt_norm,
             &layer.norm,
             lengths,
             lengths_array,
             batch_size,
             channels,
             seq_len,
+            data_type,
             kernels,
         )?;
+        let cnxt_pw1 = ws.next_scratch(encoder, &[batch_size, layer.pwconv1.cout, seq_len], data_type);
         let x = conv1d_pointwise_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, layer.pwconv1.cout, seq_len], data_type, "cnxt_pw1"),
+            cnxt_pw1,
             &layer.pwconv1,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
+            data_type,
             kernels,
         )?;
-        let x = gelu_enqueue(encoder, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu"), kernels)?;
+        let cnxt_gelu = ws.next_scratch(encoder, &[batch_size, layer.pwconv1.cout, seq_len], data_type);
+        let x = gelu_enqueue(encoder, &x, cnxt_gelu, data_type, kernels)?;
+        let cnxt_pw2 = ws.next_scratch(encoder, &[batch_size, layer.pwconv2.cout, seq_len], data_type);
         let x = conv1d_pointwise_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, layer.pwconv2.cout, seq_len], data_type, "cnxt_pw2"),
+            cnxt_pw2,
             &layer.pwconv2,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
+            data_type,
             kernels,
         )?;
-        add_enqueue(encoder, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add"), kernels)
+        let cnxt_add = ws.next_scratch(encoder, &[batch_size, layer.pwconv2.cout, seq_len], data_type);
+        add_enqueue(encoder, &x, &residual, cnxt_add, data_type, kernels)
     }
 
     pub(super) fn build_post_module_runtime<B: Backend>(
@@ -210,7 +187,7 @@ impl StructuredAudioCodecGraph {
             self.config.codebook_dim,
             data_type,
         )?;
-        let codebook_dim = semantic_codebook.shape()[1];
+        let codebook_dim = self.config.codebook_dim;
         let semantic_out_proj = read_float_matrix_exact::<B>(
             &semantic_tree.subtree("out_proj")?,
             "weights",
@@ -224,20 +201,20 @@ impl StructuredAudioCodecGraph {
         let residual_quantizers = self.config.n_codebooks;
         let residual_count_for_shape = residual_quantizers.max(1);
         let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-        let residual_codebooks = context.create_array_zeros(
+        let residual_codebooks = crate::backends::common::allocation_helpers::create_zeroed_allocation(
+            context.as_ref(),
             &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
             data_type,
-            "structured_audio_quantizer_residual_codebooks",
         );
-        let residual_out_proj = context.create_array_zeros(
+        let residual_out_proj = crate::backends::common::allocation_helpers::create_zeroed_allocation(
+            context.as_ref(),
             &[residual_count_for_shape, self.input_dim, codebook_dim],
             data_type,
-            "structured_audio_quantizer_residual_out_proj",
         );
-        let residual_out_bias = context.create_array_zeros(
+        let residual_out_bias = crate::backends::common::allocation_helpers::create_zeroed_allocation(
+            context.as_ref(),
             &[residual_count_for_shape, self.input_dim],
             data_type,
-            "structured_audio_quantizer_residual_out_bias",
         );
 
         let residual_root = quantizer_tree.subtree("quantizer")?.subtree("quantizers")?;
@@ -264,12 +241,14 @@ impl StructuredAudioCodecGraph {
                 data_type,
             )?;
 
-            let mut dst_codebook = outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim])?;
-            dst_codebook.copy_from_array(&codebook);
-            let mut dst_out_proj = outer_axis_view(&residual_out_proj, index, &[self.input_dim, codebook_dim])?;
-            dst_out_proj.copy_from_array(&out_proj);
-            let mut dst_out_bias = outer_axis_view(&residual_out_bias, index, &[self.input_dim])?;
-            dst_out_bias.copy_from_array(&out_bias);
+            let mut dst_codebook =
+                outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim], data_type)?;
+            crate::backends::common::allocation_helpers::copy_allocation_to_allocation(&mut dst_codebook, &codebook);
+            let mut dst_out_proj =
+                outer_axis_view(&residual_out_proj, index, &[self.input_dim, codebook_dim], data_type)?;
+            crate::backends::common::allocation_helpers::copy_allocation_to_allocation(&mut dst_out_proj, &out_proj);
+            let mut dst_out_bias = outer_axis_view(&residual_out_bias, index, &[self.input_dim], data_type)?;
+            crate::backends::common::allocation_helpers::copy_allocation_to_allocation(&mut dst_out_bias, &out_bias);
         }
 
         Ok(FishAudioQuantizerResources {
@@ -409,18 +388,18 @@ impl StructuredAudioCodecGraph {
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         encoder: &mut Encoder<B>,
-        latent_nsc: &Array<B>,
+        latent_nsc: &crate::backends::common::Allocation<B>,
         frames: usize,
-    ) -> AudioResult<Array<B>> {
+    ) -> AudioResult<crate::backends::common::Allocation<B>> {
         if frames == 0 {
             return Ok(latent_nsc.clone());
         }
 
-        let expected_elements = checked_product(&[frames, self.input_dim])?;
-        if latent_nsc.num_elements() != expected_elements {
+        let expected_size = size_for_shape(&[frames, self.input_dim], self.vocoder_data_type);
+        if latent_nsc.as_buffer_range().1.len() != expected_size {
             return Err(AudioError::InvalidTokenShape {
-                expected_tokens: expected_elements,
-                actual_tokens: latent_nsc.num_elements(),
+                expected_tokens: expected_size,
+                actual_tokens: latent_nsc.as_buffer_range().1.len(),
             });
         }
 
@@ -443,63 +422,46 @@ impl StructuredAudioCodecGraph {
                 self.input_dim, main_shape[0], main_shape[1]
             )));
         }
-        if runtime.model_shape.activation_data_type() != latent_nsc.data_type() {
+        if runtime.model_shape.activation_data_type() != self.vocoder_data_type {
             return Err(AudioError::Runtime(format!(
                 "post_module dtype mismatch: main={:?}, latent={:?}",
                 runtime.model_shape.activation_data_type(),
-                latent_nsc.data_type()
+                self.vocoder_data_type
             )));
         }
 
-        let main_output = runtime.context.create_array_zeros(
-            &[frames, self.input_dim],
-            latent_nsc.data_type(),
-            "structured_audio_post_module_main",
-        );
-        let mut main = crate::forward_pass::state::allocation_helpers::create_allocation(
-            runtime.context.as_ref(),
-            &[frames, self.input_dim],
-            latent_nsc.data_type(),
-        );
-        copy_array_into_allocation(encoder, latent_nsc, &mut main);
-        let main = Self::encode_post_module_layers(&runtime, &mut state, main, encoder)?;
-        copy_allocation_into_array(encoder, &main, &main_output);
-
-        Ok(main_output)
+        Self::encode_post_module_layers(&runtime, &mut state, latent_nsc.clone(), encoder)
     }
 
     pub(super) fn apply_post_module_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        context: &Rc<B::Context>,
         encoder: &mut Encoder<B>,
-        latent_nsc: &Array<B>,
+        latent_nsc: &crate::backends::common::Allocation<B>,
         lengths: &[usize],
         batch_size: usize,
         frames: usize,
-    ) -> AudioResult<Array<B>> {
+    ) -> AudioResult<crate::backends::common::Allocation<B>> {
         if lengths.len() != batch_size {
             return Err(AudioError::InvalidTokenLengths {
                 expected_lengths: batch_size,
                 actual_lengths: lengths.len(),
             });
         }
-        let expected_elements = checked_product(&[batch_size, frames, self.input_dim])?;
-        if latent_nsc.num_elements() != expected_elements {
+        let expected_size = size_for_shape(&[batch_size, frames, self.input_dim], self.vocoder_data_type);
+        if latent_nsc.as_buffer_range().1.len() != expected_size {
             return Err(AudioError::InvalidTokenShape {
-                expected_tokens: expected_elements,
-                actual_tokens: latent_nsc.num_elements(),
+                expected_tokens: expected_size,
+                actual_tokens: latent_nsc.as_buffer_range().1.len(),
             });
         }
         if batch_size == 1 && lengths.first().copied() == Some(frames) {
             return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
         }
 
-        let output = context.create_array_zeros(
-            &[batch_size, frames, self.input_dim],
-            latent_nsc.data_type(),
-            "structured_audio_post_module_output_nsc",
-        );
+        let output = encoder.allocate_scratch(expected_size).map_err(|err| {
+            AudioError::Runtime(format!("failed to allocate structured audio post_module output: {err}"))
+        })?;
         let mut batch_indices_by_length = BTreeMap::<usize, Vec<usize>>::new();
         for (batch_index, &active_len) in lengths.iter().enumerate() {
             if active_len == 0 {
@@ -515,12 +477,10 @@ impl StructuredAudioCodecGraph {
         }
 
         if batch_indices_by_length.is_empty() {
-            let mut output = output;
-            output.copy_from_array(latent_nsc);
-            return Ok(output);
+            return Ok(latent_nsc.clone());
         }
 
-        let full_copy_bytes = latent_nsc.size();
+        let full_copy_bytes = latent_nsc.as_buffer_range().1.len();
         let mut copied_output_prefix = false;
         for (active_len, batch_indices) in batch_indices_by_length {
             let runtime = self.post_module_runtime(resources, active_len.max(1))?;
@@ -542,40 +502,46 @@ impl StructuredAudioCodecGraph {
                     self.input_dim, main_shape[0], main_shape[1]
                 )));
             }
-            if runtime.model_shape.activation_data_type() != latent_nsc.data_type() {
+            if runtime.model_shape.activation_data_type() != self.vocoder_data_type {
                 return Err(AudioError::Runtime(format!(
                     "post_module dtype mismatch: main={:?}, latent={:?}",
                     runtime.model_shape.activation_data_type(),
-                    latent_nsc.data_type()
+                    self.vocoder_data_type
                 )));
             }
 
             for &batch_index in &batch_indices {
                 if !copied_output_prefix {
-                    {
-                        let latent_buffer = latent_nsc.buffer();
-                        let output_buffer = output.buffer();
-                        let latent_buffer = latent_buffer.borrow();
-                        let mut output_buffer = output_buffer.borrow_mut();
-                        encoder.encode_copy(
-                            &latent_buffer,
-                            latent_nsc.offset()..latent_nsc.offset() + full_copy_bytes,
-                            &mut output_buffer,
-                            output.offset()..output.offset() + full_copy_bytes,
-                        );
-                    }
+                    let (latent_buffer, latent_range) = latent_nsc.as_buffer_range();
+                    let (output_buffer, output_range) = output.as_buffer_range();
+                    encoder.encode_copy(
+                        latent_buffer,
+                        latent_range.start..latent_range.start + full_copy_bytes,
+                        output_buffer,
+                        output_range.start..output_range.start + full_copy_bytes,
+                    );
                     copied_output_prefix = true;
                 }
-                let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
-                let mut main = crate::forward_pass::state::allocation_helpers::create_allocation(
-                    runtime.context.as_ref(),
-                    &[active_len, self.input_dim],
-                    source.data_type(),
-                );
-                copy_array_into_allocation(encoder, &source, &mut main);
-                let main = Self::encode_post_module_layers(&runtime, &mut state, main, encoder)?;
-                let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
-                copy_allocation_into_array(encoder, &main, &destination);
+                let source = allocation_batch_view(
+                    latent_nsc,
+                    batch_index,
+                    frames,
+                    self.input_dim,
+                    active_len,
+                    self.vocoder_data_type,
+                )?;
+                let main = Self::encode_post_module_layers(&runtime, &mut state, source, encoder)?;
+                let destination = allocation_batch_view(
+                    &output,
+                    batch_index,
+                    frames,
+                    self.input_dim,
+                    active_len,
+                    self.vocoder_data_type,
+                )?;
+                let (main_buffer, main_range) = main.as_buffer_range();
+                let (destination_buffer, destination_range) = destination.as_buffer_range();
+                encoder.encode_copy(main_buffer, main_range, destination_buffer, destination_range);
             }
         }
 

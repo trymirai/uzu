@@ -227,7 +227,7 @@ impl<B: Backend> Attention<B> {
             let mut values =
                 encoder.allocate_scratch(size_for_shape(&[num_groups, suffix_length, head_dim], self.data_type))?;
             self.update_kv_cache_inplace_kernel.encode(
-                None::<&B::Buffer>,
+                None::<&Allocation<B>>,
                 qkv,
                 &mut rotated_keys,
                 &mut values,

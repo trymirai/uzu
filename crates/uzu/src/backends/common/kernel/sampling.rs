@@ -150,9 +150,11 @@ impl<B: Backend> SamplingKernel<B> {
         }
 
         if let Some(bitmask_buffer) = bitmask_buffer {
+            let bitmask_len = batch_size * vocab_size.div_ceil(32) * size_of::<u32>();
+            let bitmask = bitmask_buffer.slice(bitmask_offset..bitmask_offset + bitmask_len);
             self.bitmask.encode(
-                None::<&B::Buffer>,
-                (bitmask_buffer, bitmask_offset),
+                None::<&Allocation<B>>,
+                &bitmask,
                 &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -172,7 +174,7 @@ impl<B: Backend> SamplingKernel<B> {
                 && processing_order == SamplingProcessingOrder::TemperatureThenFilters
             {
                 self.temperature.encode(
-                    None::<&B::Buffer>,
+                    None::<&Allocation<B>>,
                     &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -183,7 +185,7 @@ impl<B: Backend> SamplingKernel<B> {
 
             if let Some(top_k) = top_k {
                 self.topk.encode(
-                    None::<&B::Buffer>,
+                    None::<&Allocation<B>>,
                     &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -193,7 +195,7 @@ impl<B: Backend> SamplingKernel<B> {
             }
             if let Some(top_p) = top_p {
                 self.topp.encode(
-                    None::<&B::Buffer>,
+                    None::<&Allocation<B>>,
                     &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -203,7 +205,7 @@ impl<B: Backend> SamplingKernel<B> {
             }
             if let Some(min_p) = min_p {
                 self.minp.encode(
-                    None::<&B::Buffer>,
+                    None::<&Allocation<B>>,
                     &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -216,7 +218,7 @@ impl<B: Backend> SamplingKernel<B> {
                 && processing_order == SamplingProcessingOrder::FiltersThenTemperature
             {
                 self.temperature.encode(
-                    None::<&B::Buffer>,
+                    None::<&Allocation<B>>,
                     &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
@@ -225,9 +227,11 @@ impl<B: Backend> SamplingKernel<B> {
                 );
             }
 
+            let seeds_len = batch_size * size_of::<u64>();
+            let seeds = seeds_buffer.slice(seeds_offset..seeds_offset + seeds_len);
             self.gumbel.encode(
-                None::<&B::Buffer>,
-                (seeds_buffer, seeds_offset),
+                None::<&Allocation<B>>,
+                &seeds,
                 &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,

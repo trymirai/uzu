@@ -1,19 +1,22 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::{
         common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel},
         cpu::Cpu,
     },
 };
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     fused_up: Box<[T]>,
@@ -52,13 +55,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let fused_len = (input.m * 2 * input.h) as usize;
     let out_len = (input.m * input.h) as usize;
-    let fused_up_array = context.create_array_from(&[fused_len], &input.fused_up, "");
-    let hidden_array = context.create_array_uninitialized(&[out_len], T::data_type(), "");
+    let fused_up_allocation = alloc_allocation_with_data::<B, T>(&context, &input.fused_up[..fused_len]);
+    let mut hidden_allocation = alloc_allocation::<B, T>(&context, out_len);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        fused_up_array.buffer().borrow().deref(),
-        hidden_array.buffer().borrow_mut().deref_mut(),
+        &fused_up_allocation,
+        &mut hidden_allocation,
         input.h,
         input.m,
         input.act_type,
@@ -66,7 +69,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    hidden_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&hidden_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {

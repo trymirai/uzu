@@ -17,7 +17,7 @@ pub struct SSDPrefillArguments<'a, B: Backend> {
     pub dt: &'a Allocation<B>,
     pub b: &'a Allocation<B>,
     pub c: &'a Allocation<B>,
-    pub d: &'a B::Buffer,
+    pub d: &'a Allocation<B>,
     pub z: &'a Allocation<B>,
     pub state: &'a mut Allocation<B>,
     pub y: &'a mut Allocation<B>,

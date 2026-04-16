@@ -303,12 +303,12 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             let traces = layer_traces.borrow();
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 shortcut,
                 &traces.inputs,
             );
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 &main,
                 &traces.pre_attention_norm,
@@ -435,7 +435,7 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             let traces = layer_traces.borrow();
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 &main,
                 &traces.attention,
@@ -447,7 +447,7 @@ impl<B: Backend> LayerExecutables<B> {
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 let traces = layer_traces.borrow();
-                crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+                crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                     encoder,
                     &main,
                     &traces.post_attention_norm,
@@ -459,12 +459,12 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             let traces = layer_traces.borrow();
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 shortcut,
                 &traces.mlp_inputs,
             );
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 &main,
                 &traces.pre_mlp_norm,
@@ -475,11 +475,7 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             let traces = layer_traces.borrow();
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
-                encoder,
-                &main,
-                &traces.mlp,
-            );
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(encoder, &main, &traces.mlp);
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
@@ -487,7 +483,7 @@ impl<B: Backend> LayerExecutables<B> {
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
                 let traces = layer_traces.borrow();
-                crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+                crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                     encoder,
                     &main,
                     &traces.post_mlp_norm,

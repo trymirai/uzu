@@ -1,19 +1,22 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TensorAddScaleKernel},
         cpu::Cpu,
     },
 };
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,
@@ -41,15 +44,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let length = input.length as usize;
     let num_cols = input.num_cols as usize;
-    let input_array = context.create_array_from(&[length], &input.input, "");
-    let bias_array = context.create_array_from(&[num_cols], &input.bias, "");
-    let output_array = context.create_array_uninitialized(&[length], T::data_type(), "");
+    let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.input[..length]);
+    let bias_allocation = alloc_allocation_with_data::<B, T>(&context, &input.bias[..num_cols]);
+    let mut output_allocation = alloc_allocation::<B, T>(&context, length);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_array.buffer().borrow().deref(),
-        bias_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        &input_allocation,
+        &bias_allocation,
+        &mut output_allocation,
         input.num_cols,
         input.length,
         input.scale,
@@ -57,7 +60,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {

@@ -1,7 +1,5 @@
 #![cfg(metal_backend)]
 
-use bytemuck;
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use rand::seq::SliceRandom;
 
 // for Vec::shuffle
@@ -30,7 +28,7 @@ fn allocation_from_slice<T: ArrayElement>(
     let mut allocation = context
         .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
-    crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data);
+    crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut allocation, data);
     allocation
 }
 
@@ -44,7 +42,7 @@ fn empty_allocation<T: ArrayElement>(
 }
 
 fn allocation_to_vec<T: ArrayElement>(allocation: &Allocation<Metal>) -> Vec<T> {
-    crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<T, Metal>(allocation).to_vec()
+    crate::backends::common::allocation_helpers::copy_allocation_to_slice::<T, Metal>(allocation).to_vec()
 }
 
 fn cpu_reference_min_p(
@@ -548,22 +546,14 @@ fn test_temperature_gpu_cpu_match() {
 
     let logits: Vec<f32> = (0..BATCH * VOCAB).map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01).collect();
 
-    let logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut processed_buffer = context
-        .device
-        .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let logits_buffer = allocation_from_slice(context.as_ref(), &logits);
+    let mut processed_buffer = empty_allocation::<f32>(context.as_ref(), logits.len());
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_ptr = processed_buffer.contents().as_ptr() as *const f32;
-    let gpu_results = unsafe { std::slice::from_raw_parts(gpu_ptr, logits.len()) };
+    let gpu_results = allocation_to_vec::<f32>(&processed_buffer);
 
     for (idx, (&logit, &processed)) in logits.iter().zip(gpu_results.iter()).enumerate() {
         let expected = logit / TEMPERATURE;
@@ -608,22 +598,14 @@ fn test_minp_gpu_cpu_match() {
         *x = rng.random_range(-16.0f32..16.0f32);
     }
 
-    let logits_buffer = context
-        .device
-        .new_buffer_with_data(bytemuck::cast_slice(&logits), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
-
-    let mut processed_buffer = context
-        .device
-        .new_buffer(logits.len() * std::mem::size_of::<f32>(), MTLResourceOptions::STORAGE_MODE_SHARED)
-        .expect("Failed to create buffer");
+    let logits_buffer = allocation_from_slice(context.as_ref(), &logits);
+    let mut processed_buffer = empty_allocation::<f32>(context.as_ref(), logits.len());
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let results_ptr = processed_buffer.contents().as_ptr() as *const f32;
-    let all_results = unsafe { std::slice::from_raw_parts(results_ptr, logits.len()) };
+    let all_results = allocation_to_vec::<f32>(&processed_buffer);
 
     for batch_idx in 0..BATCH {
         let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];

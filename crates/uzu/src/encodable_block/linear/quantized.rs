@@ -1,5 +1,3 @@
-use std::{cell::RefCell, ops::Deref, rc::Rc};
-
 use thiserror::Error;
 
 use super::Linear;
@@ -84,10 +82,10 @@ pub enum QuantizedLinearError<B: Backend> {
 pub struct QuantizedLinear<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-    biases_buffer: Option<Rc<RefCell<B::Buffer>>>,
-    weights_buffer: Rc<RefCell<B::Buffer>>,
-    scales_buffer: Rc<RefCell<B::Buffer>>,
-    zero_points_or_biases_buffer: Rc<RefCell<B::Buffer>>,
+    biases: Option<Allocation<B>>,
+    weights: Allocation<B>,
+    scales: Allocation<B>,
+    zero_points_or_biases: Allocation<B>,
     output_dim: usize,
     output_data_type: DataType,
 }
@@ -105,30 +103,30 @@ impl<B: Backend> QuantizedLinear<B> {
             return Err(QuantizedLinearError::UnsupportedDataType(kernel_data_type));
         }
 
-        let weights = parameter_tree.leaf_array("weights").map_err(QuantizedLinearError::ParameterError)?;
+        let weights_leaf = parameter_tree.leaf("weights").map_err(QuantizedLinearError::ParameterError)?;
         let packing_divisor = config.weight_quantization_mode.packing_divisor();
         let storage_type = config.weight_quantization_mode.storage_type();
-        if weights.data_type() != storage_type {
+        if weights_leaf.data_type() != storage_type {
             return Err(QuantizedLinearError::InvalidWeightsDataType {
                 expected: storage_type,
-                got: weights.data_type(),
+                got: weights_leaf.data_type(),
             });
         }
 
-        let scales = parameter_tree.leaf_array("scales").map_err(QuantizedLinearError::ParameterError)?;
-        if scales.data_type() != kernel_data_type {
+        let scales_leaf = parameter_tree.leaf("scales").map_err(QuantizedLinearError::ParameterError)?;
+        if scales_leaf.data_type() != kernel_data_type {
             return Err(QuantizedLinearError::InvalidScalesDataType {
                 expected: kernel_data_type,
-                got: scales.data_type(),
+                got: scales_leaf.data_type(),
             });
         }
 
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
-        let weights_shape = weights.shape().to_vec();
-        let scales_shape = scales.shape().to_vec();
-        let (quantization_type, zero_points_or_biases_buffer) = match parameter_tree.leaf_array("deq_biases") {
-            Ok(deq_biases) => {
-                let deq_biases_shape = deq_biases.shape().to_vec();
+        let weights_shape = weights_leaf.shape().to_vec();
+        let scales_shape = scales_leaf.shape().to_vec();
+        let (quantization_type, zero_points_or_biases) = match parameter_tree.leaf("deq_biases") {
+            Ok(deq_biases_leaf) => {
+                let deq_biases_shape = deq_biases_leaf.shape().to_vec();
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
                     && scales_shape == [output_dim, k_g]
                     && deq_biases_shape == [output_dim, k_g])
@@ -141,19 +139,22 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                if deq_biases.data_type() != kernel_data_type {
+                if deq_biases_leaf.data_type() != kernel_data_type {
                     return Err(QuantizedLinearError::InvalidDeqBiasesDataType {
                         expected: kernel_data_type,
-                        got: deq_biases.data_type(),
+                        got: deq_biases_leaf.data_type(),
                     });
                 }
 
-                (QuantizedMatmulType::Mlx, deq_biases.buffer())
+                (
+                    QuantizedMatmulType::Mlx,
+                    deq_biases_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+                )
             },
             Err(_) => {
-                let zero_points =
-                    parameter_tree.leaf_array("zero_points").map_err(QuantizedLinearError::ParameterError)?;
-                let zero_points_shape = zero_points.shape().to_vec();
+                let zero_points_leaf =
+                    parameter_tree.leaf("zero_points").map_err(QuantizedLinearError::ParameterError)?;
+                let zero_points_shape = zero_points_leaf.shape().to_vec();
                 let expected_zero_points_entries = (k_g + packing_divisor - 1) / packing_divisor;
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
                     && scales_shape == [output_dim, k_g]
@@ -168,20 +169,23 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                if zero_points.data_type() != storage_type {
+                if zero_points_leaf.data_type() != storage_type {
                     return Err(QuantizedLinearError::InvalidZeroPointsDataType {
                         expected: storage_type,
-                        got: zero_points.data_type(),
+                        got: zero_points_leaf.data_type(),
                     });
                 }
 
-                (QuantizedMatmulType::ZeroPoint, zero_points.buffer())
+                (
+                    QuantizedMatmulType::ZeroPoint,
+                    zero_points_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+                )
             },
         };
 
-        let (bias_add_kernel, biases_buffer) = match parameter_tree.leaf_array("biases") {
-            Ok(biases) => {
-                let bias_shape = biases.shape().to_vec();
+        let (bias_add_kernel, biases) = match parameter_tree.leaf("biases") {
+            Ok(biases_leaf) => {
+                let bias_shape = biases_leaf.shape().to_vec();
                 if bias_shape != [output_dim] {
                     return Err(QuantizedLinearError::InvalidBiasShape {
                         got: bias_shape.into_boxed_slice(),
@@ -189,17 +193,20 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                if biases.data_type() != kernel_data_type {
+                if biases_leaf.data_type() != kernel_data_type {
                     return Err(QuantizedLinearError::InvalidBiasDataType {
                         expected: kernel_data_type,
-                        got: biases.data_type(),
+                        got: biases_leaf.data_type(),
                     });
                 }
 
                 let bias_add_kernel =
                     <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, kernel_data_type, true)
                         .map_err(QuantizedLinearError::BackendError)?;
-                (Some(bias_add_kernel), Some(biases.buffer()))
+                (
+                    Some(bias_add_kernel),
+                    Some(biases_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?),
+                )
             },
             Err(_) => (None, None),
         };
@@ -220,10 +227,10 @@ impl<B: Backend> QuantizedLinear<B> {
         Ok(Self {
             kernel,
             bias_add_kernel,
-            biases_buffer,
-            weights_buffer: weights.buffer(),
-            scales_buffer: scales.buffer(),
-            zero_points_or_biases_buffer,
+            biases,
+            weights: weights_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+            scales: scales_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+            zero_points_or_biases,
             output_dim,
             output_data_type: kernel_data_type,
         })
@@ -246,20 +253,20 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
                 encoder,
                 QuantizedMatmulArguments {
                     a: input,
-                    b_buffer: self.weights_buffer.borrow().deref(),
-                    scales_buffer: self.scales_buffer.borrow().deref(),
-                    zero_points_or_biases_buffer: self.zero_points_or_biases_buffer.borrow().deref(),
+                    b: &self.weights,
+                    scales: &self.scales,
+                    zero_points_or_biases: &self.zero_points_or_biases,
                     output: &mut output,
                     batch_dim,
                 },
             )
             .expect("Failed to encode quantized matmul");
 
-        if let (Some(bias_add_kernel), Some(biases_buffer)) = (&self.bias_add_kernel, &self.biases_buffer) {
+        if let (Some(bias_add_kernel), Some(biases)) = (&self.bias_add_kernel, &self.biases) {
             let total_length = batch_dim * self.output_dim;
             bias_add_kernel.encode(
-                None::<&B::Buffer>,
-                biases_buffer.borrow().deref(),
+                None::<&Allocation<B>>,
+                biases,
                 &mut output,
                 self.output_dim as u32,
                 total_length as u32,

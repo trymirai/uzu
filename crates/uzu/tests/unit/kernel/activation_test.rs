@@ -1,19 +1,22 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::{
         common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::ActivationKernel},
         cpu::Cpu,
     },
 };
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     data: Box<[T]>,
@@ -38,30 +41,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let n = input.data.len();
 
     if input.in_place {
-        let output_array = context.create_array_from(&[n], &input.data, "");
+        let mut output_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(
-            Option::<&B::Buffer>::None,
-            output_array.buffer().borrow_mut().deref_mut(),
-            n as u32,
-            input.act_type,
-            &mut encoder,
-        );
+        kernel.encode(None, &mut output_allocation, n as u32, input.act_type, &mut encoder);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
-        output_array.as_slice().to_vec()
+        allocation_to_vec::<B, T>(&output_allocation)
     } else {
-        let input_array = context.create_array_from(&[n], &input.data, "");
-        let output_array = context.create_array_uninitialized(&[n], T::data_type(), "");
+        let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
+        let mut output_allocation = alloc_allocation::<B, T>(&context, n);
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(
-            Some(input_array.buffer().borrow().deref()),
-            output_array.buffer().borrow_mut().deref_mut(),
-            n as u32,
-            input.act_type,
-            &mut encoder,
-        );
+        kernel.encode(Some(&input_allocation), &mut output_allocation, n as u32, input.act_type, &mut encoder);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
-        output_array.as_slice().to_vec()
+        allocation_to_vec::<B, T>(&output_allocation)
     }
 }
 

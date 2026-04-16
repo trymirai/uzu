@@ -2,8 +2,7 @@ use std::cell::Cell;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Buffer},
-    forward_pass::state::allocation_helpers,
+    backends::common::{Allocation, Backend, Buffer, allocation_helpers},
 };
 
 pub struct ShortConvLayer<B: Backend> {

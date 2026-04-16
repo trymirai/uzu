@@ -3,11 +3,11 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 use anyhow::{Context, bail};
 use async_trait::async_trait;
 use itertools::Itertools;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, Lifetime, PathArguments, Type,
-    punctuated::Punctuated, token::Comma,
+    Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, PathArguments, Type, punctuated::Punctuated,
+    token::Comma,
 };
 use walkdir::WalkDir;
 
@@ -329,29 +329,27 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let (encode_generics, encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
+        let encode_args_defs: Vec<_> = kernel_arguments
             .iter()
             .map(|argument| {
                 let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
-                let (generic, mut ty) = match &argument.ty {
-                    KernelArgumentType::Buffer(access) => {
-                        let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
-                        (
-                            Some(quote! { #buffer_lifetime }),
-                            match access {
-                                KernelBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, std::cell::UnsafeCell<std::pin::Pin<Box<[u8]>>>> },
-                                KernelBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, std::cell::UnsafeCell<std::pin::Pin<Box<[u8]>>>> },
-                            },
-                        )
+                let mut ty = match &argument.ty {
+                    KernelArgumentType::Buffer(access) => match access {
+                        KernelBufferAccess::Read => {
+                            quote! { &crate::backends::common::Allocation<crate::backends::cpu::Cpu> }
+                        },
+                        KernelBufferAccess::ReadWrite => {
+                            quote! { &mut crate::backends::common::Allocation<crate::backends::cpu::Cpu> }
+                        },
                     },
                     KernelArgumentType::Constant(ty) => {
                         let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, quote! { &[#ty] })
+                        quote! { &[#ty] }
                     },
                     KernelArgumentType::Scalar(ty) => {
                         let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, quote! { #ty })
+                        quote! { #ty }
                     },
                 };
 
@@ -359,11 +357,9 @@ impl CpuCompiler {
                     ty = quote! { Option<#ty> };
                 }
 
-                Ok((generic, quote! { #argument_ident: #ty }))
+                Ok(quote! { #argument_ident: #ty })
             })
             .collect::<anyhow::Result<_>>()?;
-
-        let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
 
         let argument_copies = function_arguments
             .iter()
@@ -371,30 +367,35 @@ impl CpuCompiler {
                 let argument_ident = &argument.name;
                 match &argument.ty {
                     FunctionArgumentType::Buffer(access) => {
-                        let (buffer_ptr, buffer_ptr_wrapper) = match access {
-                            KernelBufferAccess::Read => {
-                                (quote! { (&*__dsl_buffer.get()).as_ptr() }, quote! { crate::utils::pointers::SendPtr })
-                            },
-                            KernelBufferAccess::ReadWrite => (
-                                quote! { (&mut *__dsl_buffer.get()).as_mut_ptr() },
-                                quote! { crate::utils::pointers::SendPtrMut },
-                            ),
+                        let buffer_ptr_wrapper = match access {
+                            KernelBufferAccess::Read => quote! { crate::utils::pointers::SendPtr },
+                            KernelBufferAccess::ReadWrite => quote! { crate::utils::pointers::SendPtrMut },
                         };
 
                         if argument.conditional.is_some() {
                             Some(quote! {
-                                let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
-                                    let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
+                                let #argument_ident = #argument_ident.map(|__dsl_allocation| unsafe {
+                                    let (__dsl_buffer, __dsl_range) = __dsl_allocation.as_buffer_range();
 
-                                    #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
+                                    #buffer_ptr_wrapper(
+                                        crate::backends::common::Buffer::cpu_ptr(__dsl_buffer)
+                                            .as_ptr()
+                                            .cast::<u8>()
+                                            .add(__dsl_range.start)
+                                    )
                                 });
                             })
                         } else {
                             Some(quote! {
                                 let #argument_ident = unsafe {
-                                    let (__dsl_buffer, __dsl_offset) = #argument_ident.into_parts();
+                                    let (__dsl_buffer, __dsl_range) = #argument_ident.as_buffer_range();
 
-                                    #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
+                                    #buffer_ptr_wrapper(
+                                        crate::backends::common::Buffer::cpu_ptr(__dsl_buffer)
+                                            .as_ptr()
+                                            .cast::<u8>()
+                                            .add(__dsl_range.start)
+                                    )
                                 };
                             })
                         }
@@ -535,7 +536,7 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
+                fn encode(&self, #(#encode_args_defs, )* encoder: &mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
                     #(#argument_copies)*
                     #encode_body
                 }

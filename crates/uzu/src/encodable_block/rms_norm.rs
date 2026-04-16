@@ -1,7 +1,5 @@
 //! RMS Normalization encodable.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc};
-
 use thiserror::Error;
 
 use crate::{
@@ -26,7 +24,7 @@ pub enum RMSNormError<B: Backend> {
 pub struct RMSNorm<B: Backend> {
     kernel: <B::Kernels as Kernels>::RMSNormKernel,
     config: NormalizationConfig,
-    scales_buffer: Rc<RefCell<B::Buffer>>,
+    scales: Allocation<B>,
     element_count: usize,
     input_data_type: DataType,
     output_data_type: DataType,
@@ -41,8 +39,9 @@ impl<B: Backend> RMSNorm<B> {
         use_shortcut: bool,
         residual_add: bool,
     ) -> Result<Self, RMSNormError<B>> {
-        let scales = parameter_tree.leaf_array("scales").map_err(RMSNormError::ParameterError)?;
-        let element_count = scales.shape()[0];
+        let scales_leaf = parameter_tree.leaf("scales").map_err(RMSNormError::ParameterError)?;
+        let element_count = scales_leaf.shape()[0];
+        let scales = scales_leaf.read_allocation().map_err(RMSNormError::ParameterError)?;
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
@@ -68,7 +67,7 @@ impl<B: Backend> RMSNorm<B> {
         Ok(Self {
             kernel,
             config,
-            scales_buffer: scales.buffer(),
+            scales,
             element_count,
             input_data_type: input_type,
             output_data_type: output_type,
@@ -86,11 +85,14 @@ impl<B: Backend> RMSNorm<B> {
         let input_offset = row_offset * self.element_count * self.input_data_type.size_in_bytes();
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
+        let input_len = size_for_shape(&[row_count, self.element_count], self.input_data_type);
+        let input = input.slice(input_offset..input_offset + input_len);
+        let mut shortcut_view = shortcut.map(|shortcut| shortcut.slice(input_offset..input_offset + input_len));
         self.kernel.encode(
-            Some((input, input_offset)),
-            self.scales_buffer.borrow().deref(),
-            (&mut output, 0),
-            shortcut.map(|shortcut| (shortcut, input_offset)),
+            Some(&input),
+            &self.scales,
+            &mut output,
+            shortcut_view.as_mut(),
             row_count as u32,
             self.element_count as u32,
             self.config.epsilon,

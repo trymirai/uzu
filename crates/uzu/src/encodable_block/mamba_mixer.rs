@@ -4,7 +4,7 @@ use std::env;
 
 use crate::{
     DataType,
-    array::{Array, size_for_shape},
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{
@@ -28,10 +28,10 @@ pub(crate) struct MambaMixer<B: Backend> {
     conv_scan: <B::Kernels as Kernels>::Conv1dScanKernel,
     ssd_prefill: SSDPrefillKernels<B>,
     ssd_update: <B::Kernels as Kernels>::SSDUpdateKernel,
-    conv_weight: Array<B>,
-    conv_bias: Option<Array<B>>,
-    gate_bias: Array<B>,
-    skip_connection_weight: Array<B>,
+    conv_weight: Allocation<B>,
+    conv_bias: Option<Allocation<B>>,
+    gate_bias: Allocation<B>,
+    skip_connection_weight: Allocation<B>,
     prefill_mode: SSDPrefillMode,
     data_type: DataType,
 }
@@ -95,14 +95,14 @@ impl<B: Backend> MambaMixer<B> {
         )
         .expect("Failed to create out-projection kernel");
 
-        let conv_weight = conv_tree.leaf_array("weights").unwrap();
+        let conv_weight = conv_tree.leaf("weights").unwrap().read_allocation().unwrap();
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf_array("biases").unwrap())
+            Some(conv_tree.leaf("biases").unwrap().read_allocation().unwrap())
         } else {
             None
         };
-        let gate_bias = split_tree.leaf_array("gate_bias").unwrap();
-        let skip_connection_weight = split_tree.leaf_array("skip_connection_weight").unwrap();
+        let gate_bias = split_tree.leaf("gate_bias").unwrap().read_allocation().unwrap();
+        let skip_connection_weight = split_tree.leaf("skip_connection_weight").unwrap().read_allocation().unwrap();
 
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
             .expect("Failed to create split in-projection kernel");
@@ -155,15 +155,12 @@ impl<B: Backend> MambaMixer<B> {
         let inner_dim = self.config.inner_dim();
         let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
-        let gate_bias = self.gate_bias.buffer();
-        let gate_bias = gate_bias.borrow();
-
         self.split_inproj.encode(
             in_proj,
             conv_inputs,
             gate,
             dt,
-            &*gate_bias,
+            &self.gate_bias,
             suffix_length as u32,
             total_dim as u32,
             conv_dim as u32,
@@ -184,11 +181,6 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let weight_buf_rc = self.conv_weight.buffer();
-        let weight_buf_borrow = weight_buf_rc.borrow();
-        let bias_buf_rc = self.conv_bias.as_ref().map(|arr| arr.buffer());
-        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let proj_dim = self.config.num_groups * self.config.state_dim;
@@ -198,8 +190,8 @@ impl<B: Backend> MambaMixer<B> {
             if conv_dim > 0 && self.config.kernel_size > 0 {
                 self.conv_decode.encode(
                     conv_inputs,
-                    &*weight_buf_borrow,
-                    bias_buf_borrow.as_deref(),
+                    &self.conv_weight,
+                    self.conv_bias.as_ref(),
                     None::<&Allocation<B>>,
                     x,
                     b,
@@ -234,8 +226,8 @@ impl<B: Backend> MambaMixer<B> {
                 let conv_source = padded.as_deref().unwrap_or(conv_inputs);
                 self.conv_scan.encode(
                     conv_source,
-                    &*weight_buf_borrow,
-                    bias_buf_borrow.as_deref(),
+                    &self.conv_weight,
+                    self.conv_bias.as_ref(),
                     x,
                     b,
                     c,
@@ -266,9 +258,6 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let skip_connection_weight = self.skip_connection_weight.buffer();
-        let skip_connection_weight = skip_connection_weight.borrow();
-
         self.ssd_prefill.encode(
             encoder,
             SSDPrefillArguments {
@@ -276,7 +265,7 @@ impl<B: Backend> MambaMixer<B> {
                 dt,
                 b,
                 c,
-                d: &*skip_connection_weight,
+                d: &self.skip_connection_weight,
                 z,
                 state: &mut layer.ssm_state,
                 y: out,
@@ -306,9 +295,6 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) {
-        let skip_connection_weight = self.skip_connection_weight.buffer();
-        let skip_connection_weight = skip_connection_weight.borrow();
-
         let h = self.config.num_heads as u32;
         let g = self.config.num_groups as u32;
         let dh = self.config.head_dim as u32;
@@ -326,7 +312,7 @@ impl<B: Backend> MambaMixer<B> {
             dt,
             b,
             c,
-            &*skip_connection_weight,
+            &self.skip_connection_weight,
             z,
             None::<&Allocation<B>>,
             out,

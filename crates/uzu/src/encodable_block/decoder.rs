@@ -383,7 +383,7 @@ impl<B: Backend> Decoder<B> {
         #[cfg(feature = "tracing")]
         if let Some(trace) = &trace {
             let traces = trace.borrow();
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 &main,
                 &traces.output_norm,
@@ -394,7 +394,7 @@ impl<B: Backend> Decoder<B> {
         #[cfg(feature = "tracing")]
         if let Some(trace) = &trace {
             let traces = trace.borrow();
-            crate::forward_pass::state::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
                 encoder,
                 &logits,
                 &traces.logits,

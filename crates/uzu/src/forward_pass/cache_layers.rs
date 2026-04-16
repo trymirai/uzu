@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use crate::{
-    backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Backend, Encoder, allocation_helpers, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
@@ -9,7 +9,6 @@ use crate::{
         model_shape::ModelShape,
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
-        state::allocation_helpers,
     },
 };
 

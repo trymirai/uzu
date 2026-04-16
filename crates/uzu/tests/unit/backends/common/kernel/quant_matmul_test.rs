@@ -13,7 +13,7 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            QuantizedMatmulType, tests::common::helpers::alloc_buffer_with_data,
+            QuantizedMatmulType, tests::common::helpers::alloc_allocation_with_data,
         },
     },
 };
@@ -261,23 +261,23 @@ fn generate_test_quant_params(
     }
 }
 
-fn buffer_from_f32_slice<B: Backend>(
+fn allocation_from_quantized_f32_slice<B: Backend>(
     ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
-) -> B::Buffer {
+) -> Allocation<B> {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            alloc_buffer_with_data::<B, f16>(ctx, data.as_slice())
+            alloc_allocation_with_data::<B, f16>(ctx, data.as_slice())
         },
         DataType::BF16 => {
             let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            alloc_buffer_with_data::<B, bf16>(ctx, data.as_slice())
+            alloc_allocation_with_data::<B, bf16>(ctx, data.as_slice())
         },
-        DataType::F32 => alloc_buffer_with_data::<B, f32>(ctx, values),
+        DataType::F32 => alloc_allocation_with_data::<B, f32>(ctx, values),
         other => {
-            panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
+            panic!("Unsupported dtype for allocation_from_quantized_f32_slice: {:?}", other)
         },
     }
 }
@@ -293,14 +293,14 @@ fn allocation_from_f32_slice<B: Backend>(
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data.as_slice());
+            crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut allocation, data.as_slice());
         },
         DataType::BF16 => {
             let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, data.as_slice());
+            crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut allocation, data.as_slice());
         },
         DataType::F32 => {
-            crate::forward_pass::state::allocation_helpers::copy_slice_to_allocation(&mut allocation, values);
+            crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut allocation, values);
         },
         other => panic!("Unsupported dtype for allocation_from_f32_slice: {:?}", other),
     }
@@ -345,12 +345,12 @@ fn execute_quantized_matmul<B: Backend>(
     };
     let x_quant = quantize_slice(&x_f32, data_type);
 
-    let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
-    let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
+    let w_buf = alloc_allocation_with_data::<B, u8>(ctx, &weights_packed);
+    let s_buf = allocation_from_quantized_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
-        QuantizedMatmulType::ZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizedMatmulType::Mlx => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
+        QuantizedMatmulType::ZeroPoint => alloc_allocation_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizedMatmulType::Mlx => allocation_from_quantized_f32_slice::<B>(ctx, data_type, &params.biases),
     };
     let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx
@@ -378,9 +378,9 @@ fn execute_quantized_matmul<B: Backend>(
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
                 a: &x_buf,
-                b_buffer: &w_buf,
-                scales_buffer: &s_buf,
-                zero_points_or_biases_buffer: &b_buf,
+                b: &w_buf,
+                scales: &s_buf,
+                zero_points_or_biases: &b_buf,
                 output: &mut y_buf,
                 batch_dim: batch,
             };
@@ -394,9 +394,9 @@ fn execute_quantized_matmul<B: Backend>(
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
             a: &x_buf,
-            b_buffer: &w_buf,
-            scales_buffer: &s_buf,
-            zero_points_or_biases_buffer: &b_buf,
+            b: &w_buf,
+            scales: &s_buf,
+            zero_points_or_biases: &b_buf,
             output: &mut y_buf,
             batch_dim: batch,
         };
@@ -425,15 +425,15 @@ fn execute_quantized_matmul<B: Backend>(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_out = crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f16, B>(&y_buf);
+                let y_out = crate::backends::common::allocation_helpers::copy_allocation_to_slice::<f16, B>(&y_buf);
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_out = crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<bf16, B>(&y_buf);
+                let y_out = crate::backends::common::allocation_helpers::copy_allocation_to_slice::<bf16, B>(&y_buf);
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
-                crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f32, B>(&y_buf).to_vec()
+                crate::backends::common::allocation_helpers::copy_allocation_to_slice::<f32, B>(&y_buf).to_vec()
             },
             other => panic!("Unsupported dtype for validation: {:?}", other),
         };

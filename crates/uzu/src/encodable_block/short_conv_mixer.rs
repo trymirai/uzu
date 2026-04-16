@@ -1,6 +1,6 @@
 use crate::{
     DataType,
-    array::{Array, size_for_shape},
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
@@ -20,8 +20,8 @@ pub struct ShortConvMixer<B: Backend> {
     short_conv_prefill: <B::Kernels as Kernels>::ShortConvPrefillKernel,
     short_conv_decode: <B::Kernels as Kernels>::ShortConvDecodeKernel,
     short_conv_trie: <B::Kernels as Kernels>::ShortConvTrieKernel,
-    conv_weight: Array<B>,
-    conv_bias: Option<Array<B>>,
+    conv_weight: Allocation<B>,
+    conv_bias: Option<Allocation<B>>,
     data_type: DataType,
 }
 
@@ -72,9 +72,9 @@ impl<B: Backend> ShortConvMixer<B> {
         )
         .expect("Failed to create out-projection kernel");
 
-        let conv_weight = conv_tree.leaf_array("weights").unwrap().clone();
+        let conv_weight = conv_tree.leaf("weights").unwrap().read_allocation().unwrap();
         let conv_bias = if short_conv_config.conv_config.has_biases {
-            Some(conv_tree.leaf_array("biases").unwrap().clone())
+            Some(conv_tree.leaf("biases").unwrap().read_allocation().unwrap())
         } else {
             None
         };
@@ -173,11 +173,6 @@ impl<B: Backend> ShortConvMixer<B> {
             return Ok(());
         }
 
-        let bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-        let conv_weight = self.conv_weight.buffer();
-        let conv_weight = conv_weight.borrow();
-
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
@@ -196,8 +191,8 @@ impl<B: Backend> ShortConvMixer<B> {
         self.short_conv_prefill.encode(
             &padded,
             in_proj,
-            &*conv_weight,
-            bias_buf_borrow.as_deref(),
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
             out,
             &mut layer.conv_state,
             suffix_length as u32,
@@ -235,19 +230,23 @@ impl<B: Backend> ShortConvMixer<B> {
         let suffix_state_offset = sampling_start * self.model_dim * state_stride * elem_bytes;
         let base_state_offset = 0;
         let parents_offset = sampling_start * std::mem::size_of::<i32>();
-        let trie_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let trie_bias_buf_borrow = trie_bias_buf_rc.as_ref().map(|rc| rc.borrow());
-        let conv_weight = self.conv_weight.buffer();
-        let conv_weight = conv_weight.borrow();
+        let in_proj_view = in_proj.slice(in_proj_offset..in_proj_offset + trie_len * in_proj_stride * elem_bytes);
+        let base_state =
+            layer.conv_state.slice(base_state_offset..base_state_offset + layer.conv_state.as_buffer_range().1.len());
+        let parents = token_parents.slice(parents_offset..parents_offset + trie_len * std::mem::size_of::<i32>());
+        let mut out_view = out.slice(out_offset..out_offset + trie_len * self.model_dim * elem_bytes);
+        let mut suffix_state = layer
+            .suffix_state
+            .slice(suffix_state_offset..suffix_state_offset + trie_len * self.model_dim * state_stride * elem_bytes);
 
         self.short_conv_trie.encode(
-            (in_proj, in_proj_offset),
-            &*conv_weight,
-            trie_bias_buf_borrow.as_deref(),
-            (&layer.conv_state, base_state_offset),
-            (token_parents, parents_offset),
-            (out, out_offset),
-            (&mut layer.suffix_state, suffix_state_offset),
+            &in_proj_view,
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
+            &base_state,
+            &parents,
+            &mut out_view,
+            &mut suffix_state,
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -269,18 +268,13 @@ impl<B: Backend> ShortConvMixer<B> {
             return;
         }
 
-        let decode_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let decode_bias_buf_borrow = decode_bias_buf_rc.as_ref().map(|rc| rc.borrow());
-        let conv_weight = self.conv_weight.buffer();
-        let conv_weight = conv_weight.borrow();
-
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size.saturating_sub(1);
 
         self.short_conv_decode.encode(
             in_proj,
-            &*conv_weight,
-            decode_bias_buf_borrow.as_deref(),
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
             None::<&Allocation<B>>,
             out,
             &mut layer.conv_state,

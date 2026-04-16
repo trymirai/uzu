@@ -148,10 +148,6 @@ impl MatmulMetalKernel {
             input_dim,
             output_dim,
         } = arguments;
-        let (a, a_range) = a.as_buffer_range();
-        let (d, d_range) = d.as_buffer_range();
-        let a_offset = a_range.start;
-        let d_offset = d_range.start;
 
         let (is_accumulate, output_bias) = match c {
             MatmulArgumentC::Accumulate => (true, None),
@@ -164,9 +160,9 @@ impl MatmulMetalKernel {
 
         self.get_or_create_gemv(context, specialization)?.encode(
             b,
-            (a, a_offset),
+            a,
             output_bias,
-            (d, d_offset),
+            d,
             input_dim,
             output_dim,
             input_dim,
@@ -195,10 +191,6 @@ impl MatmulMetalKernel {
             input_dim,
             output_dim,
         } = arguments;
-        let (a, a_range) = a.as_buffer_range();
-        let (d, d_range) = d.as_buffer_range();
-        let a_offset = a_range.start;
-        let d_offset = d_range.start;
 
         let specialization =
             gemm::GemmSpecialization::select(context, self.data_type, batch_dim, input_dim, output_dim, &c);
@@ -223,9 +215,9 @@ impl MatmulMetalKernel {
         let kernel = self.get_or_create_gemm(context, specialization)?;
 
         kernel.encode(
-            (a, a_offset),
+            a,
             b,
-            (d, d_offset),
+            d,
             std::slice::from_ref(&params),
             threadgroups_per_row,
             threadgroups_per_column,
@@ -235,9 +227,9 @@ impl MatmulMetalKernel {
 
         if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                None::<&crate::backends::common::Allocation<Metal>>,
                 bias,
-                (d, d_offset),
+                d,
                 output_dim,
                 batch_dim * output_dim,
                 encoder,
@@ -263,10 +255,6 @@ impl MatmulMetalKernel {
             input_dim,
             output_dim,
         } = arguments;
-        let (a, a_range) = a.as_buffer_range();
-        let (d, d_range) = d.as_buffer_range();
-        let a_offset = a_range.start;
-        let d_offset = d_range.start;
         let is_accumulate = matches!(c, MatmulArgumentC::Accumulate);
         let specialization = gemm_mpp::GemmMppSpecialization::select(batch_dim, output_dim, is_accumulate);
 
@@ -303,22 +291,13 @@ impl MatmulMetalKernel {
         };
 
         let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
-        kernel.encode(
-            (a, a_offset),
-            b,
-            (d, d_offset),
-            std::slice::from_ref(&params),
-            group_count_x,
-            group_count_y,
-            ab_scale,
-            encoder,
-        );
+        kernel.encode(a, b, d, std::slice::from_ref(&params), group_count_x, group_count_y, ab_scale, encoder);
 
         if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                None::<&crate::backends::common::Allocation<Metal>>,
                 bias,
-                (d, d_offset),
+                d,
                 output_dim,
                 batch_dim * output_dim,
                 encoder,

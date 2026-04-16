@@ -42,14 +42,14 @@ pub enum EmbeddingError<B: Backend> {
 
 enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        biases: Allocation<B>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
@@ -57,26 +57,26 @@ enum TiedEmbeddingType<B: Backend> {
 
 enum UntiedEmbeddingLookupType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        biases: Allocation<B>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
     },
 }
 
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: Allocation<B>,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        biases: Allocation<B>,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
 }
@@ -205,7 +205,7 @@ impl<B: Backend> Embedding<B> {
 
                 let weights_leaf = lookup_tree.leaf("weights")?;
                 validate_tensor(&weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let weights = weights_leaf.read_buffer()?;
+                let weights = weights_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -230,8 +230,8 @@ impl<B: Backend> Embedding<B> {
                 let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
                 validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let output_weights = output_weights_leaf.read_buffer()?;
+                let input_weights = input_weights_leaf.read_allocation()?;
+                let output_weights = output_weights_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -273,9 +273,9 @@ impl<B: Backend> Embedding<B> {
                 let biases_leaf = lookup_tree.leaf("biases")?;
                 validate_tensor(&biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let weights = weights_leaf.read_buffer()?;
-                let scales = scales_leaf.read_buffer()?;
-                let biases = biases_leaf.read_buffer()?;
+                let weights = weights_leaf.read_allocation()?;
+                let scales = scales_leaf.read_allocation()?;
+                let biases = biases_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -348,13 +348,13 @@ impl<B: Backend> Embedding<B> {
                 let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let input_scales = input_scales_leaf.read_buffer()?;
-                let input_biases = input_biases_leaf.read_buffer()?;
+                let input_weights = input_weights_leaf.read_allocation()?;
+                let input_scales = input_scales_leaf.read_allocation()?;
+                let input_biases = input_biases_leaf.read_allocation()?;
 
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let output_weights = output_weights_leaf.read_allocation()?;
+                let output_scales = output_scales_leaf.read_allocation()?;
+                let output_biases = output_biases_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -424,11 +424,11 @@ impl<B: Backend> Embedding<B> {
                 let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
+                let input_weights = input_weights_leaf.read_allocation()?;
 
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let output_weights = output_weights_leaf.read_allocation()?;
+                let output_scales = output_scales_leaf.read_allocation()?;
+                let output_biases = output_biases_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -626,9 +626,9 @@ impl<B: Backend> Embedding<B> {
                         encoder,
                         QuantizedMatmulArguments {
                             a: input_allocation,
-                            b_buffer: weights,
-                            scales_buffer: scales,
-                            zero_points_or_biases_buffer: biases,
+                            b: weights,
+                            scales,
+                            zero_points_or_biases: biases,
                             output: output_allocation,
                             batch_dim,
                         },

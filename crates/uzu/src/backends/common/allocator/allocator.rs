@@ -8,21 +8,54 @@ use std::{
 use super::{RangeAllocationType, RangeAllocator};
 use crate::backends::common::{Backend, Buffer, Context};
 
-pub struct Allocation<B: Backend> {
+struct AllocationInner<B: Backend> {
     allocator: Rc<Allocator<B>>,
     buffer: *const B::Buffer,
+    base_range: Range<usize>,
+}
+
+pub struct Allocation<B: Backend> {
+    inner: Rc<AllocationInner<B>>,
     range: Range<usize>,
+}
+
+impl<B: Backend> Clone for Allocation<B> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            range: self.range.clone(),
+        }
+    }
 }
 
 impl<B: Backend> Allocation<B> {
     pub fn as_buffer_range<'a>(&'a self) -> (&'a B::Buffer, Range<usize>) {
-        (unsafe { &*self.buffer }, self.range.clone())
+        (unsafe { &*self.inner.buffer }, self.range.clone())
+    }
+
+    pub fn slice(
+        &self,
+        subrange: Range<usize>,
+    ) -> Self {
+        assert!(subrange.start <= subrange.end, "invalid allocation slice: {subrange:?}");
+        assert!(
+            subrange.end <= self.range.len(),
+            "allocation slice out of bounds: slice={subrange:?} len={}",
+            self.range.len()
+        );
+
+        Self {
+            inner: self.inner.clone(),
+            range: (self.range.start + subrange.start)..(self.range.start + subrange.end),
+        }
     }
 }
 
 impl<B: Backend> Drop for Allocation<B> {
     fn drop(&mut self) {
-        self.allocator.free(self)
+        if Rc::strong_count(&self.inner) == 1 {
+            self.inner.allocator.free(self.inner.buffer, self.inner.base_range.clone());
+        }
     }
 }
 
@@ -123,9 +156,14 @@ impl<B: Backend> Allocator<B> {
 
         allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
 
-        Ok(Allocation {
+        let inner = Rc::new(AllocationInner {
             allocator: self.clone(),
             buffer,
+            base_range: range.clone(),
+        });
+
+        Ok(Allocation {
+            inner,
             range,
         })
     }
@@ -153,7 +191,8 @@ impl<B: Backend> Allocator<B> {
 
     fn free(
         self: &Rc<Self>,
-        allocation: &Allocation<B>,
+        buffer: *const B::Buffer,
+        range: Range<usize>,
     ) {
         let mut allocator_buffers = self.allocator_buffers.borrow_mut();
 
@@ -161,11 +200,11 @@ impl<B: Backend> Allocator<B> {
             .iter_mut()
             .enumerate()
             .find(|(_allocator_buffer_index, allocator_buffer)| {
-                (allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer) == allocation.buffer
+                (allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer) == buffer
             })
             .unwrap(); // Can never fail
 
-        allocator_buffer.range_allocator.free_range(allocation.range.clone());
+        allocator_buffer.range_allocator.free_range(range);
 
         if allocator_buffer.range_allocator.is_empty() {
             allocator_buffers.remove(allocator_buffer_index);

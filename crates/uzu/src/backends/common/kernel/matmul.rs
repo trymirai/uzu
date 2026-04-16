@@ -13,13 +13,13 @@ pub enum MatmulError<B: Backend> {
     BackendError(#[source] B::Error),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum MatmulArgumentC<'a, B: Backend> {
     None,
     /// Accumulate: [M, N]
     Accumulate,
     /// Bias: [N] (broadcasted across M/batch)
-    Bias(&'a B::Buffer),
+    Bias(&'a Allocation<B>),
 }
 
 // D = ab_scale * (A @ B.T) + C
@@ -27,7 +27,7 @@ pub struct MatmulArguments<'a, 'input, 'output, B: Backend> {
     /// A: [M, K]
     pub a: &'input Allocation<B>,
     /// B: [N, K]
-    pub b: &'a B::Buffer,
+    pub b: &'a Allocation<B>,
     /// AB scale: also known as alpha
     pub ab_scale: f32,
     /// C: behavior depends on enum variant

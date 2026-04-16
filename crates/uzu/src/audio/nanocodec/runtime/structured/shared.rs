@@ -1,21 +1,21 @@
 use super::*;
 
-pub(super) fn array_batch_view<B: Backend>(
-    array: &Array<B>,
+pub(super) fn allocation_batch_view<B: Backend>(
+    allocation: &crate::backends::common::Allocation<B>,
     batch_index: usize,
     frames: usize,
     channels: usize,
     active_frames: usize,
-) -> AudioResult<Array<B>> {
-    let batch_stride_bytes = size_for_shape(&[frames, channels], array.data_type());
+    data_type: DataType,
+) -> AudioResult<crate::backends::common::Allocation<B>> {
+    let batch_stride_bytes = size_for_shape(&[frames, channels], data_type);
     let batch_offset = batch_index
         .checked_mul(batch_stride_bytes)
-        .and_then(|value| value.checked_add(array.offset()))
-        .ok_or(AudioError::Runtime("array batch view offset overflow".to_string()))?;
+        .ok_or(AudioError::Runtime("allocation batch view offset overflow".to_string()))?;
     if active_frames > frames {
-        return Err(AudioError::Runtime("array batch view active_frames exceeds frames".to_string()));
+        return Err(AudioError::Runtime("allocation batch view active_frames exceeds frames".to_string()));
     }
-    Ok(unsafe { Array::from_parts(array.buffer(), batch_offset, &[active_frames, channels], array.data_type()) })
+    Ok(allocation.slice(batch_offset..batch_offset + size_for_shape(&[active_frames, channels], data_type)))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,10 +45,10 @@ pub struct StructuredAudioCodecGraph {
     pub(in crate::audio::nanocodec::runtime) vocoder_data_type: DataType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioConv1d<B: Backend> {
-    pub(super) weight: Array<B>,
-    pub(super) bias: Array<B>,
+    pub(super) weight: crate::backends::common::Allocation<B>,
+    pub(super) bias: crate::backends::common::Allocation<B>,
     pub(super) cin: usize,
     pub(super) cout: usize,
     pub(super) kernel_size: usize,
@@ -56,10 +56,10 @@ pub(super) struct StructuredAudioConv1d<B: Backend> {
     pub(super) groups: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioConvTranspose1d<B: Backend> {
-    pub(super) weight: Array<B>,
-    pub(super) bias: Array<B>,
+    pub(super) weight: crate::backends::common::Allocation<B>,
+    pub(super) bias: crate::backends::common::Allocation<B>,
     pub(super) cin: usize,
     pub(super) cout: usize,
     pub(super) kernel_size: usize,
@@ -67,23 +67,23 @@ pub(super) struct StructuredAudioConvTranspose1d<B: Backend> {
     pub(super) groups: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioPointwiseConv<B: Backend> {
-    pub(super) weight: Array<B>,
-    pub(super) bias: Array<B>,
+    pub(super) weight: crate::backends::common::Allocation<B>,
+    pub(super) bias: crate::backends::common::Allocation<B>,
     pub(super) cin: usize,
     pub(super) cout: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioNorm<B: Backend> {
-    pub(super) scales: Array<B>,
-    pub(super) bias: Array<B>,
+    pub(super) scales: crate::backends::common::Allocation<B>,
+    pub(super) bias: crate::backends::common::Allocation<B>,
     pub(super) epsilon: f32,
     pub(super) subtract_mean: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioConvNeXt<B: Backend> {
     pub(super) depthwise_conv: StructuredAudioConv1d<B>,
     pub(super) norm: StructuredAudioNorm<B>,
@@ -91,28 +91,28 @@ pub(super) struct StructuredAudioConvNeXt<B: Backend> {
     pub(super) pwconv2: StructuredAudioPointwiseConv<B>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioResidualUnit<B: Backend> {
-    pub(super) snake1_alpha: Array<B>,
+    pub(super) snake1_alpha: crate::backends::common::Allocation<B>,
     pub(super) conv1: StructuredAudioConv1d<B>,
-    pub(super) snake2_alpha: Array<B>,
+    pub(super) snake2_alpha: crate::backends::common::Allocation<B>,
     pub(super) conv2: StructuredAudioConv1d<B>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioDecoderBlock<B: Backend> {
-    pub(super) snake_alpha: Array<B>,
+    pub(super) snake_alpha: crate::backends::common::Allocation<B>,
     pub(super) trans_conv: StructuredAudioConvTranspose1d<B>,
     pub(super) res_unit1: StructuredAudioResidualUnit<B>,
     pub(super) res_unit2: StructuredAudioResidualUnit<B>,
     pub(super) res_unit3: StructuredAudioResidualUnit<B>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StructuredAudioDecoderGraph<B: Backend> {
     pub(super) first_conv: StructuredAudioConv1d<B>,
     pub(super) upsample_blocks: Vec<(StructuredAudioConvTranspose1d<B>, StructuredAudioConvNeXt<B>)>,
     pub(super) decoder_blocks: Vec<StructuredAudioDecoderBlock<B>>,
-    pub(super) final_snake_alpha: Array<B>,
+    pub(super) final_snake_alpha: crate::backends::common::Allocation<B>,
     pub(super) final_conv: StructuredAudioConv1d<B>,
 }

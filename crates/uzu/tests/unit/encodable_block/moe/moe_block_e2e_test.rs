@@ -14,8 +14,7 @@ use uzu::{
 };
 
 use crate::encodable_block::mlp::moe::tests::common::helpers::{
-    alloc_allocation, alloc_allocation_with_data, alloc_buffer_with_data, allocation_prefix_to_vec, allocation_to_vec,
-    create_context,
+    alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
 };
 
 fn moe_cpu_reference(
@@ -286,12 +285,12 @@ fn run_moe_parity_test_internal<B: Backend>(
 
     // Create Metal buffers
     let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
-    let router_w_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_weight_bf16);
-    let router_b_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_bias_bf16);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13_gpu);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2_gpu);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+    let router_w_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_weight_bf16);
+    let router_b_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_bias_bf16);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13_gpu);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_gpu);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
     // Allocate intermediate buffers (max capacity)
     let max_sumk = t * k;

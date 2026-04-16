@@ -2,10 +2,12 @@ use std::ptr;
 
 use ndarray::{ArrayView, Dimension};
 
+#[cfg(feature = "tracing")]
+use crate::backends::common::Encoder;
 use crate::{
     ArrayElement, DataType,
-    array::{Array, size_for_shape},
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder},
+    array::size_for_shape,
+    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
 };
 
 pub fn create_allocation<B: Backend>(
@@ -49,48 +51,11 @@ pub fn copy_slice_to_allocation<T: ArrayElement, B: Backend>(
     }
 }
 
-pub fn copy_array_to_allocation<C: Backend, B: Backend>(
-    allocation: &mut Allocation<B>,
-    array: &Array<C>,
-) {
-    unsafe {
-        let dst = allocation_bytes_mut(allocation);
-        assert_eq!(dst.len(), array.size());
-        dst.copy_from_slice(array.as_bytes());
-    }
-}
-
-pub fn copy_buffer_bytes_to_allocation<B: Backend>(
-    allocation: &mut Allocation<B>,
-    buffer: &B::Buffer,
-    source_offset: usize,
-    byte_len: usize,
-) {
-    unsafe {
-        let dst = allocation_bytes_mut(allocation);
-        assert_eq!(dst.len(), byte_len);
-        let src = std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(source_offset), byte_len);
-        dst.copy_from_slice(src);
-    }
-}
-
-pub fn encode_copy_buffer_bytes_to_allocation<B: Backend>(
-    encoder: &mut Encoder<B>,
-    allocation: &mut Allocation<B>,
-    buffer: &B::Buffer,
-    source_offset: usize,
-    byte_len: usize,
-) {
-    let (destination_buffer, destination_range) = allocation.as_buffer_range();
-    assert_eq!(destination_range.len(), byte_len);
-    encoder.encode_copy(buffer, source_offset..source_offset + byte_len, destination_buffer, destination_range);
-}
-
 #[cfg(feature = "tracing")]
 pub fn encode_copy_allocation_to_array<B: Backend>(
     encoder: &mut Encoder<B>,
     source: &Allocation<B>,
-    destination: &Array<B>,
+    destination: &crate::array::Array<B>,
 ) {
     let (source_buffer, source_range) = source.as_buffer_range();
     let destination_buffer = destination.buffer();

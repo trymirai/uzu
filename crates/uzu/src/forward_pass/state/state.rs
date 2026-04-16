@@ -1,5 +1,3 @@
-#[cfg(feature = "tracing")]
-use std::ops::DerefMut;
 use std::{cell::RefCell, rc::Rc};
 
 use ndarray::ArrayView2;
@@ -13,7 +11,7 @@ use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{Allocation, Backend},
+    backends::common::{Allocation, Backend, allocation_helpers},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -65,12 +63,9 @@ impl<B: Backend> ForwardPassState<B> {
     fn init_token_ids(
         context: &B::Context,
         token_ids: &[u64],
-        skip_token_ids_copy: bool,
     ) -> Allocation<B> {
-        let mut allocation = super::allocation_helpers::create_allocation(context, &[token_ids.len()], DataType::U64);
-        if !skip_token_ids_copy {
-            super::allocation_helpers::copy_slice_to_allocation(&mut allocation, token_ids);
-        }
+        let mut allocation = allocation_helpers::create_allocation(context, &[token_ids.len()], DataType::U64);
+        allocation_helpers::copy_slice_to_allocation(&mut allocation, token_ids);
         allocation
     }
 
@@ -79,25 +74,8 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
     ) -> Allocation<B> {
         let positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
-        let mut allocation =
-            super::allocation_helpers::create_allocation(context, &[token_positions.len()], DataType::I32);
-        super::allocation_helpers::copy_slice_to_allocation(&mut allocation, positions_i32.as_ref());
-        allocation
-    }
-
-    fn init_token_positions_from_buffer(
-        context: &B::Context,
-        suffix_length: usize,
-        buffer: &B::Buffer,
-        offset: usize,
-    ) -> Allocation<B> {
-        let mut allocation = super::allocation_helpers::create_allocation(context, &[suffix_length], DataType::I32);
-        super::allocation_helpers::copy_buffer_bytes_to_allocation(
-            &mut allocation,
-            buffer,
-            offset * std::mem::size_of::<i32>(),
-            suffix_length * std::mem::size_of::<i32>(),
-        );
+        let mut allocation = allocation_helpers::create_allocation(context, &[token_positions.len()], DataType::I32);
+        allocation_helpers::copy_slice_to_allocation(&mut allocation, positions_i32.as_ref());
         allocation
     }
 
@@ -138,8 +116,8 @@ impl<B: Backend> ForwardPassState<B> {
             }
         }
 
-        let mut allocation = super::allocation_helpers::create_allocation(context, &[suffix_length], DataType::I32);
-        super::allocation_helpers::copy_slice_to_allocation(&mut allocation, &parents);
+        let mut allocation = allocation_helpers::create_allocation(context, &[suffix_length], DataType::I32);
+        allocation_helpers::copy_slice_to_allocation(&mut allocation, &parents);
         allocation
     }
 
@@ -150,9 +128,9 @@ impl<B: Backend> ForwardPassState<B> {
         token_bitmask: &[u32],
     ) -> Allocation<B> {
         let shape = model_shape.bitmask_shape(suffix_length);
-        let mut allocation = super::allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
+        let mut allocation = allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
         let source = ArrayView2::from_shape((shape[0], shape[1]), token_bitmask).expect("Invalid token bitmask shape");
-        super::allocation_helpers::copy_view_to_allocation(&mut allocation, source);
+        allocation_helpers::copy_view_to_allocation(&mut allocation, source);
         allocation
     }
 
@@ -163,13 +141,13 @@ impl<B: Backend> ForwardPassState<B> {
         token_subtrie_ranges: &[[u32; 3]],
     ) -> Allocation<B> {
         let shape = model_shape.subtrie_ranges_shape(suffix_length);
-        let mut allocation = super::allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
+        let mut allocation = allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
         let source = ArrayView2::from_shape(
             (token_subtrie_ranges.len(), 3),
             bytemuck::cast_slice::<_, u32>(token_subtrie_ranges),
         )
         .unwrap();
-        super::allocation_helpers::copy_view_to_allocation(&mut allocation, source);
+        allocation_helpers::copy_view_to_allocation(&mut allocation, source);
         allocation
     }
 
@@ -177,24 +155,8 @@ impl<B: Backend> ForwardPassState<B> {
         context: &B::Context,
         token_seeds: &[u64],
     ) -> Allocation<B> {
-        let mut allocation = super::allocation_helpers::create_allocation(context, &[token_seeds.len()], DataType::U64);
-        super::allocation_helpers::copy_slice_to_allocation(&mut allocation, token_seeds);
-        allocation
-    }
-
-    fn init_token_seeds_from_buffer(
-        context: &B::Context,
-        suffix_length: usize,
-        buffer: &B::Buffer,
-        offset: usize,
-    ) -> Allocation<B> {
-        let mut allocation = super::allocation_helpers::create_allocation(context, &[suffix_length], DataType::U64);
-        super::allocation_helpers::copy_buffer_bytes_to_allocation(
-            &mut allocation,
-            buffer,
-            offset * std::mem::size_of::<u64>(),
-            suffix_length * std::mem::size_of::<u64>(),
-        );
+        let mut allocation = allocation_helpers::create_allocation(context, &[token_seeds.len()], DataType::U64);
+        allocation_helpers::copy_slice_to_allocation(&mut allocation, token_seeds);
         allocation
     }
 
@@ -209,51 +171,40 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
         token_bitmask: Option<&[u32]>,
         token_seeds: &[u64],
+        token_ids_allocation: Option<Allocation<B>>,
+        token_positions_allocation: Option<Allocation<B>>,
+        token_seeds_allocation: Option<Allocation<B>>,
         active_row_count: usize,
         sampling_start: usize,
         sampling_length: usize,
         is_prefilling: bool,
-        skip_token_ids_copy: bool,
-        async_positions: Option<(Rc<RefCell<B::Buffer>>, usize)>,
-        async_seeds: Option<(Rc<RefCell<B::Buffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");
         assert!(suffix_length <= cache_layers.borrow().max_suffix_length(), "Suffix length exceeds KV cache capacity");
 
-        let token_ids_allocation = Self::init_token_ids(context.as_ref(), token_ids, skip_token_ids_copy);
+        let token_ids_allocation =
+            token_ids_allocation.unwrap_or_else(|| Self::init_token_ids(context.as_ref(), token_ids));
         let token_subtrie_ranges_allocation = token_subtrie_ranges
             .map(|ranges| Self::init_token_subtrie_ranges(context.as_ref(), model_shape, suffix_length, ranges));
-        let token_positions_allocation = if let Some((buffer, offset)) = async_positions {
-            {
-                let buffer = buffer.borrow();
-                Self::init_token_positions_from_buffer(context.as_ref(), suffix_length, &*buffer, offset)
-            }
-        } else {
-            Self::init_token_positions(context.as_ref(), token_positions)
-        };
+        let token_positions_allocation =
+            token_positions_allocation.unwrap_or_else(|| Self::init_token_positions(context.as_ref(), token_positions));
         let token_parents_allocation =
             Self::init_token_parents(context.as_ref(), token_positions, sampling_start, sampling_length);
         let token_bitmask_allocation =
             token_bitmask.map(|mask| Self::init_token_bitmask(context.as_ref(), model_shape, suffix_length, mask));
-        let token_seeds_allocation = if let Some((buffer, offset)) = async_seeds {
-            {
-                let buffer = buffer.borrow();
-                Self::init_token_seeds_from_buffer(context.as_ref(), suffix_length, &*buffer, offset)
-            }
-        } else {
-            Self::init_token_seeds(context.as_ref(), token_seeds)
-        };
+        let token_seeds_allocation =
+            token_seeds_allocation.unwrap_or_else(|| Self::init_token_seeds(context.as_ref(), token_seeds));
 
         let logits = (sampling_length > 0).then(|| {
-            super::allocation_helpers::create_allocation(
+            allocation_helpers::create_allocation(
                 context.as_ref(),
                 &model_shape.logits_shape(suffix_length),
                 model_shape.activation_data_type(),
             )
         });
         let sampling_output = (sampling_length > 0)
-            .then(|| super::allocation_helpers::create_allocation(context.as_ref(), &[sampling_length], DataType::U32));
+            .then(|| allocation_helpers::create_allocation(context.as_ref(), &[sampling_length], DataType::U32));
 
         #[cfg(feature = "tracing")]
         let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(context.as_ref(), model_shape, suffix_length)));
@@ -297,7 +248,7 @@ impl<B: Backend> ForwardPassState<B> {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len());
 
-        let token_ids_allocation = Self::init_token_ids(context.as_ref(), token_ids, false);
+        let token_ids_allocation = Self::init_token_ids(context.as_ref(), token_ids);
         let token_positions_allocation = Self::init_token_positions(context.as_ref(), token_positions);
         let token_parents_allocation = Self::init_token_parents(context.as_ref(), token_positions, 0, 0);
         let classifier_state = Self::init_classifier_buffers(context.as_ref(), model_shape, num_labels, suffix_length);

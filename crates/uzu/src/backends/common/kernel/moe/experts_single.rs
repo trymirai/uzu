@@ -17,13 +17,13 @@ pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     /// Top-K probabilities from router [K]
     pub topk_probs: &'a Allocation<B>,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: &'a B::Buffer,
+    pub w13_all: &'a Allocation<B>,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: &'a B::Buffer,
+    pub w2_all: &'a Allocation<B>,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: &'a B::Buffer,
+    pub up_biases: &'a Allocation<B>,
     /// Down biases [E, d_model]
-    pub down_biases: &'a B::Buffer,
+    pub down_biases: &'a Allocation<B>,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
     pub hidden: &'a mut Allocation<B>,
     /// Final output [d_model]

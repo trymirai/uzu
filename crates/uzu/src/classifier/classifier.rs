@@ -310,21 +310,21 @@ impl<B: Backend> Classifier<B> {
 
         match logits_data_type {
             DataType::F32 => {
-                Ok(crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<f32, B>(logits)
+                Ok(crate::backends::common::allocation_helpers::copy_allocation_to_slice::<f32, B>(logits)
                     .iter()
                     .take(num_labels)
                     .copied()
                     .collect())
             },
             DataType::F16 => {
-                Ok(crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<half::f16, B>(logits)
+                Ok(crate::backends::common::allocation_helpers::copy_allocation_to_slice::<half::f16, B>(logits)
                     .iter()
                     .take(num_labels)
                     .map(|&x| x.to_f32())
                     .collect::<Box<[_]>>())
             },
             DataType::BF16 => {
-                Ok(crate::forward_pass::state::allocation_helpers::copy_allocation_to_slice::<half::bf16, B>(logits)
+                Ok(crate::backends::common::allocation_helpers::copy_allocation_to_slice::<half::bf16, B>(logits)
                     .iter()
                     .take(num_labels)
                     .map(|&x| x.to_f32())

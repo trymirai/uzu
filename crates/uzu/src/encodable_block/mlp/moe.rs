@@ -1,7 +1,5 @@
 //! MoE (Mixture of Experts) block encodable.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc};
-
 use thiserror::Error;
 
 use crate::{
@@ -25,16 +23,15 @@ use crate::{
 };
 
 struct RouterBlock<B: Backend> {
-    weights_buf: Rc<RefCell<B::Buffer>>,
-    biases_buf: Rc<RefCell<B::Buffer>>,
+    weights: Allocation<B>,
+    biases: Allocation<B>,
 }
 
-#[derive(Clone)]
 struct SharedMoeWeights<B: Backend> {
-    pub w13_buf: Rc<RefCell<B::Buffer>>,
-    pub w2_buf: Rc<RefCell<B::Buffer>>,
-    pub up_biases_buf: Rc<RefCell<B::Buffer>>,
-    pub down_biases_buf: Rc<RefCell<B::Buffer>>,
+    pub w13: Allocation<B>,
+    pub w2: Allocation<B>,
+    pub up_biases: Allocation<B>,
+    pub down_biases: Allocation<B>,
 }
 
 pub struct MoeBlock<B: Backend> {
@@ -60,7 +57,7 @@ pub enum MoeBlockError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
-    ParameterLoaderError(#[source] ParameterLoaderError<B>),
+    ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
 impl<B: Backend> MoeBlock<B> {
@@ -89,11 +86,13 @@ impl<B: Backend> MoeBlock<B> {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let weights_arr = router_tree.leaf_array("weights").map_err(MoeBlockError::ParameterLoaderError)?;
-                let biases_arr = router_tree.leaf_array("biases").map_err(MoeBlockError::ParameterLoaderError)?;
+                let weights =
+                    router_tree.leaf("weights").map_err(MoeBlockError::ParameterLoaderError)?.read_allocation()?;
+                let biases =
+                    router_tree.leaf("biases").map_err(MoeBlockError::ParameterLoaderError)?.read_allocation()?;
                 RouterBlock {
-                    weights_buf: weights_arr.buffer(),
-                    biases_buf: biases_arr.buffer(),
+                    weights,
+                    biases,
                 }
             },
             LinearConfig::QLoRA {
@@ -122,35 +121,39 @@ impl<B: Backend> MoeBlock<B> {
 
         let experts_tree = parameter_tree.subtree("experts").map_err(MoeBlockError::ParameterLoaderError)?;
 
-        let w13_arr = experts_tree
+        let w13 = experts_tree
             .subtree("up_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("weights")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("weights")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
-        let w2_arr = experts_tree
+        let w2 = experts_tree
             .subtree("down_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("weights")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("weights")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
-        let up_biases_arr = experts_tree
+        let up_biases = experts_tree
             .subtree("up_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("biases")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
-        let down_biases_arr = experts_tree
+        let down_biases = experts_tree
             .subtree("down_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("biases")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
         let shared_weights = SharedMoeWeights {
-            w13_buf: w13_arr.buffer(),
-            w2_buf: w2_arr.buffer(),
-            up_biases_buf: up_biases_arr.buffer(),
-            down_biases_buf: down_biases_arr.buffer(),
+            w13,
+            w2,
+            up_biases,
+            down_biases,
         };
 
         Ok(Self {
@@ -279,8 +282,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             // Use the fused router+topk kernel
             self.router_topk_kernel.encode(
                 input,
-                self.router.weights_buf.borrow().deref(),
-                self.router.biases_buf.borrow().deref(),
+                &self.router.weights,
+                &self.router.biases,
                 &mut topk_ids,
                 &mut topk_probs,
                 suffix_length as u32,
@@ -364,10 +367,10 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                     row_expert_map: &mut row_expert_map,
                     hidden: &mut hidden,
                     output: &mut y_partial,
-                    w13_all: self.shared_weights.w13_buf.borrow().deref(),
-                    w2_all: self.shared_weights.w2_buf.borrow().deref(),
-                    up_biases: self.shared_weights.up_biases_buf.borrow().deref(),
-                    down_biases: self.shared_weights.down_biases_buf.borrow().deref(),
+                    w13_all: &self.shared_weights.w13,
+                    w2_all: &self.shared_weights.w2,
+                    up_biases: &self.shared_weights.up_biases,
+                    down_biases: &self.shared_weights.down_biases,
                     tile_counts: &mut tile_counts,
                     tile_offsets: &mut tile_offsets,
                     tile_map: &mut tile_map,
@@ -389,20 +392,16 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             );
         } else {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-            let w13_borrow = self.shared_weights.w13_buf.borrow();
-            let w2_borrow = self.shared_weights.w2_buf.borrow();
-            let up_biases_borrow = self.shared_weights.up_biases_buf.borrow();
-            let down_biases_borrow = self.shared_weights.down_biases_buf.borrow();
             let args = MoeExpertsTwoPassArguments {
                 x_perm: &x_perm,
                 expert_offsets: &offsets,
                 row_expert_map: &mut row_expert_map,
                 hidden: &mut hidden,
                 output: &mut y_partial,
-                w13_all: w13_borrow.deref(),
-                w2_all: w2_borrow.deref(),
-                up_biases: up_biases_borrow.deref(),
-                down_biases: down_biases_borrow.deref(),
+                w13_all: &self.shared_weights.w13,
+                w2_all: &self.shared_weights.w2,
+                up_biases: &self.shared_weights.up_biases,
+                down_biases: &self.shared_weights.down_biases,
                 tile_counts: &mut tile_counts,
                 tile_offsets: &mut tile_offsets,
                 tile_map: &mut tile_map,

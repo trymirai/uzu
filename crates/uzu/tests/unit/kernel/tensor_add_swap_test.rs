@@ -1,13 +1,16 @@
-use std::{fmt::Debug, ops::DerefMut};
+use std::fmt::Debug;
 
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
-    ArrayContextExt, ArrayElement,
+    ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
 };
 
-use crate::uzu_test;
+use crate::{
+    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     skip_buffer: Box<[T]>,
@@ -44,19 +47,17 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         .expect("Failed to create TensorAddSwapKernel");
 
     let size = input.length as usize;
-    let skip_array = context.create_array_from(&[size], &input.skip_buffer, "");
-    let main_array = context.create_array_from(&[size], &input.main_buffer, "");
+    let mut skip_allocation = alloc_allocation_with_data::<B, T>(&context, &input.skip_buffer[..size]);
+    let mut main_allocation = alloc_allocation_with_data::<B, T>(&context, &input.main_buffer[..size]);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        skip_array.buffer().borrow_mut().deref_mut(),
-        main_array.buffer().borrow_mut().deref_mut(),
-        input.length,
-        &mut encoder,
-    );
+    kernel.encode(&mut skip_allocation, &mut main_allocation, input.length, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (skip_array.as_slice().to_vec(), main_array.as_slice().to_vec())
+    (
+        allocation_to_vec::<B, T>(&skip_allocation),
+        allocation_to_vec::<B, T>(&main_allocation),
+    )
 }
 
 fn test<T: ArrayElement + Float + Debug>() {

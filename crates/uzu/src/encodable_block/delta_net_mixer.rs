@@ -42,11 +42,11 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
     // Parameters
-    conv_weight: B::Buffer,
-    conv_bias: Option<B::Buffer>,
-    a_log: B::Buffer,
-    dt_bias: B::Buffer,
-    norm_weight: B::Buffer,
+    conv_weight: Allocation<B>,
+    conv_bias: Option<Allocation<B>>,
+    a_log: Allocation<B>,
+    dt_bias: Allocation<B>,
+    norm_weight: Allocation<B>,
     data_type: DataType,
 }
 
@@ -110,17 +110,17 @@ impl<B: Backend> DeltaNetMixer<B> {
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
-        let conv_weight = conv_tree.leaf("weights")?.read_buffer()?;
+        let conv_weight = conv_tree.leaf("weights")?.read_allocation()?;
         let conv_bias = if has_bias {
-            Some(conv_tree.leaf("biases")?.read_buffer()?)
+            Some(conv_tree.leaf("biases")?.read_allocation()?)
         } else {
             None
         };
 
-        let a_log = mixer_tree.leaf("a_log")?.read_buffer()?;
-        let dt_bias = mixer_tree.leaf("dt_bias")?.read_buffer()?;
+        let a_log = mixer_tree.leaf("a_log")?.read_allocation()?;
+        let dt_bias = mixer_tree.leaf("dt_bias")?.read_allocation()?;
         let norm_tree = resolve_subtree(&mixer_tree, &["norm", "inner_norm"]);
-        let norm_weight = norm_tree.leaf("scales")?.read_buffer()?;
+        let norm_weight = norm_tree.leaf("scales")?.read_allocation()?;
 
         // Create kernels
         let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, data_type, has_bias)

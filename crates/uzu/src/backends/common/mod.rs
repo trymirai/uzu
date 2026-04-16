@@ -1,4 +1,5 @@
 mod activation_config;
+pub mod allocation_helpers;
 mod allocator;
 mod backend;
 mod buffer;
