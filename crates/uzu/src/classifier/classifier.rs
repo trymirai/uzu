@@ -1,5 +1,3 @@
-#[cfg(feature = "tracing")]
-use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, path::Path, time::Instant};
 
 #[cfg(feature = "tracing")]
@@ -86,7 +84,7 @@ impl<B: Backend> Classifier<B> {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<B>>>), Error> {
+    ) -> Result<(Box<[f32]>, ActivationTrace<B>), Error> {
         self.forward_pass(token_ids, token_positions)
     }
 
@@ -95,7 +93,7 @@ impl<B: Backend> Classifier<B> {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-    ) -> Result<(Box<[f32]>, Rc<RefCell<ActivationTrace<B>>>), Error> {
+    ) -> Result<(Box<[f32]>, ActivationTrace<B>), Error> {
         let num_labels = self.context.model_config.model_config.num_labels;
         let mut state = ForwardPassState::new_classifier(
             self.context.context.clone(),
@@ -103,6 +101,12 @@ impl<B: Backend> Classifier<B> {
             self.context.shared_buffers.clone(),
             token_ids,
             token_positions,
+            num_labels,
+        );
+        let traces = ActivationTrace::new_classifier(
+            self.context.context.as_ref(),
+            &self.context.model_shape,
+            token_ids.len(),
             num_labels,
         );
 
@@ -128,8 +132,11 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
-            let traces = state.traces().clone();
-            state.encode_copy_allocation(&mut encoder, &main, traces.borrow().embedding_norm().clone());
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
+                &mut encoder,
+                &main,
+                traces.embedding_norm(),
+            );
         }
 
         let mut shortcut =
@@ -152,7 +159,7 @@ impl<B: Backend> Classifier<B> {
                         sampling_length: state.sampling_length(),
                         cache_layer: None,
                         #[cfg(feature = "tracing")]
-                        trace: state.traces().borrow().layer_results.get(layer_index).cloned(),
+                        trace: traces.layer_results.get(layer_index),
                     },
                     &encoding_params,
                     main,
@@ -168,8 +175,11 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
-            let traces = state.traces().clone();
-            state.encode_copy_allocation(&mut encoder, &main, traces.borrow().output_norm.clone());
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
+                &mut encoder,
+                &main,
+                &traces.output_norm,
+            );
         }
 
         let pooling = self
@@ -179,8 +189,11 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
-            let output_pooling_trace = state.traces().borrow().output_pooling().clone();
-            state.encode_copy_allocation(&mut encoder, &pooling, output_pooling_trace);
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
+                &mut encoder,
+                &pooling,
+                traces.output_pooling(),
+            );
         }
         state.set_active_row_count(1);
 
@@ -191,8 +204,11 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         {
-            let traces = state.traces().clone();
-            state.encode_copy_allocation(&mut encoder, &logits, traces.borrow().logits.clone());
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
+                &mut encoder,
+                &logits,
+                &traces.logits,
+            );
         }
 
         let _completed = encoder
@@ -203,7 +219,6 @@ impl<B: Backend> Classifier<B> {
 
         let logits = self.copy_logits_from_allocation(&logits)?;
 
-        let traces = state.traces().clone();
         Ok((logits, traces))
     }
 

@@ -2,12 +2,10 @@ use std::ptr;
 
 use ndarray::{ArrayView, Dimension};
 
-#[cfg(feature = "tracing")]
-use crate::backends::common::Encoder;
 use crate::{
     ArrayElement, DataType,
     array::size_for_shape,
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
+    backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder},
 };
 
 pub fn create_allocation<B: Backend>(
@@ -51,17 +49,15 @@ pub fn copy_slice_to_allocation<T: ArrayElement, B: Backend>(
     }
 }
 
-#[cfg(feature = "tracing")]
-pub fn encode_copy_allocation_to_array<B: Backend>(
+pub fn encode_copy_allocation_to_allocation<B: Backend>(
     encoder: &mut Encoder<B>,
     source: &Allocation<B>,
-    destination: &crate::array::Array<B>,
+    destination: &Allocation<B>,
 ) {
     let (source_buffer, source_range) = source.as_buffer_range();
-    let destination_buffer = destination.buffer();
-    debug_assert_eq!(destination.size(), source_range.len());
-
-    encoder.encode_copy(source_buffer, source_range, &mut destination_buffer.borrow_mut(), 0..destination.size());
+    let (destination_buffer, destination_range) = destination.as_buffer_range();
+    debug_assert_eq!(destination_range.len(), source_range.len());
+    encoder.encode_copy(source_buffer, source_range, destination_buffer, destination_range);
 }
 
 pub fn copy_view_to_allocation<T: ArrayElement, D: Dimension, B: Backend>(

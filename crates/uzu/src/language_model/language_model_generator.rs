@@ -1,6 +1,7 @@
 use std::{any::Any, iter::repeat_n, ops::Range, path::Path, time::Instant};
 
 use itertools::{Either, Itertools, izip};
+use ndarray::ArrayView2;
 
 use super::{
     gpu_capture::GpuCaptureManager,
@@ -14,7 +15,7 @@ use crate::{
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
     config::ModelMetadata,
-    encodable_block::{DecoderArguments, EncodingParameters, SamplingArguments},
+    encodable_block::{DecoderArguments, EncodingParameters, SamplingArguments, SamplingInputs},
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::INVALID_POSITION,
@@ -493,12 +494,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 .positions
                 .slice(pass_idx * std::mem::size_of::<i32>()..(pass_idx + 1) * std::mem::size_of::<i32>()),
         );
-        let token_seeds_allocation = Some(
-            self.context
-                .async_buffers
-                .seeds
-                .slice(pass_idx * std::mem::size_of::<u64>()..(pass_idx + 1) * std::mem::size_of::<u64>()),
-        );
+        let sampling_inputs = self.async_sampling_inputs(pass_idx);
 
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -514,11 +510,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &task.token_ids,
             task.token_subtrie_ranges,
             &task.token_positions,
-            task.token_bitmask,
-            &task.token_seeds,
             token_ids_allocation,
             token_positions_allocation,
-            token_seeds_allocation,
             task.active_row_count,
             /*sampling_start=*/ 0,
             /*sampling_length=*/ task.active_row_count,
@@ -557,7 +550,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                         rope_max_sequence_length: state.rope_max_sequence_length(),
                         rope_dim: state.rope_dim(),
                         #[cfg(feature = "tracing")]
-                        trace: Some(state.traces().clone()),
+                        trace: None,
                     },
                     decoder_logits,
                     &EncodingParameters::new(),
@@ -570,18 +563,13 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let mut sampling_output = state.take_sampling_output().expect("Sampling requires output allocation");
         let sampling_start = state.sampling_start();
         let seeds_offset = sampling_start * std::mem::size_of::<u64>();
-        let bitmask = state.token_bitmask();
-        let bitmask_offset = bitmask.map_or(0, |_| {
-            let row_len = state.token_bitmask_row_len().expect("Token bitmask row length not available");
-            sampling_start * row_len * std::mem::size_of::<u32>()
-        });
         let sampling_result = self.context.gpu_sampler.encode(
             SamplingArguments {
                 logits: &mut logits,
-                seeds: state.token_seeds().expect("Sampling requires token seeds"),
+                seeds: &sampling_inputs.seeds,
                 seeds_offset,
-                bitmask,
-                bitmask_offset,
+                bitmask: sampling_inputs.bitmask.as_ref(),
+                bitmask_offset: sampling_inputs.bitmask_offset(sampling_start),
                 output: &mut sampling_output,
                 sampling_method: state.sampling_method().unwrap(),
                 batch_size: state.sampling_length(),
@@ -778,6 +766,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_method: SamplingMethod,
     ) -> Result<(ForwardPassState<B>, f64), Error> {
         let run_start = Instant::now();
+        let sample = !task.is_prefilling;
+        let sampling_inputs =
+            sample.then(|| self.create_sampling_inputs(task.token_ids.len(), task.token_seeds, task.token_bitmask));
 
         let mut state = ForwardPassState::new_llm(
             self.context.context.clone(),
@@ -787,9 +778,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             task.token_ids,
             task.token_subtrie_ranges,
             task.token_positions,
-            task.token_bitmask,
-            task.token_seeds,
-            None,
             None,
             None,
             task.active_row_count,
@@ -822,14 +810,12 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.pre_encoded_task = None;
         }
 
-        let sample = !task.is_prefilling;
-
         let executable = if let Some((pre_encoded_key, pre_encoded_executable)) = self.pre_encoded_task.take()
             && pre_encoded_key == encoding_key
         {
             pre_encoded_executable
         } else {
-            self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample)?
+            self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample, sampling_inputs.as_ref())?
         };
 
         let pending = executable.submit();
@@ -839,8 +825,12 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
             next_encoding_key.context_len += 1;
 
-            let next_executable =
-                self.encode_forward_pass(&mut state, &EncodingParameters::new().with_projection(1), sample)?;
+            let next_executable = self.encode_forward_pass(
+                &mut state,
+                &EncodingParameters::new().with_projection(1),
+                sample,
+                sampling_inputs.as_ref(),
+            )?;
 
             self.pre_encoded_task = Some((next_encoding_key, next_executable));
         }
@@ -861,6 +851,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         state: &mut ForwardPassState<B>,
         parameters: &EncodingParameters,
         sample: bool,
+        sampling_inputs: Option<&SamplingInputs<B>>,
     ) -> Result<Executable<B>, Error> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
@@ -886,7 +877,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                         rope_max_sequence_length: state.rope_max_sequence_length(),
                         rope_dim: state.rope_dim(),
                         #[cfg(feature = "tracing")]
-                        trace: Some(state.traces().clone()),
+                        trace: None,
                     },
                     parameters,
                     &mut encoder,
@@ -915,7 +906,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                             rope_max_sequence_length: state.rope_max_sequence_length(),
                             rope_dim: state.rope_dim(),
                             #[cfg(feature = "tracing")]
-                            trace: Some(state.traces().clone()),
+                            trace: None,
                         },
                         decoder_logits,
                         parameters,
@@ -926,22 +917,18 @@ impl<B: Backend> LanguageModelGenerator<B> {
         };
 
         if sample {
+            let sampling_inputs = sampling_inputs.expect("Sampling requires sampling inputs");
             let mut logits = maybe_logits.expect("Sampling requires decoder logits allocation");
             let mut sampling_output = state.take_sampling_output().expect("Sampling requires output allocation");
             let sampling_start = state.sampling_start();
             let seeds_offset = sampling_start * std::mem::size_of::<u64>();
-            let bitmask = state.token_bitmask();
-            let bitmask_offset = bitmask.map_or(0, |_| {
-                let row_len = state.token_bitmask_row_len().expect("Token bitmask row length not available");
-                sampling_start * row_len * std::mem::size_of::<u32>()
-            });
             let sampling_result = self.context.gpu_sampler.encode(
                 SamplingArguments {
                     logits: &mut logits,
-                    seeds: state.token_seeds().expect("Sampling requires token seeds"),
+                    seeds: &sampling_inputs.seeds,
                     seeds_offset,
-                    bitmask,
-                    bitmask_offset,
+                    bitmask: sampling_inputs.bitmask.as_ref(),
+                    bitmask_offset: sampling_inputs.bitmask_offset(sampling_start),
                     output: &mut sampling_output,
                     sampling_method: state.sampling_method().unwrap(),
                     batch_size: state.sampling_length(),
@@ -959,6 +946,58 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let executable = encoder.end_encoding();
 
         Ok(executable)
+    }
+
+    fn create_sampling_inputs(
+        &self,
+        suffix_length: usize,
+        token_seeds: &[u64],
+        token_bitmask: Option<&[u32]>,
+    ) -> SamplingInputs<B> {
+        let mut seeds = allocation_helpers::create_allocation(
+            self.context.context.as_ref(),
+            &[token_seeds.len()],
+            crate::DataType::U64,
+        );
+        allocation_helpers::copy_slice_to_allocation(&mut seeds, token_seeds);
+
+        let (bitmask, bitmask_row_len) = if let Some(token_bitmask) = token_bitmask {
+            let shape = self.context.model_shape.bitmask_shape(suffix_length);
+            let mut bitmask = allocation_helpers::create_zeroed_allocation(
+                self.context.context.as_ref(),
+                &shape,
+                crate::DataType::U32,
+            );
+            let source =
+                ArrayView2::from_shape((shape[0], shape[1]), token_bitmask).expect("Invalid token bitmask shape");
+            allocation_helpers::copy_view_to_allocation(&mut bitmask, source);
+            (Some(bitmask), Some(shape[1]))
+        } else {
+            (None, None)
+        };
+
+        SamplingInputs {
+            seeds,
+            bitmask,
+            bitmask_row_len,
+        }
+    }
+
+    fn async_sampling_inputs(
+        &self,
+        pass_idx: usize,
+    ) -> SamplingInputs<B> {
+        let seeds = self
+            .context
+            .async_buffers
+            .seeds
+            .slice(pass_idx * std::mem::size_of::<u64>()..(pass_idx + 1) * std::mem::size_of::<u64>());
+
+        SamplingInputs {
+            seeds,
+            bitmask: None,
+            bitmask_row_len: None,
+        }
     }
 
     fn read_sampling_output(

@@ -37,6 +37,7 @@ pub use prediction_head::ClassifierPredictionHead;
 pub use qk_norm::QKNorm;
 pub use rms_norm::{RMSNorm, RMSNormError};
 pub use rope::Rope;
+pub(crate) use sampling::SamplingInputs;
 pub use sampling::{Sampling, SamplingArguments};
 pub(crate) use short_conv_mixer::ShortConvArguments;
 pub use short_conv_mixer::ShortConvMixer;

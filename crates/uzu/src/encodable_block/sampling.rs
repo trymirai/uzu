@@ -25,6 +25,21 @@ pub struct SamplingArguments<'a, B: Backend> {
     pub vocab_size: usize,
 }
 
+pub(crate) struct SamplingInputs<B: Backend> {
+    pub seeds: Allocation<B>,
+    pub bitmask: Option<Allocation<B>>,
+    pub bitmask_row_len: Option<usize>,
+}
+
+impl<B: Backend> SamplingInputs<B> {
+    pub(crate) fn bitmask_offset(
+        &self,
+        sampling_start: usize,
+    ) -> usize {
+        self.bitmask_row_len.map_or(0, |row_len| sampling_start * row_len * std::mem::size_of::<u32>())
+    }
+}
+
 impl<B: Backend> Sampling<B> {
     pub fn new(
         context: &B::Context,

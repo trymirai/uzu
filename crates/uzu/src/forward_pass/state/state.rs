@@ -2,12 +2,6 @@ use std::{cell::RefCell, rc::Rc};
 
 use ndarray::ArrayView2;
 
-#[cfg(feature = "tracing")]
-use crate::array::Array;
-#[cfg(feature = "tracing")]
-use crate::backends::common::Encoder;
-#[cfg(feature = "tracing")]
-use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
     array::size_for_shape,
@@ -27,12 +21,9 @@ pub enum ForwardPassMode<B: Backend> {
 
 pub struct LanguageModelGeneratorModeState<B: Backend> {
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub token_seeds: Allocation<B>,
     pub logits: Option<Allocation<B>>,
     pub sampling_output: Option<Allocation<B>>,
     pub sampling_method: Option<SamplingMethod>,
-    #[cfg(feature = "tracing")]
-    pub traces: Rc<RefCell<ActivationTrace<B>>>,
     pub active_row_count: usize,
     pub sampling_start: usize,
     pub sampling_length: usize,
@@ -41,9 +32,6 @@ pub struct LanguageModelGeneratorModeState<B: Backend> {
 
 pub struct ClassifierModeState<B: Backend> {
     pub active_row_count: usize,
-    #[cfg(feature = "tracing")]
-    pub traces: Rc<RefCell<ActivationTrace<B>>>,
-    #[cfg(not(feature = "tracing"))]
     _backend: std::marker::PhantomData<B>,
 }
 
@@ -54,7 +42,6 @@ pub struct ForwardPassState<B: Backend> {
     pub token_subtrie_ranges: Option<Allocation<B>>,
     token_positions: Allocation<B>,
     token_parents: Allocation<B>,
-    token_bitmask: Option<Allocation<B>>,
     pub shared_buffers: Rc<SharedBuffers<B>>,
     mode: ForwardPassMode<B>,
 }
@@ -121,19 +108,6 @@ impl<B: Backend> ForwardPassState<B> {
         allocation
     }
 
-    fn init_token_bitmask(
-        context: &B::Context,
-        model_shape: &ModelShape,
-        suffix_length: usize,
-        token_bitmask: &[u32],
-    ) -> Allocation<B> {
-        let shape = model_shape.bitmask_shape(suffix_length);
-        let mut allocation = allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
-        let source = ArrayView2::from_shape((shape[0], shape[1]), token_bitmask).expect("Invalid token bitmask shape");
-        allocation_helpers::copy_view_to_allocation(&mut allocation, source);
-        allocation
-    }
-
     fn init_token_subtrie_ranges(
         context: &B::Context,
         model_shape: &ModelShape,
@@ -151,15 +125,6 @@ impl<B: Backend> ForwardPassState<B> {
         allocation
     }
 
-    fn init_token_seeds(
-        context: &B::Context,
-        token_seeds: &[u64],
-    ) -> Allocation<B> {
-        let mut allocation = allocation_helpers::create_allocation(context, &[token_seeds.len()], DataType::U64);
-        allocation_helpers::copy_slice_to_allocation(&mut allocation, token_seeds);
-        allocation
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new_llm(
         context: Rc<B::Context>,
@@ -169,11 +134,8 @@ impl<B: Backend> ForwardPassState<B> {
         token_ids: &[u64],
         token_subtrie_ranges: Option<&[[u32; 3]]>,
         token_positions: &[usize],
-        token_bitmask: Option<&[u32]>,
-        token_seeds: &[u64],
         token_ids_allocation: Option<Allocation<B>>,
         token_positions_allocation: Option<Allocation<B>>,
-        token_seeds_allocation: Option<Allocation<B>>,
         active_row_count: usize,
         sampling_start: usize,
         sampling_length: usize,
@@ -191,10 +153,6 @@ impl<B: Backend> ForwardPassState<B> {
             token_positions_allocation.unwrap_or_else(|| Self::init_token_positions(context.as_ref(), token_positions));
         let token_parents_allocation =
             Self::init_token_parents(context.as_ref(), token_positions, sampling_start, sampling_length);
-        let token_bitmask_allocation =
-            token_bitmask.map(|mask| Self::init_token_bitmask(context.as_ref(), model_shape, suffix_length, mask));
-        let token_seeds_allocation =
-            token_seeds_allocation.unwrap_or_else(|| Self::init_token_seeds(context.as_ref(), token_seeds));
 
         let logits = (sampling_length > 0).then(|| {
             allocation_helpers::create_allocation(
@@ -206,17 +164,11 @@ impl<B: Backend> ForwardPassState<B> {
         let sampling_output = (sampling_length > 0)
             .then(|| allocation_helpers::create_allocation(context.as_ref(), &[sampling_length], DataType::U32));
 
-        #[cfg(feature = "tracing")]
-        let traces = Rc::new(RefCell::new(ActivationTrace::new_llm(context.as_ref(), model_shape, suffix_length)));
-
         let mode = ForwardPassMode::LanguageModelGenerator(LanguageModelGeneratorModeState {
             cache_layers,
-            token_seeds: token_seeds_allocation,
             logits,
             sampling_output,
             sampling_method: None,
-            #[cfg(feature = "tracing")]
-            traces,
             active_row_count,
             sampling_start,
             sampling_length,
@@ -230,7 +182,6 @@ impl<B: Backend> ForwardPassState<B> {
             token_subtrie_ranges: token_subtrie_ranges_allocation,
             token_positions: token_positions_allocation,
             token_parents: token_parents_allocation,
-            token_bitmask: token_bitmask_allocation,
             shared_buffers,
             mode,
         }
@@ -243,7 +194,7 @@ impl<B: Backend> ForwardPassState<B> {
         shared_buffers: Rc<SharedBuffers<B>>,
         token_ids: &[u64],
         token_positions: &[usize],
-        num_labels: usize,
+        _num_labels: usize,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len());
@@ -251,7 +202,6 @@ impl<B: Backend> ForwardPassState<B> {
         let token_ids_allocation = Self::init_token_ids(context.as_ref(), token_ids);
         let token_positions_allocation = Self::init_token_positions(context.as_ref(), token_positions);
         let token_parents_allocation = Self::init_token_parents(context.as_ref(), token_positions, 0, 0);
-        let classifier_state = Self::init_classifier_buffers(context.as_ref(), model_shape, num_labels, suffix_length);
 
         Self {
             context,
@@ -260,40 +210,11 @@ impl<B: Backend> ForwardPassState<B> {
             token_subtrie_ranges: None,
             token_positions: token_positions_allocation,
             token_parents: token_parents_allocation,
-            token_bitmask: None,
             shared_buffers,
-            mode: ForwardPassMode::Classifier(classifier_state),
-        }
-    }
-
-    #[cfg(feature = "tracing")]
-    fn init_classifier_buffers(
-        context: &B::Context,
-        model_shape: &ModelShape,
-        num_labels: usize,
-        suffix_length: usize,
-    ) -> ClassifierModeState<B> {
-        ClassifierModeState {
-            active_row_count: suffix_length,
-            traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
-                context,
-                model_shape,
-                suffix_length,
-                num_labels,
-            ))),
-        }
-    }
-
-    #[cfg(not(feature = "tracing"))]
-    fn init_classifier_buffers(
-        _context: &B::Context,
-        _model_shape: &ModelShape,
-        _num_labels: usize,
-        suffix_length: usize,
-    ) -> ClassifierModeState<B> {
-        ClassifierModeState {
-            active_row_count: suffix_length,
-            _backend: std::marker::PhantomData,
+            mode: ForwardPassMode::Classifier(ClassifierModeState {
+                active_row_count: suffix_length,
+                _backend: std::marker::PhantomData,
+            }),
         }
     }
 
@@ -325,14 +246,6 @@ impl<B: Backend> ForwardPassState<B> {
         self.token_subtrie_ranges.as_ref()
     }
 
-    pub fn token_bitmask(&self) -> Option<&Allocation<B>> {
-        self.token_bitmask.as_ref()
-    }
-
-    pub fn token_bitmask_row_len(&self) -> Option<usize> {
-        self.token_bitmask.as_ref().map(|_| self.model_shape.bitmask_shape(self.token_count())[1])
-    }
-
     pub fn sampling_output(&self) -> Option<&Allocation<B>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output.as_ref(),
@@ -354,13 +267,6 @@ impl<B: Backend> ForwardPassState<B> {
         match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_output = Some(sampling_output),
             ForwardPassMode::Classifier(_) => panic!("Not in LLM mode"),
-        }
-    }
-
-    pub fn token_seeds(&self) -> Option<&Allocation<B>> {
-        match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => Some(&state.token_seeds),
-            ForwardPassMode::Classifier(_) => None,
         }
     }
 
@@ -486,14 +392,6 @@ impl<B: Backend> ForwardPassState<B> {
         f(&mut cache.data[layer_index])
     }
 
-    #[cfg(feature = "tracing")]
-    pub fn traces(&self) -> &Rc<RefCell<ActivationTrace<B>>> {
-        match &self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => &state.traces,
-            ForwardPassMode::Classifier(state) => &state.traces,
-        }
-    }
-
     pub fn sampling_method_mut(&mut self) -> Option<&mut Option<SamplingMethod>> {
         match &mut self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => Some(&mut state.sampling_method),
@@ -506,20 +404,6 @@ impl<B: Backend> ForwardPassState<B> {
             ForwardPassMode::LanguageModelGenerator(state) => state.sampling_method,
             ForwardPassMode::Classifier(_) => None,
         }
-    }
-
-    #[cfg(feature = "tracing")]
-    pub fn encode_copy_allocation(
-        &self,
-        encoder: &mut Encoder<B>,
-        source: &Allocation<B>,
-        destination_array: Array<B>,
-    ) {
-        let (src_buffer, src_range) = source.as_buffer_range();
-        let dst_buf_rc = destination_array.buffer();
-        debug_assert_eq!(destination_array.size(), src_range.end - src_range.start);
-
-        encoder.encode_copy(src_buffer, src_range, dst_buf_rc.borrow_mut().deref_mut(), 0..destination_array.size());
     }
 
     fn token_count(&self) -> usize {

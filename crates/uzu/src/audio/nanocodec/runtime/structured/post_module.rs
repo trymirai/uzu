@@ -320,8 +320,6 @@ impl StructuredAudioCodecGraph {
             let rope_type = layer.rope_type();
             let rope_cosines = rope_type.map(|rope_type| state.rope_cosines(rope_type));
             let rope_sines = rope_type.map(|rope_type| state.rope_sines(rope_type));
-            #[cfg(feature = "tracing")]
-            let trace = state.traces().borrow().layer_results.get(layer.layer_index).cloned();
             main = if state.cache_layers().is_some() {
                 state
                     .with_cache_layer_mut(layer.layer_index, |cache_layer| {
@@ -341,7 +339,7 @@ impl StructuredAudioCodecGraph {
                                 sampling_length: state.sampling_length(),
                                 cache_layer: Some(cache_layer),
                                 #[cfg(feature = "tracing")]
-                                trace,
+                                trace: None,
                             },
                             &encoding_parameters,
                             main,
@@ -368,7 +366,7 @@ impl StructuredAudioCodecGraph {
                             sampling_length: state.sampling_length(),
                             cache_layer: None,
                             #[cfg(feature = "tracing")]
-                            trace,
+                            trace: None,
                         },
                         &encoding_parameters,
                         main,

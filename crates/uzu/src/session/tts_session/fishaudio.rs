@@ -647,7 +647,9 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             sampling,
             by_codebook,
         )?;
-        self.slow_runner.submit_and_wait_command_buffer(shared_encoder)?;
+        let submit_result = self.slow_runner.submit_and_wait_command_buffer(shared_encoder);
+        self.fast_runner.clear_pending_sampling_inputs();
+        submit_result?;
 
         for pass in 0..total_fast_count {
             let sampled = self.fast_runner.read_async_chain_result(pass)?;

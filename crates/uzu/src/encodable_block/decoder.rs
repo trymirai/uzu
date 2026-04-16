@@ -1,7 +1,5 @@
 //! Decoder executables - combines embedding, layers, normalization, and readout.
 
-#[cfg(feature = "tracing")]
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use thiserror::Error;
@@ -53,7 +51,7 @@ pub struct DecoderArguments<'a, B: Backend> {
     pub rope_max_sequence_length: usize,
     pub rope_dim: usize,
     #[cfg(feature = "tracing")]
-    pub trace: Option<Rc<RefCell<ActivationTrace<B>>>>,
+    pub trace: Option<&'a ActivationTrace<B>>,
 }
 
 impl<B: Backend> Decoder<B> {
@@ -280,8 +278,7 @@ impl<B: Backend> Decoder<B> {
             });
             let attention_sinks = shared_buffers.attention_sinks.as_ref().map(|sinks| &sinks[layer.layer_index]);
             #[cfg(feature = "tracing")]
-            let layer_trace =
-                trace.as_ref().and_then(|trace| trace.borrow().layer_results.get(layer.layer_index).cloned());
+            let layer_trace = trace.and_then(|trace| trace.layer_results.get(layer.layer_index));
 
             main = if let Some(cache_layers) = cache_layers.as_deref_mut() {
                 let cache_layer = &mut cache_layers.data[layer.layer_index];
@@ -374,7 +371,7 @@ impl<B: Backend> Decoder<B> {
         let sampling_start = args.sampling_start;
         let sampling_length = args.sampling_length;
         #[cfg(feature = "tracing")]
-        let trace = args.trace.clone();
+        let trace = args.trace;
         let (mut main, mut shortcut) = self.encode_hidden_from_embeddings(args, main, parameters, encoder)?;
 
         main = self
@@ -382,23 +379,21 @@ impl<B: Backend> Decoder<B> {
             .encode(&main, sampling_start, sampling_length, Some(&mut shortcut), encoder)
             .map_err(DecoderError::BackendError)?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = &trace {
-            let traces = trace.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+        if let Some(trace) = trace {
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.output_norm,
+                &trace.output_norm,
             );
         }
 
         self.embed.encode_readout(context, sampling_length, &main, &mut logits, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = &trace {
-            let traces = trace.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+        if let Some(trace) = trace {
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &logits,
-                &traces.logits,
+                &trace.logits,
             );
         }
         Ok((logits, shortcut))

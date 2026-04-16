@@ -223,11 +223,10 @@ impl<B: Backend> ClassifierLayer<B> {
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.inputs,
+                &layer_traces.inputs,
             );
         }
 
@@ -240,11 +239,10 @@ impl<B: Backend> ClassifierLayer<B> {
         };
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.pre_attention_norm,
+                &layer_traces.pre_attention_norm,
             );
         }
 
@@ -288,11 +286,10 @@ impl<B: Backend> ClassifierLayer<B> {
         main = self.out_projection.encode(context, &attention_output, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.attention,
+                &layer_traces.attention,
             );
         }
 
@@ -300,11 +297,10 @@ impl<B: Backend> ClassifierLayer<B> {
             main = post_attn_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                let traces = layer_traces.borrow();
-                crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+                crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                     encoder,
                     &main,
-                    &traces.post_attention_norm,
+                    &layer_traces.post_attention_norm,
                 );
             }
         }
@@ -312,11 +308,10 @@ impl<B: Backend> ClassifierLayer<B> {
         self.mixer_residual_add.encode(shortcut, &mut main, layer_len, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.mlp_inputs,
+                &layer_traces.mlp_inputs,
             );
         }
 
@@ -325,30 +320,31 @@ impl<B: Backend> ClassifierLayer<B> {
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.pre_mlp_norm,
+                &layer_traces.pre_mlp_norm,
             );
         }
 
         main = self.mlp.encode(context, &main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(encoder, &main, &traces.mlp);
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
+                encoder,
+                &main,
+                &layer_traces.mlp,
+            );
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
             main = post_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                let traces = layer_traces.borrow();
-                crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+                crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                     encoder,
                     &main,
-                    &traces.post_mlp_norm,
+                    &layer_traces.post_mlp_norm,
                 );
             }
         }
@@ -356,11 +352,10 @@ impl<B: Backend> ClassifierLayer<B> {
         self.mlp_residual_add.encode(shortcut, &mut main, layer_len, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            let traces = layer_traces.borrow();
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_array(
+            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
                 encoder,
                 &main,
-                &traces.outputs,
+                &layer_traces.outputs,
             );
         }
 
