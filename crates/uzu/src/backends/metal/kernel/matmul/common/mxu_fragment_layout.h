@@ -37,22 +37,22 @@ struct MxuFragment {
   template <typename U>
   using FragmentVector = typename metal::vec<U, ELEMENTS_PER_FRAG>;
 
-  METAL_FUNC static ushort2 get_lane_coordinate() {
+  METAL_FUNC static short2 get_lane_coordinate() {
     const ushort simd_lane_id = __metal_get_thread_index_in_simdgroup(ushort());
-    const ushort quad_id = simd_lane_id >> 2;
-    const ushort lane_row = ((quad_id & 4) | ((simd_lane_id >> 1) & 3));
-    const ushort lane_col = ((quad_id & 2) | (simd_lane_id & 1)) * 4;
-    return ushort2{lane_col, lane_row};
+    const short quad_id = simd_lane_id >> 2;
+    const short lane_row = ((quad_id & 4) | ((simd_lane_id >> 1) & 3));
+    const short lane_col = ((quad_id & 2) | (simd_lane_id & 1)) * 4;
+    return short2{lane_col, lane_row};
   }
 
-  METAL_FUNC static ushort2 get_lane_coordinate(ushort index) {
+  METAL_FUNC static short2 get_lane_coordinate(ushort index) {
     const ushort simd_lane_id = __metal_get_thread_index_in_simdgroup(ushort());
-    const ushort quad_id = simd_lane_id >> 2;
-    const ushort lane_row =
+    const short quad_id = simd_lane_id >> 2;
+    const short lane_row =
         ((quad_id & 4) | ((simd_lane_id >> 1) & 3)) + (index >> 2) * 8;
-    const ushort lane_col =
+    const short lane_col =
         ((quad_id & 2) | (simd_lane_id & 1)) * 4 + index % 4;
-    return ushort2{lane_col, lane_row};
+    return short2{lane_col, lane_row};
   }
 
   template <
@@ -70,7 +70,7 @@ struct MxuFragment {
       RowOffset row_offset = {},
       ColOffset col_offset = {}
   ) {
-    const ushort2 lane_coord = get_lane_coordinate();
+    const short2 lane_coord = get_lane_coordinate();
     source += lane_coord.y * row_stride + lane_coord.x * col_stride;
 
     METAL_PRAGMA_UNROLL
@@ -111,7 +111,7 @@ struct MxuFragment {
       RowOffset row_offset = {},
       ColOffset col_offset = {}
   ) {
-    const ushort2 lane_coord = get_lane_coordinate();
+    const short2 lane_coord = get_lane_coordinate();
     source += lane_coord.y * row_stride + lane_coord.x * col_stride;
     auto local_row_limit = row_limit - lane_coord.y;
 
@@ -162,7 +162,7 @@ struct MxuFragment {
       RowOffset row_offset = {},
       ColOffset col_offset = {}
   ) {
-    const ushort2 lane_coord = get_lane_coordinate();
+    const short2 lane_coord = get_lane_coordinate();
     source += lane_coord.y * row_stride + lane_coord.x * col_stride;
     auto local_row_limit = row_limit - lane_coord.y;
     auto local_col_limit = col_limit - lane_coord.x;
@@ -200,7 +200,7 @@ struct MxuFragment {
   ) {
     using U = PointerElementType<DestinationPointerType>;
 
-    const ushort2 lane_coord = get_lane_coordinate();
+    const short2 lane_coord = get_lane_coordinate();
     destination += lane_coord.y * row_stride + lane_coord.x * col_stride;
 
     METAL_PRAGMA_UNROLL
@@ -243,7 +243,7 @@ struct MxuFragment {
   ) {
     using U = PointerElementType<DestinationPointerType>;
 
-    const ushort2 lane_coord = get_lane_coordinate();
+    const short2 lane_coord = get_lane_coordinate();
     destination += lane_coord.y * row_stride + lane_coord.x * col_stride;
     auto local_row_limit = row_limit - lane_coord.y;
 
@@ -291,7 +291,7 @@ struct MxuFragment {
   ) {
     using U = PointerElementType<DestinationPointerType>;
 
-    const ushort2 lane_coord = get_lane_coordinate();
+    const short2 lane_coord = get_lane_coordinate();
     destination += lane_coord.y * row_stride + lane_coord.x * col_stride;
     auto local_row_limit = row_limit - lane_coord.y;
     auto local_col_limit = col_limit - lane_coord.x;
