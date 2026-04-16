@@ -1,0 +1,36 @@
+[package]
+name = "download-manager"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tokio-stream.workspace = true
+futures-util.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+async-shutdown.workspace = true
+crc32c.workspace = true
+base64.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+async-fetcher.workspace = true
+reqwest.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+block2.workspace = true
+objc-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+libc.workspace = true
+indicatif.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true

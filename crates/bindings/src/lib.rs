@@ -29,10 +29,7 @@ impl Parse for ExportArguments {
             "Impl" => BindingKind::Impl,
             "Error" => BindingKind::Error,
             other => {
-                return Err(syn::Error::new(
-                    identifier.span(),
-                    format!("Unknown binding kind: {other}"),
-                ));
+                return Err(syn::Error::new(identifier.span(), format!("Unknown binding kind: {other}")));
             },
         };
 
@@ -40,16 +37,10 @@ impl Parse for ExportArguments {
             input.parse::<Token![,]>()?;
             let key: Ident = input.parse()?;
             if key != "name" {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!("Unknown parameter: {key}, expected 'name'"),
-                ));
+                return Err(syn::Error::new(key.span(), format!("Unknown parameter: {key}, expected 'name'")));
             }
             if matches!(kind, BindingKind::Impl) {
-                return Err(syn::Error::new(
-                    key.span(),
-                    "'name' parameter is not supported for Impl",
-                ));
+                return Err(syn::Error::new(key.span(), "'name' parameter is not supported for Impl"));
             }
             input.parse::<Token![=]>()?;
             Some(input.parse::<LitStr>()?)
@@ -119,12 +110,9 @@ pub fn export(
             let type_name = match &item {
                 syn::Item::Enum(item_enum) => &item_enum.ident,
                 _ => {
-                    return syn::Error::new_spanned(
-                        &item,
-                        "Error can only be applied to enums",
-                    )
-                    .to_compile_error()
-                    .into();
+                    return syn::Error::new_spanned(&item, "Error can only be applied to enums")
+                        .to_compile_error()
+                        .into();
                 },
             };
 
