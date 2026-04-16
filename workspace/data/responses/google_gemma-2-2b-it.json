@@ -1,0 +1,23 @@
+[
+    {
+        "repo_id": "google/gemma-2-2b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nWhat is the current temperature in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "I do not have access to real-time information, including weather data. To get the current temperature in London, I recommend checking a reliable weather website or app. \n\nHere are some good options:\n\n* **Google Weather:** Just search \"weather London\" on Google.\n* **AccuWeather:** https://www.accuweather.com/\n* **The Met Office:** https://www.metoffice.gov.uk/ \n* **BBC Weather:** https://www.bbc.com/weather \n\n\nLet me know if you have other questions! \n<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

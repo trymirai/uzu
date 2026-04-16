@@ -1,0 +1,114 @@
+[
+    {
+        "repo_id": "google/translategemma-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "source_lang_code": "en",
+                            "target_lang_code": "fr",
+                            "text": "Tell me about London."
+                        }
+                    ]
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a professional English (en) to French (fr) translator. Your goal is to accurately convey the meaning and nuances of the original English text while adhering to French grammar, vocabulary, and cultural sensitivities.\nProduce only the French translation, without any additional explanations or commentary. Please translate the following English text into French:\n\n\nTell me about London.<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "Parlez-moi de Londres.<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/translategemma-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "source_lang_code": "fr",
+                            "target_lang_code": "en",
+                            "text": "Parlez-moi de Londres."
+                        }
+                    ]
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a professional French (fr) to English (en) translator. Your goal is to accurately convey the meaning and nuances of the original French text while adhering to English grammar, vocabulary, and cultural sensitivities.\nProduce only the English translation, without any additional explanations or commentary. Please translate the following French text into English:\n\n\nParlez-moi de Londres.<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "Tell me about London.<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/translategemma-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "source_lang_code": "en",
+                            "target_lang_code": "de-DE",
+                            "text": "The weather in Paris is lovely today."
+                        }
+                    ]
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a professional English (en) to German (de-DE) translator. Your goal is to accurately convey the meaning and nuances of the original English text while adhering to German grammar, vocabulary, and cultural sensitivities.\nProduce only the German translation, without any additional explanations or commentary. Please translate the following English text into German:\n\n\nThe weather in Paris is lovely today.<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "Das Wetter in Paris ist heute herrlich.<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/translategemma-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "source_lang_code": "de",
+                            "target_lang_code": "en",
+                            "text": "Das Wetter in Paris ist heute wundersch\u00f6n."
+                        }
+                    ]
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a professional German (de) to English (en) translator. Your goal is to accurately convey the meaning and nuances of the original German text while adhering to English grammar, vocabulary, and cultural sensitivities.\nProduce only the English translation, without any additional explanations or commentary. Please translate the following German text into English:\n\n\nDas Wetter in Paris ist heute wundersch\u00f6n.<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "The weather in Paris is beautiful today.<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

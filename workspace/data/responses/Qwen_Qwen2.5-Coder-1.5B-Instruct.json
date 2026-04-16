@@ -1,0 +1,73 @@
+[
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "The current temperature in London is 14\u00b0C (57\u00b0F).<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "As of my last update, the current wind speed in London is 15-20 mph (24-32 km/h). Please note that wind speeds can vary depending on time and weather conditions.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "As of my last update, the current temperature in London is 15 degrees Celsius (60 degrees Fahrenheit) with a wind speed of 3.8 meters per second (12.4 miles per hour).<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

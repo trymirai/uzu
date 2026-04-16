@@ -1,0 +1,789 @@
+[
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>user<|message|>What is the current temperature in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks \"What is the current temperature in London?\" This is a request for real-time information (weather). The assistant cannot access up-to-date external data. According to the policy, we must refuse and provide apology. We should not speculate. So respond with refusal.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I can\u2019t provide that information.<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>user<|message|>What is the current temperature in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks: \"What is the current temperature in London?\" This is a request for up-to-date information. I cannot browse the web. According to OpenAI policy, I should refuse to provide real-time answers. I must provide a refusal with brief apology and short statement.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I can\u2019t provide that information.<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current temperature at a location.\ntype get_current_temperature = (_: {\n// The location to get the temperature for\nlocation: {\ncity: \n                string, country: \n                string},\n// The unit to return the temperature in.\nunit: \"celsius\" | \"fahrenheit\",\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current temperature in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>Need to call function get_current_temperature for London, UK, probably.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_temperature <|constrain|>json<|message|>{\"location\":{\"city\":\"London\",\"country\":\"United Kingdom\"},\"unit\":\"celsius\"}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current wind speed in km/h at a given location.\ntype get_current_wind_speed = (_: {\n// The location to get the wind speed for, in the format \"City, Country\"\nlocation: string,\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current temperature in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks \"What is the current temperature in London?\" The system says we only have capability to get wind speed but no temperature. But we can see that get_current_wind_speed is available, but that doesn't provide temperature. Is there a known API for temperature? No. The user question is about current temperature. We don't have a function to get temperature. Is there an inference that we can't answer, or we can respond that we don't have that capability? According to policy, if we cannot answer, we should answer honestly. But we can maybe say we don't have that info. The guidelines: \"If you cannot answer a question you should respond with: I don't know.\" And optionally offer other info. But we can also provide an alternative or ask follow-up. The user might be interested in temperature. Provide an apology and say we currently only can provide wind speed. Then ask if they'd like wind speed? Or we can try to get the data from other sources? But we have no function for temperature. So answer: \"I don't know.\" And offer something else: \"I can get the current wind speed.\" That might be acceptable. Thus answer with a brief apology and indicate we can provide wind speed.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I don\u2019t have access to the current temperature for London. I can, however, get you the current wind speed there if that would help.<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current temperature at a location.\ntype get_current_temperature = (_: {\n// The location to get the temperature for\nlocation: {\ncity: \n                string, country: \n                string},\n// The unit to return the temperature in.\nunit: \"celsius\" | \"fahrenheit\",\n}) => any;\n\n// Get the current wind speed in km/h at a given location.\ntype get_current_wind_speed = (_: {\n// The location to get the wind speed for, in the format \"City, Country\"\nlocation: string,\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current temperature in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks for current temperature in London. We have a function get_current_temperature. Need to call that.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_temperature <|constrain|>json<|message|>{\"location\":{\"city\":\"London\",\"country\":\"United Kingdom\"},\"unit\":\"celsius\"}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n<|end|><|start|>user<|message|>What is the current wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks: \"What is the current wind speed in London?\" They want real-time data. This requires up-to-date external data, which the assistant can't access. According to policies, the assistant should decline to provide. Provide a refusal or a \"cannot\" answer. There's no disallowed content. So we should refuse.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I don\u2019t have the ability to retrieve real\u2011time weather data.<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n<|end|><|start|>user<|message|>What is the current wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks: \"What is the current wind speed in London?\" They want real-time data. I cannot provide real-time data accurately. According to policy, I should provide a disclaimer that I cannot give real-time weather. Suggest using official weather services. Also can provide some general info: typical wind speeds, etc. Also can show how to get the data. So give a brief apology and reference to resources.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I don\u2019t have real\u2011time access to live weather data. To find the current wind speed in London (or any other location) you can check one of the following reliable sources:\n\n| Service | How to use |\n|--------|------------|\n| **Weather.com** (The Weather Channel) | Go to the site or app, type \u201cLondon, UK\u201d in the search bar. The main dashboard shows wind speed, direction, and gusts. |\n| **BBC Weather** | Visit the BBC Weather page, enter \u201cLondon\u201d or choose \u201cLondon Central.\u201d It lists wind details in the \u201cWind\u201d section. |\n| **OpenWeatherMap API** | If you\u2019re comfortable with APIs, you can get up\u2011to\u2011date data in JSON: `https://api.openweathermap.org/data/2.5/weather?q=London,UK&appid=YOUR_API_KEY`. The `wind` field contains speed (m/s) and direction. |\n| **AccuWeather** | Search \u201cLondon\u201d and view the \u201cWind\u201d column in the brief forecast. |\n| **Weather Underground** | Provides a \u201cWind\u201d tab that shows speed, direction, gusts, and a 24\u2011hour trend. |\n\nThese platforms pull data directly from local weather stations, satellites, and official meteorological services, so they\u2019ll give you the most accurate and up\u2011to\u2011date wind speed (typically shown in km/h or mph, depending on the site\u2019s settings).<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current temperature at a location.\ntype get_current_temperature = (_: {\n// The location to get the temperature for\nlocation: {\ncity: \n                string, country: \n                string},\n// The unit to return the temperature in.\nunit: \"celsius\" | \"fahrenheit\",\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>User asked \"What is the current wind speed in London?\" This is a weather question. We need to use function get_current_temperature? But that function only retrieves temperature. There's no function for wind speed. The instructions mention only one function get_current_temperature, which takes location and unit. This function is for temperature, not wind speed. There's no tool to get wind speed. Thus we cannot provide. We can ask clarification? We could respond that we cannot retrieve wind speed because function only supports temperature. But we can provide temperature. The question explicitly is about wind speed. We must say we cannot provide. Let's respond politely.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I can\u2019t fetch the wind speed right now. The available function only retrieves current temperature information. If you\u2019d like the current temperature for London (or another location), just let me know!<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current wind speed in km/h at a given location.\ntype get_current_wind_speed = (_: {\n// The location to get the wind speed for, in the format \"City, Country\"\nlocation: string,\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>We need to use the tool get_current_wind_speed. We'll make a function call.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_wind_speed <|constrain|>json<|message|>{\"location\":\"London, United Kingdom\"}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current temperature at a location.\ntype get_current_temperature = (_: {\n// The location to get the temperature for\nlocation: {\ncity: \n                string, country: \n                string},\n// The unit to return the temperature in.\nunit: \"celsius\" | \"fahrenheit\",\n}) => any;\n\n// Get the current wind speed in km/h at a given location.\ntype get_current_wind_speed = (_: {\n// The location to get the wind speed for, in the format \"City, Country\"\nlocation: string,\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>We need to call get_current_wind_speed with location string. Probably \"London\". But function expects location: string, \"City, Country\". So \"London, UK\" or \"London, United Kingdom\".\n\nWe'll call the function.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_wind_speed <|constrain|>json<|message|>{\"location\":\"London, United Kingdom\"}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n<|end|><|start|>user<|message|>What is the current temperature and wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>We need to answer: user asks \"What is the current temperature and wind speed in London?\" We need to answer with current temperature and wind speed in London. The system is offline. Cannot get real-time data. We must clarify that's not available or provide a potential approximation? The best approach is to give a disclaimer that as a language model, can't fetch real-time data. You can suggest them to check reliable sources. The request is straightforward. We must not fabricate data. So respond with disclaimer.<|end|><|start|>assistant<|channel|>final<|message|>I\u2019m sorry, but I don\u2019t have real\u2011time access to weather data.  \nTo find the current temperature and wind speed in London, you can check a reliable weather service such as:\n\n- The UK Met Office website  \n- BBC Weather  \n- Weather.com or AccuWeather  \n- A weather app on your phone  \n\nThese sources update hourly and will give you the most accurate, up\u2011to\u2011date figures.<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n<|end|><|start|>user<|message|>What is the current temperature and wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>We need current weather data. As ChatGPT, we don't have real-time data. The question: \"What is the current temperature and wind speed in London?\" We can\u2019t access real-time. Should respond that I can't provide real-time data; recommend checking official weather source or provide approximate values? According to policy, no hallucination. Best answer: I don't have real-time data, recommend checking reliable sources.<|end|><|start|>assistant<|channel|>final<|message|>I don\u2019t have real\u2011time data, so I can\u2019t give you the current temperature or wind speed in London at this moment.  \nFor the most up\u2011to\u2011date weather information you can check:\n\n- The UK Met Office website or app  \n- National Weather Service (NWS) or Met Office mobile apps  \n- Weather websites like BBC Weather, Weather.com, AccuWeather, or the Weather.gov UK portal  \n- Weather widgets on your phone or a voice assistant such as Alexa, Google Assistant, or Siri.\n\nThese sources typically provide the latest temperature, wind speed (and direction), humidity, and other relevant conditions.<|return|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current temperature at a location.\ntype get_current_temperature = (_: {\n// The location to get the temperature for\nlocation: {\ncity: \n                string, country: \n                string},\n// The unit to return the temperature in.\nunit: \"celsius\" | \"fahrenheit\",\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current temperature and wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>We need to answer: current temperature and wind speed in London. The environment provides a tool 'get_current_temperature', but that only returns temperature, not wind speed. We can request temperature; wind speed might need another tool but none provided. So maybe I should answer with temperature retrieved via function; not provide wind speed, or state we can't get wind speed with current tools. But possibly we can approximate or say we need another API. However guidelines: If question requires data not available, should say we can't fetch. So we can call get_current_temperature for London. This returns temperature. We cannot get wind speed. So answer: provide temperature, and mention we can't get wind speed currently.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_temperature <|constrain|>json<|message|>{\"location\":{\"city\":\"London\",\"country\":\"United Kingdom\"},\"unit\":\"celsius\"}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current wind speed in km/h at a given location.\ntype get_current_wind_speed = (_: {\n// The location to get the wind speed for, in the format \"City, Country\"\nlocation: string,\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current temperature and wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>The user asks: \"What is the current temperature and wind speed in London?\" We have a function get_current_wind_speed but no function for temperature. We cannot fetch temperature. So we can give wind speed using the function, but cannot provide temperature. We can say we can provide wind speed, but not temperature. If we can approximate or say we don't have. We should explain the limitation. Also we might fetch wind speed via the function. Let's do that.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_wind_speed <|constrain|>json<|message|>{\"location\":\"London, UK\"}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-03-25\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get the current temperature at a location.\ntype get_current_temperature = (_: {\n// The location to get the temperature for\nlocation: {\ncity: \n                string, country: \n                string},\n// The unit to return the temperature in.\nunit: \"celsius\" | \"fahrenheit\",\n}) => any;\n\n// Get the current wind speed in km/h at a given location.\ntype get_current_wind_speed = (_: {\n// The location to get the wind speed for, in the format \"City, Country\"\nlocation: string,\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>What is the current temperature and wind speed in London?<|end|><|start|>assistant",
+            "completion": "<|channel|>analysis<|message|>We need to query both functions. First get_current_temperature with location city: London, country: United Kingdom, unit celsius or fahrenheit? Probably celsius. Also get_current_wind_speed with location \"London, United Kingdom\". Let's call in order.\n\nSo first call get_current_temperature.<|end|><|start|>assistant<|channel|>commentary to=functions.get_current_temperature <|constrain|>json<|message|>{\n  \"location\": {\n    \"city\": \"London\",\n    \"country\": \"United Kingdom\"\n  },\n  \"unit\": \"celsius\"\n}<|call|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]

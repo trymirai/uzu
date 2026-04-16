@@ -1,0 +1,7 @@
+{
+    "ruff.path": [".venv/bin/ruff"],
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.testing.pytestArgs": [
+        "tests"
+    ]
+}

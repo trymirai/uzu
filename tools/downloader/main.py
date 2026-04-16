@@ -9,7 +9,7 @@ from typing import Annotated
 import google_crc32c
 import requests
 import tomllib
-from model import BenchmarkTask, File, Message, Model, Registry, Role
+from .model import BenchmarkTask, File, Message, Model, Registry, Role
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -22,11 +22,12 @@ from rich.progress import (
 )
 from rich.table import Table
 from typer import Argument, Typer
-from utils import download_file_with_resume
+from .utils import download_file_with_resume
 
 ROOT_PATH = Path(__file__).parent.parent.parent
 CARGO_TOML_PATH = ROOT_PATH / "Cargo.toml"
-MODELS_PATH = ROOT_PATH / "models"
+WORKSPACE_PATH = ROOT_PATH / "workspace"
+MODELS_PATH = WORKSPACE_PATH / "models"
 
 
 console = Console()
@@ -67,7 +68,7 @@ def load_registry() -> Registry:
 
 
 @app.command(help="List models")
-def list_models():
+def list():
     try:
         with Progress(
             SpinnerColumn(),
@@ -91,7 +92,7 @@ def list_models():
 
 
 @app.command(help="Download model")
-def download_model(
+def download(
     model_repo: Annotated[
         str,
         Argument(

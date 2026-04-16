@@ -43,8 +43,15 @@
       "source.organizeImports.ruff": "explicit"
     }
   },
+  "python.defaultInterpreterPath": "tools/.venv/bin/python",
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": false,
+  "ruff.path": [
+    "tools/.venv/bin/ruff"
+  ],
   "[swift]": {
     "editor.formatOnSave": true,
   },
