@@ -81,10 +81,18 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
+        output_quantized_hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let data_type = quantization.activation_precision.into();
 
-        let base_linear = QuantizedLinear::new(context, quantization, input_dim, output_dim, parameter_tree)?;
+        let base_linear = QuantizedLinear::new(
+            context,
+            quantization,
+            input_dim,
+            output_dim,
+            parameter_tree,
+            output_quantized_hadamard_factors,
+        )?;
         let adapter_kernel =
             RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);
 

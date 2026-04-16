@@ -147,6 +147,12 @@ impl ModelShape {
                     } => {
                         max_lora_intermediate = Some(max_lora_intermediate.unwrap_or(0).max(*lora_rank));
                     },
+                    LinearConfig::RHTLinearWrapper {
+                        inner_config,
+                        ..
+                    } => {
+                        linear_configs.push(inner_config.as_ref());
+                    },
                     _ => (),
                 };
             }

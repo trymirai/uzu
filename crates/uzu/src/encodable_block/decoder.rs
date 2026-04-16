@@ -210,6 +210,7 @@ impl<B: Backend> Decoder<B> {
             norm_data_type,
             decoder_config.output_norm_config.clone(),
             &decoder_weight_loader.subtree("output_norm").unwrap(),
+            None,
             true,
             true,
         )

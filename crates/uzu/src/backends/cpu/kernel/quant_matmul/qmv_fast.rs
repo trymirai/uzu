@@ -15,12 +15,17 @@ pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32,
     #[optional(use_mlx_quant)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
+    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     in_vec_size: u32,
     out_vec_size: u32,
     batch_size: u32,
     #[specialize] use_zero_points: bool,
     #[specialize] use_mlx_quant: bool,
+    #[specialize] use_hadamard: bool,
 ) {
+    if use_hadamard {
+        unimplemented!("not supported yet");
+    }
     qmv::<T>(
         weights,
         scales,

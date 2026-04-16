@@ -293,6 +293,7 @@ impl<B: Backend> Embedding<B> {
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
+                        use_hadamard: false,
                     },
                 )?;
 
@@ -372,6 +373,7 @@ impl<B: Backend> Embedding<B> {
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
+                        use_hadamard: false,
                     },
                 )?;
 
@@ -441,6 +443,7 @@ impl<B: Backend> Embedding<B> {
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
+                        use_hadamard: false,
                     },
                 )?;
 
@@ -630,6 +633,7 @@ impl<B: Backend> Embedding<B> {
                             scales,
                             zero_points_or_biases: biases,
                             output: output_allocation,
+                            hadamard_factors: None,
                             batch_dim,
                         },
                     )

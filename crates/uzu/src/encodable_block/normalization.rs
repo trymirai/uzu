@@ -36,7 +36,15 @@ impl<B: Backend> Normalization<B> {
         if config.subtract_mean {
             Ok(Self::LayerNorm(LayerNorm::new(context, intermediate_data_type, config, parameter_tree)?))
         } else {
-            Ok(Self::RMSNorm(RMSNorm::new(context, intermediate_data_type, config, parameter_tree, false, false)?))
+            Ok(Self::RMSNorm(RMSNorm::new(
+                context,
+                intermediate_data_type,
+                config,
+                parameter_tree,
+                None,
+                false,
+                false,
+            )?))
         }
     }
 

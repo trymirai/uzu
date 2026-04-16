@@ -4,14 +4,12 @@ use anyhow::Context;
 use futures::future::try_join_all;
 
 mod common;
-mod gpu_types;
+use common::{compiler::Compiler, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
 
 mod cpu;
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
-
-use common::{compiler::Compiler, envs, traitgen::traitgen_all};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -25,12 +23,19 @@ async fn main() -> anyhow::Result<()> {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }
 
-    let metal_backend = cfg!(feature = "metal")
-        && matches!(env::var("CARGO_CFG_TARGET_OS").unwrap().as_ref(), "macos" | "ios" | "tvos" | "visionos");
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
+    let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
+    let metal_backend = cfg!(feature = "metal") && matches!(target_os.as_ref(), "macos" | "ios" | "tvos" | "visionos");
     println!("cargo::rustc-check-cfg=cfg(metal_backend)");
     if metal_backend {
         println!("cargo::rustc-cfg=metal_backend");
+    }
+
+    let grammar_xgrammar = cfg!(feature = "grammar") && target_arch != "wasm32";
+    println!("cargo::rustc-check-cfg=cfg(grammar_xgrammar)");
+    if grammar_xgrammar {
+        println!("cargo::rustc-cfg=grammar_xgrammar");
     }
 
     debug_log!("build script started");
@@ -44,9 +49,8 @@ async fn main() -> anyhow::Result<()> {
         debug_log!("cleaned caches");
     }
 
-    let gpu_types_compiler = gpu_types::GpuTypesCompiler::new()?;
-    gpu_types_compiler.build().await?;
-    debug_log!("gpu_types build done");
+    let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
+    debug_log!("gpu_types scan done");
 
     let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
 
@@ -54,11 +58,10 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if metal_backend {
-        let generated_header_dir = gpu_types_compiler.generated_header_dir().clone();
-        compilers.push(Box::new(metal::MetalCompiler::new_with_include_dir(generated_header_dir)?));
+        compilers.push(Box::new(metal::MetalCompiler::new()?));
     }
 
-    let backends_kernels = try_join_all(compilers.iter().map(|c| c.build())).await?;
+    let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types))).await?;
 
     debug_log!("backend build end");
 

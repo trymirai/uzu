@@ -9,6 +9,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     kernel: <B::Kernels as Kernels>::MlpGateActMulKernel,
     activation: ActivationConfig,
     hidden_dim: usize,
+    hadamard_factors: Option<B::Buffer>,
 }
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
@@ -17,12 +18,14 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         data_type: DataType,
         activation: ActivationConfig,
         hidden_dim: usize,
+        hadamard_factors: Option<B::Buffer>,
     ) -> Result<Self, B::Error> {
-        let kernel = <B::Kernels as Kernels>::MlpGateActMulKernel::new(context, data_type)?;
+        let kernel = <B::Kernels as Kernels>::MlpGateActMulKernel::new(context, data_type, hadamard_factors.is_some())?;
         Ok(Self {
             kernel,
             activation,
             hidden_dim,
+            hadamard_factors,
         })
     }
 
@@ -36,7 +39,15 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
-        self.kernel.encode(fused_up, hidden, self.hidden_dim as i32, m, self.activation.act_type(), encoder);
+        self.kernel.encode(
+            fused_up,
+            hidden,
+            self.hadamard_factors.as_ref(),
+            self.hidden_dim as i32,
+            m,
+            self.activation.act_type(),
+            encoder,
+        );
         Ok(())
     }
 

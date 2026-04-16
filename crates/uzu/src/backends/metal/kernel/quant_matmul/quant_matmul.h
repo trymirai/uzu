@@ -18,24 +18,47 @@ METAL_FUNC bfloat uint_to_fp<bfloat>(uint32_t x) {
   return as_type<bfloat>(uint16_t(x | 0x4300u)) - bfloat(128.0f);
 }
 
-template <typename U>
-METAL_FUNC vec<U, 4> uint4_to_fp4(uint4 n);
-
-template <>
-METAL_FUNC float4 uint4_to_fp4<float>(uint4 n) {
-  n &= uint4(0xFu);
+// Unpack 4 lanes of `BITS`-wide packed uints (low bits of each uint) into
+// vec<U, 4> of floats. `BITS` in [1, 23] to fit the float23 mantissa trick.
+template <int BITS>
+METAL_FUNC float4 _uint4_to_fp4_float(uint4 n) {
+  static_assert(BITS > 0 && BITS <= 23, "BITS must fit in float23 mantissa");
+  constexpr uint mask = (1u << BITS) - 1u;
+  n &= uint4(mask);
   return as_type<float4>(n | uint4(0x4B000000u)) - float4(8388608.0f);
 }
 
+template <typename U, int BITS>
+METAL_FUNC vec<U, 4> uint4_to_fp4(uint4 n);
+
 template <>
-METAL_FUNC half4 uint4_to_fp4<half>(uint4 n) {
-  return half4(uint4_to_fp4<float>(n));
+METAL_FUNC float4 uint4_to_fp4<float, 4>(uint4 n) {
+  return _uint4_to_fp4_float<4>(n);
 }
 
 template <>
-METAL_FUNC bfloat4 uint4_to_fp4<bfloat>(uint4 n) {
-  ushort4 narrow = ushort4(n & uint4(0xFu));
-  return as_type<bfloat4>(narrow | ushort4(0x4300u)) - bfloat(128.0f);
+METAL_FUNC float4 uint4_to_fp4<float, 8>(uint4 n) {
+  return _uint4_to_fp4_float<8>(n);
+}
+
+template <>
+METAL_FUNC half4 uint4_to_fp4<half, 4>(uint4 n) {
+  return half4(_uint4_to_fp4_float<4>(n));
+}
+
+template <>
+METAL_FUNC half4 uint4_to_fp4<half, 8>(uint4 n) {
+  return half4(_uint4_to_fp4_float<8>(n));
+}
+
+template <>
+METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 4>(uint4 n) {
+  return bfloat4(_uint4_to_fp4_float<4>(n));
+}
+
+template <>
+METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
+  return bfloat4(_uint4_to_fp4_float<8>(n));
 }
 
 template <int bits, int wsize = 8>
@@ -120,12 +143,17 @@ inline U qdot(
     const thread U4* x4 = (const thread U4*)x_thread;
     for (int i = 0; i < (values_per_thread / 4); i++) {
       uint wi = ws[i];
-      U4 w_vec = uint4_to_fp4<U>(uint4(wi, wi >> 4, wi >> 8, wi >> 12));
+      U4 w_vec = uint4_to_fp4<U, 4>(uint4(wi, wi >> 4, wi >> 8, wi >> 12));
       accum += dot(x4[i], w_vec);
     }
   } else if (bits == 8) {
-    for (int i = 0; i < values_per_thread; i++) {
-      accum += x_thread[i] * w[i];
+    using U4 = vec<U, 4>;
+    const device uint* ws = (const device uint*)w;
+    const thread U4* x4 = (const thread U4*)x_thread;
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      uint wi = ws[i];
+      U4 w_vec = uint4_to_fp4<U, 8>(uint4(wi, wi >> 8, wi >> 16, wi >> 24));
+      accum += dot(x4[i], w_vec);
     }
   }
   return scale * accum + sum * bias;
@@ -151,7 +179,7 @@ inline U qdot_safe(
     int full = N / 4;
     for (int i = 0; i < full; i++) {
       uint16_t wi = ws[i];
-      U4 w_vec = uint4_to_fp4<U>(uint4(wi, wi >> 4, wi >> 8, wi >> 12));
+      U4 w_vec = uint4_to_fp4<U, 4>(uint4(wi, wi >> 4, wi >> 8, wi >> 12));
       accum += dot(x4[i], w_vec);
     }
 
@@ -675,7 +703,9 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32,
-    const bool use_mlx_quant = false>
+    const bool use_mlx_quant = false,
+    const int WM = 2,
+    const int WN = 2>
 void qmm_transposed_impl(
     const device uint32_t* weights,
     const device T* scales,
@@ -695,9 +725,6 @@ void qmm_transposed_impl(
 ) {
   static_assert(BK >= 32, "BK should be larger than METAL_SIMD_SIZE");
   static_assert(BK % 32 == 0, "BK should be divisible by METAL_SIMD_SIZE");
-
-  constexpr int WM = 2;
-  constexpr int WN = 2;
   constexpr int pack_factor = get_pack_factor<bits, 8>();
   constexpr int bytes_per_pack = get_bytes_per_pack<bits>();
   constexpr int BK_padded = (BK + 16 / sizeof(T));

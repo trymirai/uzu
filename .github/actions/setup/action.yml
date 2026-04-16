@@ -18,30 +18,44 @@ inputs:
     description: "Install nextest"
     required: false
     default: 'false'
+  target:
+    description: "Additional Rust target to install"
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
-    - if: inputs.linters == 'true'
-      uses: dtolnay/rust-toolchain@nightly
       with:
-        components: rustfmt
+        targets: ${{ inputs.target }}
+
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: ${{ inputs.linters == 'true' && 'rustfmt' || '' }}
+
+    - if: inputs.target == 'wasm32-wasip1-threads'
+      uses: bytecodealliance/actions/wasmtime/setup@v1
+
     - if: inputs.linters == 'true'
       run: |
         arch -arm64 brew install clang-format cargo-deny
       shell: bash
+
     - if: inputs.metal == 'true'
       run: |
         arch -arm64 brew install cmake
         xcodebuild -downloadComponent MetalToolchain
       shell: bash
+
     - if: inputs.nextest == 'true'
       uses: taiki-e/install-action@nextest
+
     - if: inputs.test_model == 'true'
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+
     - if: inputs.test_model == 'true'
       run: |
         mkdir -p ~/.cache/ci-uzu/models

@@ -3,6 +3,7 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/threadgroup_reduce.h"
+#include "../hadamard_transform/hadamard_transform.h"
 
 using namespace metal;
 
@@ -18,6 +19,7 @@ PUBLIC KERNEL(RMSNorm)(
     const device ScaleT* scales,
     device OutputT* output,
     device InputT* shortcut OPTIONAL(copy_to_shortcut),
+    const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
     constant uint& batch_size,
     constant uint& element_count,
     constant float& epsilon,
@@ -26,6 +28,7 @@ PUBLIC KERNEL(RMSNorm)(
     const bool full_layer SPECIALIZE,
     const bool copy_to_shortcut SPECIALIZE,
     const bool residual_add SPECIALIZE,
+    const bool use_hadamard SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -91,11 +94,21 @@ PUBLIC KERNEL(RMSNorm)(
 
     // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
     // If not, cast to OutputT after normalize, scale in OutputT
+    OutputT val;
     if (full_layer) {
-      output[i] = static_cast<OutputT>(x * rms_inv * scale);
+      val = static_cast<OutputT>(x * rms_inv * scale);
     } else {
-      output[i] =
-          static_cast<OutputT>(x * rms_inv) * static_cast<OutputT>(scale);
+      val = static_cast<OutputT>(x * rms_inv) * static_cast<OutputT>(scale);
     }
+
+    if (use_hadamard) {
+      val = static_cast<OutputT>(simdgroup_random_hadamard_transform(
+          static_cast<ushort>(thread_in_row % METAL_SIMD_SIZE),
+          val,
+          hadamard_factors[i]
+      ));
+    }
+
+    output[i] = val;
   }
 }

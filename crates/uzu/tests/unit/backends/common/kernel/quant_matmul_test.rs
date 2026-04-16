@@ -370,6 +370,7 @@ fn execute_quantized_matmul<B: Backend>(
                 _ => panic!("Unsupported bits: {}", bits),
             },
             quantization_type,
+            use_hadamard: false,
         },
     )
     .unwrap();
@@ -382,6 +383,7 @@ fn execute_quantized_matmul<B: Backend>(
                 scales: &s_buf,
                 zero_points_or_biases: &b_buf,
                 output: &mut y_buf,
+                hadamard_factors: None,
                 batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
@@ -398,6 +400,7 @@ fn execute_quantized_matmul<B: Backend>(
             scales: &s_buf,
             zero_points_or_biases: &b_buf,
             output: &mut y_buf,
+            hadamard_factors: None,
             batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();

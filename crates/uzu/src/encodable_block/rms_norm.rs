@@ -28,6 +28,7 @@ pub struct RMSNorm<B: Backend> {
     element_count: usize,
     input_data_type: DataType,
     output_data_type: DataType,
+    hadamard_factors: Option<Allocation<B>>,
 }
 
 impl<B: Backend> RMSNorm<B> {
@@ -36,6 +37,7 @@ impl<B: Backend> RMSNorm<B> {
         intermediate_data_type: DataType,
         config: NormalizationConfig,
         parameter_tree: &ParameterTree<B::Context>,
+        hadamard_factors: Option<Allocation<B>>,
         use_shortcut: bool,
         residual_add: bool,
     ) -> Result<Self, RMSNormError<B>> {
@@ -61,6 +63,7 @@ impl<B: Backend> RMSNorm<B> {
             config.upcast_mode == UpcastMode::FullLayer,
             use_shortcut,
             residual_add,
+            hadamard_factors.is_some(),
         )
         .map_err(RMSNormError::BackendError)?;
 
@@ -71,6 +74,7 @@ impl<B: Backend> RMSNorm<B> {
             element_count,
             input_data_type: input_type,
             output_data_type: output_type,
+            hadamard_factors,
         })
     }
 
@@ -93,6 +97,7 @@ impl<B: Backend> RMSNorm<B> {
             &self.scales,
             &mut output,
             shortcut_view.as_mut(),
+            self.hadamard_factors.as_ref(),
             row_count as u32,
             self.element_count as u32,
             self.config.epsilon,

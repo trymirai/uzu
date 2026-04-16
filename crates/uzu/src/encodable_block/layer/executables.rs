@@ -61,17 +61,7 @@ impl<B: Backend> LayerExecutables<B> {
         let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
             .expect("Failed to create TensorAddBiasKernel kernel"); // TODO: this function return Result
 
-        let pre_attention_norm = RMSNorm::new(
-            context,
-            intermediate_data_type,
-            layer_config.pre_attention_norm_config.clone(),
-            &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
-            true,
-            layer_index > 0,
-        )
-        .expect("Failed to create RMS norm kernel");
-
-        let mixer = match &layer_config.mixer_config {
+        let (mixer, mixer_hadamard_factors) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
@@ -82,7 +72,7 @@ impl<B: Backend> LayerExecutables<B> {
                 let q_dim = layer_num_heads * layer_head_dim;
                 let kv_dim = layer_num_groups * layer_head_dim;
 
-                let qkv_projection = <dyn Linear<B>>::new(
+                let (qkv_projection, input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                     &attention_config.qkv_projection_config,
                     attention_config.has_qkv_biases,
                     model_dim,
@@ -153,17 +143,20 @@ impl<B: Backend> LayerExecutables<B> {
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
-                MixerExecutables::Attention {
-                    qkv_projection,
-                    gate_projection,
-                    qk_norm,
-                    rope: rope_block,
-                    attention,
-                    out_projection,
-                    num_heads: layer_num_heads,
-                    num_groups: layer_num_groups,
-                    head_dim: layer_head_dim,
-                }
+                (
+                    MixerExecutables::Attention {
+                        qkv_projection,
+                        gate_projection,
+                        qk_norm,
+                        rope: rope_block,
+                        attention,
+                        out_projection,
+                        num_heads: layer_num_heads,
+                        num_groups: layer_num_groups,
+                        head_dim: layer_head_dim,
+                    },
+                    input_hadamard_factors,
+                )
             },
             MixerConfig::Mamba(mamba_config) => {
                 let mixer = MambaMixer::new(
@@ -177,12 +170,15 @@ impl<B: Backend> LayerExecutables<B> {
                     num_groups,
                     decoder_layer_loader,
                 );
-                MixerExecutables::StateSpace {
-                    mixer,
-                }
+                (
+                    MixerExecutables::StateSpace {
+                        mixer,
+                    },
+                    None,
+                )
             },
             MixerConfig::ShortConv(short_conv_config) => {
-                let mixer = ShortConvMixer::new(
+                let (mixer, input_hadamard_factors) = ShortConvMixer::new(
                     context,
                     layer_type.clone(),
                     short_conv_config.clone(),
@@ -190,20 +186,36 @@ impl<B: Backend> LayerExecutables<B> {
                     model_dim,
                     decoder_layer_loader,
                 );
-                MixerExecutables::ShortConv {
-                    mixer,
-                }
+                (
+                    MixerExecutables::ShortConv {
+                        mixer,
+                    },
+                    input_hadamard_factors,
+                )
             },
             MixerConfig::DeltaNet(delta_net_config) => {
                 let mixer =
                     DeltaNetMixer::new(context, delta_net_config.clone(), layer_index, model_dim, decoder_layer_loader)
                         .expect("Failed to create DeltaNet mixer");
-
-                MixerExecutables::DeltaNet {
-                    mixer,
-                }
+                (
+                    MixerExecutables::DeltaNet {
+                        mixer,
+                    },
+                    None,
+                )
             },
         };
+
+        let pre_attention_norm = RMSNorm::new(
+            context,
+            intermediate_data_type,
+            layer_config.pre_attention_norm_config.clone(),
+            &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
+            mixer_hadamard_factors,
+            true,
+            layer_index > 0,
+        )
+        .expect("Failed to create RMS norm kernel");
 
         let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
             Some(
@@ -212,6 +224,7 @@ impl<B: Backend> LayerExecutables<B> {
                     intermediate_data_type,
                     norm_config.clone(),
                     &decoder_layer_loader.subtree("post_mixer_norm").unwrap(),
+                    None,
                     false,
                     false,
                 )
@@ -221,17 +234,7 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
-        let pre_mlp_norm = RMSNorm::new(
-            context,
-            intermediate_data_type,
-            layer_config.pre_mlp_norm_config.clone(),
-            &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-            true,
-            true,
-        )
-        .expect("Failed to create RMS norm kernel");
-
-        let mlp = <dyn Mlp<B>>::new(
+        let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,
@@ -240,6 +243,17 @@ impl<B: Backend> LayerExecutables<B> {
         )
         .expect("Failed to create mlp block");
 
+        let pre_mlp_norm = RMSNorm::new(
+            context,
+            intermediate_data_type,
+            layer_config.pre_mlp_norm_config.clone(),
+            &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
+            mlp_input_hadamard_factors,
+            true,
+            true,
+        )
+        .expect("Failed to create RMS norm kernel");
+
         let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
             Some(
                 RMSNorm::new(
@@ -247,6 +261,7 @@ impl<B: Backend> LayerExecutables<B> {
                     intermediate_data_type,
                     norm_config.clone(),
                     &decoder_layer_loader.subtree("post_mlp_norm").unwrap(),
+                    None,
                     false,
                     false,
                 )

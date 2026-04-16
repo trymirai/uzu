@@ -86,6 +86,7 @@ pub struct QuantizedLinear<B: Backend> {
     weights: Allocation<B>,
     scales: Allocation<B>,
     zero_points_or_biases: Allocation<B>,
+    output_hadamard_factors: Option<Allocation<B>>,
     output_dim: usize,
     output_data_type: DataType,
 }
@@ -97,6 +98,7 @@ impl<B: Backend> QuantizedLinear<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
+        output_hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, QuantizedLinearError<B>> {
         let kernel_data_type: DataType = config.activation_precision.into();
         if !matches!(kernel_data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
@@ -220,6 +222,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 output_dim,
                 mode: config.weight_quantization_mode,
                 quantization_type,
+                use_hadamard: output_hadamard_factors.is_some(),
             },
         )
         .map_err(QuantizedLinearError::QuantizedMatmulError)?;
@@ -231,6 +234,7 @@ impl<B: Backend> QuantizedLinear<B> {
             weights: weights_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
             scales: scales_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
             zero_points_or_biases,
+            output_hadamard_factors,
             output_dim,
             output_data_type: kernel_data_type,
         })
@@ -257,6 +261,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
                     scales: &self.scales,
                     zero_points_or_biases: &self.zero_points_or_biases,
                     output: &mut output,
+                    hadamard_factors: self.output_hadamard_factors.as_ref(),
                     batch_dim,
                 },
             )

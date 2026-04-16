@@ -3,7 +3,7 @@ members = ["crates/cli", "crates/uzu", "crates/benchmarks", "crates/dsl"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
@@ -20,7 +20,7 @@ ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-tokenizers = "0.22"
+tokenizers = { version = "0.22", features = ["fancy-regex"], default-features = false }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 metal = { package = "mtl-rs", version = "0.1" }
@@ -56,7 +56,7 @@ tokio = { version = "1.49", features = ["full"] }
 blake3 = "1.8"
 quote = "1.0"
 proc-macro2 = "1.0"
-syn = "2.0"
+syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"
 mach2 = "0.6"
@@ -67,15 +67,16 @@ inquire = "0.9"
 console = "0.16"
 rocket = { version = "0.5", features = ["json"] }
 uuid = { version = "1.20", features = ["v4"] }
-comfy-table = "7.2"
+comfy-table = { version = "7.2", default-features = false }
 autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
 test-tag = "0.1"
-proptest = "1.10"
-criterion = "0.8.2"
+proptest = { version = "1.10", default-features = false, features = ["std"] }
+criterion = { version = "0.8.2", default-features = false }
 criterion-macro = "0.4.0"
+rustix = "1.1.4"
 
 # optimize the build script in debug builds
 [profile.dev.build-override]

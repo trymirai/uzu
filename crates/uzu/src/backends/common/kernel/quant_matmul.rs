@@ -3,10 +3,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::QuantizationMode,
-        kernel::{
-            QuantizedMatmulQmmTransposed64x64Kernel, QuantizedMatmulQmmTransposedKernel,
-            QuantizedMatmulQmmTransposedWideKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-        },
+        kernel::{QuantizedMatmulQmmTransposedKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
     },
 };
 
@@ -18,6 +15,8 @@ pub enum QuantizedMatmulError<B: Backend> {
     UnsupportedDataType(DataType),
     #[error("Unsupported group size: {0}")]
     UnsupportedGroupSize(usize),
+    #[error("Hadamard not supported for this kernel configuration")]
+    UnsupportedHadamard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +33,7 @@ pub struct QuantizedMatmulConfiguration {
     pub output_dim: usize,
     pub mode: QuantizationMode,
     pub quantization_type: QuantizedMatmulType,
+    pub use_hadamard: bool,
 }
 
 pub struct QuantizedMatmulArguments<'a, 'input, 'output, B: Backend> {
@@ -42,6 +42,7 @@ pub struct QuantizedMatmulArguments<'a, 'input, 'output, B: Backend> {
     pub scales: &'a Allocation<B>,
     pub zero_points_or_biases: &'a Allocation<B>,
     pub output: &'output mut Allocation<B>,
+    pub hadamard_factors: Option<&'a Allocation<B>>,
     pub batch_dim: usize,
 }
 
@@ -58,10 +59,33 @@ enum MatrixVectorKernel<B: Backend> {
     QmvFast(<B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel),
 }
 
+type QmmKernel<B> = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel;
+
 enum MatrixMatrixKernel<B: Backend> {
-    QmmTransposed(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel),
-    QmmTransposed64x64(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel),
-    QmmTransposedWide(<B::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel),
+    Big(QmmKernel<B>),
+    BigAndSmall {
+        big: QmmKernel<B>,
+        small: QmmKernel<B>,
+    },
+}
+
+impl<B: Backend> MatrixMatrixKernel<B> {
+    fn pick(
+        &self,
+        batch_dim: usize,
+    ) -> Option<&QmmKernel<B>> {
+        match self {
+            Self::Big(big) => (batch_dim >= 32).then_some(big),
+            Self::BigAndSmall {
+                big,
+                small,
+            } => Some(if batch_dim < 48 {
+                small
+            } else {
+                big
+            }),
+        }
+    }
 }
 
 impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
@@ -85,7 +109,6 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         let use_mlx_quant = matches!(configuration.quantization_type, QuantizedMatmulType::Mlx);
         let use_zero_points = !use_mlx_quant;
 
-        // Matrix-vector
         let matrix_vector = if configuration.output_dim % 8 == 0 && configuration.input_dim % 512 == 0 {
             MatrixVectorKernel::QmvFast(
                 <B::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
@@ -95,10 +118,15 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     bits,
                     use_zero_points,
                     use_mlx_quant,
+                    configuration.use_hadamard,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )
         } else {
+            if configuration.use_hadamard {
+                return Err(QuantizedMatmulError::UnsupportedHadamard);
+            }
+
             MatrixVectorKernel::Qmv(
                 <B::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
                     context,
@@ -112,48 +140,59 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             )
         };
 
-        // Matrix-matrix
         let aligned_n_64 = configuration.output_dim % 64 == 0;
+        let aligned_n_32 = configuration.output_dim % 32 == 0;
         let is_bf16 = configuration.data_type == DataType::BF16;
+        let can_use_64_tile = aligned_n_64 && is_bf16;
 
-        let matrix_matrix = if aligned_n_64 && is_bf16 && matches!(configuration.group_size, 64 | 128) {
-            MatrixMatrixKernel::QmmTransposed64x64(
-                <B::Kernels as Kernels>::QuantizedMatmulQmmTransposed64x64Kernel::new(
-                    context,
-                    configuration.data_type,
-                    group_size,
-                    bits,
-                    use_zero_points,
-                    use_mlx_quant,
-                )
-                .map_err(QuantizedMatmulError::BackendError)?,
-            )
-        } else if aligned_n_64 && is_bf16 {
-            MatrixMatrixKernel::QmmTransposedWide(
-                <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedWideKernel::new(
-                    context,
-                    configuration.data_type,
-                    group_size,
-                    bits,
-                    use_zero_points,
-                    use_mlx_quant,
-                )
-                .map_err(QuantizedMatmulError::BackendError)?,
-            )
+        let (bm, bk, bn, aligned_n) = if can_use_64_tile && matches!(configuration.group_size, 64 | 128) {
+            (64u32, 64u32, 64u32, true)
+        } else if can_use_64_tile {
+            (64u32, 32u32, 64u32, true)
         } else {
-            let aligned_n = configuration.output_dim % 32 == 0;
-            MatrixMatrixKernel::QmmTransposed(
-                <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
-                    context,
-                    configuration.data_type,
-                    group_size,
-                    bits,
-                    use_zero_points,
-                    use_mlx_quant,
-                    aligned_n,
-                )
-                .map_err(QuantizedMatmulError::BackendError)?,
+            (32u32, 32u32, 32u32, configuration.output_dim % 32 == 0)
+        };
+
+        let big = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+            context,
+            configuration.data_type,
+            group_size,
+            bits,
+            bm,
+            bk,
+            bn,
+            2u32,
+            2u32,
+            use_zero_points,
+            use_mlx_quant,
+            configuration.use_hadamard,
+            aligned_n,
+        )
+        .map_err(QuantizedMatmulError::BackendError)?;
+
+        let matrix_matrix = if aligned_n_32 && !configuration.use_hadamard {
+            let small = <B::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+                context,
+                configuration.data_type,
+                group_size,
+                bits,
+                8u32,
+                32u32,
+                32u32,
+                1u32,
+                1u32,
+                use_zero_points,
+                use_mlx_quant,
+                false,
+                true,
             )
+            .map_err(QuantizedMatmulError::BackendError)?;
+            MatrixMatrixKernel::BigAndSmall {
+                big,
+                small,
+            }
+        } else {
+            MatrixMatrixKernel::Big(big)
         };
 
         Ok(Self {
@@ -176,6 +215,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             scales,
             zero_points_or_biases,
             output,
+            hadamard_factors,
             batch_dim,
         } = arguments;
 
@@ -185,7 +225,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         };
 
         macro_rules! encode_kernel {
-            ($kernel:expr) => {
+            ($kernel:expr $(, $hadamard:expr)?) => {
                 $kernel.encode(
                     b,
                     scales,
@@ -193,6 +233,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     biases,
                     a,
                     output,
+                    $($hadamard,)?
                     self.input_dim as u32,
                     self.output_dim as u32,
                     batch_dim as u32,
@@ -201,17 +242,16 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             };
         }
 
-        if batch_dim < 32 || self.output_dim == 1 {
-            match &self.matrix_vector {
-                MatrixVectorKernel::Qmv(k) => encode_kernel!(k),
-                MatrixVectorKernel::QmvFast(k) => encode_kernel!(k),
+        if batch_dim >= 8 && self.output_dim > 1 {
+            if let Some(kernel) = self.matrix_matrix.pick(batch_dim) {
+                encode_kernel!(kernel, hadamard_factors);
+                return Ok(());
             }
-        } else {
-            match &self.matrix_matrix {
-                MatrixMatrixKernel::QmmTransposed(k) => encode_kernel!(k),
-                MatrixMatrixKernel::QmmTransposed64x64(k) => encode_kernel!(k),
-                MatrixMatrixKernel::QmmTransposedWide(k) => encode_kernel!(k),
-            }
+        }
+
+        match &self.matrix_vector {
+            MatrixVectorKernel::Qmv(k) => encode_kernel!(k),
+            MatrixVectorKernel::QmvFast(k) => encode_kernel!(k, hadamard_factors),
         }
 
         Ok(())
