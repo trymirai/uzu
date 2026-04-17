@@ -90,24 +90,6 @@ struct MxuTile {
     }
   }
 
-  template <int i, int j, bool transpose>
-  METAL_FUNC constexpr thread FragmentVectorType& fragment_at() {
-    if constexpr (transpose) {
-      return fragment_at<j, i>();
-    } else {
-      return fragment_at<i, j>();
-    }
-  }
-
-  template <int i, int j, bool transpose>
-  METAL_FUNC constexpr const thread FragmentVectorType& fragment_at() const {
-    if constexpr (transpose) {
-      return fragment_at<j, i>();
-    } else {
-      return fragment_at<i, j>();
-    }
-  }
-
   METAL_FUNC thread ElementType* elems() {
     return reinterpret_cast<thread ElementType*>(fragment_data);
   }
@@ -152,27 +134,6 @@ struct MxuTile {
   }
 
   template <typename SourcePointerType>
-  METAL_FUNC void load_rows(
-      SourcePointerType source,
-      const int leading_dimension,
-      const ushort row_count
-  ) {
-    const_for_loop<0, TILE_ROWS, 1>([&](auto idx_row) {
-      const_for_loop<0, TILE_COLS, 1>([&](auto idx_col) {
-        FragmentType::load_rows(
-            fragment_at<idx_row.value, idx_col.value>(),
-            source,
-            leading_dimension,
-            Int<1>{},
-            row_count,
-            idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
-            idx_col * Int<FragmentType::FRAGMENT_COLS>{}
-        );
-      });
-    });
-  }
-
-  template <typename SourcePointerType>
   METAL_FUNC void load_safe(
       SourcePointerType source,
       const int leading_dimension,
@@ -187,27 +148,6 @@ struct MxuTile {
             Int<1>{},
             tile_dimensions.y,
             tile_dimensions.x,
-            idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
-            idx_col * Int<FragmentType::FRAGMENT_COLS>{}
-        );
-      });
-    });
-  }
-
-  template <typename U>
-  METAL_FUNC void store_rows(
-      device U* destination,
-      const int leading_dimension,
-      const ushort row_count
-  ) const {
-    const_for_loop<0, TILE_ROWS, 1>([&](auto idx_row) {
-      const_for_loop<0, TILE_COLS, 1>([&](auto idx_col) {
-        FragmentType::store_rows(
-            fragment_at<idx_row.value, idx_col.value>(),
-            destination,
-            leading_dimension,
-            Int<1>{},
-            row_count,
             idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
             idx_col * Int<FragmentType::FRAGMENT_COLS>{}
         );

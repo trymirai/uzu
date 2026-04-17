@@ -4,11 +4,10 @@
 #include <metal_simdgroup_matrix>
 #include <metal_stdlib>
 
-#include "../../common/defines.h"
 #include "../../common/integral_constant.h"
 using namespace uzu;
 
-#include "matmul_support.h"
+#include "defines.h"
 
 #include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
 
@@ -42,15 +41,6 @@ struct MxuFragment {
     const short quad_id = simd_lane_id >> 2;
     const short lane_row = ((quad_id & 4) | ((simd_lane_id >> 1) & 3));
     const short lane_col = ((quad_id & 2) | (simd_lane_id & 1)) * 4;
-    return short2{lane_col, lane_row};
-  }
-
-  METAL_FUNC static short2 get_lane_coordinate(ushort index) {
-    const ushort simd_lane_id = __metal_get_thread_index_in_simdgroup(ushort());
-    const short quad_id = simd_lane_id >> 2;
-    const short lane_row =
-        ((quad_id & 4) | ((simd_lane_id >> 1) & 3)) + (index >> 2) * 8;
-    const short lane_col = ((quad_id & 2) | (simd_lane_id & 1)) * 4 + index % 4;
     return short2{lane_col, lane_row};
   }
 
@@ -88,56 +78,6 @@ struct MxuFragment {
         for (ushort j = 0; j < ELEMENT_COLS; j++) {
           destination[i * ELEMENT_COLS + j] =
               static_cast<T>(source[row * row_stride + (col + j) * col_stride]);
-        }
-      }
-    }
-  }
-
-  template <
-      typename T,
-      typename SourcePointerType,
-      typename RowStride,
-      typename ColStride,
-      typename RowLimit,
-      typename RowOffset = Int<0>,
-      typename ColOffset = Int<0>>
-  METAL_FUNC static constexpr void load_rows(
-      thread FragmentVector<T>& destination,
-      SourcePointerType source,
-      RowStride row_stride,
-      ColStride col_stride,
-      RowLimit row_limit,
-      RowOffset row_offset = {},
-      ColOffset col_offset = {}
-  ) {
-    const short2 lane_coord = get_lane_coordinate();
-    source += lane_coord.y * row_stride + lane_coord.x * col_stride;
-    auto local_row_limit = row_limit - lane_coord.y;
-
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < ELEMENT_ROWS; i++) {
-      const auto row = row_offset + i * ELEMENT_ROWS_JUMP;
-      const auto col = col_offset;
-
-      if (row < local_row_limit) {
-        if constexpr (metal::is_same_v<ColStride, Int<1>>) {
-          METAL_PRAGMA_UNROLL
-          for (ushort j = 0; j < ELEMENT_COLS; j++) {
-            destination[i * ELEMENT_COLS + j] =
-                static_cast<T>(source[row * row_stride + (col + j)]);
-          }
-        } else {
-          METAL_PRAGMA_UNROLL
-          for (ushort j = 0; j < ELEMENT_COLS; j++) {
-            destination[i * ELEMENT_COLS + j] = static_cast<T>(
-                source[row * row_stride + (col + j) * col_stride]
-            );
-          }
-        }
-      } else {
-        METAL_PRAGMA_UNROLL
-        for (ushort j = 0; j < ELEMENT_COLS; j++) {
-          destination[i * ELEMENT_COLS + j] = T(0);
         }
       }
     }
@@ -219,52 +159,6 @@ struct MxuFragment {
         for (ushort j = 0; j < ELEMENT_COLS; j++) {
           destination[row * row_stride + (col + j) * col_stride] =
               static_cast<U>(source[i * ELEMENT_COLS + j]);
-        }
-      }
-    }
-  }
-
-  template <
-      typename T,
-      typename DestinationPointerType,
-      typename RowStride,
-      typename ColStride,
-      typename RowLimit,
-      typename RowOffset = Int<0>,
-      typename ColOffset = Int<0>>
-  METAL_FUNC static constexpr void store_rows(
-      const thread FragmentVector<T>& source,
-      DestinationPointerType destination,
-      RowStride row_stride,
-      ColStride col_stride,
-      RowLimit row_limit,
-      RowOffset row_offset = {},
-      ColOffset col_offset = {}
-  ) {
-    using U = PointerElementType<DestinationPointerType>;
-
-    const short2 lane_coord = get_lane_coordinate();
-    destination += lane_coord.y * row_stride + lane_coord.x * col_stride;
-    auto local_row_limit = row_limit - lane_coord.y;
-
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < ELEMENT_ROWS; i++) {
-      const auto row = row_offset + i * ELEMENT_ROWS_JUMP;
-      const auto col = col_offset;
-
-      if (row < local_row_limit) {
-        if constexpr (metal::is_same_v<ColStride, Int<1>>) {
-          METAL_PRAGMA_UNROLL
-          for (ushort j = 0; j < ELEMENT_COLS; j++) {
-            destination[row * row_stride + col + j] =
-                static_cast<U>(source[i * ELEMENT_COLS + j]);
-          }
-        } else {
-          METAL_PRAGMA_UNROLL
-          for (ushort j = 0; j < ELEMENT_COLS; j++) {
-            destination[row * row_stride + (col + j) * col_stride] =
-                static_cast<U>(source[i * ELEMENT_COLS + j]);
-          }
         }
       }
     }

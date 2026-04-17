@@ -1,6 +1,6 @@
 #pragma once
 
-#include "matmul_support.h"
+#include "defines.h"
 
 using namespace metal;
 
