@@ -93,6 +93,7 @@ pub struct QuantizedLinear<B: Backend> {
     scales_buffer: Rc<RefCell<B::Buffer>>,
     zero_points_or_biases_buffer: Rc<RefCell<B::Buffer>>,
     output_hadamard_factors: Option<B::Buffer>,
+    lora_adapter: Option<(B::Buffer, f32)>,
     output_dim: usize,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
@@ -108,6 +109,7 @@ impl<B: Backend> QuantizedLinear<B> {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         output_hadamard_factors: Option<B::Buffer>,
+        lora_adapter: Option<(B::Buffer, f32)>,
     ) -> Result<Self, QuantizedLinearError<B>> {
         let kernel_data_type: DataType = config.activation_precision.into();
         if !matches!(kernel_data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
@@ -223,6 +225,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 mode: config.weight_quantization_mode,
                 quantization_type,
                 use_hadamard: output_hadamard_factors.is_some(),
+                use_lora: lora_adapter.is_some(),
             },
         )
         .map_err(QuantizedLinearError::QuantizedMatmulError)?;
@@ -235,6 +238,7 @@ impl<B: Backend> QuantizedLinear<B> {
             scales_buffer: scales.buffer(),
             zero_points_or_biases_buffer,
             output_hadamard_factors,
+            lora_adapter,
             output_dim,
             input_array_id,
             output_array_id,
@@ -250,16 +254,28 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     ) -> Result<(), B::Error> {
         let batch_dim = state.active_row_count();
 
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
-        let output_buf_rc = output_array.buffer();
+        // Gather all Rc<RefCell<...>> handles before any borrows.
+        let input_buf_rc = state.array(self.input_array_id).buffer();
+        let output_buf_rc = state.array(self.output_array_id).buffer();
+
+        let input_buf_borrow = input_buf_rc.borrow();
         let mut output_buf_borrow = output_buf_rc.borrow_mut();
+
+        let h_buf_rc = self.lora_adapter.as_ref().map(|_| {
+            state
+                .common_aux
+                .lora_intermediate
+                .as_ref()
+                .expect("lora_intermediate required for QLoRA decode path")
+                .buffer()
+        });
+        let h_buf_borrow = h_buf_rc.as_ref().map(|rc| rc.borrow());
 
         self.kernel
             .encode(
                 encoder,
                 QuantizedMatmulArguments {
-                    a_buffer: input_array.buffer().borrow().deref(),
+                    a_buffer: input_buf_borrow.deref(),
                     a_offset: 0,
                     b_buffer: self.weights_buffer.borrow().deref(),
                     scales_buffer: self.scales_buffer.borrow().deref(),
@@ -267,6 +283,9 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
                     output_buffer: output_buf_borrow.deref_mut(),
                     hadamard_factors: self.output_hadamard_factors.as_ref(),
                     batch_dim,
+                    h_buffer: h_buf_borrow.as_ref().map(|b| b.deref()),
+                    adapter_up: self.lora_adapter.as_ref().map(|(u, _)| u),
+                    lora_scale: self.lora_adapter.as_ref().map(|(_, s)| *s).unwrap_or(0.0),
                 },
             )
             .expect("Failed to encode quantized matmul");

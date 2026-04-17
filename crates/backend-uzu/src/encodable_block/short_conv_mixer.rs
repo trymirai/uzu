@@ -45,17 +45,18 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
-        let (in_projection, in_proj_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-            &short_conv_config.in_projection_config,
-            false,
-            model_dim,
-            [model_dim * 3],
-            context,
-            &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
-            ArrayId::Main,
-            ArrayId::SsmInProj,
-        )
-        .expect("Failed to create in-projection kernel");
+        let (in_projection, in_proj_input_hadamard_factors, _in_proj_adapter_down_prime) =
+            <dyn Linear<B>>::new_extracting_input_hadamard(
+                &short_conv_config.in_projection_config,
+                false,
+                model_dim,
+                [model_dim * 3],
+                context,
+                &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
+                ArrayId::Main,
+                ArrayId::SsmInProj,
+            )
+            .expect("Failed to create in-projection kernel");
 
         let out_projection = <dyn Linear<B>>::new(
             &short_conv_config.out_projection_config,

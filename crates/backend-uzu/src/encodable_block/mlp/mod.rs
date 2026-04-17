@@ -35,28 +35,34 @@ pub enum MlpBlockError<B: Backend> {
 }
 
 impl<B: Backend> dyn Mlp<B> {
+    /// Returns `(mlp, input_hadamard_factors, adapter_down_prime)`.
+    ///
+    /// `input_hadamard_factors` is for the pre-MLP RMSNorm (Hadamard fused into it).
+    /// `adapter_down_prime` is the offline-composed A_down @ H buffer when the MLP
+    /// up_projection is a QLoRA layer — used to fuse A_down into the pre-MLP RMSNorm.
     pub fn new(
         config: &MLPConfig,
         model_dimension: usize,
         hidden_dimension: usize,
         context: &B::Context,
         parameter_tree: &ParameterTree<B::Context>,
-    ) -> Result<(Box<dyn Mlp<B>>, Option<B::Buffer>), MlpBlockError<B>> {
+    ) -> Result<(Box<dyn Mlp<B>>, Option<B::Buffer>, Option<B::Buffer>), MlpBlockError<B>> {
         if let MLPConfig::Dense(dense_config) = config {
             let data_type: DataType = dense_config.linear_config.activation_precision().into();
 
-            let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-                &dense_config.linear_config,
-                false,
-                model_dimension,
-                [2 * hidden_dimension],
-                context,
-                &parameter_tree.subtree("up_projection")?,
-                ArrayId::Main,
-                ArrayId::MlpFusedUp,
-            )?;
+            let (up_projection, up_input_hadamard_factors, up_adapter_down_prime) =
+                <dyn Linear<B>>::new_extracting_input_hadamard(
+                    &dense_config.linear_config,
+                    false,
+                    model_dimension,
+                    [2 * hidden_dimension],
+                    context,
+                    &parameter_tree.subtree("up_projection")?,
+                    ArrayId::Main,
+                    ArrayId::MlpFusedUp,
+                )?;
 
-            let (down_projection, down_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
+            let (down_projection, down_input_hadamard_factors, _) = <dyn Linear<B>>::new_extracting_input_hadamard(
                 &dense_config.linear_config,
                 false,
                 hidden_dimension,
@@ -76,13 +82,17 @@ impl<B: Backend> dyn Mlp<B> {
             )
             .map_err(MlpBlockError::BackendError)?;
 
-            return Ok((Box::new(DenseMlp::new(up_projection, gate, down_projection)), up_input_hadamard_factors));
+            return Ok((
+                Box::new(DenseMlp::new(up_projection, gate, down_projection)),
+                up_input_hadamard_factors,
+                up_adapter_down_prime,
+            ));
         }
 
         if let MLPConfig::MixtureOfExperts(mixture_of_experts_config) = config {
             let mixture_of_experts_block =
                 MoeBlock::new(context, mixture_of_experts_config, model_dimension, hidden_dimension, parameter_tree)?;
-            return Ok((Box::new(mixture_of_experts_block), None));
+            return Ok((Box::new(mixture_of_experts_block), None, None));
         }
 
         unreachable!("Unknown MLP config")

@@ -148,7 +148,7 @@ impl<B: Backend> ClassifierLayer<B> {
         )
         .expect("Failed to create pre-MLP norm kernel");
 
-        let (mlp, mlp_hadamard_factors) = <dyn Mlp<B>>::new(
+        let (mlp, mlp_hadamard_factors, _mlp_adapter_down_prime) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,

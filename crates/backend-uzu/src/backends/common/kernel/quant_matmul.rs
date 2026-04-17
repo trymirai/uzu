@@ -34,6 +34,7 @@ pub struct QuantizedMatmulConfiguration {
     pub mode: QuantizationMode,
     pub quantization_type: QuantizedMatmulType,
     pub use_hadamard: bool,
+    pub use_lora: bool,
 }
 
 pub struct QuantizedMatmulArguments<'a, B: Backend> {
@@ -45,6 +46,9 @@ pub struct QuantizedMatmulArguments<'a, B: Backend> {
     pub output_buffer: &'a mut B::Buffer,
     pub hadamard_factors: Option<&'a B::Buffer>,
     pub batch_dim: usize,
+    pub h_buffer: Option<&'a B::Buffer>,
+    pub adapter_up: Option<&'a B::Buffer>,
+    pub lora_scale: f32,
 }
 
 pub struct QuantizedMatmulKernelEncodable<B: Backend> {
@@ -123,6 +127,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     use_zero_points,
                     use_mlx_quant,
                     configuration.use_hadamard,
+                    configuration.use_lora,
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )
@@ -251,7 +256,22 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         // configs that don't cover this batch_dim.
         match &self.matrix_vector {
             MatrixVectorKernel::Qmv(k) => encode_kernel!(k,),
-            MatrixVectorKernel::QmvFast(k) => encode_kernel!(k, arguments.hadamard_factors),
+            MatrixVectorKernel::QmvFast(k) => k.encode(
+                arguments.b_buffer,
+                arguments.scales_buffer,
+                zero_points,
+                biases,
+                (arguments.a_buffer, arguments.a_offset),
+                arguments.output_buffer,
+                arguments.hadamard_factors,
+                arguments.h_buffer,
+                arguments.adapter_up,
+                arguments.h_buffer.map(|_| arguments.lora_scale),
+                self.input_dim as u32,
+                self.output_dim as u32,
+                arguments.batch_dim as u32,
+                encoder,
+            ),
         }
 
         Ok(())

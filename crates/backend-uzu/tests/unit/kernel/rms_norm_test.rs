@@ -134,6 +134,7 @@ fn get_output<
         false,
         false,
         false,
+        false,
     )
     .expect("Failed to create RMSNormKernel");
 
@@ -157,6 +158,8 @@ fn get_output<
         output_array.buffer().borrow_mut().deref_mut(),
         None::<&mut B::Buffer>,
         None::<&B::Buffer>,
+        None::<&B::Buffer>,
+        None::<&mut B::Buffer>,
         input.batch_size,
         input.element_count,
         input.epsilon,
@@ -410,6 +413,7 @@ fn bench_rms_norm(c: &mut Criterion) {
             false,
             false,
             false,
+            false,
         )
         .unwrap();
 
@@ -457,6 +461,8 @@ fn bench_rms_norm(c: &mut Criterion) {
                             &mut output_buffer,
                             None::<&mut <B as Backend>::Buffer>,
                             None::<&<B as Backend>::Buffer>,
+                            None::<&<B as Backend>::Buffer>,
+                            None::<&mut <B as Backend>::Buffer>,
                             batch_size as u32,
                             model_dim as u32,
                             epsilon,

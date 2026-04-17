@@ -10,7 +10,7 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Encoder},
+    backends::common::{Backend, Encoder, Kernels, kernel::HadamardTransformKernel},
     config::LinearConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -60,6 +60,7 @@ impl<B: Backend> dyn Linear<B> {
                     parameter_tree,
                     input_array_id,
                     output_array_id,
+                    None,
                     None,
                 )?;
                 Ok(Box::new(block))
@@ -126,6 +127,30 @@ impl<B: Backend> dyn Linear<B> {
         input_dim: usize,
         output_dim: usize,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
+        Self::new_with_output_hadamard_and_flags(
+            context,
+            config,
+            input_array_id,
+            output_array_id,
+            parameter_tree,
+            output_factors,
+            input_dim,
+            output_dim,
+            false,
+        )
+    }
+
+    fn new_with_output_hadamard_and_flags(
+        context: &B::Context,
+        config: &LinearConfig,
+        input_array_id: ArrayId,
+        output_array_id: ArrayId,
+        parameter_tree: &ParameterTree<B::Context>,
+        output_factors: B::Buffer,
+        input_dim: usize,
+        output_dim: usize,
+        rms_norm_fuses_a_down: bool,
+    ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         match config {
             LinearConfig::Quantized(config) | LinearConfig::MLXQuantized(config) => Ok(Box::new(QuantizedLinear::new(
                 context,
@@ -136,27 +161,54 @@ impl<B: Backend> dyn Linear<B> {
                 input_array_id,
                 output_array_id,
                 Some(output_factors),
+                None,
             )?)),
             LinearConfig::QLoRA {
                 quantization,
                 lora_rank,
                 lora_scale,
-            } => Ok(Box::new(QLoRALinearWrapper::new(
-                context,
-                quantization,
-                *lora_rank,
-                *lora_scale,
-                input_dim,
-                output_dim,
-                parameter_tree,
-                Some(output_factors),
-                input_array_id,
-                output_array_id,
-            )?)),
+            } => {
+                if rms_norm_fuses_a_down {
+                    Ok(Box::new(QLoRALinearWrapper::new_with_rms_norm_fused_a_down(
+                        context,
+                        quantization,
+                        *lora_rank,
+                        *lora_scale,
+                        input_dim,
+                        output_dim,
+                        parameter_tree,
+                        Some(output_factors),
+                        input_array_id,
+                        output_array_id,
+                    )?))
+                } else {
+                    Ok(Box::new(QLoRALinearWrapper::new(
+                        context,
+                        quantization,
+                        *lora_rank,
+                        *lora_scale,
+                        input_dim,
+                        output_dim,
+                        parameter_tree,
+                        Some(output_factors),
+                        input_array_id,
+                        output_array_id,
+                    )?))
+                }
+            },
             inner_config => unimplemented!("{inner_config:?} doesn't support fused output hadamard"),
         }
     }
 
+    /// Like `new_extracting_input_hadamard` but also returns an offline-composed
+    /// `adapter_down_prime = A_down @ H` buffer when the inner linear is a QLoRA variant.
+    ///
+    /// The third element is `Some(adapter_down_prime)` when:
+    /// - config is `RHTLinearWrapper { inner_config: QLoRA { .. } }` AND
+    /// - the H application at load time succeeds.
+    ///
+    /// Callers should pass `adapter_down_prime` to `RMSNorm::new_with_lora_fuse` so
+    /// the A_down GEMV is eliminated from the decode dispatch path.
     pub fn new_extracting_input_hadamard<const N: usize>(
         config: &LinearConfig,
         _has_biases: bool,
@@ -166,7 +218,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B::Context>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::Buffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<B::Buffer>, Option<B::Buffer>), LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
             LinearConfig::RHTLinearWrapper {
@@ -176,7 +228,44 @@ impl<B: Backend> dyn Linear<B> {
                 let input_factors = parameter_tree.leaf("input_factors")?.read_buffer()?;
                 let output_factors = parameter_tree.leaf("output_factors")?.read_buffer()?;
                 let inner_tree = parameter_tree.subtree("inner_linear")?;
-                let inner_linear = Self::new_with_output_hadamard(
+
+                // Compute adapter_down_prime = H(A_down rows) at load time when inner is QLoRA.
+                // This enables the fused RMSNorm+A_down decode path (no separate A_down dispatch).
+                let adapter_down_prime = if let LinearConfig::QLoRA {
+                    lora_rank,
+                    ..
+                } = inner_config.as_ref()
+                {
+                    let lora_rank = *lora_rank;
+                    let down_weights_leaf = inner_tree.leaf("down_weights")?;
+                    // Read a copy of A_down to mutate via the Hadamard kernel.
+                    let mut adapter_down_prime = down_weights_leaf.read_buffer()?;
+                    // Apply H to each row: treat A_down as a [rank, K] batch where
+                    // batch_size = rank, hidden_dim = K = input_dimension.
+                    let hadamard_kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
+                        context,
+                        down_weights_leaf.data_type(),
+                    )
+                    .map_err(ParameterLoaderError::BackendError)?;
+                    let mut encoder = Encoder::<B>::new(context).expect("Failed to create encoder for H composition");
+                    hadamard_kernel.encode(
+                        &mut adapter_down_prime,
+                        &input_factors,
+                        input_dimension as u32,
+                        lora_rank as u32,
+                        &mut encoder,
+                    );
+                    encoder
+                        .end_encoding()
+                        .submit()
+                        .wait_until_completed()
+                        .map_err(ParameterLoaderError::BackendError)?;
+                    Some(adapter_down_prime)
+                } else {
+                    None
+                };
+
+                let inner_linear = Self::new_with_output_hadamard_and_flags(
                     context,
                     inner_config,
                     input_array_id,
@@ -185,8 +274,9 @@ impl<B: Backend> dyn Linear<B> {
                     output_factors,
                     input_dimension,
                     output_dimension_sum,
+                    adapter_down_prime.is_some(),
                 )?;
-                Ok((inner_linear, Some(input_factors)))
+                Ok((inner_linear, Some(input_factors), adapter_down_prime))
             },
             other => {
                 let linear = Self::new(
@@ -199,7 +289,7 @@ impl<B: Backend> dyn Linear<B> {
                     input_array_id,
                     output_array_id,
                 )?;
-                Ok((linear, None))
+                Ok((linear, None, None))
             },
         }
     }

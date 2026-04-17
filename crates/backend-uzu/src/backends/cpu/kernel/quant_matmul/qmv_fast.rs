@@ -16,16 +16,24 @@ pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32,
     input: *const T,
     output: *mut T,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
+    #[optional(use_lora)] h_input: Option<*const T>,
+    #[optional(use_lora)] adapter_up: Option<*const T>,
+    #[optional(use_lora)] lora_scale: Option<f32>,
     in_vec_size: u32,
     out_vec_size: u32,
     batch_size: u32,
     #[specialize] use_zero_points: bool,
     #[specialize] use_mlx_quant: bool,
     #[specialize] use_hadamard: bool,
+    #[specialize] use_lora: bool,
 ) {
     if use_hadamard {
         unimplemented!("not supported yet");
     }
+    if use_lora {
+        unimplemented!("LoRA fusion not implemented on CPU");
+    }
+    let _ = (h_input, adapter_up, lora_scale);
     qmv::<T>(
         weights,
         scales,

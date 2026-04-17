@@ -343,6 +343,7 @@ fn execute_quantized_matmul<B: Backend>(
             },
             quantization_type,
             use_hadamard: false,
+            use_lora: false,
         },
     )
     .unwrap();
@@ -358,6 +359,9 @@ fn execute_quantized_matmul<B: Backend>(
                 output_buffer: &mut y_buf,
                 hadamard_factors: None,
                 batch_dim: batch,
+                h_buffer: None,
+                adapter_up: None,
+                lora_scale: 0.0,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
             kernel.encode(&mut encoder, args).unwrap();
@@ -376,6 +380,9 @@ fn execute_quantized_matmul<B: Backend>(
             output_buffer: &mut y_buf,
             hadamard_factors: None,
             batch_dim: batch,
+            h_buffer: None,
+            adapter_up: None,
+            lora_scale: 0.0,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
         kernel.encode(&mut encoder, args).unwrap();

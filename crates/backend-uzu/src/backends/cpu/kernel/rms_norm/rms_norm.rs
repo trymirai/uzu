@@ -20,6 +20,8 @@ pub fn rms_norm<
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
+    #[optional(use_lora)] adapter_down_prime: Option<*const OutputT>,
+    #[optional(use_lora)] h_output: Option<*mut OutputT>,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
@@ -29,9 +31,13 @@ pub fn rms_norm<
     #[specialize] copy_to_shortcut: bool,
     #[specialize] residual_add: bool,
     #[specialize] use_hadamard: bool,
+    #[specialize] use_lora: bool,
 ) {
     if use_hadamard {
         unimplemented!("not supported yet");
+    }
+    if use_lora {
+        unimplemented!("RMSNorm use_lora not supported on CPU backend");
     }
 
     let input = match in_place {
