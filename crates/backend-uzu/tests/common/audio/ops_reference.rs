@@ -1,4 +1,4 @@
-use uzu::prelude::{AudioError, AudioResult};
+use backend_uzu::prelude::{AudioError, AudioResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PadMode {

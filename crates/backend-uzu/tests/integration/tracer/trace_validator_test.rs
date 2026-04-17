@@ -1,6 +1,6 @@
 #![cfg(all(feature = "tracing"))]
 
-use uzu::{TraceValidator, backends::common::Backend};
+use backend_uzu::{TraceValidator, backends::common::Backend};
 
 use crate::common::{
     for_each_non_cpu_backend,

@@ -2,7 +2,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, DataType,
     backends::{
         common::{

@@ -1,11 +1,6 @@
 use std::mem::MaybeUninit;
 
-use criterion::{BenchmarkId, Criterion, Throughput};
-use num_traits::{Float, NumCast};
-use proptest::prelude::*;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-use rand_distr::Normal;
-use uzu::{
+use backend_uzu::{
     ArrayElement,
     backends::common::{
         Backend, Buffer, Context, Encoder, Kernels,
@@ -13,6 +8,11 @@ use uzu::{
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
 };
+use criterion::{BenchmarkId, Criterion, Throughput};
+use num_traits::{Float, NumCast};
+use proptest::prelude::*;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use rand_distr::Normal;
 
 use crate::{
     common::{

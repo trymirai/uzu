@@ -1,13 +1,13 @@
 use std::ops::{Deref, DerefMut};
 
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
         cpu::Cpu,
     },
 };
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::uzu_test;
 

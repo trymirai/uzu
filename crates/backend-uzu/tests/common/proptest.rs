@@ -1,15 +1,15 @@
 use std::rc::Rc;
 
-use proptest::prelude::*;
 #[cfg(metal_backend)]
-use uzu::backends::metal::Metal;
-use uzu::{
+use backend_uzu::backends::metal::Metal;
+use backend_uzu::{
     DataType,
     backends::{
         common::{Backend, Context},
         cpu::Cpu,
     },
 };
+use proptest::prelude::*;
 
 pub fn kernel_data_type() -> impl Strategy<Value = DataType> {
     prop_oneof![Just(DataType::F16), Just(DataType::BF16), Just(DataType::F32)]
@@ -41,13 +41,15 @@ macro_rules! for_each_context {
     ($CONTEXTES:ident, |$CONTEXT_NAME:ident: $CONTEXT_TYPE:ident| $body:expr) => {
         crate::common::proptest::TestResults {
             cpu: ({
-                type $CONTEXT_TYPE = <uzu::backends::cpu::Cpu as uzu::backends::common::Backend>::Context;
+                type $CONTEXT_TYPE =
+                    <backend_uzu::backends::cpu::Cpu as backend_uzu::backends::common::Backend>::Context;
                 let $CONTEXT_NAME = $CONTEXTES.cpu.as_ref();
                 $body
             })?,
             #[cfg(metal_backend)]
             metal: ({
-                type $CONTEXT_TYPE = <uzu::backends::metal::Metal as uzu::backends::common::Backend>::Context;
+                type $CONTEXT_TYPE =
+                    <backend_uzu::backends::metal::Metal as backend_uzu::backends::common::Backend>::Context;
                 let $CONTEXT_NAME = $CONTEXTES.metal.as_ref();
                 $body
             })?,
@@ -77,9 +79,9 @@ macro_rules! dispatch_dtype {
     (|()| $body:expr) => { $body };
     (|($T:ident : $dt:expr $(, $rest_T:ident : $rest_dt:expr)*)| $body:expr) => {
         match $dt {
-            uzu::DataType::F16 => { type $T = half::f16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            uzu::DataType::BF16 => { type $T = half::bf16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            uzu::DataType::F32 => { type $T = f32; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
+            backend_uzu::DataType::F16 => { type $T = half::f16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
+            backend_uzu::DataType::BF16 => { type $T = half::bf16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
+            backend_uzu::DataType::F32 => { type $T = f32; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
             other => panic!("unsupported dtype in test: {:?}", other),
         }
     };

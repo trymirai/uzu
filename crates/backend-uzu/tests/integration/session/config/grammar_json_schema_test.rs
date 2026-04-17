@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use test_tag::tag;
-use uzu::session::{
+use backend_uzu::session::{
     Session,
     config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
     parameter::SamplingPolicy,
     types::Input,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use test_tag::tag;
 
 use crate::{common::path::get_test_model_path, util::speculator::RepeatSpeculator};
 
@@ -43,7 +43,7 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     }
 
     let decoding_config = DecodingConfig::default()
-        .with_sampling_seed(uzu::prelude::SamplingSeed::Custom(42))
+        .with_sampling_seed(backend_uzu::prelude::SamplingSeed::Custom(42))
         .with_speculator_config(speculator_config);
     let mut session = Session::new(model_dir, decoding_config).expect("Failed to create session");
 
@@ -54,8 +54,9 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     let run_config =
         RunConfig::default().tokens_limit(1024).sampling_policy(SamplingPolicy::Default).grammar_config(grammar_config);
 
-    let output =
-        session.run(input, run_config, None::<fn(uzu::session::types::Output) -> bool>).expect("Failed to run session");
+    let output = session
+        .run(input, run_config, None::<fn(backend_uzu::session::types::Output) -> bool>)
+        .expect("Failed to run session");
 
     let stats = output.stats;
     let total_tokens = stats.total_stats.tokens_count_input + stats.total_stats.tokens_count_output;

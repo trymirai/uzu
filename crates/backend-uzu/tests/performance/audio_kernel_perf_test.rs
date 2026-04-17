@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use uzu::{
+use backend_uzu::{
     Array, ArrayContextExt, DataType,
     backends::{
         common::{

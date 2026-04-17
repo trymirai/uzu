@@ -1,13 +1,13 @@
 use std::fmt::{Debug, Display};
 
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
         cpu::Cpu,
     },
 };
+use num_traits::Float;
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{common::helpers::alloc_buffer_with_data, uzu_test};

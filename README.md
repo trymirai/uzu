@@ -133,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 To run benchmarks, you can use the following command:
 
 ```bash
-cargo run --release -p cli -- bench ./models/{ENGINE_VERSION}/{MODEL_NAME} ./models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_task.json ./models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench ./workspace/models/{ENGINE_VERSION}/{MODEL_NAME} ./workspace/models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_task.json ./workspace/models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_result.json
 ```
 
 `benchmark_task.json` will be automatically generated after the model is downloaded via `./tools/helpers/`, as described earlier.

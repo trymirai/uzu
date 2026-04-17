@@ -1,4 +1,4 @@
-use uzu::prelude::{ChatSession, DecodingConfig};
+use backend_uzu::prelude::{ChatSession, DecodingConfig};
 
 use crate::common::{path::get_test_model_path, perf::run_perf};
 

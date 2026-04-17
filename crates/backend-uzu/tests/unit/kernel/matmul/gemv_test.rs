@@ -3,9 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
@@ -18,6 +16,8 @@ use uzu::{
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
 

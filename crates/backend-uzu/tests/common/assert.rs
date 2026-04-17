@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
+use backend_uzu::ArrayElement;
 use num_traits::Float;
-use uzu::ArrayElement;
 
 pub fn assert_eq_float<T: ArrayElement + Float + Display>(
     expected: &[T],

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use uzu::prelude::Speculator;
+use backend_uzu::prelude::Speculator;
 
 pub struct RepeatSpeculator;
 

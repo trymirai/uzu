@@ -1,12 +1,12 @@
 #![cfg(metal_backend)]
 
-use test_tag::tag;
-use uzu::session::{
+use backend_uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig},
     parameter::SamplingSeed,
     types::{Input, Message, Output},
 };
+use test_tag::tag;
 
 use crate::common::path::get_test_model_path;
 

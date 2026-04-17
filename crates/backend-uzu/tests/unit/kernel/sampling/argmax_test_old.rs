@@ -4,9 +4,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::common::{
         Backend, Context, Encoder, Kernels,
@@ -14,6 +12,8 @@ use uzu::{
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::uzu_test;
 

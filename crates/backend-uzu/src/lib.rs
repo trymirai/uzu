@@ -1,5 +1,5 @@
-// needed for tests to resolve `uzu::` imports
-extern crate self as uzu;
+// needed for tests to resolve `backend_uzu::` imports
+extern crate self as backend_uzu;
 
 mod array;
 mod audio;

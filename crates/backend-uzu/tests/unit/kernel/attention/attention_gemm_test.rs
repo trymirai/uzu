@@ -3,15 +3,15 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{Backend, Context, Encoder, kernel::attention::AttentionGemmArguments},
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
 
@@ -79,7 +79,7 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let block = uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
+    let block = backend_uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
 
     let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
     let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");

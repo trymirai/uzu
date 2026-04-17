@@ -3,9 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::GumbelKernel},
@@ -13,6 +11,8 @@ use uzu::{
     },
     gumbel_float, revidx,
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::uzu_test;
 

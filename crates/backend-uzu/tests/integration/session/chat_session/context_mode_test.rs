@@ -2,8 +2,7 @@
 
 use std::path::PathBuf;
 
-use test_tag::tag;
-use uzu::session::{
+use backend_uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig, SpeculatorConfig},
     parameter::{
@@ -11,6 +10,7 @@ use uzu::session::{
     },
     types::{Input, Message, Output},
 };
+use test_tag::tag;
 
 use crate::common::path::get_test_model_path;
 

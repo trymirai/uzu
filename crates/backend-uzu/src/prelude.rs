@@ -1,6 +1,6 @@
 //! Prelude module containing commonly used types from the uzu crate.
 //!
-//! This module can be imported with `use uzu::prelude::*;` to bring the most
+//! This module can be imported with `use backend_uzu::prelude::*;` to bring the most
 //! frequently used types into scope.
 
 // Constants & Utilities

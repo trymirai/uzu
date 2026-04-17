@@ -1,14 +1,14 @@
 #![cfg(metal_backend)]
 
-use indicatif::{ProgressBar, ProgressStyle};
-use metal::MTLDeviceExt;
-use uzu::{
+use backend_uzu::{
     DataType,
     backends::{
         common::{Backend, Context},
         metal::Metal,
     },
 };
+use indicatif::{ProgressBar, ProgressStyle};
+use metal::MTLDeviceExt;
 
 use crate::matmul::{bench, output::print_results_table, shapes::test_shapes};
 

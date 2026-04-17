@@ -1,11 +1,11 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::uzu_test;
 

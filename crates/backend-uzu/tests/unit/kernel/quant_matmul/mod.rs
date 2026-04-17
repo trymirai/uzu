@@ -6,8 +6,8 @@ mod qmm_transposed_test;
 mod qmv_fast_test;
 mod qmv_test;
 
+use backend_uzu::ArrayElement;
 use num_traits::Float;
-use uzu::ArrayElement;
 
 pub(super) struct Input<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,

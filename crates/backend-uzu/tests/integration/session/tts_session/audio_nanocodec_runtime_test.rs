@@ -1,6 +1,6 @@
 #![cfg(metal_backend)]
 
-use uzu::{
+use backend_uzu::{
     NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
     backends::metal::Metal,
     prelude::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid},

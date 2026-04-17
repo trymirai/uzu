@@ -1,8 +1,6 @@
 #![cfg(metal_backend)]
 
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
-use uzu::{
+use backend_uzu::{
     DataType,
     backends::{
         common::{
@@ -15,6 +13,8 @@ use uzu::{
         metal::Metal,
     },
 };
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{error::BenchError, output::PerfResult, shapes::TestShape};
 

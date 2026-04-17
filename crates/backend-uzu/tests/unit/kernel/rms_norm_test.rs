@@ -4,18 +4,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use criterion::{BenchmarkId, Criterion, Throughput};
-use half::{bf16, f16};
-use itertools::iproduct;
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{Backend, Buffer, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
 };
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::{bf16, f16};
+use itertools::iproduct;
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::{
     common::{assert::assert_eq_float, type_short_name},

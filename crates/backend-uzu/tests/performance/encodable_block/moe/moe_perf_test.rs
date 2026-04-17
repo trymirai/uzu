@@ -1,6 +1,4 @@
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::{
+use backend_uzu::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
@@ -11,6 +9,8 @@ use uzu::{
         },
     },
 };
+use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::common::{
     helpers::{alloc_buffer, alloc_buffer_with_data, create_context},

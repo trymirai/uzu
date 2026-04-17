@@ -1,11 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use criterion::{BenchmarkId, Criterion, Throughput};
-use half::{bf16, f16};
-use itertools::iproduct;
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-use uzu::{
+use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
@@ -15,6 +10,11 @@ use uzu::{
         cpu::Cpu,
     },
 };
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::{bf16, f16};
+use itertools::iproduct;
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{
@@ -328,11 +328,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
         256
     };
 
-    for (m, n, k) in iproduct!(
-        [1, 2, 3, 4],
-        [1024, 2048, 4096, 14336, 65536],
-        [1024, 2048, 4096, 8192, 14336]
-    ) {
+    for (m, n, k) in iproduct!([1, 2, 3, 4], [1024, 2048, 4096, 14336, 65536], [1024, 2048, 4096, 8192, 14336]) {
         if n % 8 != 0 || k % block_size != 0 {
             continue;
         }

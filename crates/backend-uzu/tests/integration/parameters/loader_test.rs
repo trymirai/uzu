@@ -1,16 +1,16 @@
 #![cfg(metal_backend)]
 
 // New integration test for ParameterLoader
-use half::bf16;
-use is_close::is_close;
-use test_tag::tag;
-use uzu::{
+use backend_uzu::{
     ParameterLoader,
     backends::{
         common::{Backend, Context},
         metal::Metal,
     },
 };
+use half::bf16;
+use is_close::is_close;
+use test_tag::tag;
 
 use crate::common::path::get_test_weights_path;
 

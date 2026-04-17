@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use uzu::read_safetensors_metadata;
+use backend_uzu::read_safetensors_metadata;
 
 use crate::common::path::get_test_weights_path;
 

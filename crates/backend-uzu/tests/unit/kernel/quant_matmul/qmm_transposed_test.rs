@@ -1,14 +1,14 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
@@ -285,10 +285,34 @@ impl TileCfg {
     }
 }
 
-const CFG_BM8: TileCfg = TileCfg { bm: 8, bk: 32, bn: 32, wm: 1, wn: 1 };
-const CFG_32X32: TileCfg = TileCfg { bm: 32, bk: 32, bn: 32, wm: 2, wn: 2 };
-const CFG_WIDE: TileCfg = TileCfg { bm: 64, bk: 32, bn: 64, wm: 2, wn: 2 };
-const CFG_64X64: TileCfg = TileCfg { bm: 64, bk: 64, bn: 64, wm: 2, wn: 2 };
+const CFG_BM8: TileCfg = TileCfg {
+    bm: 8,
+    bk: 32,
+    bn: 32,
+    wm: 1,
+    wn: 1,
+};
+const CFG_32X32: TileCfg = TileCfg {
+    bm: 32,
+    bk: 32,
+    bn: 32,
+    wm: 2,
+    wn: 2,
+};
+const CFG_WIDE: TileCfg = TileCfg {
+    bm: 64,
+    bk: 32,
+    bn: 64,
+    wm: 2,
+    wn: 2,
+};
+const CFG_64X64: TileCfg = TileCfg {
+    bm: 64,
+    bk: 64,
+    bn: 64,
+    wm: 2,
+    wn: 2,
+};
 
 fn pick_aligned_n(
     cfg: &TileCfg,
@@ -356,7 +380,15 @@ fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
     let input = make_input_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
 
     // ±1 factors: non-trivial Hadamard, bounded output across all dtypes.
-    let factors: Vec<i32> = (0..n).map(|i| if (i * 13 + 7) % 2 == 0 { 1 } else { -1 }).collect();
+    let factors: Vec<i32> = (0..n)
+        .map(|i| {
+            if (i * 13 + 7) % 2 == 0 {
+                1
+            } else {
+                -1
+            }
+        })
+        .collect();
 
     // Hadamard amplifies by sqrt(32) ≈ 5.65; tolerance widened accordingly.
     let (rel_tol, abs_tol): (f64, f64) = match T::data_type() {
@@ -366,11 +398,8 @@ fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let shapes: [(u32, u32, u32, u32, u32, &str); 3] = [
-            (32, 32, 32, 2, 2, "32x32"),
-            (64, 32, 64, 2, 2, "wide"),
-            (64, 64, 64, 2, 2, "64x64"),
-        ];
+        let shapes: [(u32, u32, u32, u32, u32, &str); 3] =
+            [(32, 32, 32, 2, 2, "32x32"), (64, 32, 64, 2, 2, "wide"), (64, 64, 64, 2, 2, "64x64")];
 
         let outputs: Vec<(&str, Vec<T>)> = shapes
             .iter()
@@ -390,14 +419,7 @@ fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
                 let o_f32 = o.to_f32().unwrap();
                 if !check_tolerance(r_f32, o_f32, rel_tol, abs_tol) {
                     if errors < 5 {
-                        eprintln!(
-                            "  idx={} 32x32={} {}={} diff={}",
-                            i,
-                            r_f32,
-                            name,
-                            o_f32,
-                            (r_f32 - o_f32).abs()
-                        );
+                        eprintln!("  idx={} 32x32={} {}={} diff={}", i, r_f32, name, o_f32, (r_f32 - o_f32).abs());
                     }
                     errors += 1;
                 }

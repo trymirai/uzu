@@ -3,16 +3,16 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TopKKernel},
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::uzu_test;
 

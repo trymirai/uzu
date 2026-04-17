@@ -4,10 +4,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
@@ -18,6 +15,9 @@ use uzu::{
     },
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
+use half::{bf16, f16};
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use crate::uzu_test;
 

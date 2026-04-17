@@ -5,9 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use criterion::{BenchmarkId, Criterion, Throughput};
-use half::bf16;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
@@ -21,6 +19,8 @@ use uzu::{
         metal::{DeviceExt, MatmulDispatchPath, Metal, MetalContext},
     },
 };
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::bf16;
 
 use crate::{
     common::{assert::assert_eq_float, type_short_name},

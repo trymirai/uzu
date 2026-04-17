@@ -3,9 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
@@ -18,6 +16,8 @@ use uzu::{
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
 
@@ -49,7 +49,10 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f32) -> Vec<T> {
+fn get_output<T: ArrayElement + Float, B: Backend>(
+    input: &Input<T>,
+    ab_scale: f32,
+) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let m = input.m as u32;
@@ -116,7 +119,12 @@ fn test_with_scale<T: ArrayElement + Float + Debug + Display>(
     let expected = get_output::<T, Cpu>(&input, ab_scale);
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(&input, ab_scale);
-        assert_eq_float(&expected, &output, eps, &format!("backend {} ab_scale={ab_scale}", std::any::type_name::<B>()));
+        assert_eq_float(
+            &expected,
+            &output,
+            eps,
+            &format!("backend {} ab_scale={ab_scale}", std::any::type_name::<B>()),
+        );
     });
 }
 

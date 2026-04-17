@@ -6,9 +6,7 @@
 //! - Intermediate buffer correctness (row maps, tiles, dispatch args)
 //! - Numerical correctness against CPU reference
 
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-use uzu::{
+use backend_uzu::{
     DataType,
     backends::common::{
         Buffer, Encoder,
@@ -19,6 +17,8 @@ use uzu::{
         },
     },
 };
+use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::encodable_block::mlp::moe::tests::{
     common::{

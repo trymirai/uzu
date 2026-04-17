@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use uzu::{
+use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::common::{
         Backend, Context, Encoder, Kernels,
