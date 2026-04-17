@@ -2,17 +2,31 @@
 name = "hanashi"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
 default = []
-bindings = ["bindings-uniffi", "bindings-napi", "bindings-pyo3", "bindings-wasm"]
+bindings = [
+    "bindings-uniffi",
+    "bindings-napi",
+    "bindings-pyo3",
+    "bindings-wasm",
+]
 bindings-uniffi = ["dep:uniffi"]
 bindings-napi = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
 bindings-pyo3 = ["dep:pyo3"]
-bindings-wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen", "dep:wasm-bindgen-futures", "dep:tsify"]
+bindings-wasm = [
+    "dep:wasm-bindgen",
+    "dep:serde-wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:tsify",
+]
 
 [dependencies]
 bindings.workspace = true

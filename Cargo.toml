@@ -7,8 +7,9 @@ members = [
     "crates/hanashi",
     "crates/nagare",
     "crates/download-manager",
-    "crates/benchmarks",
+    "crates/backend-uzu",
     "crates/uzu",
+    "crates/benchmarks",
     "crates/cli",
 ]
 resolver = "3"
@@ -23,13 +24,14 @@ repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
-bindings = { path = "crates/bindings" }
-json-transform = { path = "crates/json-transform" }
-token-stream-parser = { path = "crates/token-stream-parser" }
+bindings = { path = "crates/bindings", default-features = false }
+json-transform = { path = "crates/json-transform", default-features = false }
+token-stream-parser = { path = "crates/token-stream-parser", default-features = false }
 hanashi = { path = "crates/hanashi", default-features = false }
 nagare = { path = "crates/nagare", default-features = false }
-download-manager = { path = "crates/download-manager" }
+download-manager = { path = "crates/download-manager", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
+backend-uzu = { path = "crates/backend-uzu", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }

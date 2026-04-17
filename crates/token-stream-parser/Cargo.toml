@@ -2,6 +2,10 @@
 name = "token-stream-parser"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 json-transform.workspace = true
