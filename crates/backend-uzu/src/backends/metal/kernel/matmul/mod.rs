@@ -18,8 +18,7 @@ use crate::{
             Metal,
             context::MetalContext,
             kernel::{
-                MatmulGemmMetalKernel, MatmulGemmMppMetalKernel,
-                MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
+                MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
             },
             metal_extensions::DeviceExt,
         },
@@ -295,7 +294,6 @@ impl MatmulMetalKernel {
 
         Ok(())
     }
-
 }
 
 /// Explicit dispatch paths for testing individual kernels independent of production routing.

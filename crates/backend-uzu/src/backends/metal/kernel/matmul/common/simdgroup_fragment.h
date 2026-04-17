@@ -92,12 +92,11 @@ struct SimdgroupFragment {
       for (ushort j = 0; j < GRID_COLS; ++j) {
         SimdgroupMultiplyAccumulateOpsType::load(
             multiply_accumulate_at(i, j),
-            &(
-                source[(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
-                           STRIDE_X +
-                       (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y *
-                           STRIDE_Y]
-            ),
+            &(source
+                  [(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
+                       STRIDE_X +
+                   (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y *
+                       STRIDE_Y]),
             STRIDE_X,
             STRIDE_Y
         );
@@ -106,18 +105,20 @@ struct SimdgroupFragment {
   }
 
   template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y>
-  METAL_FUNC void store(device U* destination, const int leading_dimension) const {
+  METAL_FUNC void store(
+      device U* destination,
+      const int leading_dimension
+  ) const {
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < GRID_ROWS; ++i) {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < GRID_COLS; ++j) {
         SimdgroupMultiplyAccumulateOpsType::store(
             multiply_accumulate_at(i, j),
-            &(
-                destination[(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
-                                leading_dimension +
-                            (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y]
-            ),
+            &(destination
+                  [(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
+                       leading_dimension +
+                   (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y]),
             leading_dimension,
             1
         );

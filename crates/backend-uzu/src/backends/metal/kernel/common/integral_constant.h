@@ -23,12 +23,14 @@ using false_type = bool_constant<false>;
 template <int val>
 using Int = integral_constant<int, val>;
 
-#define UZU_INTEGRAL_CONST_BINOP(op, fn)                                \
-  template <typename T, T tv, typename U, U uv>                         \
-  METAL_FUNC constexpr auto fn(                                         \
-      integral_constant<T, tv>, integral_constant<U, uv>) {             \
-    constexpr auto res = tv op uv;                                      \
-    return integral_constant<decltype(res), res>{};                     \
+#define UZU_INTEGRAL_CONST_BINOP(op, fn)                                       \
+  template <typename T, T tv, typename U, U uv>                                \
+  METAL_FUNC constexpr auto fn(                                                \
+      integral_constant<T, tv>,                                                \
+      integral_constant<U, uv>                                                 \
+  ) {                                                                          \
+    constexpr auto res = tv op uv;                                             \
+    return integral_constant<decltype(res), res>{};                            \
   }
 
 UZU_INTEGRAL_CONST_BINOP(+, operator+)

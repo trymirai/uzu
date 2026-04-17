@@ -50,8 +50,7 @@ struct MxuFragment {
     const short quad_id = simd_lane_id >> 2;
     const short lane_row =
         ((quad_id & 4) | ((simd_lane_id >> 1) & 3)) + (index >> 2) * 8;
-    const short lane_col =
-        ((quad_id & 2) | (simd_lane_id & 1)) * 4 + index % 4;
+    const short lane_col = ((quad_id & 2) | (simd_lane_id & 1)) * 4 + index % 4;
     return short2{lane_col, lane_row};
   }
 
@@ -130,8 +129,9 @@ struct MxuFragment {
         } else {
           METAL_PRAGMA_UNROLL
           for (ushort j = 0; j < ELEMENT_COLS; j++) {
-            destination[i * ELEMENT_COLS + j] =
-                static_cast<T>(source[row * row_stride + (col + j) * col_stride]);
+            destination[i * ELEMENT_COLS + j] = static_cast<T>(
+                source[row * row_stride + (col + j) * col_stride]
+            );
           }
         }
       } else {

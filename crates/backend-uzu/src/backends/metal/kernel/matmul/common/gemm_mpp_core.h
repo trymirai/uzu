@@ -110,70 +110,88 @@ struct GemmMppCore {
     const device T* left_simdgroup_ptr =
         left_block_ptr + size_t(tile_row_offset) * params->leading_dimension_a;
     const device T* right_simdgroup_ptr =
-        right_block_ptr + size_t(tile_col_offset) * int(params->leading_dimension_b);
+        right_block_ptr +
+        size_t(tile_col_offset) * int(params->leading_dimension_b);
 
     const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
 
     dispatch_bool(align_k, [&](auto aligned_k) {
-      dispatch_bool(align_m || (simdgroup_limit_m == SIMDGROUP_BLOCK_M), [&](auto aligned_m) {
-        dispatch_bool(align_n || (simdgroup_limit_n == SIMDGROUP_BLOCK_N), [&](auto aligned_n) {
-          auto accumulator_tile = gemm_loop<
-              T,
-              SIMDGROUP_BLOCK_M,
-              SIMDGROUP_BLOCK_N,
-              SIMDGROUP_BLOCK_K,
-              BLOCK_K,
-              false,
-              true,
-              aligned_m.value,
-              aligned_n.value,
-              aligned_k.value,
-              AccumulatorType>(
-              left_simdgroup_ptr,
-              right_simdgroup_ptr,
-              int(params->leading_dimension_a),
-              int(params->leading_dimension_b),
-              int(params->K),
-              aligned_k_iterations,
-              simdgroup_limit_m,
-              simdgroup_limit_n);
+      dispatch_bool(
+          align_m || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
+          [&](auto aligned_m) {
+            dispatch_bool(
+                align_n || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
+                [&](auto aligned_n) {
+                  auto accumulator_tile = gemm_loop<
+                      T,
+                      SIMDGROUP_BLOCK_M,
+                      SIMDGROUP_BLOCK_N,
+                      SIMDGROUP_BLOCK_K,
+                      BLOCK_K,
+                      false,
+                      true,
+                      aligned_m.value,
+                      aligned_n.value,
+                      aligned_k.value,
+                      AccumulatorType>(
+                      left_simdgroup_ptr,
+                      right_simdgroup_ptr,
+                      int(params->leading_dimension_a),
+                      int(params->leading_dimension_b),
+                      int(params->K),
+                      aligned_k_iterations,
+                      simdgroup_limit_m,
+                      simdgroup_limit_n
+                  );
 
-          if constexpr (APPLY_AB_SCALE) {
-            METAL_PRAGMA_UNROLL
-            for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE; i++) {
-              accumulator_tile.elems()[i] *= AccumulatorType(ab_scale);
-            }
-          }
+                  if constexpr (APPLY_AB_SCALE) {
+                    METAL_PRAGMA_UNROLL
+                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
+                         i++) {
+                      accumulator_tile.elems()[i] *= AccumulatorType(ab_scale);
+                    }
+                  }
 
-          if constexpr (SUPPORTS_ACCUMULATE) {
-            if (is_accumulate) {
-              MxuTile<T, TILES_M, TILES_N> existing_output;
-              if constexpr (aligned_m.value && aligned_n.value) {
-                existing_output.load(output_ptr, int(params->leading_dimension_d));
-              } else {
-                existing_output.load_safe(
-                    output_ptr,
-                    int(params->leading_dimension_d),
-                    short2(simdgroup_limit_n, simdgroup_limit_m));
-              }
-              METAL_PRAGMA_UNROLL
-              for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE; i++) {
-                accumulator_tile.elems()[i] +=
-                    AccumulatorType(existing_output.elems()[i]);
-              }
-            }
-          }
+                  if constexpr (SUPPORTS_ACCUMULATE) {
+                    if (is_accumulate) {
+                      MxuTile<T, TILES_M, TILES_N> existing_output;
+                      if constexpr (aligned_m.value && aligned_n.value) {
+                        existing_output.load(
+                            output_ptr,
+                            int(params->leading_dimension_d)
+                        );
+                      } else {
+                        existing_output.load_safe(
+                            output_ptr,
+                            int(params->leading_dimension_d),
+                            short2(simdgroup_limit_n, simdgroup_limit_m)
+                        );
+                      }
+                      METAL_PRAGMA_UNROLL
+                      for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
+                           i++) {
+                        accumulator_tile.elems()[i] +=
+                            AccumulatorType(existing_output.elems()[i]);
+                      }
+                    }
+                  }
 
-          if constexpr (aligned_m.value && aligned_n.value) {
-            accumulator_tile.store(output_ptr, int(params->leading_dimension_d));
-          } else {
-            accumulator_tile.store_safe(
-                output_ptr,
-                int(params->leading_dimension_d),
-                short2(simdgroup_limit_n, simdgroup_limit_m));
+                  if constexpr (aligned_m.value && aligned_n.value) {
+                    accumulator_tile.store(
+                        output_ptr,
+                        int(params->leading_dimension_d)
+                    );
+                  } else {
+                    accumulator_tile.store_safe(
+                        output_ptr,
+                        int(params->leading_dimension_d),
+                        short2(simdgroup_limit_n, simdgroup_limit_m)
+                    );
+                  }
+                }
+            );
           }
-        });
-      });
+      );
     });
   }
 };

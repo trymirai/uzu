@@ -162,8 +162,8 @@ struct ThreadgroupGemm {
     (void)thread_position;
 
     const int swizzle_stride = pow2(params->swizzle_log);
-    const int swizzled_row_id =
-        threadgroup_position.y * swizzle_stride + (threadgroup_position.x % swizzle_stride);
+    const int swizzled_row_id = threadgroup_position.y * swizzle_stride +
+                                (threadgroup_position.x % swizzle_stride);
     const int swizzled_col_id = threadgroup_position.x / swizzle_stride;
 
     if (params->threadgroups_per_row <= swizzled_col_id ||
@@ -205,7 +205,6 @@ struct ThreadgroupGemm {
         ab_scale,
         is_accumulate ? 1.0f : 0.0f
     );
-
 
     ///////////////////////////////////////////////////////////////////////////
     // MNK aligned loop

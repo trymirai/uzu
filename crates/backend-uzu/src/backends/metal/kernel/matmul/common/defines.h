@@ -35,8 +35,12 @@ template <typename OutputType, typename InputType>
 struct TransformNone {
   TransformNone(float = 1.0f, float = 0.0f) {}
 
-  static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
-  METAL_FUNC OutputType apply(InputType x, OutputType) const { return static_cast<OutputType>(x); }
+  static METAL_FUNC OutputType apply(InputType x) {
+    return static_cast<OutputType>(x);
+  }
+  METAL_FUNC OutputType apply(InputType x, OutputType) const {
+    return static_cast<OutputType>(x);
+  }
 };
 
 template <typename OutputType, typename InputType>
@@ -47,12 +51,15 @@ struct TransformScaleAccumulate {
   TransformScaleAccumulate(float alpha, float beta)
       : alpha(alpha), beta(beta) {}
 
-  static METAL_FUNC OutputType apply(InputType x) { return static_cast<OutputType>(x); }
+  static METAL_FUNC OutputType apply(InputType x) {
+    return static_cast<OutputType>(x);
+  }
 
   METAL_FUNC OutputType apply(InputType x, OutputType c) const {
     return static_cast<OutputType>(
         x * static_cast<InputType>(alpha) +
-        (beta != 0.0f ? (static_cast<OutputType>(beta) * c) : static_cast<OutputType>(0.0))
+        (beta != 0.0f ? (static_cast<OutputType>(beta) * c)
+                      : static_cast<OutputType>(0.0))
     );
   }
 };

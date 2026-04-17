@@ -88,9 +88,10 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
         if ((row_offset + i) < row_limit && (col_offset + j) < col_limit) {
-          destination[i * THREAD_ELEMENT_COLS + j] = static_cast<T>(
-              source[(row_offset + i) * row_stride + (col_offset + j) * col_stride]
-          );
+          destination[i * THREAD_ELEMENT_COLS + j] =
+              static_cast<T>(source
+                                 [(row_offset + i) * row_stride +
+                                  (col_offset + j) * col_stride]);
         } else {
           destination[i * THREAD_ELEMENT_COLS + j] = T(0);
         }
@@ -98,7 +99,10 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
     }
   }
 
-  template <typename DestinationPointerType, typename RowStride, typename ColStride>
+  template <
+      typename DestinationPointerType,
+      typename RowStride,
+      typename ColStride>
   METAL_FUNC static constexpr void store(
       const thread ThreadDataType& source,
       DestinationPointerType destination,
@@ -142,8 +146,9 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
         if ((row_offset + i) < row_limit && (col_offset + j) < col_limit) {
-          destination[(row_offset + i) * row_stride + (col_offset + j) * col_stride] =
-              static_cast<U>(source[i * THREAD_ELEMENT_COLS + j]);
+          destination
+              [(row_offset + i) * row_stride + (col_offset + j) * col_stride] =
+                  static_cast<U>(source[i * THREAD_ELEMENT_COLS + j]);
         }
       }
     }
