@@ -105,12 +105,6 @@ enum MatrixMatrixFamily {
     QmmTransposed64x64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeVariant {
-    MatrixVector,
-    MatrixMatrix,
-}
-
 impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
     pub fn new(
         context: &B::Context,
@@ -120,53 +114,33 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
 
         let bits = quant_bits(configuration.mode)?;
         let use_mlx_quant = matches!(configuration.quantization_type, QuantizedMatmulType::Mlx);
-        let force_matrix_vector = bits == 2;
-
-        let matrix_vector_family = if force_matrix_vector {
-            MatrixVectorFamily::QmvFast
-        } else {
-            select_matrix_vector_family(&configuration)
-        };
-        let matrix_matrix_family = if force_matrix_vector {
-            MatrixMatrixFamily::QmmAlignedK
-        } else {
-            select_matrix_matrix_family(&configuration, bits)
-        };
-        let matrix_vector_key = KernelKey::MatrixVector(matrix_vector_family);
-        let matrix_matrix_key = KernelKey::MatrixMatrix(matrix_matrix_family);
+        let (matrix_vector_key, matrix_matrix_key) = select_kernel_keys(&configuration, bits);
 
         let mut kernels = HashMap::new();
         kernels.insert(
             matrix_vector_key,
-            create_matrix_vector_kernel(
+            create_kernel(
                 context,
                 configuration.data_type,
                 configuration.group_size,
                 bits,
                 use_mlx_quant,
-                matrix_vector_family,
+                matrix_vector_key,
             )?,
         );
-        let matrix_matrix_kernel = if force_matrix_vector {
-            create_matrix_vector_kernel(
-                context,
-                configuration.data_type,
-                configuration.group_size,
-                bits,
-                use_mlx_quant,
-                matrix_vector_family,
-            )?
-        } else {
-            create_matrix_matrix_kernel(
-                context,
-                configuration.data_type,
-                configuration.group_size,
-                bits,
-                use_mlx_quant,
-                matrix_matrix_family,
-            )?
-        };
-        kernels.insert(matrix_matrix_key, matrix_matrix_kernel);
+        if matrix_matrix_key != matrix_vector_key {
+            kernels.insert(
+                matrix_matrix_key,
+                create_kernel(
+                    context,
+                    configuration.data_type,
+                    configuration.group_size,
+                    bits,
+                    use_mlx_quant,
+                    matrix_matrix_key,
+                )?,
+            );
+        }
 
         Ok(Self {
             kernels,
@@ -189,10 +163,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             });
         }
 
-        let key = match self.select_runtime_variant(arguments.batch) {
-            RuntimeVariant::MatrixVector => self.matrix_vector_key,
-            RuntimeVariant::MatrixMatrix => self.matrix_matrix_key,
-        };
+        let key = self.kernel_key(arguments.batch);
 
         let kernel = self.kernels.get(&key).ok_or(QuantizedMatmulError::MissingKernel(kernel_key_name(key)))?;
         let k = to_i32("input_dim", arguments.input_dim)?;
@@ -291,15 +262,33 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         Ok(())
     }
 
-    fn select_runtime_variant(
+    fn kernel_key(
         &self,
         batch: usize,
-    ) -> RuntimeVariant {
+    ) -> KernelKey {
         if batch < 32 || self.output_dim == 1 {
-            RuntimeVariant::MatrixVector
+            self.matrix_vector_key
         } else {
-            RuntimeVariant::MatrixMatrix
+            self.matrix_matrix_key
         }
+    }
+}
+
+fn create_kernel<B: Backend>(
+    context: &B::Context,
+    data_type: DataType,
+    group_size: usize,
+    bits: usize,
+    use_mlx_quant: bool,
+    key: KernelKey,
+) -> Result<EncodableVariant<B>, QuantizedMatmulError<B>> {
+    match key {
+        KernelKey::MatrixVector(family) => {
+            create_matrix_vector_kernel(context, data_type, group_size, bits, use_mlx_quant, family)
+        },
+        KernelKey::MatrixMatrix(family) => {
+            create_matrix_matrix_kernel(context, data_type, group_size, bits, use_mlx_quant, family)
+        },
     }
 }
 
@@ -444,6 +433,21 @@ fn validate_configuration<B: Backend>(
 
     let _ = quant_bits(configuration.mode)?;
     Ok(())
+}
+
+fn select_kernel_keys(
+    configuration: &QuantizedMatmulConfiguration,
+    bits: usize,
+) -> (KernelKey, KernelKey) {
+    if bits == 2 {
+        let shared_key = KernelKey::MatrixVector(MatrixVectorFamily::QmvFast);
+        return (shared_key, shared_key);
+    }
+
+    (
+        KernelKey::MatrixVector(select_matrix_vector_family(configuration)),
+        KernelKey::MatrixMatrix(select_matrix_matrix_family(configuration, bits)),
+    )
 }
 
 fn select_matrix_vector_family(configuration: &QuantizedMatmulConfiguration) -> MatrixVectorFamily {

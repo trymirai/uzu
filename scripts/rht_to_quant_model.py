@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import shutil
 from dataclasses import dataclass
@@ -26,20 +25,6 @@ class Settings:
     mixer_group_size: int | None
     lm_head_mode: str
     lm_head_group_size: int
-
-
-@dataclass(frozen=True)
-class ConvertedLinear:
-    weights: torch.Tensor
-    scales: torch.Tensor
-    zero_points: torch.Tensor
-
-
-@dataclass(frozen=True)
-class ConvertedEmbeddingOutput:
-    weights: torch.Tensor
-    scales: torch.Tensor
-    biases: torch.Tensor
 
 
 def parse_args() -> Settings:
@@ -145,16 +130,6 @@ def hadamard_blocks_last_dim(values: torch.Tensor, block_size: int) -> torch.Ten
     return result.reshape(original_shape) / (block_size**0.5)
 
 
-def apply_input_inverse(weights: torch.Tensor, input_factors: torch.Tensor) -> torch.Tensor:
-    return hadamard_blocks_last_dim(weights, RHT_BLOCK_SIZE) * input_factors.to(torch.float32)
-
-
-def apply_output_rotate(weights: torch.Tensor, output_factors: torch.Tensor) -> torch.Tensor:
-    transposed = weights.transpose(0, 1)
-    rotated = hadamard_blocks_last_dim(transposed * output_factors.to(torch.float32), RHT_BLOCK_SIZE)
-    return rotated.transpose(0, 1).contiguous()
-
-
 def unwrap_rht_group_uint4(
     packed_weights: torch.Tensor,
     scales: torch.Tensor,
@@ -162,11 +137,14 @@ def unwrap_rht_group_uint4(
     input_factors: torch.Tensor,
     output_factors: torch.Tensor,
 ) -> torch.Tensor:
-    dequantized = dequantize_group_uint4(packed_weights, scales, packed_zero_points, RHT_GROUP_SIZE)
-    return apply_output_rotate(apply_input_inverse(dequantized, input_factors), output_factors).contiguous()
+    weights = dequantize_group_uint4(packed_weights, scales, packed_zero_points, RHT_GROUP_SIZE)
+    weights = hadamard_blocks_last_dim(weights, RHT_BLOCK_SIZE) * input_factors.to(torch.float32)
+    weights = weights.transpose(0, 1)
+    weights = hadamard_blocks_last_dim(weights * output_factors.to(torch.float32), RHT_BLOCK_SIZE)
+    return weights.transpose(0, 1).contiguous()
 
 
-def requantize_group_uint4(weights: torch.Tensor, group_size: int) -> ConvertedLinear:
+def requantize_group_uint4(weights: torch.Tensor, group_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     assert weights.ndim == 2
     output_dim, input_dim = weights.shape
     assert input_dim % group_size == 0
@@ -178,14 +156,14 @@ def requantize_group_uint4(weights: torch.Tensor, group_size: int) -> ConvertedL
     scales = torch.where(scales == 0, torch.ones_like(scales), scales)
     zero_points = torch.round(-min_vals / scales).clamp(0, UINT4_MAX)
     quantized = torch.round(grouped / scales + zero_points).clamp(0, UINT4_MAX).to(torch.uint8)
-    return ConvertedLinear(
-        weights=pack_uint4(quantized.view(output_dim, input_dim)),
-        scales=scales.squeeze(-1).to(torch.bfloat16).contiguous(),
-        zero_points=pack_uint4(zero_points.to(torch.uint8).view(output_dim, group_count)),
+    return (
+        pack_uint4(quantized.view(output_dim, input_dim)),
+        scales.squeeze(-1).to(torch.bfloat16).contiguous(),
+        pack_uint4(zero_points.to(torch.uint8).view(output_dim, group_count)),
     )
 
 
-def requantize_mlx_uint4(weights: torch.Tensor, group_size: int) -> ConvertedEmbeddingOutput:
+def requantize_mlx_uint4(weights: torch.Tensor, group_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     assert weights.ndim == 2
     output_dim, input_dim = weights.shape
     assert input_dim % group_size == 0
@@ -196,14 +174,14 @@ def requantize_mlx_uint4(weights: torch.Tensor, group_size: int) -> ConvertedEmb
     scales = (max_vals - min_vals) / UINT4_MAX
     scales = torch.where(scales == 0, torch.ones_like(scales), scales)
     quantized = torch.round((grouped - min_vals) / scales).clamp(0, UINT4_MAX).to(torch.uint8)
-    return ConvertedEmbeddingOutput(
-        weights=pack_uint4(quantized.view(output_dim, input_dim)),
-        scales=scales.squeeze(-1).to(torch.bfloat16).contiguous(),
-        biases=min_vals.squeeze(-1).to(torch.bfloat16).contiguous(),
+    return (
+        pack_uint4(quantized.view(output_dim, input_dim)),
+        scales.squeeze(-1).to(torch.bfloat16).contiguous(),
+        min_vals.squeeze(-1).to(torch.bfloat16).contiguous(),
     )
 
 
-def requantize_mlx_uint2(weights: torch.Tensor, group_size: int) -> ConvertedEmbeddingOutput:
+def requantize_mlx_uint2(weights: torch.Tensor, group_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     assert weights.ndim == 2
     output_dim, input_dim = weights.shape
     assert input_dim % group_size == 0
@@ -214,30 +192,17 @@ def requantize_mlx_uint2(weights: torch.Tensor, group_size: int) -> ConvertedEmb
     scales = (max_vals - min_vals) / 3.0
     scales = torch.where(scales == 0, torch.ones_like(scales), scales)
     quantized = torch.round((grouped - min_vals) / scales).clamp(0, 3).to(torch.uint8)
-    return ConvertedEmbeddingOutput(
-        weights=pack_uint2(quantized.view(output_dim, input_dim)),
-        scales=scales.squeeze(-1).to(torch.bfloat16).contiguous(),
-        biases=min_vals.squeeze(-1).to(torch.bfloat16).contiguous(),
+    return (
+        pack_uint2(quantized.view(output_dim, input_dim)),
+        scales.squeeze(-1).to(torch.bfloat16).contiguous(),
+        min_vals.squeeze(-1).to(torch.bfloat16).contiguous(),
     )
 
 
-def base_weight_key_from_inner(weight_key: str) -> str:
-    assert weight_key.endswith(".inner_linear.weights")
-    return weight_key.removesuffix(".inner_linear.weights") + ".weights"
-
-
-def linear_group_size_for_weight_key(weight_key: str, settings: Settings) -> int:
-    if ".mlp." in weight_key and settings.mlp_group_size is not None:
+def linear_group_size(settings: Settings, *, is_mlp: bool, is_mixer: bool) -> int:
+    if is_mlp and settings.mlp_group_size is not None:
         return settings.mlp_group_size
-    if ".mixer." in weight_key and settings.mixer_group_size is not None:
-        return settings.mixer_group_size
-    return settings.linear_group_size
-
-
-def linear_group_size_for_config_path(path: tuple[str, ...], settings: Settings) -> int:
-    if "mlp_config" in path and settings.mlp_group_size is not None:
-        return settings.mlp_group_size
-    if "mixer_config" in path and settings.mixer_group_size is not None:
+    if is_mixer and settings.mixer_group_size is not None:
         return settings.mixer_group_size
     return settings.linear_group_size
 
@@ -246,17 +211,23 @@ def rewrite_rht_config(config: dict[str, object], settings: Settings) -> None:
     def replace(node: object, path: tuple[str, ...] = ()) -> object:
         if isinstance(node, dict):
             if node.get("type") == "RHTLinearWrapperConfig":
-                inner = copy.deepcopy(node["inner_config"])
+                inner = replace(node["inner_config"], path)
+                assert isinstance(inner, dict)
                 assert inner["type"] == "GroupQuantizedLinearConfig"
-                inner["group_size"] = linear_group_size_for_config_path(path, settings)
+                inner["group_size"] = linear_group_size(
+                    settings,
+                    is_mlp="mlp_config" in path,
+                    is_mixer="mixer_config" in path,
+                )
                 inner["weight_quantization_mode"] = "uint4"
-                return replace(inner, path)
+                return inner
             return {key: replace(value, path + (key,)) for key, value in node.items()}
         if isinstance(node, list):
             return [replace(value, path + (str(index),)) for index, value in enumerate(node)]
         return node
 
     replaced = replace(config)
+    assert isinstance(replaced, dict)
     config.clear()
     config.update(replaced)
 
@@ -278,20 +249,29 @@ def rewrite_embedding_config(config: dict[str, object], settings: Settings) -> N
     embedding_config.update(rewritten_embedding_config)
 
 
-def convert_linear(source: safe_open, weight_key: str, settings: Settings) -> ConvertedLinear:
-    prefix = weight_key.removesuffix(".inner_linear.weights")
+def convert_linear(source: safe_open, weight_key: str, settings: Settings) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    assert weight_key.endswith(".inner_linear.weights")
+    base_prefix = weight_key.removesuffix(".inner_linear.weights")
     dense = unwrap_rht_group_uint4(
         source.get_tensor(weight_key),
-        source.get_tensor(f"{prefix}.inner_linear.scales"),
-        source.get_tensor(f"{prefix}.inner_linear.zero_points"),
-        source.get_tensor(f"{prefix}.input_factors"),
-        source.get_tensor(f"{prefix}.output_factors"),
+        source.get_tensor(f"{base_prefix}.inner_linear.scales"),
+        source.get_tensor(f"{base_prefix}.inner_linear.zero_points"),
+        source.get_tensor(f"{base_prefix}.input_factors"),
+        source.get_tensor(f"{base_prefix}.output_factors"),
     )
-    group_size = linear_group_size_for_weight_key(base_weight_key_from_inner(weight_key), settings)
+    group_size = linear_group_size(
+        settings,
+        is_mlp=".mlp." in weight_key,
+        is_mixer=".mixer." in weight_key,
+    )
     return requantize_group_uint4(dense, group_size)
 
 
-def convert_embedding_output(source: safe_open, settings: Settings, config: dict[str, object]) -> ConvertedEmbeddingOutput:
+def convert_embedding_output(
+    source: safe_open,
+    settings: Settings,
+    config: dict[str, object],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     embedding_config = config["model_config"]["model_config"]["embedding_config"]
     dense = dequantize_mlx_embedding(
         source.get_tensor("embedding.weights"),
@@ -325,26 +305,26 @@ def main() -> None:
         converted_prefixes: set[str] = set()
 
         for index, weight_key in enumerate(wrapped_weight_keys, start=1):
-            base_weight_key = base_weight_key_from_inner(weight_key)
-            print(f"[{index}/{len(wrapped_weight_keys)}] {base_weight_key}", flush=True)
-            converted = convert_linear(source, weight_key, settings)
-            base_prefix = base_weight_key.removesuffix(".weights")
+            assert weight_key.endswith(".inner_linear.weights")
+            base_prefix = weight_key.removesuffix(".inner_linear.weights")
+            print(f"[{index}/{len(wrapped_weight_keys)}] {base_prefix}.weights", flush=True)
+            converted_weights, converted_scales, converted_zero_points = convert_linear(source, weight_key, settings)
             converted_prefixes.add(base_prefix)
-            converted_tensors[f"{base_prefix}.weights"] = converted.weights
-            converted_tensors[f"{base_prefix}.scales"] = converted.scales
-            converted_tensors[f"{base_prefix}.zero_points"] = converted.zero_points
-            bias_key = f"{weight_key.removesuffix('.weights')}.biases"
+            converted_tensors[f"{base_prefix}.weights"] = converted_weights
+            converted_tensors[f"{base_prefix}.scales"] = converted_scales
+            converted_tensors[f"{base_prefix}.zero_points"] = converted_zero_points
+            bias_key = f"{base_prefix}.inner_linear.biases"
             if bias_key in keys:
                 converted_tensors[f"{base_prefix}.biases"] = source.get_tensor(bias_key)
 
         print(f"[lm_head] {settings.lm_head_mode} gs={settings.lm_head_group_size}", flush=True)
-        converted_embedding = convert_embedding_output(source, settings, config)
+        output_weights, output_scales, output_biases = convert_embedding_output(source, settings, config)
         converted_tensors["embedding.input_weights"] = source.get_tensor("embedding.weights")
         converted_tensors["embedding.input_scales"] = source.get_tensor("embedding.scales")
         converted_tensors["embedding.input_biases"] = source.get_tensor("embedding.biases")
-        converted_tensors["embedding.output.weights"] = converted_embedding.weights
-        converted_tensors["embedding.output.scales"] = converted_embedding.scales
-        converted_tensors["embedding.output.biases"] = converted_embedding.biases
+        converted_tensors["embedding.output.weights"] = output_weights
+        converted_tensors["embedding.output.scales"] = output_scales
+        converted_tensors["embedding.output.biases"] = output_biases
 
         for key in keys:
             if ".inner_linear." in key or key.endswith(".input_factors") or key.endswith(".output_factors"):

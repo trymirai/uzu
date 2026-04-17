@@ -130,6 +130,53 @@ fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
     Ok(())
 }
 
+fn read_quantized_embedding_tensors<B: Backend>(
+    parameter_tree: &ParameterTree<B::Context>,
+    weights_name: &str,
+    scales_name: &str,
+    biases_name: &str,
+    vocab_size: u32,
+    model_dim: u32,
+    group_size: usize,
+    mode: QuantizationMode,
+    data_type: DataType,
+) -> Result<(B::Buffer, B::Buffer, B::Buffer), EmbeddingError<B>> {
+    let vocab_size = vocab_size as usize;
+    let model_dim = model_dim as usize;
+    let num_groups = model_dim.div_ceil(group_size);
+
+    let weights_leaf = parameter_tree.leaf(weights_name)?;
+    validate_tensor(&weights_leaf, [vocab_size, model_dim / mode.packing_divisor()], mode.storage_type())?;
+    let scales_leaf = parameter_tree.leaf(scales_name)?;
+    validate_tensor(&scales_leaf, [vocab_size, num_groups], data_type)?;
+    let biases_leaf = parameter_tree.leaf(biases_name)?;
+    validate_tensor(&biases_leaf, [vocab_size, num_groups], data_type)?;
+
+    Ok((weights_leaf.read_buffer()?, scales_leaf.read_buffer()?, biases_leaf.read_buffer()?))
+}
+
+fn new_mlx_quantized_readout<B: Backend>(
+    context: &B::Context,
+    data_type: DataType,
+    group_size: usize,
+    model_dim: u32,
+    vocab_size: u32,
+    mode: QuantizationMode,
+) -> Result<QuantizedMatmulKernelEncodable<B>, EmbeddingError<B>> {
+    Ok(QuantizedMatmulKernelEncodable::new(
+        context,
+        QuantizedMatmulConfiguration {
+            data_type,
+            group_size,
+            input_dim: model_dim as usize,
+            output_dim: vocab_size as usize,
+            mode,
+            quantization_type: QuantizedMatmulType::Mlx,
+            weights_transposed: true,
+        },
+    )?)
+}
+
 impl<B: Backend> Embedding<B> {
     pub fn new(
         context: &B::Context,
@@ -268,53 +315,28 @@ impl<B: Backend> Embedding<B> {
                 activation_precision,
             } => {
                 let data_type = (*activation_precision).into();
-
-                let packing_divisor = embedding_quantization_mode.packing_divisor();
-                let storage_data_type = embedding_quantization_mode.storage_type();
-
-                let num_groups = (model_dim as usize).div_ceil(*group_size);
-
-                let input_weights_leaf = parameter_tree.leaf("input_weights")?;
-                validate_tensor(
-                    &input_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
+                let (input_weights, input_scales, input_biases) = read_quantized_embedding_tensors(
+                    parameter_tree,
+                    "input_weights",
+                    "input_scales",
+                    "input_biases",
+                    vocab_size,
+                    model_dim,
+                    *group_size,
+                    *embedding_quantization_mode,
+                    data_type,
                 )?;
-                let input_scales_leaf = parameter_tree.leaf("input_scales")?;
-                validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let input_biases_leaf = parameter_tree.leaf("input_biases")?;
-                validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
-
-                let output_weights_leaf = parameter_tree.leaf("output_weights")?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
+                let (output_weights, output_scales, output_biases) = read_quantized_embedding_tensors(
+                    parameter_tree,
+                    "output_weights",
+                    "output_scales",
+                    "output_biases",
+                    vocab_size,
+                    model_dim,
+                    *group_size,
+                    *embedding_quantization_mode,
+                    data_type,
                 )?;
-                let output_scales_leaf = parameter_tree.leaf("output_scales")?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = parameter_tree.leaf("output_biases")?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
-
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let input_scales = input_scales_leaf.read_buffer()?;
-                let input_biases = input_biases_leaf.read_buffer()?;
-
-                let output_tree = parameter_tree.subtree("output")?;
-                let output_weights_leaf = output_tree.leaf("weights")?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / output_packing_divisor],
-                    output_storage_data_type,
-                )?;
-                let output_scales_leaf = output_tree.leaf("scales")?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, output_num_groups], data_type)?;
-                let output_biases_leaf = output_tree.leaf("biases")?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, output_num_groups], data_type)?;
-
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -323,17 +345,13 @@ impl<B: Backend> Embedding<B> {
                     quant_mode_to_int(*embedding_quantization_mode),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
+                let readout = new_mlx_quantized_readout(
                     context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                        weights_transposed: true,
-                    },
+                    data_type,
+                    *group_size,
+                    model_dim,
+                    vocab_size,
+                    *embedding_quantization_mode,
                 )?;
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -365,45 +383,30 @@ impl<B: Backend> Embedding<B> {
                 activation_precision,
             } => {
                 let data_type = (*activation_precision).into();
-
-                let packing_divisor = embedding_quantization_mode.packing_divisor();
-                let storage_data_type = embedding_quantization_mode.storage_type();
-
-                let num_groups = (model_dim as usize).div_ceil(*group_size);
-
                 let input_weights_leaf = parameter_tree.leaf("input_weights")?;
                 validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-
-                let output_weights_leaf = parameter_tree.leaf("output_weights")?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
-                let output_scales_leaf = parameter_tree.leaf("output_scales")?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = parameter_tree.leaf("output_biases")?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
-
                 let input_weights = input_weights_leaf.read_buffer()?;
-
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let (output_weights, output_scales, output_biases) = read_quantized_embedding_tensors(
+                    parameter_tree,
+                    "output_weights",
+                    "output_scales",
+                    "output_biases",
+                    vocab_size,
+                    model_dim,
+                    *group_size,
+                    *embedding_quantization_mode,
+                    data_type,
+                )?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
+                let readout = new_mlx_quantized_readout(
                     context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                        weights_transposed: true,
-                    },
+                    data_type,
+                    *group_size,
+                    model_dim,
+                    vocab_size,
+                    *embedding_quantization_mode,
                 )?;
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -434,44 +437,30 @@ impl<B: Backend> Embedding<B> {
                 output_quantization_mode,
             } => {
                 let data_type = (*activation_precision).into();
-                let input_packing_divisor = embedding_quantization_mode.packing_divisor();
-                let input_storage_data_type = embedding_quantization_mode.storage_type();
-                let input_num_groups = (model_dim as usize).div_ceil(*group_size);
-
-                let output_packing_divisor = output_quantization_mode.packing_divisor();
-                let output_storage_data_type = output_quantization_mode.storage_type();
-                let output_num_groups = (model_dim as usize).div_ceil(*output_group_size);
-
-                let input_weights_leaf = parameter_tree.leaf("input_weights")?;
-                validate_tensor(
-                    &input_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / input_packing_divisor],
-                    input_storage_data_type,
+                let (input_weights, input_scales, input_biases) = read_quantized_embedding_tensors(
+                    parameter_tree,
+                    "input_weights",
+                    "input_scales",
+                    "input_biases",
+                    vocab_size,
+                    model_dim,
+                    *group_size,
+                    *embedding_quantization_mode,
+                    data_type,
                 )?;
-                let input_scales_leaf = parameter_tree.leaf("input_scales")?;
-                validate_tensor(&input_scales_leaf, [vocab_size as usize, input_num_groups], data_type)?;
-                let input_biases_leaf = parameter_tree.leaf("input_biases")?;
-                validate_tensor(&input_biases_leaf, [vocab_size as usize, input_num_groups], data_type)?;
-
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let input_scales = input_scales_leaf.read_buffer()?;
-                let input_biases = input_biases_leaf.read_buffer()?;
 
                 let output_tree = parameter_tree.subtree("output")?;
-                let output_weights_leaf = output_tree.leaf("weights")?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / output_packing_divisor],
-                    output_storage_data_type,
+                let (output_weights, output_scales, output_biases) = read_quantized_embedding_tensors(
+                    &output_tree,
+                    "weights",
+                    "scales",
+                    "biases",
+                    vocab_size,
+                    model_dim,
+                    *output_group_size,
+                    *output_quantization_mode,
+                    data_type,
                 )?;
-                let output_scales_leaf = output_tree.leaf("scales")?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, output_num_groups], data_type)?;
-                let output_biases_leaf = output_tree.leaf("biases")?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, output_num_groups], data_type)?;
-
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -480,17 +469,13 @@ impl<B: Backend> Embedding<B> {
                     quant_mode_to_int(*embedding_quantization_mode),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
+                let readout = new_mlx_quantized_readout(
                     context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *output_group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *output_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                        weights_transposed: true,
-                    },
+                    data_type,
+                    *output_group_size,
+                    model_dim,
+                    vocab_size,
+                    *output_quantization_mode,
                 )?;
 
                 EmbeddingTying::Untied {

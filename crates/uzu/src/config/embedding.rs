@@ -68,24 +68,24 @@ impl EmbeddingConfig {
             EmbeddingConfig::Tied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::Untied {
+            }
+            | EmbeddingConfig::Untied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXQuantizedTied {
+            }
+            | EmbeddingConfig::MLXQuantizedTied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXQuantizedUntied {
+            }
+            | EmbeddingConfig::MLXQuantizedUntied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXSemiQuantizedUntied {
+            }
+            | EmbeddingConfig::MLXSemiQuantizedUntied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXQuantizedOutputUntied {
+            }
+            | EmbeddingConfig::MLXQuantizedOutputUntied {
                 common,
                 ..
             } => common,
