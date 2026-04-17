@@ -19,6 +19,7 @@ tokio-stream.workspace = true
 dotenvy.workspace = true
 
 [features]
-default = ["metal"]
-
+default = ["metal", "grammar"]
 metal = ["backend-uzu/metal"]
+grammar = ["backend-uzu/grammar"]
+tracing = ["backend-uzu/tracing"]
