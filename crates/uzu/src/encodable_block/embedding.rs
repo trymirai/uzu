@@ -103,6 +103,7 @@ pub struct Embedding<B: Backend> {
 
 fn quant_mode_to_int(quant_mode: QuantizationMode) -> u32 {
     match quant_mode {
+        QuantizationMode::UInt2 => panic!("uint2 embedding lookup is unsupported"),
         QuantizationMode::UInt4 => 0,
         QuantizationMode::Int8 => 1,
         QuantizationMode::UInt8 => 2,
@@ -299,6 +300,18 @@ impl<B: Backend> Embedding<B> {
                 let input_scales = input_scales_leaf.read_buffer()?;
                 let input_biases = input_biases_leaf.read_buffer()?;
 
+                let output_tree = parameter_tree.subtree("output")?;
+                let output_weights_leaf = output_tree.leaf("weights")?;
+                validate_tensor(
+                    &output_weights_leaf,
+                    [vocab_size as usize, model_dim as usize / output_packing_divisor],
+                    output_storage_data_type,
+                )?;
+                let output_scales_leaf = output_tree.leaf("scales")?;
+                validate_tensor(&output_scales_leaf, [vocab_size as usize, output_num_groups], data_type)?;
+                let output_biases_leaf = output_tree.leaf("biases")?;
+                validate_tensor(&output_biases_leaf, [vocab_size as usize, output_num_groups], data_type)?;
+
                 let output_weights = output_weights_leaf.read_buffer()?;
                 let output_scales = output_scales_leaf.read_buffer()?;
                 let output_biases = output_biases_leaf.read_buffer()?;
@@ -402,6 +415,89 @@ impl<B: Backend> Embedding<B> {
                 EmbeddingTying::Untied {
                     input_ty: UntiedEmbeddingLookupType::FullPrecision {
                         weights: input_weights,
+                        lookup,
+                    },
+                    output_ty: UntiedEmbeddingReadoutType::Quantized {
+                        weights: output_weights,
+                        scales: output_scales,
+                        biases: output_biases,
+                        readout,
+                    },
+                }
+            },
+            EmbeddingConfig::MLXQuantizedOutputUntied {
+                common: _,
+                group_size,
+                output_group_size,
+                embedding_quantization_mode,
+                activation_precision,
+                output_quantization_mode,
+            } => {
+                let data_type = (*activation_precision).into();
+                let input_packing_divisor = embedding_quantization_mode.packing_divisor();
+                let input_storage_data_type = embedding_quantization_mode.storage_type();
+                let input_num_groups = (model_dim as usize).div_ceil(*group_size);
+
+                let output_packing_divisor = output_quantization_mode.packing_divisor();
+                let output_storage_data_type = output_quantization_mode.storage_type();
+                let output_num_groups = (model_dim as usize).div_ceil(*output_group_size);
+
+                let input_weights_leaf = parameter_tree.leaf("input_weights")?;
+                validate_tensor(
+                    &input_weights_leaf,
+                    [vocab_size as usize, model_dim as usize / input_packing_divisor],
+                    input_storage_data_type,
+                )?;
+                let input_scales_leaf = parameter_tree.leaf("input_scales")?;
+                validate_tensor(&input_scales_leaf, [vocab_size as usize, input_num_groups], data_type)?;
+                let input_biases_leaf = parameter_tree.leaf("input_biases")?;
+                validate_tensor(&input_biases_leaf, [vocab_size as usize, input_num_groups], data_type)?;
+
+                let input_weights = input_weights_leaf.read_buffer()?;
+                let input_scales = input_scales_leaf.read_buffer()?;
+                let input_biases = input_biases_leaf.read_buffer()?;
+
+                let output_tree = parameter_tree.subtree("output")?;
+                let output_weights_leaf = output_tree.leaf("weights")?;
+                validate_tensor(
+                    &output_weights_leaf,
+                    [vocab_size as usize, model_dim as usize / output_packing_divisor],
+                    output_storage_data_type,
+                )?;
+                let output_scales_leaf = output_tree.leaf("scales")?;
+                validate_tensor(&output_scales_leaf, [vocab_size as usize, output_num_groups], data_type)?;
+                let output_biases_leaf = output_tree.leaf("biases")?;
+                validate_tensor(&output_biases_leaf, [vocab_size as usize, output_num_groups], data_type)?;
+
+                let output_weights = output_weights_leaf.read_buffer()?;
+                let output_scales = output_scales_leaf.read_buffer()?;
+                let output_biases = output_biases_leaf.read_buffer()?;
+
+                let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+                    context,
+                    data_type,
+                    *group_size as u32,
+                    quant_mode_to_int(*embedding_quantization_mode),
+                )
+                .map_err(EmbeddingError::BackendError)?;
+                let readout = QuantizedMatmulKernelEncodable::new(
+                    context,
+                    QuantizedMatmulConfiguration {
+                        data_type,
+                        group_size: *output_group_size,
+                        input_dim: model_dim as usize,
+                        output_dim: vocab_size as usize,
+                        mode: *output_quantization_mode,
+                        quantization_type: QuantizedMatmulType::Mlx,
+                        weights_transposed: true,
+                    },
+                )?;
+
+                EmbeddingTying::Untied {
+                    input_ty: UntiedEmbeddingLookupType::Quantized {
+                        weights: input_weights,
+                        scales: input_scales,
+                        biases: input_biases,
                         lookup,
                     },
                     output_ty: UntiedEmbeddingReadoutType::Quantized {

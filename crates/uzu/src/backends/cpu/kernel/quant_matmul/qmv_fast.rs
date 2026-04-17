@@ -6,8 +6,8 @@ use crate::ArrayElement;
 
 #[kernel(QuantizedMatmulQmvFast)]
 #[variants(T, f32, f16, bf16)]
-#[variants(GROUP_SIZE, 32, 64, 128)]
-#[variants(BITS, 4, 8)]
+#[variants(GROUP_SIZE, 32, 64, 128, 256, 512)]
+#[variants(BITS, 2, 4, 8)]
 pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
     #[allow(unused)] w: *const u32,
     #[allow(unused)] scales: *const T,

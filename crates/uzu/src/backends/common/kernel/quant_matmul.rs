@@ -120,9 +120,18 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
 
         let bits = quant_bits(configuration.mode)?;
         let use_mlx_quant = matches!(configuration.quantization_type, QuantizedMatmulType::Mlx);
+        let force_matrix_vector = bits == 2;
 
-        let matrix_vector_family = select_matrix_vector_family(&configuration);
-        let matrix_matrix_family = select_matrix_matrix_family(&configuration, bits);
+        let matrix_vector_family = if force_matrix_vector {
+            MatrixVectorFamily::QmvFast
+        } else {
+            select_matrix_vector_family(&configuration)
+        };
+        let matrix_matrix_family = if force_matrix_vector {
+            MatrixMatrixFamily::QmmAlignedK
+        } else {
+            select_matrix_matrix_family(&configuration, bits)
+        };
         let matrix_vector_key = KernelKey::MatrixVector(matrix_vector_family);
         let matrix_matrix_key = KernelKey::MatrixMatrix(matrix_matrix_family);
 
@@ -138,8 +147,16 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                 matrix_vector_family,
             )?,
         );
-        kernels.insert(
-            matrix_matrix_key,
+        let matrix_matrix_kernel = if force_matrix_vector {
+            create_matrix_vector_kernel(
+                context,
+                configuration.data_type,
+                configuration.group_size,
+                bits,
+                use_mlx_quant,
+                matrix_vector_family,
+            )?
+        } else {
             create_matrix_matrix_kernel(
                 context,
                 configuration.data_type,
@@ -147,8 +164,9 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                 bits,
                 use_mlx_quant,
                 matrix_matrix_family,
-            )?,
-        );
+            )?
+        };
+        kernels.insert(matrix_matrix_key, matrix_matrix_kernel);
 
         Ok(Self {
             kernels,
@@ -420,7 +438,7 @@ fn validate_configuration<B: Backend>(
         return Err(QuantizedMatmulError::UnsupportedDataType(configuration.data_type));
     }
 
-    if !matches!(configuration.group_size, 32 | 64 | 128) {
+    if !matches!(configuration.group_size, 32 | 64 | 128 | 256 | 512) {
         return Err(QuantizedMatmulError::UnsupportedGroupSize(configuration.group_size));
     }
 
@@ -466,10 +484,11 @@ fn select_matrix_matrix_family(
 
 fn quant_bits<B: Backend>(mode: QuantizationMode) -> Result<usize, QuantizedMatmulError<B>> {
     let bits = match mode {
+        QuantizationMode::UInt2 => 2,
         QuantizationMode::UInt4 => 4,
         QuantizationMode::UInt8 | QuantizationMode::Int8 => 8,
     };
-    if matches!(bits, 4 | 8) {
+    if matches!(bits, 2 | 4 | 8) {
         Ok(bits)
     } else {
         Err(QuantizedMatmulError::UnsupportedBits(bits))

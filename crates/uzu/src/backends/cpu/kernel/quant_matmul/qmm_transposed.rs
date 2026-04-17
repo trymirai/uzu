@@ -6,7 +6,7 @@ use crate::ArrayElement;
 
 #[kernel(QuantizedMatmulQmmTransposed)]
 #[variants(T, f32, f16, bf16)]
-#[variants(GROUP_SIZE, 32, 64, 128)]
+#[variants(GROUP_SIZE, 32, 64, 128, 256, 512)]
 #[variants(BITS, 4, 8)]
 pub fn quantized_matmul_qmm_transposed<T: ArrayElement + Float, const GROUP_SIZE: i32, const BITS: i32>(
     #[allow(unused)] w: *const u32,

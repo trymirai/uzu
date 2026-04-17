@@ -18,10 +18,18 @@ inline constexpr short get_bytes_per_pack() {
 
 template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector(const device T* x, thread U* x_thread) {
-  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+  static_assert(bits == 2 || bits == 4 || bits == 8, "Only int2, int4 and int8 supported");
 
   U sum = 0;
-  if (bits == 4) {
+  if (bits == 2) {
+    for (int i = 0; i < values_per_thread; i += 4) {
+      sum += x[i] + x[i + 1] + x[i + 2] + x[i + 3];
+      x_thread[i] = x[i];
+      x_thread[i + 1] = x[i + 1] / 4.0f;
+      x_thread[i + 2] = x[i + 2] / 16.0f;
+      x_thread[i + 3] = x[i + 3] / 64.0f;
+    }
+  } else if (bits == 4) {
     for (int i = 0; i < values_per_thread; i += 4) {
       sum += x[i] + x[i + 1] + x[i + 2] + x[i + 3];
       x_thread[i] = x[i];
@@ -40,10 +48,26 @@ inline U load_vector(const device T* x, thread U* x_thread) {
 
 template <typename T, typename U, int values_per_thread, int bits>
 inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
-  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+  static_assert(bits == 2 || bits == 4 || bits == 8, "Only int2, int4 and int8 supported");
 
   U sum = 0;
-  if (bits == 4) {
+  if (bits == 2) {
+    const U scale_lut[4] = {
+        static_cast<U>(1.0f),
+        static_cast<U>(1.0f / 4.0f),
+        static_cast<U>(1.0f / 16.0f),
+        static_cast<U>(1.0f / 64.0f)
+    };
+
+    for (int i = 0; i < values_per_thread; ++i) {
+      x_thread[i] = 0;
+    }
+    for (int i = 0; i < N; ++i) {
+      U v = x[i];
+      sum += v;
+      x_thread[i] = v * scale_lut[i & 3];
+    }
+  } else if (bits == 4) {
     const U scale_lut[4] = {
         static_cast<U>(1.0f),
         static_cast<U>(1.0f / 16.0f),
@@ -104,10 +128,19 @@ inline U qdot(
     U bias,
     U sum
 ) {
-  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+  static_assert(bits == 2 || bits == 4 || bits == 8, "Only int2, int4 and int8 supported");
 
   U accum = 0;
-  if (bits == 4) {
+  if (bits == 2) {
+    for (int i = 0; i < values_per_thread; i += 4) {
+      const uint8_t byte = w[i / 4];
+      accum +=
+          (x_thread[i] * (byte & 0x03) +
+           x_thread[i + 1] * (byte & 0x0c) +
+           x_thread[i + 2] * (byte & 0x30) +
+           x_thread[i + 3] * (byte & 0xc0));
+    }
+  } else if (bits == 4) {
     const device uint16_t* ws = (const device uint16_t*)w;
     for (int i = 0; i < (values_per_thread / 4); i++) {
       accum +=
@@ -131,10 +164,34 @@ inline U qdot_zero_point(
     U scale,
     U zero_point
 ) {
-  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
+  static_assert(bits == 2 || bits == 4 || bits == 8, "Only int2, int4 and int8 supported");
 
   U accum = 0;
-  if (bits == 4) {
+  if (bits == 2) {
+    const uint8_t zp0 = static_cast<uint8_t>(zero_point);
+    const uint8_t zp1 = static_cast<uint8_t>(zero_point) << 2;
+    const uint8_t zp2 = static_cast<uint8_t>(zero_point) << 4;
+    const uint8_t zp3 = static_cast<uint8_t>(zero_point) << 6;
+    for (int i = 0; i < (values_per_thread / 4); i++) {
+      uint8_t byte = w[i];
+      accum += x_thread[4 * i] *
+               static_cast<U>(
+                   static_cast<int>(byte & 0x03) - static_cast<int>(zp0)
+               );
+      accum += x_thread[4 * i + 1] *
+               static_cast<U>(
+                   static_cast<int>(byte & 0x0c) - static_cast<int>(zp1)
+               );
+      accum += x_thread[4 * i + 2] *
+               static_cast<U>(
+                   static_cast<int>(byte & 0x30) - static_cast<int>(zp2)
+               );
+      accum += x_thread[4 * i + 3] *
+               static_cast<U>(
+                   static_cast<int>(byte & 0xc0) - static_cast<int>(zp3)
+               );
+    }
+  } else if (bits == 4) {
     const device uint16_t* ws = (const device uint16_t*)w;
     const uint16_t zp0 = static_cast<uint16_t>(zero_point);
     const uint16_t zp1 = static_cast<uint16_t>(zero_point) << 4;

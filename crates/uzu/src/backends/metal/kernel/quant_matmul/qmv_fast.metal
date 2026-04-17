@@ -4,8 +4,8 @@
 
 template <typename T, int GROUP_SIZE, int BITS>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(GROUP_SIZE, 32, 64, 128)
-VARIANTS(BITS, 4, 8)
+VARIANTS(GROUP_SIZE, 32, 64, 128, 256, 512)
+VARIANTS(BITS, 2, 4, 8)
 KERNEL(QuantizedMatmulQmvFast)(
     const device uint32_t* w,
     const device T* scales,

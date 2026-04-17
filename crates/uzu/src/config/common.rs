@@ -41,6 +41,7 @@ impl From<DataType> for ConfigDataType {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum QuantizationMode {
+    UInt2,
     UInt4,
     Int8,
     UInt8,
@@ -49,6 +50,7 @@ pub enum QuantizationMode {
 impl QuantizationMode {
     pub fn packing_divisor(&self) -> usize {
         match self {
+            QuantizationMode::UInt2 => 4,
             QuantizationMode::UInt4 => 2,
             QuantizationMode::Int8 => 1,
             QuantizationMode::UInt8 => 1,
@@ -57,6 +59,7 @@ impl QuantizationMode {
 
     pub fn storage_type(&self) -> DataType {
         match self {
+            QuantizationMode::UInt2 => DataType::U8,
             QuantizationMode::UInt4 => DataType::U8,
             QuantizationMode::Int8 => DataType::I8,
             QuantizationMode::UInt8 => DataType::U8,
@@ -67,6 +70,7 @@ impl QuantizationMode {
 impl From<QuantizationMode> for DataType {
     fn from(val: QuantizationMode) -> Self {
         match val {
+            QuantizationMode::UInt2 => DataType::U2,
             QuantizationMode::UInt4 => DataType::U4,
             QuantizationMode::Int8 => DataType::I8,
             QuantizationMode::UInt8 => DataType::U8,

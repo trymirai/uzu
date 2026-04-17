@@ -11,6 +11,7 @@ pub enum DataType {
     F32,
     F64,
     // Sub-byte integers
+    U2,
     I4,
     U4,
     // Normal integers
@@ -27,6 +28,7 @@ pub enum DataType {
 impl DataType {
     pub const fn size_in_bits(&self) -> usize {
         match self {
+            DataType::U2 => 2,
             DataType::I4 | DataType::U4 => 4,
             DataType::I8 | DataType::U8 => 8,
             DataType::I16 | DataType::U16 => 16,
@@ -45,7 +47,9 @@ impl DataType {
             DataType::BF16 => DLDataTypeCode::kDLBfloat,
             DataType::F16 | DataType::F32 | DataType::F64 => DLDataTypeCode::kDLFloat,
             DataType::I4 | DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64 => DLDataTypeCode::kDLInt,
-            DataType::U4 | DataType::U8 | DataType::U16 | DataType::U32 | DataType::U64 => DLDataTypeCode::kDLUInt,
+            DataType::U2 | DataType::U4 | DataType::U8 | DataType::U16 | DataType::U32 | DataType::U64 => {
+                DLDataTypeCode::kDLUInt
+            },
         }
     }
 }
