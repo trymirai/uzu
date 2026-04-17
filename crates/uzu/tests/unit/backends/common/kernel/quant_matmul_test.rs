@@ -261,7 +261,7 @@ fn generate_test_quant_params(
     }
 }
 
-fn allocation_from_quantized_f32_slice<B: Backend>(
+fn allocation_from_f32_slice<B: Backend>(
     ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
@@ -277,59 +277,9 @@ fn allocation_from_quantized_f32_slice<B: Backend>(
         },
         DataType::F32 => alloc_allocation_with_data::<B, f32>(ctx, values),
         other => {
-            panic!("Unsupported dtype for allocation_from_quantized_f32_slice: {:?}", other)
+            panic!("Unsupported dtype for allocation_from_f32_slice: {:?}", other)
         },
     }
-}
-
-fn allocation_from_f32_slice<B: Backend>(
-    ctx: &B::Context,
-    dtype: DataType,
-    values: &[f32],
-) -> Allocation<B> {
-    let byte_len = values.len() * dtype.size_in_bytes();
-    let allocation = ctx.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation");
-
-    match dtype {
-        DataType::F16 => {
-            let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            let (buffer, range) = allocation.as_buffer_range();
-            unsafe {
-                let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-                std::ptr::copy_nonoverlapping(
-                    bytemuck::cast_slice(data.as_slice()).as_ptr(),
-                    dst,
-                    data.len() * std::mem::size_of::<f16>(),
-                );
-            }
-        },
-        DataType::BF16 => {
-            let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            let (buffer, range) = allocation.as_buffer_range();
-            unsafe {
-                let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-                std::ptr::copy_nonoverlapping(
-                    bytemuck::cast_slice(data.as_slice()).as_ptr(),
-                    dst,
-                    data.len() * std::mem::size_of::<bf16>(),
-                );
-            }
-        },
-        DataType::F32 => {
-            let (buffer, range) = allocation.as_buffer_range();
-            unsafe {
-                let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-                std::ptr::copy_nonoverlapping(
-                    bytemuck::cast_slice(values).as_ptr(),
-                    dst,
-                    values.len() * std::mem::size_of::<f32>(),
-                );
-            }
-        },
-        other => panic!("Unsupported dtype for allocation_from_f32_slice: {:?}", other),
-    }
-
-    allocation
 }
 
 fn execute_quantized_matmul<B: Backend>(
@@ -370,11 +320,11 @@ fn execute_quantized_matmul<B: Backend>(
     let x_quant = quantize_slice(&x_f32, data_type);
 
     let w_buf = alloc_allocation_with_data::<B, u8>(ctx, &weights_packed);
-    let s_buf = allocation_from_quantized_f32_slice::<B>(ctx, data_type, &params.scales);
+    let s_buf = allocation_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
         QuantizedMatmulType::ZeroPoint => alloc_allocation_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizedMatmulType::Mlx => allocation_from_quantized_f32_slice::<B>(ctx, data_type, &params.biases),
+        QuantizedMatmulType::Mlx => allocation_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
     let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx

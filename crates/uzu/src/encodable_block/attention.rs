@@ -256,7 +256,7 @@ impl<B: Backend> Attention<B> {
         let mut attention_output =
             encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads * head_dim], self.data_type))?;
 
-        if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
+        let (keys, values) = if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
             self.update_kv_cache_kernel.encode(
                 Some(&rotated_keys),
                 qkv,
@@ -270,64 +270,38 @@ impl<B: Backend> Attention<B> {
                 max_sequence_length as u32,
                 encoder,
             );
-
-            Self::encode_attention_variant(
-                self,
-                args.context,
-                variant,
-                &kernel_key,
-                queries,
-                &layer.keys,
-                &layer.values,
-                &mut attention_output,
-                trie_allocation,
-                sinks_allocation,
-                gqa_factor,
-                sequence_length,
-                k_head_stride,
-                k_seq_stride,
-                v_head_stride,
-                v_seq_stride,
-                ring_params,
-                scale,
-                num_heads,
-                num_groups,
-                suffix_length,
-                segment_prefix_length,
-                max_sequence_length,
-                head_dim,
-                encoder,
-            );
+            (&layer.keys, &layer.values)
         } else {
-            let values = extracted_values.as_ref().expect("Missing extracted values for classifier attention");
-            Self::encode_attention_variant(
-                self,
-                args.context,
-                variant,
-                &kernel_key,
-                queries,
-                &rotated_keys,
-                values,
-                &mut attention_output,
-                trie_allocation,
-                sinks_allocation,
-                gqa_factor,
-                sequence_length,
-                k_head_stride,
-                k_seq_stride,
-                v_head_stride,
-                v_seq_stride,
-                ring_params,
-                scale,
-                num_heads,
-                num_groups,
-                suffix_length,
-                segment_prefix_length,
-                max_sequence_length,
-                head_dim,
-                encoder,
-            );
-        }
+            (&rotated_keys, extracted_values.as_ref().expect("Missing extracted values for classifier attention"))
+        };
+
+        Self::encode_attention_variant(
+            self,
+            args.context,
+            variant,
+            &kernel_key,
+            queries,
+            keys,
+            values,
+            &mut attention_output,
+            trie_allocation,
+            sinks_allocation,
+            gqa_factor,
+            sequence_length,
+            k_head_stride,
+            k_seq_stride,
+            v_head_stride,
+            v_seq_stride,
+            ring_params,
+            scale,
+            num_heads,
+            num_groups,
+            suffix_length,
+            segment_prefix_length,
+            max_sequence_length,
+            head_dim,
+            encoder,
+        );
 
         if let Some(gate_kernel) = &self.gate_kernel {
             let total_elements = (suffix_length * num_heads * head_dim) as u32;

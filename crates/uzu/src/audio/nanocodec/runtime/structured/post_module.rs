@@ -1,5 +1,9 @@
 use super::*;
-use crate::array::{Array, ArrayContextExt};
+use crate::{
+    array::{Array, ArrayContextExt},
+    backends::common::Allocation,
+    encodable_block::LayerArguments,
+};
 
 impl StructuredAudioCodecGraph {
     pub(super) fn apply_convnext_ncs_enqueued<B: Backend>(
@@ -308,9 +312,9 @@ impl StructuredAudioCodecGraph {
     pub(super) fn encode_post_module_layers<B: Backend>(
         runtime: &StructuredAudioPostModuleRuntime<B>,
         state: &mut ForwardPassState<B>,
-        main: crate::backends::common::Allocation<B>,
+        main: Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> AudioResult<crate::backends::common::Allocation<B>> {
+    ) -> AudioResult<Allocation<B>> {
         let encoding_parameters = EncodingParameters::new();
         let mut main = main;
         let mut shortcut = encoder
@@ -327,7 +331,7 @@ impl StructuredAudioCodecGraph {
             });
             main = layer
                 .encode(
-                    crate::encodable_block::LayerArguments {
+                    LayerArguments {
                         context: state.context(),
                         batch_dim: state.active_row_count(),
                         token_positions: state.token_positions(),

@@ -2,6 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use ndarray::ArrayView2;
 
+#[cfg(feature = "tracing")]
+use crate::forward_pass::cache_layers::CacheLayer;
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
@@ -305,7 +307,7 @@ impl<B: Backend> ForwardPassState<B> {
     pub fn with_cache_layer<R>(
         &self,
         layer_index: usize,
-        f: impl FnOnce(&crate::forward_pass::cache_layers::CacheLayer<B>) -> R,
+        f: impl FnOnce(&CacheLayer<B>) -> R,
     ) -> R {
         let cache_layers = self.cache_layers().expect("Cache layers are only available in LLM mode");
         let cache = cache_layers.borrow();

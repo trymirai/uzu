@@ -842,61 +842,35 @@ impl<B: Backend> LanguageModelGenerator<B> {
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
         let mut sampling_output = sample.then(|| self.create_sampling_output(state.sampling_length()));
+        let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+        let decoder_arguments = DecoderArguments {
+            context: state.context(),
+            activation_data_type: state.model_shape().activation_data_type(),
+            token_ids: state.token_ids(),
+            token_positions: state.token_positions(),
+            token_parents: state.token_parents(),
+            token_subtrie_ranges: state.token_subtrie_ranges(),
+            shared_buffers: state.shared_buffers.as_ref(),
+            cache_layers: cache_layers.as_deref_mut(),
+            batch_dim: state.active_row_count(),
+            sampling_start: state.sampling_start(),
+            sampling_length: state.sampling_length(),
+            rope_max_sequence_length: state.rope_max_sequence_length(),
+            rope_dim: state.rope_dim(),
+            #[cfg(feature = "tracing")]
+            trace: None,
+        };
         if state.is_prefilling() {
-            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
-            let _ = self
-                .context
+            self.context
                 .executables
-                .encode_prefill(
-                    DecoderArguments {
-                        context: state.context(),
-                        activation_data_type: state.model_shape().activation_data_type(),
-                        token_ids: state.token_ids(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        shared_buffers: state.shared_buffers.as_ref(),
-                        cache_layers: cache_layers.as_deref_mut(),
-                        batch_dim: state.active_row_count(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
-                        #[cfg(feature = "tracing")]
-                        trace: None,
-                    },
-                    parameters,
-                    &mut encoder,
-                )
+                .encode_prefill(decoder_arguments, parameters, &mut encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
             let decoder_logits = self.create_decoder_logits(state.sampling_length());
-            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
             let mut logits = self
                 .context
                 .executables
-                .encode_decode(
-                    DecoderArguments {
-                        context: state.context(),
-                        activation_data_type: state.model_shape().activation_data_type(),
-                        token_ids: state.token_ids(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        shared_buffers: state.shared_buffers.as_ref(),
-                        cache_layers: cache_layers.as_deref_mut(),
-                        batch_dim: state.active_row_count(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
-                        #[cfg(feature = "tracing")]
-                        trace: None,
-                    },
-                    decoder_logits,
-                    parameters,
-                    &mut encoder,
-                )
+                .encode_decode(decoder_arguments, decoder_logits, parameters, &mut encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             let sampling_inputs = sampling_inputs.as_ref().expect("Sampling requires sampling inputs");

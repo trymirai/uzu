@@ -1,10 +1,10 @@
 use std::sync::mpsc::Receiver;
 
 use super::*;
-use crate::array::allocation_as_slice;
+use crate::{array::allocation_as_slice, backends::common::Allocation};
 
 pub struct SubmittedDecodedPaddedAudio<B: Backend> {
-    pub(in crate::audio::nanocodec::runtime) output: crate::backends::common::Allocation<B>,
+    pub(in crate::audio::nanocodec::runtime) output: Allocation<B>,
     pub(in crate::audio::nanocodec::runtime) data_type: DataType,
     pub(in crate::audio::nanocodec::runtime) channels: usize,
     pub(in crate::audio::nanocodec::runtime) frames: usize,

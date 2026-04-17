@@ -7,7 +7,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            Allocation, Encoder,
             gpu_types::GemmParams,
             kernel::{
                 TensorAddBiasKernel,
@@ -226,14 +226,7 @@ impl MatmulMetalKernel {
         );
 
         if let MatmulArgumentC::Bias(bias) = c {
-            self.bias_add.encode(
-                None::<&crate::backends::common::Allocation<Metal>>,
-                bias,
-                d,
-                output_dim,
-                batch_dim * output_dim,
-                encoder,
-            );
+            self.bias_add.encode(None::<&Allocation<Metal>>, bias, d, output_dim, batch_dim * output_dim, encoder);
         }
 
         Ok(())
@@ -294,14 +287,7 @@ impl MatmulMetalKernel {
         kernel.encode(&a, &b, d, std::slice::from_ref(&params), group_count_x, group_count_y, ab_scale, encoder);
 
         if let MatmulArgumentC::Bias(bias) = c {
-            self.bias_add.encode(
-                None::<&crate::backends::common::Allocation<Metal>>,
-                bias,
-                d,
-                output_dim,
-                batch_dim * output_dim,
-                encoder,
-            );
+            self.bias_add.encode(None::<&Allocation<Metal>>, bias, d, output_dim, batch_dim * output_dim, encoder);
         }
 
         Ok(())

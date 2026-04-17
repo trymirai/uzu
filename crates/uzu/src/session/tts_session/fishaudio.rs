@@ -506,8 +506,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     fn encode_project_slow_hidden_to_fast_on(
         context: &B::Context,
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
-        slow_hidden_capture: &crate::backends::common::Allocation<B>,
-        output_embedding: &mut crate::backends::common::Allocation<B>,
+        slow_hidden_capture: &Allocation<B>,
+        output_embedding: &mut Allocation<B>,
         slow_model_dim: usize,
         fast_model_dim: usize,
         encoder: &mut Encoder<B>,
@@ -551,7 +551,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     /// `gpu_tokens_buffer` at the given byte offset.
     fn encode_slow_codebook_sum_from_gpu_tokens_on(
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
-        slow_sum_embedding: &mut crate::backends::common::Allocation<B>,
+        slow_sum_embedding: &mut Allocation<B>,
         first_code: u32,
         source_runner: &TokenDecoderRunner<B>,
         source_slot: usize,

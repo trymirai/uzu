@@ -5,6 +5,8 @@ use std::rc::Rc;
 use super::MixerExecutables;
 #[cfg(feature = "tracing")]
 use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
+#[cfg(feature = "tracing")]
+use crate::forward_pass::traces::LayerActivationTrace;
 use crate::{
     DataType,
     backends::common::{Allocation, Backend, Encoder},
@@ -514,5 +516,5 @@ pub struct LayerArguments<'a, B: Backend> {
     pub sampling_length: usize,
     pub cache_layer: Option<&'a mut CacheLayer<B>>,
     #[cfg(feature = "tracing")]
-    pub trace: Option<&'a crate::forward_pass::traces::LayerActivationTrace<B>>,
+    pub trace: Option<&'a LayerActivationTrace<B>>,
 }

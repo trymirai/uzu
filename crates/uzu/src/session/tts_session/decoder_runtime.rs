@@ -280,30 +280,26 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
             let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
-            let _ = self
-                .ctx
+            let decoder_arguments = DecoderArguments {
+                context: state.context(),
+                activation_data_type: state.model_shape().activation_data_type(),
+                token_ids: state.token_ids(),
+                token_positions: state.token_positions(),
+                token_parents: state.token_parents(),
+                token_subtrie_ranges: state.token_subtrie_ranges(),
+                shared_buffers: self.ctx.shared_buffers.as_ref(),
+                cache_layers: cache_layers.as_deref_mut(),
+                batch_dim: state.active_row_count(),
+                sampling_start: state.sampling_start(),
+                sampling_length: state.sampling_length(),
+                rope_max_sequence_length: state.rope_max_sequence_length(),
+                rope_dim: state.rope_dim(),
+                #[cfg(feature = "tracing")]
+                trace: None,
+            };
+            self.ctx
                 .executables
-                .encode_prefill(
-                    DecoderArguments {
-                        context: state.context(),
-                        activation_data_type: state.model_shape().activation_data_type(),
-                        token_ids: state.token_ids(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        shared_buffers: self.ctx.shared_buffers.as_ref(),
-                        cache_layers: cache_layers.as_deref_mut(),
-                        batch_dim: state.active_row_count(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
-                        #[cfg(feature = "tracing")]
-                        trace: None,
-                    },
-                    &encoding_parameters,
-                    &mut encoder,
-                )
+                .encode_prefill(decoder_arguments, &encoding_parameters, &mut encoder)
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             self.encode_cache_acceptance_update_on(&mut encoder, token_count);
 
@@ -1012,7 +1008,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     fn encode_capture_last_hidden_into_single_buffer_on(
         &self,
         encoder: &mut Encoder<B>,
-        shortcut: &crate::backends::common::Allocation<B>,
+        shortcut: &Allocation<B>,
         token_count: usize,
     ) -> Result<(), Error> {
         if token_count == 0 {
@@ -1047,7 +1043,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     fn encode_override_first_row_from_device_on(
         &self,
         encoder: &mut Encoder<B>,
-        main: &mut crate::backends::common::Allocation<B>,
+        main: &mut Allocation<B>,
         override_embedding: &Allocation<B>,
     ) -> Result<(), Error> {
         let model_dim = self.ctx.decoder_config.model_dim;
@@ -1070,7 +1066,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     fn encode_add_scale_from_single_bias_on(
         &self,
         encoder: &mut Encoder<B>,
-        main: &mut crate::backends::common::Allocation<B>,
+        main: &mut Allocation<B>,
         token_count: usize,
         scale: f32,
     ) -> Result<(), Error> {
