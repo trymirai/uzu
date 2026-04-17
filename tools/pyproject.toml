@@ -38,6 +38,7 @@ version = { attr = "data_exporter.__version__" }
 
 [tool.uv]
 package = true
+python-preference = "only-managed"
 
 [tool.pyright]
 venvPath = "."
