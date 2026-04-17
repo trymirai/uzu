@@ -425,13 +425,13 @@ impl<B: Backend> Attention<B> {
                     .get(&(head_dim as u32))
                     .unwrap_or_else(|| panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key));
                 let mut partials = encoder
-                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32 * head_dim], self.data_type))
+                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32 * head_dim], DataType::F32))
                     .expect("Failed to allocate attention partials");
                 let mut sums = encoder
-                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], self.data_type))
+                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))
                     .expect("Failed to allocate attention sums");
                 let mut maxs = encoder
-                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], self.data_type))
+                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))
                     .expect("Failed to allocate attention maxs");
                 kernel_pass1.encode(
                     queries,

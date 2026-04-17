@@ -33,6 +33,16 @@ pub(crate) struct SamplingInputs<B: Backend> {
     pub bitmask_row_len: Option<usize>,
 }
 
+impl<B: Backend> Clone for SamplingInputs<B> {
+    fn clone(&self) -> Self {
+        Self {
+            seeds: self.seeds.clone(),
+            bitmask: self.bitmask.clone(),
+            bitmask_row_len: self.bitmask_row_len,
+        }
+    }
+}
+
 impl<B: Backend> SamplingInputs<B> {
     pub(crate) fn bitmask_allocation_from_slice(
         context: &B::Context,

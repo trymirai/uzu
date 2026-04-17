@@ -11,6 +11,7 @@ pub struct Encoder<'encoding, B: Backend> {
     context: &'encoding B::Context,
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
     allocation_pool: AllocationPool<B>,
+    retained_allocations: Vec<Allocation<B>>,
     hazard_tracker: HazardTracker,
 }
 
@@ -24,6 +25,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             context,
             command_buffer,
             allocation_pool,
+            retained_allocations: Vec::new(),
             hazard_tracker,
         })
     }
@@ -33,13 +35,15 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self,
         size: usize,
     ) -> Result<Allocation<B>, B::Error> {
-        self.context.create_allocation(
+        let allocation = self.context.create_allocation(
             size,
             AllocationType::Pooled {
                 pool: &self.allocation_pool,
                 cpu_available: true,
             },
-        )
+        )?;
+        self.retained_allocations.push(allocation.clone());
+        Ok(allocation)
     }
 
     // This is valid on gpu timeline only
@@ -47,13 +51,15 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self,
         size: usize,
     ) -> Result<Allocation<B>, B::Error> {
-        self.context.create_allocation(
+        let allocation = self.context.create_allocation(
             size,
             AllocationType::Pooled {
                 pool: &self.allocation_pool,
                 cpu_available: false,
             },
-        )
+        )?;
+        self.retained_allocations.push(allocation.clone());
+        Ok(allocation)
     }
 
     pub fn encode_copy(
@@ -130,6 +136,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
     pub fn end_encoding(self) -> Executable<B> {
         Executable {
             command_buffer: self.command_buffer.end_encoding(),
+            retained_allocations: self.retained_allocations,
             allocation_pool: self.allocation_pool,
         }
     }
@@ -137,6 +144,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
 pub struct Executable<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Executable,
+    retained_allocations: Vec<Allocation<B>>,
     allocation_pool: AllocationPool<B>,
 }
 
@@ -144,6 +152,7 @@ impl<B: Backend> Executable<B> {
     pub fn submit(self) -> Pending<B> {
         Pending {
             command_buffer: self.command_buffer.submit(),
+            retained_allocations: self.retained_allocations,
             allocation_pool: self.allocation_pool,
         }
     }
@@ -151,6 +160,7 @@ impl<B: Backend> Executable<B> {
 
 pub struct Pending<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Pending,
+    retained_allocations: Vec<Allocation<B>>,
     allocation_pool: AllocationPool<B>,
 }
 
@@ -158,6 +168,7 @@ impl<B: Backend> Pending<B> {
     pub fn wait_until_completed(self) -> Result<Completed<B>, B::Error> {
         Ok(Completed {
             command_buffer: self.command_buffer.wait_until_completed()?,
+            retained_allocations: self.retained_allocations,
             allocation_pool: self.allocation_pool,
         })
     }
@@ -165,6 +176,8 @@ impl<B: Backend> Pending<B> {
 
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
+    #[allow(unused)]
+    retained_allocations: Vec<Allocation<B>>,
     #[allow(unused)]
     allocation_pool: AllocationPool<B>,
 }
