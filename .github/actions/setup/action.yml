@@ -52,9 +52,13 @@ runs:
       uses: taiki-e/install-action@nextest
 
     - if: inputs.test_data == 'true'
+      run: rm -rf ~/.local/share/uv/python
+      shell: bash
+
+    - if: inputs.test_data == 'true'
       uses: astral-sh/setup-uv@v7
       with:
-        enable-cache: false
+        enable-cache: true
         python-version: "3.12"
 
     - if: inputs.test_data == 'true'
