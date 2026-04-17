@@ -84,7 +84,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           metal: ${{ matrix.backend == 'metal' }}
-          test_model: true
+          test_data: true
           nextest: true
           target: ${{ matrix.target }}
 
