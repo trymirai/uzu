@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -87,17 +86,21 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines, "");
     let sines_array = context.create_array_from(&[cos_sin_len], &input.sines, "");
     let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions, "");
-    let rotated_queries_array = context.create_array_uninitialized(&[queries_len], T::data_type(), "");
-    let rotated_keys_array = context.create_array_uninitialized(&[keys_len], T::data_type(), "");
+    let mut rotated_queries = context
+        .create_array_uninitialized(&[queries_len], T::data_type(), "")
+        .into_allocation();
+    let mut rotated_keys = context
+        .create_array_uninitialized(&[keys_len], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        qkv_array.buffer().borrow().deref(),
-        cosines_array.buffer().borrow().deref(),
-        sines_array.buffer().borrow().deref(),
-        token_positions_array.buffer().borrow().deref(),
-        rotated_queries_array.buffer().borrow_mut().deref_mut(),
-        rotated_keys_array.buffer().borrow_mut().deref_mut(),
+        qkv_array.allocation(),
+        cosines_array.allocation(),
+        sines_array.allocation(),
+        token_positions_array.allocation(),
+        &mut rotated_queries,
+        &mut rotated_keys,
         input.head_dim,
         input.rope_dim,
         input.num_heads,
@@ -108,7 +111,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (rotated_queries_array.as_slice().to_vec(), rotated_keys_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&rotated_queries),
+        crate::common::helpers::allocation_to_vec(&rotated_keys),
+    )
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {

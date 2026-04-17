@@ -55,12 +55,4 @@ impl EncodingParameters {
             projection_step: None,
         }
     }
-
-    pub fn with_projection(
-        mut self,
-        projection_step: usize,
-    ) -> Self {
-        self.projection_step = Some(projection_step);
-        self
-    }
 }

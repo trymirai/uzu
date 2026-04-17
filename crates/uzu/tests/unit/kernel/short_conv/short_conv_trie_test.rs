@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -40,7 +39,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let out_array = context.create_array_uninitialized(&[out_size], T::data_type(), "");
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type(), "").into_allocation();
 
     let state_stride = input.state_stride as usize;
     let model_dim = input.model_dim as usize;
@@ -56,20 +55,22 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let parents_array = context.create_array_from(&[input.parents.len()], &input.parents, "");
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
-    let suffix_state_array = context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "");
-
-    let bias_buf_rc = b_array.as_ref().map(|b| b.buffer());
-    let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
+    let mut suffix_state =
+        context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "").into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        bias_buf_borrow.as_deref(),
-        base_state_array.buffer().borrow().deref(),
-        parents_array.buffer().borrow().deref(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        suffix_state_array.buffer().borrow_mut().deref_mut(),
+        in_proj_array.allocation(),
+        0,
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        base_state_array.allocation(),
+        parents_array.allocation(),
+        0,
+        &mut out,
+        0,
+        &mut suffix_state,
+        0,
         input.suffix_len,
         input.kernel_size,
         input.in_proj_stride,
@@ -79,7 +80,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_array.as_slice().to_vec(), suffix_state_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&out),
+        crate::common::helpers::allocation_to_vec(&suffix_state),
+    )
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.

@@ -352,21 +352,13 @@ impl<B: Backend> Decoder<B> {
             .map_err(DecoderError::BackendError)?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &trace.output_norm,
-            );
+            encoder.encode_copy_allocation(&main, &trace.output_norm);
         }
 
         self.embed.encode_readout(context, sampling_length, &main, &mut logits, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &logits,
-                &trace.logits,
-            );
+            encoder.encode_copy_allocation(&logits, &trace.logits);
         }
         Ok((logits, shortcut))
     }

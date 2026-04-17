@@ -7,9 +7,10 @@ use std::{
 
 use crate::{
     DataType,
+    array::{Array, ArrayContextExt},
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Kernels, allocation_helpers,
-        kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
+        Backend, Context, Kernels,
+        kernel::{TokenCopySampledKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
@@ -28,13 +29,12 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Allocation<B>,
+    pub positions: Array<B>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Allocation<B>,
-    /// Results buffer: [batch_size] u32
-    /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Allocation<B>,
+    pub seeds: Array<B>,
+    /// Results buffers: one scalar slot per in-flight pass.
+    pub results: Box<[Array<B>]>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
@@ -51,15 +51,10 @@ impl<B: Backend> AsyncBuffers<B> {
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
-        let positions = context
-            .create_allocation(max_tokens * std::mem::size_of::<i32>(), AllocationType::Global)
-            .expect("Failed to create positions allocation");
-        let seeds = context
-            .create_allocation(max_tokens * std::mem::size_of::<u64>(), AllocationType::Global)
-            .expect("Failed to create seeds allocation");
-        let results = context
-            .create_allocation(batch_size * std::mem::size_of::<u32>(), AllocationType::Global)
-            .expect("Failed to create results allocation");
+        let positions = context.create_array_uninitialized(&[max_tokens], DataType::I32, "async_positions");
+        let seeds = context.create_array_uninitialized(&[max_tokens], DataType::U64, "async_seeds");
+        let results =
+            (0..batch_size).map(|_| context.create_array_uninitialized(&[1], DataType::U32, "async_result")).collect();
         let event = context.create_event().expect("Failed to create event");
 
         Self {
@@ -76,32 +71,48 @@ impl<B: Backend> AsyncBuffers<B> {
     /// Prepare positions buffer: [prefill_count-1, prefill_count, ...]
     /// Uses prefill_count-1 to match sync path which uses self.tokens.len()-1
     pub fn prepare_positions(
-        &self,
+        &mut self,
         prefill_count: usize,
         tokens_to_generate: usize,
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let positions: Box<[i32]> = (0..tokens_to_generate).map(|i| (base_position + i) as i32).collect();
-        let mut destination = self.positions.slice(0..tokens_to_generate * std::mem::size_of::<i32>());
-        allocation_helpers::copy_slice_to_allocation(&mut destination, positions.as_ref());
+        let positions = self.positions.as_slice_mut::<i32>();
+        for (index, position) in positions.iter_mut().take(tokens_to_generate).enumerate() {
+            *position = (base_position + index) as i32;
+        }
     }
 
     /// Prepare seeds buffer with deterministic sequence
     pub fn prepare_seeds(
-        &self,
+        &mut self,
         seed: &PRng,
         prefix_len: usize,
         tokens_to_generate: usize,
     ) {
-        let seeds: Box<[u64]> = (0..tokens_to_generate).map(|i| seed.derive((prefix_len + i - 1) as u64)).collect();
-        let mut destination = self.seeds.slice(0..tokens_to_generate * std::mem::size_of::<u64>());
-        allocation_helpers::copy_slice_to_allocation(&mut destination, seeds.as_ref());
+        let seeds = self.seeds.as_slice_mut::<u64>();
+        for (index, value) in seeds.iter_mut().take(tokens_to_generate).enumerate() {
+            *value = seed.derive((prefix_len + index - 1) as u64);
+        }
     }
 
     /// Reset event counter before async generation
     pub fn reset_counter(&self) {
         self.counter.set(0);
+    }
+
+    pub fn position(
+        &self,
+        index: usize,
+    ) -> Array<B> {
+        self.positions.view_at_offset(index * std::mem::size_of::<i32>(), &[1])
+    }
+
+    pub fn seed(
+        &self,
+        index: usize,
+    ) -> Array<B> {
+        self.seeds.view_at_offset(index * std::mem::size_of::<u64>(), &[1])
     }
 }
 
@@ -120,7 +131,6 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
 
     /// Kernels for copying sampled tokens in async pipeline
     pub token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
-    pub token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers<B>,
 }
@@ -177,8 +187,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
 
         let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
             .map_err(|e| Error::UnableToCreateContext(e.into()))?;
-        let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(&context)
-            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let async_batch_size = decoding_config.async_batch_size.resolve::<B>(model_path, context.as_ref());
         let async_buffers = AsyncBuffers::new(context.as_ref(), max_prefix_length, async_batch_size);
@@ -196,7 +204,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             gpu_sampler,
             seed,
             token_copy_sampled,
-            token_copy_results,
             async_buffers,
         };
 

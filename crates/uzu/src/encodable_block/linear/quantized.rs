@@ -256,12 +256,12 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
             .encode(
                 encoder,
                 QuantizedMatmulArguments {
-                    a: input.clone(),
-                    b: self.weights.clone(),
-                    scales: self.scales.clone(),
-                    zero_points_or_biases: self.zero_points_or_biases.clone(),
-                    output: output.clone(),
-                    hadamard_factors: self.output_hadamard_factors.clone(),
+                    a: input,
+                    b: &self.weights,
+                    scales: &self.scales,
+                    zero_points_or_biases: &self.zero_points_or_biases,
+                    output: &mut output,
+                    hadamard_factors: self.output_hadamard_factors.as_ref(),
                     batch_dim,
                 },
             )

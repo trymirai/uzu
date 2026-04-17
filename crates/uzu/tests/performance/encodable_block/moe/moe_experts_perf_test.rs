@@ -13,7 +13,7 @@ use uzu::{
     },
 };
 
-use crate::common::helpers::{alloc_allocation, alloc_allocation_with_data, alloc_buffer_with_data, create_context};
+use crate::common::helpers::{alloc_allocation, alloc_allocation_with_data, create_context};
 
 fn build_offsets(
     e: usize,
@@ -79,10 +79,10 @@ fn run_decode_case<B: Backend>(
 
     let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
     let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
     let num_tiles_k = d_ff.div_ceil(K_TILE);
 
@@ -229,10 +229,10 @@ fn run_two_pass_prefill_case<B: Backend>(
 
     let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
     let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
     let num_tiles_k = d_ff.div_ceil(K_TILE);
 
@@ -365,10 +365,10 @@ fn run_fused_single_token_case<B: Backend>(
     let x_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x);
     let topk_ids_buf = alloc_allocation_with_data::<B, i32>(ctx, &topk_ids);
     let topk_probs_buf = alloc_allocation_with_data::<B, bf16>(ctx, &topk_probs);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w13_all);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w2_all);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13_all);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2_all);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
     let mut hidden_buf = alloc_allocation::<B, f32>(ctx, k * d_ff);
     let mut y_buf = alloc_allocation::<B, bf16>(ctx, d_model);
 
@@ -486,10 +486,10 @@ fn run_indirect_decode_timed<B: Backend>(
 
     let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
     let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w13);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w2);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
 
     let num_tiles_k = d_ff.div_ceil(K_TILE);
     let mut hidden_buf = alloc_allocation::<B, f32>(ctx, sum_k * d_ff);
@@ -613,10 +613,10 @@ fn run_fused_decode_timed<B: Backend>(
     let x_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x);
     let topk_ids_buf = alloc_allocation_with_data::<B, i32>(ctx, &topk_ids);
     let topk_probs_buf = alloc_allocation_with_data::<B, bf16>(ctx, &topk_probs);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w13_all);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(ctx, &w2_all);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(ctx, &down_biases);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13_all);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2_all);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
     let mut hidden_buf = alloc_allocation::<B, f32>(ctx, k * d_ff);
     let mut y_buf = alloc_allocation::<B, bf16>(ctx, d_model);
 

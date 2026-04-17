@@ -20,6 +20,8 @@ pub fn rms_norm<
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
+    input_offset_elements: u32,
+    shortcut_offset_elements: u32,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
@@ -36,7 +38,12 @@ pub fn rms_norm<
 
     let input = match in_place {
         true => output as *const InputT,
-        false => input.unwrap(),
+        false => unsafe { input.unwrap().add(input_offset_elements as usize) },
+    };
+    let shortcut = if copy_to_shortcut {
+        Some(unsafe { shortcut.unwrap().add(shortcut_offset_elements as usize) })
+    } else {
+        None
     };
 
     let element_count = element_count as usize;

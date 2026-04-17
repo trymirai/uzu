@@ -3,7 +3,7 @@ use std::mem::size_of;
 use crate::{
     DataType,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dScanKernel,
@@ -17,22 +17,34 @@ use crate::{
 mod common;
 
 fn zero_allocation<B: Backend>(allocation: &mut Allocation<B>) {
-    crate::backends::common::allocation_helpers::fill_allocation(allocation, 0);
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len()).fill(0);
+    }
 }
 
 fn allocation_from_f32_slice<B: Backend>(
     ctx: &B::Context,
     data: &[f32],
 ) -> Allocation<B> {
-    let mut allocation = ctx
+    let allocation = ctx
         .create_allocation(data.len() * size_of::<f32>(), AllocationType::Global)
         .expect("Failed to create allocation");
-    crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut allocation, data);
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(bytemuck::cast_slice(data).as_ptr(), dst, data.len() * size_of::<f32>());
+    }
     allocation
 }
 
 fn read_allocation<B: Backend>(allocation: &Allocation<B>) -> Vec<f32> {
-    crate::backends::common::allocation_helpers::copy_allocation_to_slice::<f32, B>(allocation).to_vec()
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+        let bytes = std::slice::from_raw_parts(src, range.len());
+        bytemuck::cast_slice(bytes).to_vec()
+    }
 }
 
 fn ssd_prefill_cpu_reference(

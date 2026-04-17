@@ -4,26 +4,28 @@ use num_traits::Float;
 use uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
+        common::{Backend, Context, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
         cpu::Cpu,
     },
 };
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
-use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
+use crate::{
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    uzu_test,
+};
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
+    let w_buf = alloc_allocation_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<B, T>(&context, &input.scales);
 
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(&context, b));
 
-    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let x_buf = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<B, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -51,9 +53,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 /// Create test data for a qmv scenario: m×k * k×n = m×n

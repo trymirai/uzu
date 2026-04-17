@@ -1,5 +1,4 @@
 use uzu::{
-    ArrayElement,
     backends::common::{
         Backend, Context, Encoder, Kernels,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},

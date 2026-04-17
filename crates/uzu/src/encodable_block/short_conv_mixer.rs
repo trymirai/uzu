@@ -159,7 +159,7 @@ impl<B: Backend> ShortConvMixer<B> {
             }
         }
 
-        self.run_trie_conv(layer, token_parents, in_proj, out, encoder, sampling_start, trie_len);
+        self.run_trie_conv(layer, token_parents, in_proj, out, encoder, sampling_start, trie_len)?;
         self.set_suffix_state_valid_range(layer, sampling_start, trie_len);
         Ok(())
     }
@@ -217,9 +217,9 @@ impl<B: Backend> ShortConvMixer<B> {
         encoder: &mut Encoder<B>,
         sampling_start: usize,
         trie_len: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.model_dim == 0 || trie_len == 0 {
-            return;
+            return Ok(());
         }
 
         let elem_bytes = DataType::from(self.config.in_projection_config.activation_precision()).size_in_bytes();
@@ -231,25 +231,20 @@ impl<B: Backend> ShortConvMixer<B> {
         let in_proj_offset = sampling_start * in_proj_stride * elem_bytes;
         let out_offset = sampling_start * self.model_dim * elem_bytes;
         let suffix_state_offset = sampling_start * self.model_dim * state_stride * elem_bytes;
-        let base_state_offset = 0;
         let parents_offset = sampling_start * std::mem::size_of::<i32>();
-        let in_proj_view = in_proj.slice(in_proj_offset..in_proj_offset + trie_len * in_proj_stride * elem_bytes);
-        let base_state =
-            layer.conv_state.slice(base_state_offset..base_state_offset + layer.conv_state.as_buffer_range().1.len());
-        let parents = token_parents.slice(parents_offset..parents_offset + trie_len * std::mem::size_of::<i32>());
-        let mut out_view = out.slice(out_offset..out_offset + trie_len * self.model_dim * elem_bytes);
-        let mut suffix_state = layer
-            .suffix_state
-            .slice(suffix_state_offset..suffix_state_offset + trie_len * self.model_dim * state_stride * elem_bytes);
 
         self.short_conv_trie.encode(
-            &in_proj_view,
+            in_proj,
+            in_proj_offset as u32,
             &self.conv_weight,
             self.conv_bias.as_ref(),
-            &base_state,
-            &parents,
-            &mut out_view,
-            &mut suffix_state,
+            &layer.conv_state,
+            token_parents,
+            parents_offset as u32,
+            out,
+            out_offset as u32,
+            &mut layer.suffix_state,
+            suffix_state_offset as u32,
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -257,6 +252,7 @@ impl<B: Backend> ShortConvMixer<B> {
             self.model_dim as u32,
             encoder,
         );
+        Ok(())
     }
 
     fn run_decode_conv(

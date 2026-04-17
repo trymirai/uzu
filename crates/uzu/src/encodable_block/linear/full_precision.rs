@@ -128,18 +128,18 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.precision))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.precision))?;
         self.kernel.borrow_mut().encode(
             context,
             MatmulArguments {
-                a: input.clone(),
-                b: self.weights.clone(),
+                a: input,
+                b: &self.weights,
                 ab_scale: 1.0,
                 c: match self.bias.as_ref() {
-                    Some(bias) => MatmulArgumentC::Bias(bias.clone()),
+                    Some(bias) => MatmulArgumentC::Bias(bias),
                     None => MatmulArgumentC::None,
                 },
-                d: output.clone(),
+                d: &mut output,
                 batch_dim: batch_dim as u32,
                 input_dim: self.input_dim as u32,
                 output_dim: self.output_dim as u32,

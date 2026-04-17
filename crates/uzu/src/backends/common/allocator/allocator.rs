@@ -8,53 +8,53 @@ use std::{
 use super::{RangeAllocationType, RangeAllocator};
 use crate::backends::common::{Backend, Buffer, Context};
 
-struct AllocationInner<B: Backend> {
+pub struct Allocation<B: Backend> {
     allocator: Rc<Allocator<B>>,
     buffer: *const B::Buffer,
-    base_range: Range<usize>,
+    range: Range<usize>,
+    owner_range: Range<usize>,
+    owner_token: Rc<()>,
 }
 
-pub struct Allocation<B: Backend> {
-    inner: Rc<AllocationInner<B>>,
-    range: Range<usize>,
+impl<B: Backend> Allocation<B> {
+    pub fn as_buffer_range<'a>(&'a self) -> (&'a B::Buffer, Range<usize>) {
+        (unsafe { &*self.buffer }, self.range.clone())
+    }
+
+    pub fn view_at_offset(
+        &self,
+        byte_offset: usize,
+        byte_len: usize,
+    ) -> Self {
+        let start = self.range.start + byte_offset;
+        let end = start + byte_len;
+        assert!(end <= self.range.end, "Allocation view exceeds backing range");
+        Self {
+            allocator: self.allocator.clone(),
+            buffer: self.buffer,
+            range: start..end,
+            owner_range: self.owner_range.clone(),
+            owner_token: self.owner_token.clone(),
+        }
+    }
 }
 
 impl<B: Backend> Clone for Allocation<B> {
     fn clone(&self) -> Self {
         Self {
-            inner: self.inner.clone(),
+            allocator: self.allocator.clone(),
+            buffer: self.buffer,
             range: self.range.clone(),
-        }
-    }
-}
-
-impl<B: Backend> Allocation<B> {
-    pub fn as_buffer_range<'a>(&'a self) -> (&'a B::Buffer, Range<usize>) {
-        (unsafe { &*self.inner.buffer }, self.range.clone())
-    }
-
-    pub fn slice(
-        &self,
-        subrange: Range<usize>,
-    ) -> Self {
-        assert!(subrange.start <= subrange.end, "invalid allocation slice: {subrange:?}");
-        assert!(
-            subrange.end <= self.range.len(),
-            "allocation slice out of bounds: slice={subrange:?} len={}",
-            self.range.len()
-        );
-
-        Self {
-            inner: self.inner.clone(),
-            range: (self.range.start + subrange.start)..(self.range.start + subrange.end),
+            owner_range: self.owner_range.clone(),
+            owner_token: self.owner_token.clone(),
         }
     }
 }
 
 impl<B: Backend> Drop for Allocation<B> {
     fn drop(&mut self) {
-        if Rc::strong_count(&self.inner) == 1 {
-            self.inner.allocator.free(self.inner.buffer, self.inner.base_range.clone());
+        if Rc::strong_count(&self.owner_token) == 1 {
+            self.allocator.free(self.buffer, self.owner_range.clone())
         }
     }
 }
@@ -156,15 +156,14 @@ impl<B: Backend> Allocator<B> {
 
         allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
 
-        let inner = Rc::new(AllocationInner {
-            allocator: self.clone(),
-            buffer,
-            base_range: range.clone(),
-        });
+        let owner_range = range.clone();
 
         Ok(Allocation {
-            inner,
+            allocator: self.clone(),
+            buffer,
             range,
+            owner_range,
+            owner_token: Rc::new(()),
         })
     }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::array::{Array, ArrayContextExt};
 
 pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
@@ -36,12 +37,12 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
     pub(super) semantic_cardinality: usize,
     pub(super) residual_cardinality: usize,
     pub(super) kernel: <B::Kernels as Kernels>::AudioQuantizerDecodeKernel,
-    pub(super) semantic_codebook: crate::backends::common::Allocation<B>,
-    pub(super) semantic_out_proj: crate::backends::common::Allocation<B>,
-    pub(super) semantic_out_bias: crate::backends::common::Allocation<B>,
-    pub(super) residual_codebooks: crate::backends::common::Allocation<B>,
-    pub(super) residual_out_proj: crate::backends::common::Allocation<B>,
-    pub(super) residual_out_bias: crate::backends::common::Allocation<B>,
+    pub(super) semantic_codebook: Array<B>,
+    pub(super) semantic_out_proj: Array<B>,
+    pub(super) semantic_out_bias: Array<B>,
+    pub(super) residual_codebooks: Array<B>,
+    pub(super) residual_out_proj: Array<B>,
+    pub(super) residual_out_bias: Array<B>,
 }
 
 /// Ping-pong scratch pool for the sequential decode pipeline.
@@ -66,10 +67,11 @@ impl<B: Backend> DecodeWorkspace<B> {
         &self,
         encoder: &mut Encoder<B>,
         min_elements: usize,
-    ) -> crate::backends::common::Allocation<B> {
-        encoder
+    ) -> Array<B> {
+        let allocation = encoder
             .allocate_constant(min_elements * std::mem::size_of::<i32>())
-            .expect("Failed to allocate structured audio lengths")
+            .expect("Failed to allocate structured audio lengths");
+        unsafe { Array::from_allocation(allocation, 0, &[min_elements], DataType::I32) }
     }
 
     pub(super) fn next_scratch(
@@ -77,8 +79,10 @@ impl<B: Backend> DecodeWorkspace<B> {
         encoder: &mut Encoder<B>,
         shape: &[usize],
         data_type: DataType,
-    ) -> crate::backends::common::Allocation<B> {
-        encoder.allocate_scratch(size_for_shape(shape, data_type)).expect("Failed to allocate structured audio scratch")
+    ) -> Array<B> {
+        let allocation =
+            encoder.allocate_scratch(size_for_shape(shape, data_type)).expect("Failed to allocate scratch");
+        unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
 
     /// Clear both scratch slots, forcing the next call to allocate fresh
@@ -94,8 +98,8 @@ pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<
     pub(super) post_module_runtime: RefCell<Option<Rc<StructuredAudioPostModuleRuntime<B>>>>,
     pub(super) vocoder_graph: RefCell<Option<Rc<StructuredAudioDecoderGraph<B>>>>,
     pub(super) quantizer_resources: RefCell<Option<Rc<FishAudioQuantizerResources<B>>>>,
-    token_staging: RefCell<Option<crate::backends::common::Allocation<B>>>,
-    length_staging: RefCell<Option<crate::backends::common::Allocation<B>>>,
+    token_staging: RefCell<Option<Array<B>>>,
+    length_staging: RefCell<Option<Array<B>>>,
     pub(super) decode_workspace: DecodeWorkspace<B>,
 }
 
@@ -142,39 +146,31 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
     pub(super) fn token_staging(
         &self,
         min_elements: usize,
-    ) -> crate::backends::common::Allocation<B> {
+    ) -> Array<B> {
         let mut slot = self.token_staging.borrow_mut();
         if let Some(existing) = slot.as_ref() {
-            if existing.as_buffer_range().1.len() >= min_elements * std::mem::size_of::<u32>() {
+            if existing.num_elements() >= min_elements {
                 return existing.clone();
             }
         }
-        let allocation = crate::backends::common::allocation_helpers::create_allocation(
-            self.context.as_ref(),
-            &[min_elements],
-            DataType::U32,
-        );
-        *slot = Some(allocation.clone());
-        allocation
+        let array = self.context.create_array_uninitialized(&[min_elements], DataType::U32, "structured_audio_tokens");
+        *slot = Some(array.clone());
+        array
     }
 
     pub(super) fn length_staging(
         &self,
         min_elements: usize,
-    ) -> crate::backends::common::Allocation<B> {
+    ) -> Array<B> {
         let mut slot = self.length_staging.borrow_mut();
         if let Some(existing) = slot.as_ref() {
-            if existing.as_buffer_range().1.len() >= min_elements * std::mem::size_of::<i32>() {
+            if existing.num_elements() >= min_elements {
                 return existing.clone();
             }
         }
-        let allocation = crate::backends::common::allocation_helpers::create_allocation(
-            self.context.as_ref(),
-            &[min_elements],
-            DataType::I32,
-        );
-        *slot = Some(allocation.clone());
-        allocation
+        let array = self.context.create_array_uninitialized(&[min_elements], DataType::I32, "structured_audio_lengths");
+        *slot = Some(array.clone());
+        array
     }
 }
 

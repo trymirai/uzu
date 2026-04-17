@@ -1,4 +1,5 @@
 use crate::{
+    array::ArrayContextExt,
     backends::common::{Allocation, Backend},
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
@@ -20,16 +21,20 @@ impl<B: Backend> RopeBuffers<B> {
         let rope_max_sequence_length = model_shape.context_length();
 
         Self {
-            cosines: crate::backends::common::allocation_helpers::create_allocation(
-                context,
-                &[rope_max_sequence_length, rope_dim],
-                model_shape.activation_data_type(),
-            ),
-            sines: crate::backends::common::allocation_helpers::create_allocation(
-                context,
-                &[rope_max_sequence_length, rope_dim],
-                model_shape.activation_data_type(),
-            ),
+            cosines: context
+                .create_array_uninitialized(
+                    &[rope_max_sequence_length, rope_dim],
+                    model_shape.activation_data_type(),
+                    "rope_cosines",
+                )
+                .into_allocation(),
+            sines: context
+                .create_array_uninitialized(
+                    &[rope_max_sequence_length, rope_dim],
+                    model_shape.activation_data_type(),
+                    "rope_sines",
+                )
+                .into_allocation(),
         }
     }
 

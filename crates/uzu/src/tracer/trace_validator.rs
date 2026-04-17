@@ -17,8 +17,8 @@ use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
-    array::Array,
-    backends::common::{Allocation, Backend, Encoder, allocation_helpers, kernel::kv_cache_update::KVCacheUpdate},
+    array::{Array, ArrayContextExt, allocation_as_slice},
+    backends::common::{Allocation, Backend, Buffer, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{DecoderArguments, EncodingParameters, Sampling},
@@ -260,11 +260,14 @@ impl<B: Backend> TraceValidator<B> {
 
         let mut encoder =
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-        let logits = allocation_helpers::create_allocation(
-            ctx.context.as_ref(),
-            &ctx.model_shape.logits_shape(token_ids.len()),
-            ctx.model_shape.activation_data_type(),
-        );
+        let logits = ctx
+            .context
+            .create_array_uninitialized(
+                &ctx.model_shape.logits_shape(token_ids.len()),
+                ctx.model_shape.activation_data_type(),
+                "trace_logits",
+            )
+            .into_allocation();
         {
             let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
             ctx.executables
@@ -675,7 +678,7 @@ impl<B: Backend> TraceValidator<B> {
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
-        let produced_slice = allocation_helpers::copy_allocation_to_slice::<Precision, B>(produced_allocation);
+        let produced_slice = allocation_as_slice::<Precision, B>(produced_allocation).to_vec();
         let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), produced_slice)
             .expect("Failed to reshape allocation");
 
@@ -947,7 +950,7 @@ impl<B: Backend> TraceValidator<B> {
         shape: &[usize],
     ) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
-        let logits = allocation_helpers::copy_allocation_to_slice::<Precision, B>(logits);
+        let logits = allocation_as_slice::<Precision, B>(logits).to_vec();
         let logits = ArrayView::from_shape(IxDyn(shape), logits).expect("invalid logits trace shape");
         sampler.sample(logits)
     }

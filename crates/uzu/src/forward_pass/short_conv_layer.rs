@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Buffer, allocation_helpers},
+    backends::common::{Allocation, Backend, Encoder},
 };
 
 pub struct ShortConvLayer<B: Backend> {
@@ -23,12 +23,6 @@ pub struct ShortConvLayer<B: Backend> {
 }
 
 impl<B: Backend> ShortConvLayer<B> {
-    pub fn zero(&mut self) {
-        allocation_helpers::fill_allocation(&mut self.conv_state, 0);
-        allocation_helpers::fill_allocation(&mut self.suffix_state, 0);
-        self.clear_suffix_state_valid_range();
-    }
-
     pub fn clear_suffix_state_valid_range(&self) {
         self.suffix_state_valid_start.set(0);
         self.suffix_state_valid_len.set(0);
@@ -46,6 +40,7 @@ impl<B: Backend> ShortConvLayer<B> {
     pub fn commit_from_suffix_state_if_valid(
         &mut self,
         commit_index: usize,
+        encoder: &mut Encoder<B>,
     ) {
         let start = self.suffix_state_valid_start.get();
         let len = self.suffix_state_valid_len.get();
@@ -65,19 +60,14 @@ impl<B: Backend> ShortConvLayer<B> {
         let elem_bytes = self.data_type.size_in_bytes();
         let bytes_per_token = model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
         let src_start = commit_index.saturating_mul(bytes_per_token);
-        let src_end = src_start.saturating_add(bytes_per_token);
         let (src_buffer, src_range) = self.suffix_state.as_buffer_range();
         let (dst_buffer, dst_range) = self.conv_state.as_buffer_range();
-        unsafe {
-            let src = std::slice::from_raw_parts(
-                (src_buffer.cpu_ptr().as_ptr() as *const u8).add(src_range.start + src_start),
-                src_end - src_start,
-            );
-            let dst = std::slice::from_raw_parts_mut(
-                (dst_buffer.cpu_ptr().as_ptr() as *mut u8).add(dst_range.start),
-                dst_range.len(),
-            );
-            dst.copy_from_slice(src);
-        }
+        let copy_len = bytes_per_token.min(dst_range.len());
+        encoder.encode_copy(
+            src_buffer,
+            src_range.start + src_start..src_range.start + src_start + copy_len,
+            dst_buffer,
+            dst_range.start..dst_range.start + copy_len,
+        );
     }
 }

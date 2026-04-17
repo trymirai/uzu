@@ -62,7 +62,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     kernel.encode(
         &fused_up_allocation,
         &mut hidden_allocation,
-        None::<&B::Buffer>,
+        None::<&uzu::backends::common::Allocation<B>>,
         input.h,
         input.m,
         input.act_type,

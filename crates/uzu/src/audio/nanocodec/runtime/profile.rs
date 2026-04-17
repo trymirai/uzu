@@ -1,6 +1,7 @@
 use std::sync::mpsc::Receiver;
 
 use super::*;
+use crate::array::allocation_as_slice;
 
 pub struct SubmittedDecodedPaddedAudio<B: Backend> {
     pub(in crate::audio::nanocodec::runtime) output: crate::backends::common::Allocation<B>,
@@ -29,20 +30,10 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
             })?;
         }
         let samples: Vec<f32> = match self.data_type {
-            DataType::F32 => {
-                crate::backends::common::allocation_helpers::copy_allocation_to_slice::<f32, B>(&self.output).to_vec()
-            },
-            DataType::F16 => {
-                crate::backends::common::allocation_helpers::copy_allocation_to_slice::<half::f16, B>(&self.output)
-                    .iter()
-                    .map(|&v| f32::from(v))
-                    .collect()
-            },
+            DataType::F32 => allocation_as_slice::<f32, B>(&self.output).to_vec(),
+            DataType::F16 => allocation_as_slice::<half::f16, B>(&self.output).iter().map(|&v| f32::from(v)).collect(),
             DataType::BF16 => {
-                crate::backends::common::allocation_helpers::copy_allocation_to_slice::<half::bf16, B>(&self.output)
-                    .iter()
-                    .map(|&v| f32::from(v))
-                    .collect()
+                allocation_as_slice::<half::bf16, B>(&self.output).iter().map(|&v| f32::from(v)).collect()
             },
             dt => return Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
         };

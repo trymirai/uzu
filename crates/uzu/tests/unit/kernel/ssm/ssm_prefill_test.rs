@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -108,8 +107,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let c_array = context.create_array_from(&[input.c.len()], &input.c, "c");
     let d_array = context.create_array_from(&[input.d.len()], &input.d, "d");
     let z_array = context.create_array_from(&[input.z.len()], &input.z, "z");
-    let state_array = context.create_array_from(&[input.state.len()], &input.state, "state");
-    let y_array = context.create_array_uninitialized(&[total_x], T::data_type(), "y");
+    let mut state = context.create_array_from(&[input.state.len()], &input.state, "state").into_allocation();
+    let mut y = context.create_array_uninitialized(&[total_x], T::data_type(), "y").into_allocation();
 
     let x_strides: Vec<u32> = input.x_strides.iter().map(|&s| s as u32).collect();
     let dt_strides: Vec<u32> = input.dt_strides.iter().map(|&s| s as u32).collect();
@@ -122,14 +121,14 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
             let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
                 .expect("Failed to create SSDPrefillKernel");
             kernel.encode(
-                x_array.buffer().borrow().deref(),
-                dt_array.buffer().borrow().deref(),
-                b_array.buffer().borrow().deref(),
-                c_array.buffer().borrow().deref(),
-                d_array.buffer().borrow().deref(),
-                z_array.buffer().borrow().deref(),
-                state_array.buffer().borrow_mut().deref_mut(),
-                y_array.buffer().borrow_mut().deref_mut(),
+                x_array.allocation(),
+                dt_array.allocation(),
+                b_array.allocation(),
+                c_array.allocation(),
+                d_array.allocation(),
+                z_array.allocation(),
+                &mut state,
+                &mut y,
                 input.suffix_len as u32,
                 input.group_size as u32,
                 input.state_dim as u32,
@@ -147,14 +146,14 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
                 <<B as Backend>::Kernels as Kernels>::SSDPrefillSequentialKernel::new(&context, T::data_type())
                     .expect("Failed to create SSDPrefillSequentialKernel");
             kernel.encode(
-                x_array.buffer().borrow().deref(),
-                dt_array.buffer().borrow().deref(),
-                b_array.buffer().borrow().deref(),
-                c_array.buffer().borrow().deref(),
-                d_array.buffer().borrow().deref(),
-                z_array.buffer().borrow().deref(),
-                state_array.buffer().borrow_mut().deref_mut(),
-                y_array.buffer().borrow_mut().deref_mut(),
+                x_array.allocation(),
+                dt_array.allocation(),
+                b_array.allocation(),
+                c_array.allocation(),
+                d_array.allocation(),
+                z_array.allocation(),
+                &mut state,
+                &mut y,
                 input.suffix_len as u32,
                 input.group_size as u32,
                 input.state_dim as u32,
@@ -171,8 +170,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        y: y_array.as_slice().to_vec(),
-        state: state_array.as_slice().to_vec(),
+        y: crate::common::helpers::allocation_to_vec(&y),
+        state: crate::common::helpers::allocation_to_vec(&state),
     }
 }
 

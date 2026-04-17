@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    ops::{Deref, DerefMut},
 };
 
 use half::bf16;
@@ -31,17 +30,17 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let input_array = ctx.create_array_from(&[input.len()], input, "");
     let weights_array = ctx.create_array_from(&[weights.len()], weights, "");
     let bias_array = ctx.create_array_from(&[bias.len()], bias, "");
-    let ids_array = ctx.create_array_uninitialized(&[t * k], DataType::I32, "");
-    let probs_array = ctx.create_array_uninitialized(&[t * k], T::data_type(), "");
+    let mut ids = ctx.create_array_uninitialized(&[t * k], DataType::I32, "").into_allocation();
+    let mut probs = ctx.create_array_uninitialized(&[t * k], T::data_type(), "").into_allocation();
 
     let kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, T::data_type()).expect("kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_array.buffer().borrow().deref(),
-        weights_array.buffer().borrow().deref(),
-        bias_array.buffer().borrow().deref(),
-        ids_array.buffer().borrow_mut().deref_mut(),
-        probs_array.buffer().borrow_mut().deref_mut(),
+        input_array.allocation(),
+        weights_array.allocation(),
+        bias_array.allocation(),
+        &mut ids,
+        &mut probs,
         t as u32,
         d_model as u32,
         e as u32,
@@ -51,7 +50,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (ids_array.as_slice().to_vec(), probs_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&ids),
+        crate::common::helpers::allocation_to_vec(&probs),
+    )
 }
 
 fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(

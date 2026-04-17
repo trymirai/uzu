@@ -1,5 +1,3 @@
-use std::ops::{Deref, DerefMut};
-
 use half::bf16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -30,15 +28,15 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let tok2row_array = context.create_array_from(&[input.tok2row.len()], &input.tok2row, "");
     let probs_array = context.create_array_from(&[input.probs.len()], &input.probs, "");
     let y_partial_array = context.create_array_from(&[input.y_partial.len()], &input.y_partial, "");
-    let y_out_array = context.create_array_uninitialized(&[input.t * input.d_model], T::data_type(), "");
+    let mut y_out = context.create_array_uninitialized(&[input.t * input.d_model], T::data_type(), "").into_allocation();
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&context, DataType::BF16).expect("finalize kernel");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     finalize.encode(
-        tok2row_array.buffer().borrow().deref(),
-        probs_array.buffer().borrow().deref(),
-        y_partial_array.buffer().borrow().deref(),
-        y_out_array.buffer().borrow_mut().deref_mut(),
+        tok2row_array.allocation(),
+        probs_array.allocation(),
+        y_partial_array.allocation(),
+        &mut y_out,
         input.t as u32,
         input.d_model as u32,
         input.k as u32,
@@ -46,7 +44,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    y_out_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&y_out)
 }
 
 fn test_finalize_internal(

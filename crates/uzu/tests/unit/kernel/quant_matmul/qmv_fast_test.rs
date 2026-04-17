@@ -9,7 +9,7 @@ use uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Buffer, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
         },
         cpu::Cpu,
@@ -18,20 +18,22 @@ use uzu::{
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{
-    common::{helpers::alloc_buffer_with_data, type_short_name},
+    common::{
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+        type_short_name,
+    },
     uzu_bench, uzu_test,
 };
 
 fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
 
-    let w_buf = alloc_buffer_with_data::<Cpu, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<Cpu, T>(&context, &input.scales);
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<Cpu, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<Cpu, T>(&context, b));
-    let x_buf = alloc_buffer_with_data::<Cpu, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let w_buf = alloc_allocation_with_data::<Cpu, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<Cpu, T>(&context, &input.scales);
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<Cpu, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<Cpu, T>(&context, b));
+    let x_buf = alloc_allocation_with_data::<Cpu, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<Cpu, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -59,21 +61,18 @@ fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
-    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let w_buf = alloc_allocation_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<B, T>(&context, &input.scales);
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(&context, b));
+    let x_buf = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<B, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -94,7 +93,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         bias_buf.as_ref(),
         &x_buf,
         &mut y_buf,
-        None::<&B::Buffer>,
+        None::<&Allocation<B>>,
         input.k,
         input.n,
         input.m,
@@ -103,9 +102,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -351,22 +348,22 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
         )
         .unwrap();
 
-        let w_buf = alloc_buffer_with_data::<B, u32>(
+        let w_buf = alloc_allocation_with_data::<B, u32>(
             context,
             &gen_random::<u32, _>(&mut rng, 0..u32::MAX, n * k * bits as usize / 32),
         );
-        let scales_buf = alloc_buffer_with_data::<B, T>(
+        let scales_buf = alloc_allocation_with_data::<B, T>(
             context,
             &gen_random::<f32, _>(&mut rng, 0.01..1.0, n * num_groups)
                 .iter()
                 .map(|&v| T::from(v).unwrap())
                 .collect::<Vec<_>>(),
         );
-        let x_buf = alloc_buffer_with_data::<B, T>(
+        let x_buf = alloc_allocation_with_data::<B, T>(
             context,
             &gen_random::<f32, _>(&mut rng, -1.0..1.0, m * k).iter().map(|&v| T::from(v).unwrap()).collect::<Vec<_>>(),
         );
-        let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
+        let mut y_buf = alloc_allocation::<B, T>(context, m * n);
 
         let zp_buf = use_zero_points.then(|| {
             let zp_stride = if bits == 4 {
@@ -374,10 +371,10 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
             } else {
                 num_groups
             };
-            alloc_buffer_with_data::<B, u8>(context, &gen_random::<u8, _>(&mut rng, 0..u8::MAX, n * zp_stride))
+            alloc_allocation_with_data::<B, u8>(context, &gen_random::<u8, _>(&mut rng, 0..u8::MAX, n * zp_stride))
         });
         let bias_buf = use_mlx_quant.then(|| {
-            alloc_buffer_with_data::<B, T>(
+            alloc_allocation_with_data::<B, T>(
                 context,
                 &gen_random::<f32, _>(&mut rng, -0.5..0.5, n * num_groups)
                     .iter()
@@ -398,7 +395,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                         bias_buf.as_ref(),
                         &x_buf,
                         &mut y_buf,
-                        None::<&B::Buffer>,
+                        None::<&Allocation<B>>,
                         k as u32,
                         n as u32,
                         m as u32,

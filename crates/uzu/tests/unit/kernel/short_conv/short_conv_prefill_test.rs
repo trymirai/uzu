@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -40,22 +39,23 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let out_array = context.create_array_uninitialized(&[out_size], T::data_type(), "");
+    let mut out = context
+        .create_array_uninitialized(&[out_size], T::data_type(), "")
+        .into_allocation();
 
     let state_out_size = input.model_dim as usize * input.state_stride as usize;
-    let state_out_array = context.create_array_uninitialized(&[state_out_size], T::data_type(), "");
-
-    let bias_buf_rc = b_array.as_ref().map(|b| b.buffer());
-    let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
+    let mut state_out = context
+        .create_array_uninitialized(&[state_out_size], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        padded_array.buffer().borrow().deref(),
-        in_proj_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        bias_buf_borrow.as_deref(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        state_out_array.buffer().borrow_mut().deref_mut(),
+        padded_array.allocation(),
+        in_proj_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        &mut out,
+        &mut state_out,
         input.suffix_len,
         input.kernel_size,
         input.in_proj_stride,
@@ -65,7 +65,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_array.as_slice().to_vec(), state_out_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&out),
+        crate::common::helpers::allocation_to_vec(&state_out),
+    )
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(

@@ -4,8 +4,8 @@ use ndarray::ArrayView2;
 
 use crate::{
     DataType,
-    array::size_for_shape,
-    backends::common::{Allocation, Backend, allocation_helpers},
+    array::{Array, ArrayContextExt, size_for_shape},
+    backends::common::{Allocation, Backend},
     forward_pass::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
@@ -33,10 +33,10 @@ pub struct LanguageModelGeneratorModeState<B: Backend> {
 pub struct ForwardPassState<B: Backend> {
     context: Rc<B::Context>,
     model_shape: ModelShape,
-    token_ids: Allocation<B>,
-    pub token_subtrie_ranges: Option<Allocation<B>>,
-    token_positions: Allocation<B>,
-    token_parents: Allocation<B>,
+    token_ids: Array<B>,
+    pub token_subtrie_ranges: Option<Array<B>>,
+    token_positions: Array<B>,
+    token_parents: Array<B>,
     pub shared_buffers: Rc<SharedBuffers<B>>,
     mode: ForwardPassMode<B>,
 }
@@ -45,20 +45,16 @@ impl<B: Backend> ForwardPassState<B> {
     fn init_token_ids(
         context: &B::Context,
         token_ids: &[u64],
-    ) -> Allocation<B> {
-        let mut allocation = allocation_helpers::create_allocation(context, &[token_ids.len()], DataType::U64);
-        allocation_helpers::copy_slice_to_allocation(&mut allocation, token_ids);
-        allocation
+    ) -> Array<B> {
+        context.create_array_from(&[token_ids.len()], token_ids, "forward_pass_token_ids")
     }
 
     fn init_token_positions(
         context: &B::Context,
         token_positions: &[usize],
-    ) -> Allocation<B> {
+    ) -> Array<B> {
         let positions_i32: Box<[i32]> = token_positions.iter().map(|p| *p as i32).collect();
-        let mut allocation = allocation_helpers::create_allocation(context, &[token_positions.len()], DataType::I32);
-        allocation_helpers::copy_slice_to_allocation(&mut allocation, positions_i32.as_ref());
-        allocation
+        context.create_array_from(&[token_positions.len()], positions_i32.as_ref(), "forward_pass_token_positions")
     }
 
     fn init_token_parents(
@@ -66,7 +62,7 @@ impl<B: Backend> ForwardPassState<B> {
         token_positions: &[usize],
         sampling_start: usize,
         sampling_length: usize,
-    ) -> Allocation<B> {
+    ) -> Array<B> {
         let suffix_length = token_positions.len();
         let mut parents = vec![-1i32; suffix_length];
 
@@ -98,9 +94,7 @@ impl<B: Backend> ForwardPassState<B> {
             }
         }
 
-        let mut allocation = allocation_helpers::create_allocation(context, &[suffix_length], DataType::I32);
-        allocation_helpers::copy_slice_to_allocation(&mut allocation, &parents);
-        allocation
+        context.create_array_from(&[suffix_length], &parents, "forward_pass_token_parents")
     }
 
     fn init_token_subtrie_ranges(
@@ -108,16 +102,16 @@ impl<B: Backend> ForwardPassState<B> {
         model_shape: &ModelShape,
         suffix_length: usize,
         token_subtrie_ranges: &[[u32; 3]],
-    ) -> Allocation<B> {
+    ) -> Array<B> {
         let shape = model_shape.subtrie_ranges_shape(suffix_length);
-        let mut allocation = allocation_helpers::create_zeroed_allocation(context, &shape, DataType::U32);
+        let mut array = context.create_array_zeros(&shape, DataType::U32, "forward_pass_token_subtrie_ranges");
         let source = ArrayView2::from_shape(
             (token_subtrie_ranges.len(), 3),
             bytemuck::cast_slice::<_, u32>(token_subtrie_ranges),
         )
         .unwrap();
-        allocation_helpers::copy_view_to_allocation(&mut allocation, source);
-        allocation
+        array.copy_from_view(source);
+        array
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -129,8 +123,8 @@ impl<B: Backend> ForwardPassState<B> {
         token_ids: &[u64],
         token_subtrie_ranges: Option<&[[u32; 3]]>,
         token_positions: &[usize],
-        token_ids_allocation: Option<Allocation<B>>,
-        token_positions_allocation: Option<Allocation<B>>,
+        token_ids_allocation: Option<Array<B>>,
+        token_positions_allocation: Option<Array<B>>,
         active_row_count: usize,
         sampling_start: usize,
         sampling_length: usize,
@@ -208,23 +202,19 @@ impl<B: Backend> ForwardPassState<B> {
     }
 
     pub fn token_ids(&self) -> &Allocation<B> {
-        &self.token_ids
-    }
-
-    pub fn token_ids_mut(&mut self) -> &mut Allocation<B> {
-        &mut self.token_ids
+        self.token_ids.allocation()
     }
 
     pub fn token_positions(&self) -> &Allocation<B> {
-        &self.token_positions
+        self.token_positions.allocation()
     }
 
     pub fn token_parents(&self) -> &Allocation<B> {
-        &self.token_parents
+        self.token_parents.allocation()
     }
 
     pub fn token_subtrie_ranges(&self) -> Option<&Allocation<B>> {
-        self.token_subtrie_ranges.as_ref()
+        self.token_subtrie_ranges.as_ref().map(Array::allocation)
     }
 
     pub fn rope_cosines(
@@ -272,18 +262,6 @@ impl<B: Backend> ForwardPassState<B> {
             ForwardPassMode::Classifier {
                 active_row_count,
             } => *active_row_count,
-        }
-    }
-
-    pub fn set_active_row_count(
-        &mut self,
-        active_row_count: usize,
-    ) {
-        match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => state.active_row_count = active_row_count,
-            ForwardPassMode::Classifier {
-                active_row_count: state_active_row_count,
-            } => *state_active_row_count = active_row_count,
         }
     }
 

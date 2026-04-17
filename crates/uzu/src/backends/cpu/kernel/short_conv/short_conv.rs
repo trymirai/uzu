@@ -189,12 +189,16 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
 #[variants(T, f32, f16, bf16)]
 pub fn short_conv_trie<T: ArrayElement + Float>(
     in_proj: *const T,
+    in_proj_offset: u32,
     w: *const T,
     #[optional(has_bias)] b: Option<*const T>,
     base_state: *const T,
     parents: *const i32,
+    parents_offset: u32,
     out: *mut T,
+    out_offset: u32,
     suffix_state: *mut T,
+    suffix_state_offset: u32,
     suffix_len: u32,
     kernel_size: u32,
     in_proj_stride: u32,
@@ -207,8 +211,17 @@ pub fn short_conv_trie<T: ArrayElement + Float>(
     let in_proj_stride = in_proj_stride as usize;
     let state_stride = state_stride as usize;
     let model_dim = model_dim as usize;
+    let in_proj_offset = in_proj_offset as usize;
+    let parents_offset = parents_offset as usize / std::mem::size_of::<i32>();
+    let out_offset = out_offset as usize;
+    let suffix_state_offset = suffix_state_offset as usize;
 
     unsafe {
+        let in_proj = in_proj.add(in_proj_offset);
+        let parents = parents.add(parents_offset);
+        let out = out.add(out_offset);
+        let suffix_state = suffix_state.add(suffix_state_offset);
+
         for channel_idx in 0..model_dim {
             let tap_count = kernel_size.saturating_sub(1);
             let w_row = w.add(channel_idx * kernel_size);

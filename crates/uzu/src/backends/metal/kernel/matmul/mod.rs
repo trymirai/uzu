@@ -136,14 +136,14 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'_, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let MatmulArguments {
             a,
             b,
             ab_scale,
             c,
-            mut d,
+            d,
             batch_dim,
             input_dim,
             output_dim,
@@ -161,8 +161,8 @@ impl MatmulMetalKernel {
         self.get_or_create_gemv(context, specialization)?.encode(
             &b,
             &a,
-            output_bias.as_ref(),
-            &mut d,
+            output_bias,
+            d,
             input_dim,
             output_dim,
             input_dim,
@@ -179,14 +179,14 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'_, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let MatmulArguments {
             a,
             b,
             ab_scale,
             c,
-            mut d,
+            d,
             batch_dim,
             input_dim,
             output_dim,
@@ -217,7 +217,7 @@ impl MatmulMetalKernel {
         kernel.encode(
             &a,
             &b,
-            &mut d,
+            d,
             std::slice::from_ref(&params),
             threadgroups_per_row,
             threadgroups_per_column,
@@ -228,8 +228,8 @@ impl MatmulMetalKernel {
         if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(
                 None::<&crate::backends::common::Allocation<Metal>>,
-                &bias,
-                &mut d,
+                bias,
+                d,
                 output_dim,
                 batch_dim * output_dim,
                 encoder,
@@ -243,14 +243,14 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'_, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let MatmulArguments {
             a,
             b,
             ab_scale,
             c,
-            mut d,
+            d,
             batch_dim,
             input_dim,
             output_dim,
@@ -291,13 +291,13 @@ impl MatmulMetalKernel {
         };
 
         let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
-        kernel.encode(&a, &b, &mut d, std::slice::from_ref(&params), group_count_x, group_count_y, ab_scale, encoder);
+        kernel.encode(&a, &b, d, std::slice::from_ref(&params), group_count_x, group_count_y, ab_scale, encoder);
 
         if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(
                 None::<&crate::backends::common::Allocation<Metal>>,
-                &bias,
-                &mut d,
+                bias,
+                d,
                 output_dim,
                 batch_dim * output_dim,
                 encoder,
@@ -321,7 +321,7 @@ impl MatmulMetalKernel {
     pub fn encode_with_path(
         &mut self,
         context: &MetalContext,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'_, Metal>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) {
@@ -375,7 +375,7 @@ impl MatmulKernel for MatmulMetalKernel {
     fn encode(
         &mut self,
         context: &MetalContext,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
         if arguments.batch_dim <= max_gemv_batch_threshold() {

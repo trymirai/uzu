@@ -13,7 +13,7 @@ use uzu::{
 };
 
 use crate::common::{
-    helpers::{alloc_allocation, alloc_allocation_with_data, alloc_buffer_with_data, create_context},
+    helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
     perf::run_perf_with_warmup,
 };
 
@@ -40,8 +40,8 @@ fn test_moe_e2e_decode_perf() {
 
             // Buffers (simplified - just key buffers for timing)
             let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
-            let router_w_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_w);
-            let router_b_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_b);
+            let router_w_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_w);
+            let router_b_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_b);
             let mut topk_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
             let mut topk_probs_buf = alloc_allocation::<B, bf16>(&ctx, t * k);
 
@@ -97,8 +97,8 @@ fn test_moe_e2e_prefill_perf() {
 
             // Buffers (simplified - just key buffers for timing)
             let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
-            let router_w_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_w);
-            let router_b_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_b);
+            let router_w_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_w);
+            let router_b_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_b);
             let mut topk_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
             let mut topk_probs_buf = alloc_allocation::<B, bf16>(&ctx, t * k);
 
@@ -152,8 +152,8 @@ fn test_moe_pipeline_breakdown_decode() {
         let router_b: Vec<bf16> = (0..e).map(|_| bf16::from_f32(rng.random_range(-0.1..0.1))).collect();
 
         let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
-        let router_w_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_w);
-        let router_b_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_b);
+        let router_w_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_w);
+        let router_b_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_b);
         let mut topk_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
         let mut topk_probs_buf = alloc_allocation::<B, bf16>(&ctx, t * k);
         let num_blocks = ((t + 255) / 256).max(1);
@@ -190,10 +190,10 @@ fn test_moe_pipeline_breakdown_decode() {
         let up_biases: Vec<bf16> = (0..e * 2 * d_ff).map(|_| bf16::from_f32(rng.random_range(-0.1..0.1))).collect();
         let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.1..0.1))).collect();
 
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
         // Experts tiling buffers for two-pass
         const K_TILE: usize = 64;

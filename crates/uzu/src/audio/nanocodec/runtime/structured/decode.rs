@@ -1,27 +1,25 @@
 use std::sync::mpsc::channel;
 
 use super::*;
-use crate::audio::nanocodec::runtime::profile::SubmittedDecodedPaddedAudio;
+use crate::{array::Array, audio::nanocodec::runtime::profile::SubmittedDecodedPaddedAudio};
 
 impl StructuredAudioCodecGraph {
     fn run_residual_unit_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         encoder: &mut Encoder<B>,
-        input: &crate::backends::common::Allocation<B>,
+        input: &Array<B>,
         unit: &StructuredAudioResidualUnit<B>,
         lengths: &[i32],
-        lengths_array: &crate::backends::common::Allocation<B>,
+        lengths_array: &Array<B>,
         batch_size: usize,
         channels: usize,
         seq_len: usize,
         kernels: &StructuredAudioKernelCache<B>,
-    ) -> AudioResult<crate::backends::common::Allocation<B>> {
+    ) -> AudioResult<Array<B>> {
         let ws = &resources.decode_workspace;
-        let data_type = self.vocoder_data_type;
-
         let residual = input.clone();
-        let res_snake1 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], data_type);
+        let res_snake1 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
         let x = snake1d_enqueue(
             encoder,
             input,
@@ -30,10 +28,10 @@ impl StructuredAudioCodecGraph {
             batch_size,
             channels,
             seq_len,
-            data_type,
+            self.vocoder_data_type,
             kernels,
         )?;
-        let res_conv1 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], data_type);
+        let res_conv1 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
         let x = causal_conv1d_grouped_enqueue(
             encoder,
             &x,
@@ -44,10 +42,10 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
-            data_type,
+            self.vocoder_data_type,
             kernels,
         )?;
-        let res_snake2 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], data_type);
+        let res_snake2 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
         let x = snake1d_enqueue(
             encoder,
             &x,
@@ -56,10 +54,10 @@ impl StructuredAudioCodecGraph {
             batch_size,
             channels,
             seq_len,
-            data_type,
+            self.vocoder_data_type,
             kernels,
         )?;
-        let res_conv2 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], data_type);
+        let res_conv2 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
         causal_conv1d_grouped_residual_enqueue(
             encoder,
             &x,
@@ -70,7 +68,7 @@ impl StructuredAudioCodecGraph {
             lengths_array,
             batch_size,
             seq_len,
-            data_type,
+            self.vocoder_data_type,
             kernels,
         )
     }
@@ -94,12 +92,9 @@ impl StructuredAudioCodecGraph {
                 })
                 .collect::<AudioResult<Vec<_>>>()?;
             let context = resources.context().clone();
+            let output = context.create_array_zeros(&[0], DataType::F32, "structured_audio_empty_output");
             return Ok(SubmittedDecodedPaddedAudio {
-                output: crate::backends::common::allocation_helpers::create_allocation(
-                    context.as_ref(),
-                    &[0],
-                    DataType::F32,
-                ),
+                output: output.into_allocation(),
                 data_type: DataType::F32,
                 channels: 1,
                 frames: out_lengths.iter().copied().max().unwrap_or(0),
@@ -135,7 +130,7 @@ impl StructuredAudioCodecGraph {
             frames,
         )?;
         let _ = codebooks;
-        x = self.apply_post_module_enqueued(resources, &mut encoder, &quantized_nsc, lengths, batch_size, frames)?;
+        x = self.apply_post_module_enqueued(resources, &mut encoder, quantized_nsc, lengths, batch_size, frames)?;
 
         let vocoder_graph = self.vocoder_graph(resources)?;
         let kernels = resources.kernels(self.vocoder_data_type)?;
@@ -143,10 +138,8 @@ impl StructuredAudioCodecGraph {
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
         let mut lengths_array = ws.lengths_array(&mut encoder, lengths_i32.len());
-        crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut lengths_array, &lengths_i32);
+        lengths_array.as_slice_mut::<i32>()[..lengths_i32.len()].copy_from_slice(&lengths_i32);
         let mut next_lengths_array = ws.lengths_array(&mut encoder, lengths_i32.len());
-
-        let data_type = self.vocoder_data_type;
 
         for (block_index, (trans_conv, convnext)) in vocoder_graph.upsample_blocks.iter().enumerate() {
             if trans_conv.cin != current_channels {
@@ -159,12 +152,10 @@ impl StructuredAudioCodecGraph {
                 .checked_mul(trans_conv.stride)
                 .ok_or(AudioError::Runtime("structured audio upsampler frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, trans_conv.stride)?;
-            crate::backends::common::allocation_helpers::copy_slice_to_allocation(
-                &mut next_lengths_array,
-                &next_lengths_i32,
-            );
+            next_lengths_array.as_slice_mut::<i32>()[..next_lengths_i32.len()].copy_from_slice(&next_lengths_i32);
 
-            let up_tconv = ws.next_scratch(&mut encoder, &[batch_size, trans_conv.cout, next_frames], data_type);
+            let up_tconv =
+                ws.next_scratch(&mut encoder, &[batch_size, trans_conv.cout, next_frames], self.vocoder_data_type);
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &mut encoder,
                 &x,
@@ -176,13 +167,13 @@ impl StructuredAudioCodecGraph {
                 next_frames,
                 x_layout,
                 &next_lengths_array,
-                data_type,
+                self.vocoder_data_type,
                 &kernels,
             )
             .map_err(|err| {
                 AudioError::Runtime(format!(
                     "structured audio upsample block {block_index} transpose_conv failed: {err} (x_len={}, batch_size={}, cin={}, seq_len_in={}, seq_len_out={})",
-                    x.as_buffer_range().1.len(),
+                    x.size(),
                     batch_size,
                     trans_conv.cin,
                     current_frames,
@@ -219,8 +210,11 @@ impl StructuredAudioCodecGraph {
                 vocoder_graph.first_conv.cin, current_channels
             )));
         }
-        let dec_first_conv =
-            ws.next_scratch(&mut encoder, &[batch_size, vocoder_graph.first_conv.cout, current_frames], data_type);
+        let dec_first_conv = ws.next_scratch(
+            &mut encoder,
+            &[batch_size, vocoder_graph.first_conv.cout, current_frames],
+            self.vocoder_data_type,
+        );
         x = causal_conv1d_grouped_enqueue(
             &mut encoder,
             &x,
@@ -231,7 +225,7 @@ impl StructuredAudioCodecGraph {
             &lengths_array,
             batch_size,
             current_frames,
-            data_type,
+            self.vocoder_data_type,
             &kernels,
         )?;
         current_channels = vocoder_graph.first_conv.cout;
@@ -243,7 +237,8 @@ impl StructuredAudioCodecGraph {
                     block.trans_conv.cin, current_channels
                 )));
             }
-            let dec_snake = ws.next_scratch(&mut encoder, &[batch_size, current_channels, current_frames], data_type);
+            let dec_snake =
+                ws.next_scratch(&mut encoder, &[batch_size, current_channels, current_frames], self.vocoder_data_type);
             x = snake1d_enqueue(
                 &mut encoder,
                 &x,
@@ -252,7 +247,7 @@ impl StructuredAudioCodecGraph {
                 batch_size,
                 current_channels,
                 current_frames,
-                data_type,
+                self.vocoder_data_type,
                 &kernels,
             )?;
 
@@ -260,12 +255,13 @@ impl StructuredAudioCodecGraph {
                 .checked_mul(block.trans_conv.stride)
                 .ok_or(AudioError::Runtime("structured audio decoder frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, block.trans_conv.stride)?;
-            crate::backends::common::allocation_helpers::copy_slice_to_allocation(
-                &mut next_lengths_array,
-                &next_lengths_i32,
-            );
+            next_lengths_array.as_slice_mut::<i32>()[..next_lengths_i32.len()].copy_from_slice(&next_lengths_i32);
 
-            let dec_tconv = ws.next_scratch(&mut encoder, &[batch_size, block.trans_conv.cout, next_frames], data_type);
+            let dec_tconv = ws.next_scratch(
+                &mut encoder,
+                &[batch_size, block.trans_conv.cout, next_frames],
+                self.vocoder_data_type,
+            );
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &mut encoder,
                 &x,
@@ -277,7 +273,7 @@ impl StructuredAudioCodecGraph {
                 next_frames,
                 SequenceLayout::Ncs,
                 &next_lengths_array,
-                data_type,
+                self.vocoder_data_type,
                 &kernels,
             )?;
 
@@ -324,7 +320,8 @@ impl StructuredAudioCodecGraph {
             )?;
         }
 
-        let final_snake = ws.next_scratch(&mut encoder, &[batch_size, current_channels, current_frames], data_type);
+        let final_snake =
+            ws.next_scratch(&mut encoder, &[batch_size, current_channels, current_frames], self.vocoder_data_type);
         x = snake1d_enqueue(
             &mut encoder,
             &x,
@@ -333,11 +330,14 @@ impl StructuredAudioCodecGraph {
             batch_size,
             current_channels,
             current_frames,
-            data_type,
+            self.vocoder_data_type,
             &kernels,
         )?;
-        let final_conv =
-            ws.next_scratch(&mut encoder, &[batch_size, vocoder_graph.final_conv.cout, current_frames], data_type);
+        let final_conv = ws.next_scratch(
+            &mut encoder,
+            &[batch_size, vocoder_graph.final_conv.cout, current_frames],
+            self.vocoder_data_type,
+        );
         x = causal_conv1d_grouped_enqueue(
             &mut encoder,
             &x,
@@ -348,13 +348,15 @@ impl StructuredAudioCodecGraph {
             &lengths_array,
             batch_size,
             current_frames,
-            data_type,
+            self.vocoder_data_type,
             &kernels,
         )?;
-        let tanh_output = encoder
-            .allocate_constant(size_for_shape(&[batch_size, vocoder_graph.final_conv.cout, current_frames], data_type))
-            .map_err(|err| AudioError::Runtime(format!("failed to allocate structured audio tanh output: {err}")))?;
-        x = tanh_enqueue(&mut encoder, &x, tanh_output, data_type, &kernels)?;
+        let tanh_output = ws.next_scratch(
+            &mut encoder,
+            &[batch_size, vocoder_graph.final_conv.cout, current_frames],
+            self.vocoder_data_type,
+        );
+        x = tanh_enqueue(&mut encoder, &x, tanh_output, &kernels)?;
 
         let (completion_sender, completion_notification) = channel();
         encoder.add_completion_handler({
@@ -372,8 +374,8 @@ impl StructuredAudioCodecGraph {
             })
             .collect::<AudioResult<Vec<_>>>()?;
         Ok(SubmittedDecodedPaddedAudio {
-            output: x,
-            data_type,
+            output: x.into_allocation(),
+            data_type: self.vocoder_data_type,
             channels: vocoder_graph.final_conv.cout,
             frames: current_frames,
             lengths: out_lengths,

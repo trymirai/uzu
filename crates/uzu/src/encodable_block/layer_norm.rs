@@ -26,7 +26,6 @@ pub struct LayerNorm<B: Backend> {
     config: NormalizationConfig,
     scales: Allocation<B>,
     element_count: usize,
-    input_data_type: DataType,
     output_data_type: DataType,
 }
 
@@ -60,7 +59,6 @@ impl<B: Backend> LayerNorm<B> {
             config,
             scales,
             element_count,
-            input_data_type: intermediate_data_type,
             output_data_type: if full_layer {
                 scale_data_type
             } else {
@@ -83,13 +81,11 @@ impl<B: Backend> LayerNorm<B> {
         };
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
-        let input_offset = row_offset * self.element_count * self.input_data_type.size_in_bytes();
-        let input_len = size_for_shape(&[row_count, self.element_count], self.input_data_type);
-        let input = input.slice(input_offset..input_offset + input_len);
         self.kernel.encode(
-            Some(&input),
+            Some(input),
             &self.scales,
             &mut output,
+            (row_offset * self.element_count) as u32,
             row_count as u32,
             self.element_count as u32,
             self.config.epsilon,

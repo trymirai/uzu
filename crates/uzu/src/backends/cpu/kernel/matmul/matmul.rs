@@ -34,7 +34,7 @@ impl MatmulKernel for MatmulCpuKernel {
     fn encode(
         &mut self,
         _context: &CpuContext,
-        arguments: MatmulArguments<Cpu>,
+        arguments: MatmulArguments<'_, Cpu>,
         encoder: &mut Encoder<Cpu>,
     ) {
         let MatmulArguments {

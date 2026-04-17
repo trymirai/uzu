@@ -223,11 +223,7 @@ impl<B: Backend> ClassifierLayer<B> {
 
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.inputs,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.inputs);
         }
 
         self.copy_main_to_shortcut_mixer.encode(&main, shortcut, layer_len, encoder)?;
@@ -239,11 +235,7 @@ impl<B: Backend> ClassifierLayer<B> {
         };
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.pre_attention_norm,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.pre_attention_norm);
         }
 
         let mut qkv = self.qkv_projection.encode(context, &main, batch_dim, encoder)?;
@@ -286,33 +278,21 @@ impl<B: Backend> ClassifierLayer<B> {
         main = self.out_projection.encode(context, &attention_output, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.attention,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.attention);
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
             main = post_attn_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                    encoder,
-                    &main,
-                    &layer_traces.post_attention_norm,
-                );
+                encoder.encode_copy_allocation(&main, &layer_traces.post_attention_norm);
             }
         }
 
         self.mixer_residual_add.encode(shortcut, &mut main, layer_len, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.mlp_inputs,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.mlp_inputs);
         }
 
         self.copy_main_to_shortcut_mlp.encode(&main, shortcut, layer_len, encoder)?;
@@ -320,43 +300,27 @@ impl<B: Backend> ClassifierLayer<B> {
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.pre_mlp_norm,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.pre_mlp_norm);
         }
 
         main = self.mlp.encode(context, &main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.mlp,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.mlp);
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
             main = post_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                    encoder,
-                    &main,
-                    &layer_traces.post_mlp_norm,
-                );
+                encoder.encode_copy_allocation(&main, &layer_traces.post_mlp_norm);
             }
         }
 
         self.mlp_residual_add.encode(shortcut, &mut main, layer_len, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.outputs,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.outputs);
         }
 
         Ok(main)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::array::{Array, ArrayContextExt};
 
 pub(super) type BackendParameterTree<'loader, B> = crate::parameters::ParameterTree<'loader, <B as Backend>::Context>;
 
@@ -6,23 +7,23 @@ pub(super) fn read_float_allocation<B: Backend, const RANK: usize>(
     tree: &BackendParameterTree<'_, B>,
     name: &str,
     expected_data_type: DataType,
-) -> AudioResult<([usize; RANK], crate::backends::common::Allocation<B>)> {
-    let leaf = tree.leaf(name)?;
-    if leaf.data_type() != expected_data_type {
+) -> AudioResult<([usize; RANK], Array<B>)> {
+    let array = tree.leaf_array(name)?;
+    if array.data_type() != expected_data_type {
         return Err(AudioError::Runtime(format!(
             "tensor '{name}' dtype mismatch: expected {expected_data_type:?}, got {:?}",
-            leaf.data_type()
+            array.data_type()
         )));
     }
-    if leaf.shape().len() != RANK {
+    if array.shape().len() != RANK {
         return Err(AudioError::Runtime(format!(
             "expected rank-{RANK} tensor for '{name}', got rank {}",
-            leaf.shape().len()
+            array.shape().len()
         )));
     }
     let mut dims = [0usize; RANK];
-    dims.copy_from_slice(leaf.shape());
-    Ok((dims, leaf.read_allocation()?))
+    dims.copy_from_slice(array.shape());
+    Ok((dims, array))
 }
 
 pub(super) fn read_float_vector_exact<B: Backend>(
@@ -30,7 +31,7 @@ pub(super) fn read_float_vector_exact<B: Backend>(
     name: &str,
     expected_len: usize,
     expected_data_type: DataType,
-) -> AudioResult<crate::backends::common::Allocation<B>> {
+) -> AudioResult<Array<B>> {
     let (shape, allocation) = read_float_allocation::<B, 1>(tree, name, expected_data_type)?;
     if shape[0] != expected_len {
         return Err(AudioError::Runtime(format!(
@@ -47,7 +48,7 @@ pub(super) fn read_float_matrix_exact<B: Backend>(
     expected_rows: usize,
     expected_cols: usize,
     expected_data_type: DataType,
-) -> AudioResult<crate::backends::common::Allocation<B>> {
+) -> AudioResult<Array<B>> {
     let (shape, allocation) = read_float_allocation::<B, 2>(tree, name, expected_data_type)?;
     if shape != [expected_rows, expected_cols] {
         return Err(AudioError::Runtime(format!(
@@ -59,16 +60,16 @@ pub(super) fn read_float_matrix_exact<B: Backend>(
 }
 
 pub(super) fn outer_axis_view<B: Backend>(
-    allocation: &crate::backends::common::Allocation<B>,
+    allocation: &Array<B>,
     index: usize,
     slice_shape: &[usize],
     data_type: DataType,
-) -> AudioResult<crate::backends::common::Allocation<B>> {
+) -> AudioResult<Array<B>> {
     let slice_bytes = size_for_shape(slice_shape, data_type);
     let offset = index
         .checked_mul(slice_bytes)
         .ok_or(AudioError::Runtime("allocation outer-axis view offset overflow".to_string()))?;
-    Ok(allocation.slice(offset..offset + slice_bytes))
+    Ok(allocation.view_at_offset(offset, slice_shape))
 }
 
 pub(super) fn read_conv1d_layer<B: Backend>(
@@ -168,7 +169,7 @@ pub(super) fn read_norm_layer<B: Backend>(
     let bias = if use_bias {
         read_float_vector_exact::<B>(tree, "biases", channels, data_type)?
     } else {
-        crate::backends::common::allocation_helpers::create_zeroed_allocation(context.as_ref(), &[channels], data_type)
+        context.create_array_zeros(&[channels], data_type, "structured_audio_norm_bias")
     };
     Ok(StructuredAudioNorm {
         scales,

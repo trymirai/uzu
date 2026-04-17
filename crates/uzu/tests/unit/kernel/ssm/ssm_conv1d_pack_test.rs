@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -58,13 +57,13 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     let state_array = context.create_array_from(&[state_size], &input.state_in, "state_in");
     let x_array = context.create_array_from(&[x_size], &input.x, "x");
-    let padded_array = context.create_array_uninitialized(&[padded_size], T::data_type(), "padded");
+    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type(), "padded").into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        state_array.buffer().borrow().deref(),
-        x_array.buffer().borrow().deref(),
-        padded_array.buffer().borrow_mut().deref_mut(),
+        state_array.allocation(),
+        x_array.allocation(),
+        &mut padded,
         input.state_stride,
         input.row_stride,
         input.suffix_len,
@@ -73,7 +72,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    padded_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&padded)
 }
 
 fn get_test_data<T: ArrayElement + Float>(

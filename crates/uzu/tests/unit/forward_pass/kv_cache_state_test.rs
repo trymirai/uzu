@@ -3,7 +3,9 @@
 use crate::{
     DataType,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, allocation_helpers, kernel::kv_cache_update::KVCacheUpdate},
+        common::{
+            Allocation, AllocationType, Backend, Buffer, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate,
+        },
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
@@ -41,8 +43,9 @@ fn make_test_layer(
     };
     let shape = [1, total_len.max(1), 1];
 
-    let keys = allocation_helpers::create_zeroed_allocation(context, &shape, DataType::F32);
-    let values = allocation_helpers::create_zeroed_allocation(context, &shape, DataType::F32);
+    let zeroes = vec![0.0_f32; shape.iter().product()];
+    let keys = allocation_from_slice(context, &zeroes);
+    let values = allocation_from_slice(context, &zeroes);
 
     KVCacheLayer {
         state,
@@ -54,7 +57,31 @@ fn make_test_layer(
 }
 
 fn allocation_vec(allocation: &Allocation<Metal>) -> Vec<f32> {
-    allocation_helpers::copy_allocation_to_slice::<f32, _>(allocation).to_vec()
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+        let bytes = std::slice::from_raw_parts(src, range.len());
+        bytemuck::cast_slice(bytes).to_vec()
+    }
+}
+
+fn allocation_from_slice(
+    context: &<Metal as Backend>::Context,
+    data: &[f32],
+) -> Allocation<Metal> {
+    let allocation = context
+        .create_allocation((data.len() * std::mem::size_of::<f32>()).max(1), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(
+            bytemuck::cast_slice(data).as_ptr(),
+            dst,
+            data.len() * std::mem::size_of::<f32>(),
+        );
+    }
+    allocation
 }
 
 fn overwrite_allocation(
@@ -65,21 +92,36 @@ fn overwrite_allocation(
     for (index, value) in updates {
         data[*index] = *value;
     }
-    allocation_helpers::copy_slice_to_allocation(allocation, &data);
+    write_allocation(allocation, &data);
+}
+
+fn write_allocation(
+    allocation: &mut Allocation<Metal>,
+    data: &[f32],
+) {
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(
+            bytemuck::cast_slice(data).as_ptr(),
+            dst,
+            data.len() * std::mem::size_of::<f32>(),
+        );
+    }
 }
 
 fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
-        let len = allocation_helpers::copy_allocation_to_slice::<f32, _>(&layer.keys).len();
+        let len = allocation_vec(&layer.keys).len();
         let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
-        allocation_helpers::copy_slice_to_allocation(&mut layer.keys, &data);
+        write_allocation(&mut layer.keys, &data);
         data
     };
 
     let initial_values = {
-        let len = allocation_helpers::copy_allocation_to_slice::<f32, _>(&layer.values).len();
+        let len = allocation_vec(&layer.values).len();
         let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
-        allocation_helpers::copy_slice_to_allocation(&mut layer.values, &data);
+        write_allocation(&mut layer.values, &data);
         data
     };
 

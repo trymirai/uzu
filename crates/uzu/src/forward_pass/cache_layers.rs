@@ -1,7 +1,8 @@
 use std::cell::Cell;
 
 use crate::{
-    backends::common::{Backend, Encoder, allocation_helpers, kernel::kv_cache_update::KVCacheUpdate},
+    array::size_for_shape,
+    backends::common::{AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::DecoderLayerType,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
@@ -107,7 +108,7 @@ impl<B: Backend> CacheLayers<B> {
         let kv_shapes: Vec<[usize; 3]> =
             model_shape.kv_cache_layer_shapes(max_prefix_length, max_suffix_length).collect();
 
-        let data: Box<[CacheLayer<B>]> = model_shape
+        let mut data: Box<[CacheLayer<B>]> = model_shape
             .layer_types()
             .iter()
             .enumerate()
@@ -131,16 +132,18 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: allocation_helpers::create_zeroed_allocation(
-                            context,
-                            &shape,
-                            model_shape.kv_cache_data_type(),
-                        ),
-                        values: allocation_helpers::create_zeroed_allocation(
-                            context,
-                            &shape,
-                            model_shape.kv_cache_data_type(),
-                        ),
+                        keys: context
+                            .create_allocation(
+                                size_for_shape(&shape, model_shape.kv_cache_data_type()).max(1),
+                                AllocationType::Global,
+                            )
+                            .expect("Failed to create kv keys allocation"),
+                        values: context
+                            .create_allocation(
+                                size_for_shape(&shape, model_shape.kv_cache_data_type()).max(1),
+                                AllocationType::Global,
+                            )
+                            .expect("Failed to create kv values allocation"),
                         shape,
                         data_type: model_shape.kv_cache_data_type(),
                     })
@@ -158,9 +161,13 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: allocation_helpers::create_zeroed_allocation(context, &conv_shape, dtype),
+                        conv_state: context
+                            .create_allocation(size_for_shape(&conv_shape, dtype).max(1), AllocationType::Global)
+                            .expect("Failed to create ssm conv allocation"),
                         conv_shape,
-                        ssm_state: allocation_helpers::create_zeroed_allocation(context, &ssm_shape, dtype),
+                        ssm_state: context
+                            .create_allocation(size_for_shape(&ssm_shape, dtype).max(1), AllocationType::Global)
+                            .expect("Failed to create ssm state allocation"),
                         ssm_shape,
                         data_type: dtype,
                     })
@@ -174,9 +181,16 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::ShortConv(ShortConvLayer {
-                        conv_state: allocation_helpers::create_zeroed_allocation(context, &conv_shape, dtype),
+                        conv_state: context
+                            .create_allocation(size_for_shape(&conv_shape, dtype).max(1), AllocationType::Global)
+                            .expect("Failed to create short conv allocation"),
                         conv_shape,
-                        suffix_state: allocation_helpers::create_zeroed_allocation(context, &suffix_state_shape, dtype),
+                        suffix_state: context
+                            .create_allocation(
+                                size_for_shape(&suffix_state_shape, dtype).max(1),
+                                AllocationType::Global,
+                            )
+                            .expect("Failed to create short conv suffix allocation"),
                         suffix_shape: suffix_state_shape,
                         data_type: dtype,
                         suffix_state_valid_start: Cell::new(0),
@@ -196,15 +210,42 @@ impl<B: Backend> CacheLayers<B> {
                     let dtype = model_shape.activation_data_type();
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
-                        conv_state: allocation_helpers::create_zeroed_allocation(context, &conv_shape, dtype),
+                        conv_state: context
+                            .create_allocation(size_for_shape(&conv_shape, dtype).max(1), AllocationType::Global)
+                            .expect("Failed to create delta net conv allocation"),
                         conv_shape,
-                        ssm_state: allocation_helpers::create_zeroed_allocation(context, &ssm_shape, dtype),
+                        ssm_state: context
+                            .create_allocation(size_for_shape(&ssm_shape, dtype).max(1), AllocationType::Global)
+                            .expect("Failed to create delta net ssm allocation"),
                         ssm_shape,
                         data_type: dtype,
                     })
                 },
             })
             .collect();
+
+        let mut encoder = Encoder::new(context).expect("Failed to create cache initialization encoder");
+        for layer in data.iter_mut() {
+            match layer {
+                CacheLayer::Transformer(layer) => {
+                    encoder.encode_fill_allocation(&layer.keys, 0);
+                    encoder.encode_fill_allocation(&layer.values, 0);
+                },
+                CacheLayer::StateSpace(layer) => {
+                    encoder.encode_fill_allocation(&layer.conv_state, 0);
+                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                },
+                CacheLayer::ShortConv(layer) => {
+                    encoder.encode_fill_allocation(&layer.conv_state, 0);
+                    encoder.encode_fill_allocation(&layer.suffix_state, 0);
+                },
+                CacheLayer::DeltaNet(layer) => {
+                    encoder.encode_fill_allocation(&layer.conv_state, 0);
+                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                },
+            }
+        }
+        encoder.end_encoding().submit().wait_until_completed().expect("Failed to initialize cache allocations");
 
         Self {
             max_suffix_length,
@@ -213,15 +254,19 @@ impl<B: Backend> CacheLayers<B> {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(
+        &mut self,
+        context: &B::Context,
+    ) {
+        let mut encoder = Encoder::new(context).expect("Failed to create cache clear encoder");
         for layer in self.data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => match &mut layer.state {
                     KVCacheLayerState::Full {
                         prefix_len,
                     } => {
-                        allocation_helpers::fill_allocation(&mut layer.keys, 0);
-                        allocation_helpers::fill_allocation(&mut layer.values, 0);
+                        encoder.encode_fill_allocation(&layer.keys, 0);
+                        encoder.encode_fill_allocation(&layer.values, 0);
                         *prefix_len = 0;
                     },
                     KVCacheLayerState::Windowed {
@@ -229,17 +274,28 @@ impl<B: Backend> CacheLayers<B> {
                         ring_length,
                         ..
                     } => {
-                        allocation_helpers::fill_allocation(&mut layer.keys, 0);
-                        allocation_helpers::fill_allocation(&mut layer.values, 0);
+                        encoder.encode_fill_allocation(&layer.keys, 0);
+                        encoder.encode_fill_allocation(&layer.values, 0);
                         *ring_offset = 0;
                         *ring_length = 0;
                     },
                 },
-                CacheLayer::StateSpace(layer) => layer.zero(),
-                CacheLayer::ShortConv(layer) => layer.zero(),
-                CacheLayer::DeltaNet(layer) => layer.zero(),
+                CacheLayer::StateSpace(layer) => {
+                    encoder.encode_fill_allocation(&layer.conv_state, 0);
+                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                },
+                CacheLayer::ShortConv(layer) => {
+                    encoder.encode_fill_allocation(&layer.conv_state, 0);
+                    encoder.encode_fill_allocation(&layer.suffix_state, 0);
+                    layer.clear_suffix_state_valid_range();
+                },
+                CacheLayer::DeltaNet(layer) => {
+                    encoder.encode_fill_allocation(&layer.conv_state, 0);
+                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                },
             }
         }
+        encoder.end_encoding().submit().wait_until_completed().expect("Failed to clear cache layers");
     }
 
     pub fn max_suffix_length(&self) -> usize {
@@ -262,7 +318,7 @@ impl<B: Backend> CacheLayers<B> {
             if let Some(layer) = layer.as_transformer_mut() {
                 layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
             } else if let Some(layer) = layer.as_short_conv_mut() {
-                layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
+                layer.commit_from_suffix_state_if_valid(short_conv_commit_index, encoder);
             }
         }
     }
@@ -325,7 +381,7 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
     ) -> Self {
         let mut max_prefix_capacity_across_layers = 0usize;
-        let data: Box<[CacheLayer<B>]> = self
+        let mut data: Box<[CacheLayer<B>]> = self
             .data
             .iter()
             .enumerate()
@@ -342,22 +398,12 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = allocation_helpers::create_zeroed_allocation(context, &new_shape, dtype);
-                    let mut new_values = allocation_helpers::create_zeroed_allocation(context, &new_shape, dtype);
-
-                    if copy_rows > 0 {
-                        let slice = layer.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
-                        let mut new_layer = KVCacheLayer {
-                            state: layer.state.clone(),
-                            keys: new_keys,
-                            values: new_values,
-                            shape: new_shape,
-                            data_type: dtype,
-                        };
-                        new_layer.apply_slice(&slice, None);
-                        new_keys = new_layer.keys;
-                        new_values = new_layer.values;
-                    }
+                    let new_keys = context
+                        .create_allocation(size_for_shape(&new_shape, dtype).max(1), AllocationType::Global)
+                        .expect("Failed to create kv keys clone allocation");
+                    let new_values = context
+                        .create_allocation(size_for_shape(&new_shape, dtype).max(1), AllocationType::Global)
+                        .expect("Failed to create kv values clone allocation");
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: layer.state.clone(),
@@ -368,11 +414,18 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
-                    let mut new_conv =
-                        allocation_helpers::create_allocation(context, &layer.conv_shape, layer.data_type);
-                    allocation_helpers::copy_allocation_to_allocation(&mut new_conv, &layer.conv_state);
-                    let mut new_ssm = allocation_helpers::create_allocation(context, &layer.ssm_shape, layer.data_type);
-                    allocation_helpers::copy_allocation_to_allocation(&mut new_ssm, &layer.ssm_state);
+                    let new_conv = context
+                        .create_allocation(
+                            size_for_shape(&layer.conv_shape, layer.data_type).max(1),
+                            AllocationType::Global,
+                        )
+                        .expect("Failed to create ssm conv clone allocation");
+                    let new_ssm = context
+                        .create_allocation(
+                            size_for_shape(&layer.ssm_shape, layer.data_type).max(1),
+                            AllocationType::Global,
+                        )
+                        .expect("Failed to create ssm state clone allocation");
 
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: new_conv,
@@ -383,11 +436,18 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 CacheLayer::ShortConv(layer) => {
-                    let mut new_conv =
-                        allocation_helpers::create_allocation(context, &layer.conv_shape, layer.data_type);
-                    allocation_helpers::copy_allocation_to_allocation(&mut new_conv, &layer.conv_state);
-                    let new_suffix =
-                        allocation_helpers::create_zeroed_allocation(context, &layer.suffix_shape, layer.data_type);
+                    let new_conv = context
+                        .create_allocation(
+                            size_for_shape(&layer.conv_shape, layer.data_type).max(1),
+                            AllocationType::Global,
+                        )
+                        .expect("Failed to create short conv clone allocation");
+                    let new_suffix = context
+                        .create_allocation(
+                            size_for_shape(&layer.suffix_shape, layer.data_type).max(1),
+                            AllocationType::Global,
+                        )
+                        .expect("Failed to create short conv suffix clone allocation");
 
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: new_conv,
@@ -400,11 +460,18 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 CacheLayer::DeltaNet(layer) => {
-                    let mut new_conv =
-                        allocation_helpers::create_allocation(context, &layer.conv_shape, layer.data_type);
-                    allocation_helpers::copy_allocation_to_allocation(&mut new_conv, &layer.conv_state);
-                    let mut new_ssm = allocation_helpers::create_allocation(context, &layer.ssm_shape, layer.data_type);
-                    allocation_helpers::copy_allocation_to_allocation(&mut new_ssm, &layer.ssm_state);
+                    let new_conv = context
+                        .create_allocation(
+                            size_for_shape(&layer.conv_shape, layer.data_type).max(1),
+                            AllocationType::Global,
+                        )
+                        .expect("Failed to create delta net conv clone allocation");
+                    let new_ssm = context
+                        .create_allocation(
+                            size_for_shape(&layer.ssm_shape, layer.data_type).max(1),
+                            AllocationType::Global,
+                        )
+                        .expect("Failed to create delta net ssm clone allocation");
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
                         conv_state: new_conv,
@@ -416,6 +483,57 @@ impl<B: Backend> CacheLayers<B> {
                 },
             })
             .collect();
+
+        let mut zero_encoder = Encoder::new(context).expect("Failed to create cache clone zero encoder");
+        for layer in data.iter_mut() {
+            match layer {
+                CacheLayer::Transformer(layer) => {
+                    zero_encoder.encode_fill_allocation(&layer.keys, 0);
+                    zero_encoder.encode_fill_allocation(&layer.values, 0);
+                },
+                CacheLayer::ShortConv(layer) => {
+                    zero_encoder.encode_fill_allocation(&layer.suffix_state, 0);
+                },
+                _ => {},
+            }
+        }
+        zero_encoder.end_encoding().submit().wait_until_completed().expect("Failed to zero cloned cache layers");
+
+        for (source_layer, destination_layer) in self.data.iter().zip(data.iter_mut()) {
+            if let (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) =
+                (source_layer, destination_layer)
+            {
+                let copy_rows = source.prefix_segment_length();
+                if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
+                    let slice = source.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
+                    destination.apply_slice(&slice, None);
+                }
+            }
+        }
+
+        let mut encoder = Encoder::new(context).expect("Failed to create cache clone encoder");
+        for (source_layer, destination_layer) in self.data.iter().zip(data.iter_mut()) {
+            match (source_layer, destination_layer) {
+                (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
+                    if matches!(source.state, KVCacheLayerState::Full { .. }) {
+                        source.encode_copy_prefix_rows_to(destination, source.prefix_segment_length(), &mut encoder);
+                    }
+                },
+                (CacheLayer::StateSpace(source), CacheLayer::StateSpace(destination)) => {
+                    encoder.encode_copy_allocation(&source.conv_state, &destination.conv_state);
+                    encoder.encode_copy_allocation(&source.ssm_state, &destination.ssm_state);
+                },
+                (CacheLayer::ShortConv(source), CacheLayer::ShortConv(destination)) => {
+                    encoder.encode_copy_allocation(&source.conv_state, &destination.conv_state);
+                },
+                (CacheLayer::DeltaNet(source), CacheLayer::DeltaNet(destination)) => {
+                    encoder.encode_copy_allocation(&source.conv_state, &destination.conv_state);
+                    encoder.encode_copy_allocation(&source.ssm_state, &destination.ssm_state);
+                },
+                _ => {},
+            }
+        }
+        encoder.end_encoding().submit().wait_until_completed().expect("Failed to clone cache layers");
 
         Self {
             max_suffix_length: self.max_suffix_length,

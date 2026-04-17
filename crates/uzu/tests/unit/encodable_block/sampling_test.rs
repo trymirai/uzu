@@ -4,10 +4,10 @@ use rand::seq::SliceRandom;
 
 // for Vec::shuffle
 use crate::{
-    ArrayElement, DataType,
+    ArrayElement, DataType, allocation_as_slice,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+            Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
             kernel::{
                 MinPKernel, TemperatureKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
@@ -25,10 +25,14 @@ fn allocation_from_slice<T: ArrayElement>(
     context: &<Metal as Backend>::Context,
     data: &[T],
 ) -> Allocation<Metal> {
-    let mut allocation = context
+    let allocation = context
         .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
-    crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut allocation, data);
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(bytemuck::cast_slice(data).as_ptr(), dst, data.len() * std::mem::size_of::<T>());
+    }
     allocation
 }
 
@@ -39,10 +43,6 @@ fn empty_allocation<T: ArrayElement>(
     context
         .create_allocation(len * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation")
-}
-
-fn allocation_to_vec<T: ArrayElement>(allocation: &Allocation<Metal>) -> Vec<T> {
-    crate::backends::common::allocation_helpers::copy_allocation_to_slice::<T, Metal>(allocation).to_vec()
 }
 
 fn cpu_reference_min_p(
@@ -96,9 +96,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         .encode(
             &mut logits_buffer,
             &seeds_buffer,
-            0,
             None,
-            0,
             &mut output_buffer,
             SamplingMethod::Greedy,
             batch_size,
@@ -109,7 +107,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     // Check results
-    let results = allocation_to_vec::<u32>(&output_buffer);
+    let results = allocation_as_slice::<u32, Metal>(&output_buffer).to_vec();
 
     assert_eq!(results[0], 1, "First batch should select token 1 (highest logit: 3.0)");
     assert_eq!(results[1], 2, "Second batch should select token 2 (highest logit: 2.5)");
@@ -174,18 +172,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
     kernel
-        .encode(
-            &mut logits_buf,
-            &seeds_buf,
-            0,
-            None,
-            0,
-            &mut output_buf,
-            SamplingMethod::Greedy,
-            BATCH,
-            VOCAB,
-            &mut encoder,
-        )
+        .encode(&mut logits_buf, &seeds_buf, None, &mut output_buf, SamplingMethod::Greedy, BATCH, VOCAB, &mut encoder)
         .expect("encode");
 
     // Time both host-side and GPU execution
@@ -200,7 +187,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     );
 
     // Ensure the kernel produced *some* output (sanity).
-    let sample_ids = allocation_to_vec::<u32>(&output_buf);
+    let sample_ids = allocation_as_slice::<u32, Metal>(&output_buf).to_vec();
     for &tok in &sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
     }
@@ -270,9 +257,7 @@ fn test_categorical_sampling() {
             .encode(
                 &mut logits_buffer,
                 &seeds_buffer,
-                0,
                 None,
-                0,
                 &mut output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -288,7 +273,7 @@ fn test_categorical_sampling() {
             .expect("Categorical sampling should succeed");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let results = allocation_to_vec::<u32>(&output_buffer);
+        let results = allocation_as_slice::<u32, Metal>(&output_buffer).to_vec();
 
         for (batch_idx, &token) in results.iter().enumerate() {
             assert!(
@@ -397,9 +382,7 @@ fn test_categorical_sampling_statistical() {
             .encode(
                 &mut logits_buffer,
                 &seeds_buffer,
-                0,
                 None,
-                0,
                 &mut output_buffer,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -415,7 +398,7 @@ fn test_categorical_sampling_statistical() {
             .expect("encode");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let results = allocation_to_vec::<u32>(&output_buffer);
+        let results = allocation_as_slice::<u32, Metal>(&output_buffer).to_vec();
 
         for (batch_idx, &token) in results.iter().enumerate() {
             counts[batch_idx * VOCAB + token as usize] += 1;
@@ -489,9 +472,7 @@ fn perf_categorical_128k_vocab() {
         .encode(
             &mut logits_buf,
             &seeds_buf,
-            0,
             None,
-            0,
             &mut output_buf,
             SamplingMethod::Stochastic {
                 temperature: None,
@@ -517,7 +498,7 @@ fn perf_categorical_128k_vocab() {
     );
 
     // Sanity check
-    let sample_ids = allocation_to_vec::<u32>(&output_buf);
+    let sample_ids = allocation_as_slice::<u32, Metal>(&output_buf).to_vec();
     for &tok in &sample_ids {
         assert!((tok as usize) < VOCAB, "Sampled id out of range");
     }
@@ -553,7 +534,7 @@ fn test_temperature_gpu_cpu_match() {
     kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_results = allocation_to_vec::<f32>(&processed_buffer);
+    let gpu_results = allocation_as_slice::<f32, Metal>(&processed_buffer).to_vec();
 
     for (idx, (&logit, &processed)) in logits.iter().zip(gpu_results.iter()).enumerate() {
         let expected = logit / TEMPERATURE;
@@ -605,7 +586,7 @@ fn test_minp_gpu_cpu_match() {
     kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let all_results = allocation_to_vec::<f32>(&processed_buffer);
+    let all_results = allocation_as_slice::<f32, Metal>(&processed_buffer).to_vec();
 
     for batch_idx in 0..BATCH {
         let cpu_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
@@ -679,9 +660,7 @@ fn test_minp_sampling_exact_match(
             .encode(
                 &mut logits_buf,
                 &seeds_buf,
-                0,
                 None,
-                0,
                 &mut output_buf,
                 SamplingMethod::Stochastic {
                     temperature: None,
@@ -697,7 +676,7 @@ fn test_minp_sampling_exact_match(
             .expect("encode");
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let sampled_ids = allocation_to_vec::<u32>(&output_buf);
+        let sampled_ids = allocation_as_slice::<u32, Metal>(&output_buf).to_vec();
 
         for (i, &sampled_id) in sampled_ids.iter().enumerate() {
             assert!((sampled_id as usize) < vocab_size, "Sampled token out of range");

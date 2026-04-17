@@ -1,15 +1,14 @@
-use std::{cell::RefCell, ops::Range, os::raw::c_void, ptr::NonNull, rc::Rc};
+use std::{fmt, ops::Range, os::raw::c_void, ptr::NonNull};
 
 use ndarray::{ArrayView, Dimension, IxDyn};
 
 use crate::{
     ArrayElement, DataType,
-    backends::common::{Backend, Buffer, Context},
+    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
 };
 
-#[derive(Debug)]
 pub struct Array<B: Backend> {
-    buffer: Rc<RefCell<B::Buffer>>,
+    allocation: Allocation<B>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -17,24 +16,25 @@ pub struct Array<B: Backend> {
 
 impl<B: Backend> Array<B> {
     // Constructors
-    pub unsafe fn from_parts(
-        buffer: Rc<RefCell<B::Buffer>>,
+    pub unsafe fn from_allocation(
+        allocation: Allocation<B>,
         offset: usize,
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
+        let allocation_len = allocation.as_buffer_range().1.len();
         assert!(
-            offset + required_bytes <= buffer.borrow().length(),
-            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
+            offset + required_bytes <= allocation_len,
+            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but allocation length is {} bytes",
             shape,
             data_type,
             offset,
             offset + required_bytes,
-            buffer.borrow().length()
+            allocation_len
         );
         Self {
-            buffer: buffer.clone(),
+            allocation: allocation.view_at_offset(offset, required_bytes),
             offset,
             shape: shape.into(),
             data_type,
@@ -45,14 +45,35 @@ impl<B: Backend> Array<B> {
         &self,
         shape: &[usize],
     ) -> Self {
-        unsafe { Self::from_parts(self.buffer.clone(), self.offset, shape, self.data_type) }
+        self.view_at_offset(0, shape)
+    }
+
+    pub fn view_at_offset(
+        &self,
+        byte_offset: usize,
+        shape: &[usize],
+    ) -> Self {
+        let required_bytes = size_for_shape(shape, self.data_type);
+        let offset = self.offset + byte_offset;
+        let allocation_len = self.allocation.as_buffer_range().1.len();
+        assert!(
+            byte_offset + required_bytes <= allocation_len,
+            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but allocation length is {} bytes",
+            shape,
+            self.data_type,
+            offset,
+            offset + required_bytes,
+            allocation_len
+        );
+        Self {
+            allocation: self.allocation.view_at_offset(byte_offset, required_bytes),
+            offset,
+            shape: shape.into(),
+            data_type: self.data_type,
+        }
     }
 
     // Getters
-    pub fn buffer(&self) -> Rc<RefCell<B::Buffer>> {
-        self.buffer.clone()
-    }
-
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -65,9 +86,22 @@ impl<B: Backend> Array<B> {
         self.data_type
     }
 
+    pub fn allocation(&self) -> &Allocation<B> {
+        &self.allocation
+    }
+
+    pub fn into_allocation(self) -> Allocation<B> {
+        self.allocation
+    }
+
+    pub fn as_buffer_range(&self) -> (&B::Buffer, Range<usize>) {
+        self.allocation.as_buffer_range()
+    }
+
     // Utility
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { self.buffer.borrow().cpu_ptr().add(self.offset) }
+        let (buffer, range) = self.as_buffer_range();
+        unsafe { buffer.cpu_ptr().add(range.start) }
     }
 
     pub fn size(&self) -> usize {
@@ -189,14 +223,35 @@ impl<B: Backend> Array<B> {
     }
 }
 
+pub fn allocation_as_slice<T: ArrayElement, B: Backend>(allocation: &Allocation<B>) -> &[T] {
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let bytes = std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len());
+        bytemuck::cast_slice(bytes)
+    }
+}
+
 impl<B: Backend> Clone for Array<B> {
     fn clone(&self) -> Self {
         Self {
-            buffer: self.buffer.clone(),
+            allocation: self.allocation.clone(),
             offset: self.offset,
             shape: self.shape.clone(),
             data_type: self.data_type,
         }
+    }
+}
+
+impl<B: Backend> fmt::Debug for Array<B> {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        f.debug_struct("Array")
+            .field("offset", &self.offset)
+            .field("shape", &self.shape)
+            .field("data_type", &self.data_type)
+            .finish()
     }
 }
 
@@ -267,13 +322,11 @@ impl<C: Context> ArrayContextExt for C {
         &self,
         shape: &[usize],
         data_type: DataType,
-        label: &str,
+        _label: &str,
     ) -> Array<Self::Backend> {
-        let buffer_size_bytes = size_for_shape(shape, data_type);
-
-        let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
-        buffer.set_label(Some(label));
-
-        unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, shape, data_type) }
+        let allocation = self
+            .create_allocation(size_for_shape(shape, data_type), AllocationType::Global)
+            .expect("Failed to create allocation");
+        unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
 }

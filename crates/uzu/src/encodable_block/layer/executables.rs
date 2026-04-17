@@ -315,16 +315,8 @@ impl<B: Backend> LayerExecutables<B> {
         let main = self.pre_attention_norm.encode(&main, 0, batch_dim, Some(shortcut), encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                shortcut,
-                &layer_traces.inputs,
-            );
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.pre_attention_norm,
-            );
+            encoder.encode_copy_allocation(shortcut, &layer_traces.inputs);
+            encoder.encode_copy_allocation(&main, &layer_traces.pre_attention_norm);
         }
 
         let mut main = match &self.mixer {
@@ -446,59 +438,35 @@ impl<B: Backend> LayerExecutables<B> {
         };
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.attention,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.attention);
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
             main = post_attention_norm.encode(&main, 0, batch_dim, None, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                    encoder,
-                    &main,
-                    &layer_traces.post_attention_norm,
-                );
+                encoder.encode_copy_allocation(&main, &layer_traces.post_attention_norm);
             }
         }
 
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, Some(shortcut), encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                shortcut,
-                &layer_traces.mlp_inputs,
-            );
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.pre_mlp_norm,
-            );
+            encoder.encode_copy_allocation(shortcut, &layer_traces.mlp_inputs);
+            encoder.encode_copy_allocation(&main, &layer_traces.pre_mlp_norm);
         }
 
         main = self.mlp.encode(context, &main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                encoder,
-                &main,
-                &layer_traces.mlp,
-            );
+            encoder.encode_copy_allocation(&main, &layer_traces.mlp);
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             main = post_mlp_norm.encode(&main, 0, batch_dim, None, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(ref layer_traces) = layer_traces {
-                crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                    encoder,
-                    &main,
-                    &layer_traces.post_mlp_norm,
-                );
+                encoder.encode_copy_allocation(&main, &layer_traces.post_mlp_norm);
             }
         }
 

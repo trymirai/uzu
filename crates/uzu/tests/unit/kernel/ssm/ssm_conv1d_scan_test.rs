@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -94,24 +93,21 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let w_array = context.create_array_from(&[input.w.len()], &input.w, "w");
     let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, "b"));
 
-    let x_out_array = context.create_array_uninitialized(&[x_out_size], T::data_type(), "x_out");
-    let b_out_array = context.create_array_uninitialized(&[b_out_size], T::data_type(), "b_out");
-    let c_out_array = context.create_array_uninitialized(&[c_out_size], T::data_type(), "c_out");
-    let state_out_array = context.create_array_uninitialized(&[state_size], T::data_type(), "state_out");
-
-    let b_buf = b_array.as_ref().map(|a| a.buffer());
-    let b_borrow = b_buf.as_ref().map(|rc| rc.borrow());
-    let b_deref: Option<&B::Buffer> = b_borrow.as_ref().map(|b| b.deref());
+    let mut x_out = context.create_array_uninitialized(&[x_out_size], T::data_type(), "x_out").into_allocation();
+    let mut b_out = context.create_array_uninitialized(&[b_out_size], T::data_type(), "b_out").into_allocation();
+    let mut c_out = context.create_array_uninitialized(&[c_out_size], T::data_type(), "c_out").into_allocation();
+    let mut state_out =
+        context.create_array_uninitialized(&[state_size], T::data_type(), "state_out").into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        padded_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        b_deref,
-        x_out_array.buffer().borrow_mut().deref_mut(),
-        b_out_array.buffer().borrow_mut().deref_mut(),
-        c_out_array.buffer().borrow_mut().deref_mut(),
-        state_out_array.buffer().borrow_mut().deref_mut(),
+        padded_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        &mut x_out,
+        &mut b_out,
+        &mut c_out,
+        &mut state_out,
         input.suffix_len,
         input.kernel_size,
         input.row_stride,
@@ -125,10 +121,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        x_out: x_out_array.as_slice().to_vec(),
-        b_out: b_out_array.as_slice().to_vec(),
-        c_out: c_out_array.as_slice().to_vec(),
-        state_out: state_out_array.as_slice().to_vec(),
+        x_out: crate::common::helpers::allocation_to_vec(&x_out),
+        b_out: crate::common::helpers::allocation_to_vec(&b_out),
+        c_out: crate::common::helpers::allocation_to_vec(&c_out),
+        state_out: crate::common::helpers::allocation_to_vec(&state_out),
     }
 }
 

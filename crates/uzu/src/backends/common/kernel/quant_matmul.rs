@@ -36,13 +36,13 @@ pub struct QuantizedMatmulConfiguration {
     pub use_hadamard: bool,
 }
 
-pub struct QuantizedMatmulArguments<B: Backend> {
-    pub a: Allocation<B>,
-    pub b: Allocation<B>,
-    pub scales: Allocation<B>,
-    pub zero_points_or_biases: Allocation<B>,
-    pub output: Allocation<B>,
-    pub hadamard_factors: Option<Allocation<B>>,
+pub struct QuantizedMatmulArguments<'a, B: Backend> {
+    pub a: &'a Allocation<B>,
+    pub b: &'a Allocation<B>,
+    pub scales: &'a Allocation<B>,
+    pub zero_points_or_biases: &'a Allocation<B>,
+    pub output: &'a mut Allocation<B>,
+    pub hadamard_factors: Option<&'a Allocation<B>>,
     pub batch_dim: usize,
 }
 
@@ -207,14 +207,14 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: QuantizedMatmulArguments<B>,
+        arguments: QuantizedMatmulArguments<'_, B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
         let QuantizedMatmulArguments {
             a,
             b,
             scales,
             zero_points_or_biases,
-            mut output,
+            output,
             hadamard_factors,
             batch_dim,
         } = arguments;
@@ -229,11 +229,11 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                 $kernel.encode(
                     &b,
                     &scales,
-                    zero_points.as_ref(),
-                    biases.as_ref(),
+                    zero_points,
+                    biases,
                     &a,
-                    &mut output,
-                    $($hadamard.as_ref(),)?
+                    output,
+                    $($hadamard,)?
                     self.input_dim as u32,
                     self.output_dim as u32,
                     batch_dim as u32,

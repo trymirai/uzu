@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -133,29 +132,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let len = (input.batch_size * input.vocab_size) as usize;
     let bitmask_len = input.bitmask.len();
 
-    let logits_array = context.create_array_from(&[len], &input.logits, "");
+    let logits_buffer = (!input.in_place).then(|| context.create_array_from(&[len], &input.logits, "").into_allocation());
     let bitmask_array = context.create_array_from(&[bitmask_len], &input.bitmask, "");
-    let logits_array_buffer_rc = logits_array.buffer();
-    let logits_array_borrow = logits_array_buffer_rc.borrow();
-    let logits_array_deref = logits_array_borrow.deref();
-    let logits_buffer = (!input.in_place).then(|| logits_array_deref);
-    let output_array = match input.in_place {
-        true => context.create_array_from(&[len], &input.logits, ""),
-        false => context.create_array_uninitialized(&[len], T::data_type(), ""),
+    let mut output = match input.in_place {
+        true => context.create_array_from(&[len], &input.logits, "").into_allocation(),
+        false => context.create_array_uninitialized(&[len], T::data_type(), "").into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        logits_buffer,
-        bitmask_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        logits_buffer.as_ref(),
+        bitmask_array.allocation(),
+        &mut output,
         input.batch_size,
         input.vocab_size,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>(in_place: bool) {

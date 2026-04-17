@@ -7,6 +7,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu::{
     ArrayElement, DataType,
+    allocation_as_slice,
     backends::{
         common::{
             Allocation, AllocationType, Backend, Buffer, Context, Encoder,
@@ -49,29 +50,6 @@ fn allocation_from_slice<T: ArrayElement, B: Backend>(
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
     }
     allocation
-}
-
-fn allocation_to_vec<T: ArrayElement, B: Backend>(allocation: &Allocation<B>) -> Vec<T> {
-    let (buffer, range) = allocation.as_buffer_range();
-    let byte_len = range.end - range.start;
-    unsafe {
-        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-        let bytes = std::slice::from_raw_parts(src, byte_len);
-        bytemuck::cast_slice(bytes).to_vec()
-    }
-}
-
-fn buffer_from_slice<T: ArrayElement, B: Backend>(
-    context: &B::Context,
-    data: &[T],
-) -> B::Buffer {
-    let buffer = context.create_buffer(data.len() * size_of::<T>()).expect("Failed to create buffer");
-    let bytes = bytemuck::cast_slice(data);
-    unsafe {
-        let dst = buffer.cpu_ptr().as_ptr() as *mut u8;
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
-    }
-    buffer
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -162,7 +140,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     block.encode(&context, &mut encoder, args).expect("Failed to encode AttentionGemm");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&output_allocation)
+    allocation_as_slice::<T, B>(&output_allocation).to_vec()
 }
 
 fn get_output_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
@@ -225,7 +203,7 @@ fn get_output_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
     block.encode(&context, &mut encoder, args).expect("Failed to encode padded AttentionGemm");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&output_allocation)
+    allocation_as_slice::<T, B>(&output_allocation).to_vec()
 }
 
 fn get_output_with_pooled_scratch_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
@@ -281,7 +259,7 @@ fn get_output_with_pooled_scratch_output<T: ArrayElement + Float, B: Backend>(in
     drop(output_allocation);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&output_copy)
+    allocation_as_slice::<T, B>(&output_copy).to_vec()
 }
 
 fn get_output_with_followup_matmul<T: ArrayElement + Float, B: Backend>(
@@ -304,7 +282,7 @@ where
     let weights = (0..output_dim * input_dim)
         .map(|i| T::from((i as f32 * 0.017 + 0.25).cos() * 0.5).unwrap())
         .collect::<Vec<_>>();
-    let weights_buffer = buffer_from_slice::<T, B>(context.as_ref(), &weights);
+    let weights_allocation = allocation_from_slice::<T, B>(context.as_ref(), &weights);
 
     let attention_output_size = input.suffix_length * input_dim * size_of::<T>();
     let matmul_output_size = input.suffix_length * output_dim * size_of::<T>();
@@ -357,7 +335,7 @@ where
         context.as_ref(),
         MatmulArguments {
             a: &attention_output,
-            b: &weights_buffer,
+            b: &weights_allocation,
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
             d: &mut matmul_output,
@@ -371,7 +349,7 @@ where
     drop(attention_output);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_to_vec(&matmul_output)
+    allocation_as_slice::<T, B>(&matmul_output).to_vec()
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

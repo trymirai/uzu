@@ -133,9 +133,7 @@ impl<B: Backend> SamplingKernel<B> {
         &self,
         logits_buffer: &mut Allocation<B>,
         seeds_buffer: &Allocation<B>,
-        seeds_offset: usize,
         bitmask_buffer: Option<&Allocation<B>>,
-        bitmask_offset: usize,
         sampled_tokens_buffer: &mut Allocation<B>,
         sampling_method: SamplingMethod,
         batch_size: usize,
@@ -150,11 +148,9 @@ impl<B: Backend> SamplingKernel<B> {
         }
 
         if let Some(bitmask_buffer) = bitmask_buffer {
-            let bitmask_len = batch_size * vocab_size.div_ceil(32) * size_of::<u32>();
-            let bitmask = bitmask_buffer.slice(bitmask_offset..bitmask_offset + bitmask_len);
             self.bitmask.encode(
                 None::<&Allocation<B>>,
-                &bitmask,
+                bitmask_buffer,
                 &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
@@ -227,11 +223,9 @@ impl<B: Backend> SamplingKernel<B> {
                 );
             }
 
-            let seeds_len = batch_size * size_of::<u64>();
-            let seeds = seeds_buffer.slice(seeds_offset..seeds_offset + seeds_len);
             self.gumbel.encode(
                 None::<&Allocation<B>>,
-                &seeds,
+                seeds_buffer,
                 &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,

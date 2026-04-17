@@ -5,6 +5,7 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
+    array::allocation_as_slice,
     backends::common::{Allocation, Backend, Encoder},
     config::ModelMetadata,
     encodable_block::{EncodingParameters, LayerArguments},
@@ -101,14 +102,13 @@ impl<B: Backend> Classifier<B> {
         self.forward_pass_impl(token_ids, token_positions, None)
     }
 
-    #[cfg(feature = "tracing")]
     fn forward_pass_impl(
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-        trace: Option<&ActivationTrace<B>>,
+        #[cfg(feature = "tracing")] trace: Option<&ActivationTrace<B>>,
     ) -> Result<Box<[f32]>, Error> {
-        let mut state = ForwardPassState::new_classifier(
+        let state = ForwardPassState::new_classifier(
             self.context.context.clone(),
             &self.context.model_shape,
             self.context.shared_buffers.clone(),
@@ -136,12 +136,9 @@ impl<B: Backend> Classifier<B> {
             .embedding_norm
             .encode(&main, 0, state.active_row_count(), &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                &mut encoder,
-                &main,
-                trace.embedding_norm(),
-            );
+            encoder.encode_copy_allocation(&main, trace.embedding_norm());
         }
 
         let mut shortcut =
@@ -164,7 +161,7 @@ impl<B: Backend> Classifier<B> {
                         sampling_length: state.sampling_length(),
                         cache_layer: None,
                         #[cfg(feature = "tracing")]
-                        trace: trace.and_then(|trace| trace.layer_results.get(layer_index)),
+                        trace: trace.and_then(|traces| traces.layer_results.get(layer_index)),
                     },
                     &encoding_params,
                     main,
@@ -178,37 +175,27 @@ impl<B: Backend> Classifier<B> {
             .output_norm
             .encode(&main, 0, state.active_row_count(), &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                &mut encoder,
-                &main,
-                &trace.output_norm,
-            );
+            encoder.encode_copy_allocation(&main, &trace.output_norm);
         }
         let pooling = self
             .context
             .pooling
             .encode(state.active_row_count(), &main, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                &mut encoder,
-                &pooling,
-                trace.output_pooling(),
-            );
+            encoder.encode_copy_allocation(&pooling, trace.output_pooling());
         }
-        state.set_active_row_count(1);
         let logits = self
             .context
             .prediction_head
             .encode(state.context(), &pooling, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
-            crate::backends::common::allocation_helpers::encode_copy_allocation_to_allocation(
-                &mut encoder,
-                &logits,
-                &trace.logits,
-            );
+            encoder.encode_copy_allocation(&logits, &trace.logits);
         }
 
         let _completed = encoder
@@ -228,87 +215,7 @@ impl<B: Backend> Classifier<B> {
         token_ids: &[u64],
         token_positions: &[usize],
     ) -> Result<Box<[f32]>, Error> {
-        let mut state = ForwardPassState::new_classifier(
-            self.context.context.clone(),
-            &self.context.model_shape,
-            self.context.shared_buffers.clone(),
-            token_ids,
-            token_positions,
-        );
-
-        let encoding_params = EncodingParameters::new();
-
-        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
-            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-
-        let mut main = self
-            .context
-            .embed
-            .encode_lookup(
-                state.token_ids(),
-                state.active_row_count(),
-                state.model_shape().activation_data_type(),
-                &mut encoder,
-            )
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        main = self
-            .context
-            .embedding_norm
-            .encode(&main, 0, state.active_row_count(), &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        let mut shortcut =
-            encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        for (layer_index, layer) in self.context.layers.iter().enumerate() {
-            main = layer
-                .encode(
-                    LayerArguments {
-                        context: state.context(),
-                        batch_dim: state.active_row_count(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        attention_sinks: state.attention_sinks(layer_index),
-                        rope_cosines: Some(state.rope_cosines(layer.rope_type())),
-                        rope_sines: Some(state.rope_sines(layer.rope_type())),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        cache_layer: None,
-                        #[cfg(feature = "tracing")]
-                        trace: None,
-                    },
-                    &encoding_params,
-                    main,
-                    &mut shortcut,
-                    &mut encoder,
-                )
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        }
-        main = self
-            .context
-            .output_norm
-            .encode(&main, 0, state.active_row_count(), &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        let pooling = self
-            .context
-            .pooling
-            .encode(state.active_row_count(), &main, &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        state.set_active_row_count(1);
-        let logits = self
-            .context
-            .prediction_head
-            .encode(state.context(), &pooling, &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-
-        let _completed = encoder
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-
-        self.copy_logits_from_allocation(&logits)
+        self.forward_pass_impl(token_ids, token_positions)
     }
 
     fn copy_logits_from_allocation(
@@ -320,27 +227,17 @@ impl<B: Backend> Classifier<B> {
             self.context.model_config.model_config.prediction_head_config.readout_config.activation_precision().into();
 
         match logits_data_type {
-            DataType::F32 => {
-                Ok(crate::backends::common::allocation_helpers::copy_allocation_to_slice::<f32, B>(logits)
-                    .iter()
-                    .take(num_labels)
-                    .copied()
-                    .collect())
-            },
-            DataType::F16 => {
-                Ok(crate::backends::common::allocation_helpers::copy_allocation_to_slice::<half::f16, B>(logits)
-                    .iter()
-                    .take(num_labels)
-                    .map(|&x| x.to_f32())
-                    .collect::<Box<[_]>>())
-            },
-            DataType::BF16 => {
-                Ok(crate::backends::common::allocation_helpers::copy_allocation_to_slice::<half::bf16, B>(logits)
-                    .iter()
-                    .take(num_labels)
-                    .map(|&x| x.to_f32())
-                    .collect::<Box<[_]>>())
-            },
+            DataType::F32 => Ok(allocation_as_slice::<f32, B>(logits).iter().copied().take(num_labels).collect()),
+            DataType::F16 => Ok(allocation_as_slice::<half::f16, B>(logits)
+                .into_iter()
+                .take(num_labels)
+                .map(|x| x.to_f32())
+                .collect::<Box<[_]>>()),
+            DataType::BF16 => Ok(allocation_as_slice::<half::bf16, B>(logits)
+                .into_iter()
+                .take(num_labels)
+                .map(|x| x.to_f32())
+                .collect::<Box<[_]>>()),
             _ => Err(Error::UnableToDecodeText),
         }
     }

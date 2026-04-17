@@ -1,4 +1,5 @@
 use super::*;
+use crate::array::Array;
 
 impl StructuredAudioCodecGraph {
     fn conv1d_input_context<B: Backend>(layer: &StructuredAudioConv1d<B>) -> AudioResult<usize> {
@@ -103,7 +104,7 @@ impl StructuredAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<crate::backends::common::Allocation<B>> {
+    ) -> AudioResult<Array<B>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
                 "structured audio codebook mismatch: expected {}, got {codebooks}",
@@ -142,16 +143,29 @@ impl StructuredAudioCodecGraph {
 
         let lengths_i32 = convert_lengths_to_i32(lengths, frames)?;
 
-        let mut tokens_allocation = resources.token_staging(batch_size * codebooks * frames);
-        crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut tokens_allocation, tokens);
-        let mut lengths_allocation = resources.length_staging(batch_size);
-        crate::backends::common::allocation_helpers::copy_slice_to_allocation(&mut lengths_allocation, &lengths_i32);
+        let mut tokens_array = resources.token_staging(batch_size * codebooks * frames);
+        tokens_array.as_slice_mut::<u32>()[..tokens.len()].copy_from_slice(tokens);
+        let mut lengths_array = resources.length_staging(batch_size);
+        lengths_array.as_slice_mut::<i32>()[..lengths_i32.len()].copy_from_slice(&lengths_i32);
 
-        let mut output = encoder
-            .allocate_scratch(size_for_shape(&[batch_size, frames, self.input_dim], quantizer_resources.data_type))
-            .map_err(|err| {
-                AudioError::Runtime(format!("failed to allocate structured audio quantizer output: {err}"))
-            })?;
+        let output = unsafe {
+            Array::from_allocation(
+                encoder
+                    .allocate_scratch(size_for_shape(
+                        &[batch_size, frames, self.input_dim],
+                        quantizer_resources.data_type,
+                    ))
+                    .map_err(|err| {
+                        AudioError::Runtime(format!("failed to allocate structured audio quantizer output: {err}"))
+                    })?,
+                0,
+                &[batch_size, frames, self.input_dim],
+                quantizer_resources.data_type,
+            )
+        };
+        let output_shape = output.shape().to_vec();
+        let output_data_type = output.data_type();
+        let mut output = output.into_allocation();
         let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
         let codebooks_i32 = usize_to_i32(codebooks, "codebooks")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
@@ -162,14 +176,14 @@ impl StructuredAudioCodecGraph {
         let residual_cardinality_i32 = usize_to_i32(quantizer_resources.residual_cardinality, "residual_cardinality")?;
 
         quantizer_resources.kernel.encode(
-            &tokens_allocation,
-            &lengths_allocation,
-            &quantizer_resources.semantic_codebook,
-            &quantizer_resources.semantic_out_proj,
-            &quantizer_resources.semantic_out_bias,
-            &quantizer_resources.residual_codebooks,
-            &quantizer_resources.residual_out_proj,
-            &quantizer_resources.residual_out_bias,
+            tokens_array.allocation(),
+            lengths_array.allocation(),
+            quantizer_resources.semantic_codebook.allocation(),
+            quantizer_resources.semantic_out_proj.allocation(),
+            quantizer_resources.semantic_out_bias.allocation(),
+            quantizer_resources.residual_codebooks.allocation(),
+            quantizer_resources.residual_out_proj.allocation(),
+            quantizer_resources.residual_out_bias.allocation(),
             &mut output,
             batch_i32,
             codebooks_i32,
@@ -182,6 +196,6 @@ impl StructuredAudioCodecGraph {
             encoder,
         );
 
-        Ok(output)
+        Ok(unsafe { Array::from_allocation(output, 0, &output_shape, output_data_type) })
     }
 }

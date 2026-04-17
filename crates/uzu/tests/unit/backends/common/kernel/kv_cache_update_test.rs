@@ -4,9 +4,37 @@ use ndarray::{Array, Array3, s};
 
 use super::*;
 use crate::backends::{
-    common::{Context, Encoder, allocation_helpers},
+    common::{Allocation, AllocationType, Buffer, Context, Encoder},
     metal::Metal,
 };
+
+fn allocation_from_f32_slice(
+    context: &<Metal as Backend>::Context,
+    data: &[f32],
+) -> Allocation<Metal> {
+    let allocation = context
+        .create_allocation((data.len() * std::mem::size_of::<f32>()).max(1), AllocationType::Global)
+        .expect("Failed to create allocation");
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
+        std::ptr::copy_nonoverlapping(
+            bytemuck::cast_slice(data).as_ptr(),
+            dst,
+            data.len() * std::mem::size_of::<f32>(),
+        );
+    }
+    allocation
+}
+
+fn allocation_to_vec(allocation: &Allocation<Metal>) -> Vec<f32> {
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe {
+        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+        let bytes = std::slice::from_raw_parts(src, range.len());
+        bytemuck::cast_slice(bytes).to_vec()
+    }
+}
 
 fn apply_swaps_3d<T: Clone>(
     array: &mut Array3<T>,
@@ -73,12 +101,8 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     apply_swaps_3d(&mut expected_keys, &swaps);
     apply_swaps_3d(&mut expected_values, &swaps);
 
-    let mut key_allocation =
-        allocation_helpers::create_allocation(context, &[num_heads, seq_len, head_dim], DataType::F32);
-    allocation_helpers::copy_slice_to_allocation(&mut key_allocation, key_data.as_slice().unwrap());
-    let mut value_allocation =
-        allocation_helpers::create_allocation(context, &[num_heads, seq_len, head_dim], DataType::F32);
-    allocation_helpers::copy_slice_to_allocation(&mut value_allocation, value_data.as_slice().unwrap());
+    let mut key_allocation = allocation_from_f32_slice(context, key_data.as_slice().unwrap());
+    let mut value_allocation = allocation_from_f32_slice(context, value_data.as_slice().unwrap());
 
     let mut encoder = Encoder::new(context).unwrap();
     {
@@ -99,17 +123,11 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let key_result = Array::from_shape_vec(
-        (num_heads, seq_len, head_dim),
-        allocation_helpers::copy_allocation_to_slice::<f32, _>(&key_allocation).to_vec(),
-    )
-    .expect("Failed to convert key result to ndarray");
+    let key_result = Array::from_shape_vec((num_heads, seq_len, head_dim), allocation_to_vec(&key_allocation))
+        .expect("Failed to convert key result to ndarray");
 
-    let value_result = Array::from_shape_vec(
-        (num_heads, seq_len, head_dim),
-        allocation_helpers::copy_allocation_to_slice::<f32, _>(&value_allocation).to_vec(),
-    )
-    .expect("Failed to convert value result to ndarray");
+    let value_result = Array::from_shape_vec((num_heads, seq_len, head_dim), allocation_to_vec(&value_allocation))
+        .expect("Failed to convert value result to ndarray");
 
     println!("Original keys head 0 rows 0,14:");
     println!("Row 0: {:?}", key_data.slice(s![0, 0, ..]));

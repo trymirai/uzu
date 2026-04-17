@@ -51,6 +51,55 @@ pub struct KVCacheLayer<B: Backend> {
 }
 
 impl<B: Backend> KVCacheLayer<B> {
+    pub fn encode_copy_prefix_rows_to(
+        &self,
+        destination: &KVCacheLayer<B>,
+        row_count: usize,
+        encoder: &mut Encoder<B>,
+    ) {
+        if row_count == 0 {
+            return;
+        }
+
+        let [num_groups, source_seq, head_dim] = self.shape;
+        let [destination_groups, destination_seq, destination_head_dim] = destination.shape;
+        assert_eq!(num_groups, destination_groups, "KV cache group count mismatch");
+        assert_eq!(head_dim, destination_head_dim, "KV cache head dim mismatch");
+        assert_eq!(self.data_type, destination.data_type, "KV cache dtype mismatch");
+        assert!(row_count <= source_seq, "source KV cache copy exceeds source sequence");
+        assert!(row_count <= destination_seq, "source KV cache copy exceeds destination sequence");
+
+        let row_size = size_for_shape(&[1, 1, head_dim], self.data_type);
+        let source_block_size = source_seq * row_size;
+        let destination_block_size = destination_seq * row_size;
+        let copy_size = row_count * row_size;
+
+        let (source_keys_buffer, source_keys_range) = self.keys.as_buffer_range();
+        let (source_values_buffer, source_values_range) = self.values.as_buffer_range();
+        let (destination_keys_buffer, destination_keys_range) = destination.keys.as_buffer_range();
+        let (destination_values_buffer, destination_values_range) = destination.values.as_buffer_range();
+
+        for group in 0..num_groups {
+            let source_key_offset = source_keys_range.start + group * source_block_size;
+            let source_value_offset = source_values_range.start + group * source_block_size;
+            let destination_key_offset = destination_keys_range.start + group * destination_block_size;
+            let destination_value_offset = destination_values_range.start + group * destination_block_size;
+
+            encoder.encode_copy(
+                source_keys_buffer,
+                source_key_offset..source_key_offset + copy_size,
+                destination_keys_buffer,
+                destination_key_offset..destination_key_offset + copy_size,
+            );
+            encoder.encode_copy(
+                source_values_buffer,
+                source_value_offset..source_value_offset + copy_size,
+                destination_values_buffer,
+                destination_value_offset..destination_value_offset + copy_size,
+            );
+        }
+    }
+
     pub fn prefix_segment_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {

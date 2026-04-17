@@ -20,6 +20,8 @@ PUBLIC KERNEL(RMSNorm)(
     device OutputT* output,
     device InputT* shortcut OPTIONAL(copy_to_shortcut),
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
+    constant uint& input_offset_elements,
+    constant uint& shortcut_offset_elements,
     constant uint& batch_size,
     constant uint& element_count,
     constant float& epsilon,
@@ -36,6 +38,11 @@ PUBLIC KERNEL(RMSNorm)(
 ) {
   if (in_place) {
     input = reinterpret_cast<const device InputT*>(output);
+  } else {
+    input += input_offset_elements;
+  }
+  if (copy_to_shortcut) {
+    shortcut += shortcut_offset_elements;
   }
 
   const uint batch_offset = batch_idx * element_count;

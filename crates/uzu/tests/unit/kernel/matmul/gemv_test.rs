@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::Deref,
     ptr,
 };
 
@@ -79,9 +78,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
 
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-
     let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
 
@@ -90,7 +86,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         &context,
         MatmulArguments {
             a: &a_allocation,
-            b: b_ref.deref(),
+            b: b_array.allocation(),
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
             d: &mut d_allocation,

@@ -1,7 +1,6 @@
 #![cfg(metal_backend)]
 
 use std::{
-    ops::Deref,
     ptr,
     rc::Rc,
 };
@@ -96,9 +95,6 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
             .expect("Failed to create allocation")
     };
 
-    let right_buffer = right_array.buffer();
-    let right_ref = right_buffer.borrow();
-
     let argument_c = if input.destination_prefill.is_some() {
         MatmulArgumentC::Accumulate
     } else {
@@ -114,7 +110,7 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
         &cpu_context,
         MatmulArguments {
             a: &left_allocation,
-            b: right_ref.deref(),
+            b: right_array.allocation(),
             ab_scale: input.ab_scale,
             c: argument_c,
             d: &mut destination_allocation,
@@ -150,9 +146,6 @@ fn get_mpp_output(
             .expect("Failed to create allocation")
     };
 
-    let right_buffer = right_array.buffer();
-    let right_ref = right_buffer.borrow();
-
     let argument_c = if input.destination_prefill.is_some() {
         MatmulArgumentC::Accumulate
     } else {
@@ -164,7 +157,7 @@ fn get_mpp_output(
         metal_context,
         MatmulArguments {
             a: &left_allocation,
-            b: right_ref.deref(),
+            b: right_array.allocation(),
             ab_scale: input.ab_scale,
             c: argument_c,
             d: &mut destination_allocation,
@@ -294,9 +287,6 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
         benchmark_group.bench_function(
             BenchmarkId::new("BF16", format!("M[{batch_dim}]K[{input_dim}]N[{output_dim}]")),
             |bencher| {
-                let right_buffer = right_array.buffer();
-                let right_ref = right_buffer.borrow();
-
                 bencher.iter_custom(|iteration_count| {
                     let mut encoder = Encoder::<Metal>::new(&metal_context).unwrap();
 
@@ -305,7 +295,7 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
                             &metal_context,
                             MatmulArguments {
                                 a: &left_allocation,
-                                b: right_ref.deref(),
+                                b: right_array.allocation(),
                                 ab_scale: 1.0,
                                 c: MatmulArgumentC::None,
                                 d: &mut destination_allocation,

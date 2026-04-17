@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -109,18 +108,24 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     let sums_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
     let maxs_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
 
-    let partials_array = context.create_array_uninitialized(&[partials_size], DataType::F32, "");
-    let sums_array = context.create_array_uninitialized(&[sums_size], DataType::F32, "");
-    let maxs_array = context.create_array_uninitialized(&[maxs_size], DataType::F32, "");
+    let mut partials = context
+        .create_array_uninitialized(&[partials_size], DataType::F32, "")
+        .into_allocation();
+    let mut sums = context
+        .create_array_uninitialized(&[sums_size], DataType::F32, "")
+        .into_allocation();
+    let mut maxs = context
+        .create_array_uninitialized(&[maxs_size], DataType::F32, "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        queries_array.buffer().borrow().deref(),
-        keys_array.buffer().borrow().deref(),
-        values_array.buffer().borrow().deref(),
-        partials_array.buffer().borrow_mut().deref_mut(),
-        sums_array.buffer().borrow_mut().deref_mut(),
-        maxs_array.buffer().borrow_mut().deref_mut(),
+        queries_array.allocation(),
+        keys_array.allocation(),
+        values_array.allocation(),
+        &mut partials,
+        &mut sums,
+        &mut maxs,
         input.gqa_factor,
         input.sequence_length,
         input.sequence_length * input.head_dim,
@@ -131,17 +136,17 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         input.scale,
         input.num_heads,
         input.suffix_length,
-        None::<&B::Buffer>,
+        None::<&uzu::backends::common::Allocation<B>>,
         None,
-        None::<&B::Buffer>,
+        None::<&uzu::backends::common::Allocation<B>>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     FirstPassOutput {
-        partials: partials_array.as_slice().to_vec(),
-        sums: sums_array.as_slice().to_vec(),
-        maxs: maxs_array.as_slice().to_vec(),
+        partials: crate::common::helpers::allocation_to_vec(&partials),
+        sums: crate::common::helpers::allocation_to_vec(&sums),
+        maxs: crate::common::helpers::allocation_to_vec(&maxs),
     }
 }
 
@@ -204,21 +209,23 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
     let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs, "");
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
-    let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
+    let mut output = context
+        .create_array_uninitialized(&[output_size], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        partials_array.buffer().borrow().deref(),
-        sums_array.buffer().borrow().deref(),
-        maxs_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        partials_array.allocation(),
+        sums_array.allocation(),
+        maxs_array.allocation(),
+        &mut output,
         input.num_heads,
         input.suffix_length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 // --- First pass tests ---

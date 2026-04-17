@@ -1,6 +1,7 @@
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, allocation_helpers},
+    array::ArrayContextExt,
+    backends::common::{Allocation, Backend},
     forward_pass::model_shape::ModelShape,
 };
 
@@ -9,7 +10,7 @@ fn create_trace_allocation<B: Backend>(
     shape: &[usize],
     data_type: DataType,
 ) -> Allocation<B> {
-    allocation_helpers::create_allocation(context, shape, data_type)
+    context.create_array_uninitialized(shape, data_type, "activation_trace").into_allocation()
 }
 
 fn create_layer_results<B: Backend>(

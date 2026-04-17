@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use uzu::{
-    ArrayContextExt, DataType,
+    ArrayContextExt, DataType, allocation_as_slice,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -28,15 +28,13 @@ use crate::uzu_test;
 
 macro_rules! borrow_array_buffer {
     ($name:ident = $array:expr) => {
-        let $name = $array.buffer();
-        let $name = $name.borrow();
+        let $name = $array.allocation();
     };
 }
 
 macro_rules! borrow_array_buffer_mut {
     ($name:ident = $array:expr) => {
-        let $name = $array.buffer();
-        let mut $name = $name.borrow_mut();
+        let $name = &mut $array;
     };
 }
 
@@ -93,7 +91,8 @@ fn audio_conv1d_replicate_matches_reference_f32() {
     let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_conv1d_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
 
-    let output = context.create_array_zeros(&[batch_size, cout, seq_len_out], DataType::F32, "audio_conv1d_output");
+    let mut output =
+        context.create_array_zeros(&[batch_size, cout, seq_len_out], DataType::F32, "audio_conv1d_output").into_allocation();
     let expected = conv1d_reference(Conv1dSpec {
         input: &input_values,
         weight: &weight_values,
@@ -119,11 +118,11 @@ fn audio_conv1d_replicate_matches_reference_f32() {
         borrow_array_buffer_mut!(output_buffer = output);
         borrow_array_buffer!(lengths_buffer = lengths);
         kernel.encode(
-            &*input_buffer,
-            &*weight_buffer,
-            &*bias_buffer,
-            &mut *output_buffer,
-            &*lengths_buffer,
+            input_buffer,
+            weight_buffer,
+            bias_buffer,
+            output_buffer,
+            lengths_buffer,
             cin as i32,
             cout as i32,
             seq_len_in as i32,
@@ -138,7 +137,7 @@ fn audio_conv1d_replicate_matches_reference_f32() {
         );
     });
 
-    let got = output.as_slice::<f32>();
+    let got = allocation_as_slice::<f32, Metal>(&output);
     for index in 0..output_len {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -186,7 +185,9 @@ fn audio_causal_conv1d_matches_reference_f32() {
     let mut lengths_array = context.create_array_zeros(&[batch_size], DataType::I32, "audio_causal_conv1d_lengths");
     lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths);
 
-    let output = context.create_array_zeros(&[batch_size, cout, seq_len], DataType::F32, "audio_causal_conv1d_output");
+    let mut output = context
+        .create_array_zeros(&[batch_size, cout, seq_len], DataType::F32, "audio_causal_conv1d_output")
+        .into_allocation();
     let expected = causal_conv1d_reference(CausalConv1dSpec {
         input: &input_values,
         weight: &weight_values,
@@ -208,11 +209,11 @@ fn audio_causal_conv1d_matches_reference_f32() {
         borrow_array_buffer_mut!(output_buffer = output);
         borrow_array_buffer!(lengths_buffer = lengths_array);
         kernel.encode(
-            &*input_buffer,
-            &*weight_buffer,
-            &*bias_buffer,
-            &mut *output_buffer,
-            &*lengths_buffer,
+            input_buffer,
+            weight_buffer,
+            bias_buffer,
+            output_buffer,
+            lengths_buffer,
             cin as i32,
             cout as i32,
             seq_len as i32,
@@ -224,7 +225,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
         );
     });
 
-    let got = output.as_slice::<f32>();
+    let got = allocation_as_slice::<f32, Metal>(&output);
     for index in 0..output_len {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -280,11 +281,13 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
     let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
 
-    let output = context.create_array_zeros(
+    let mut output = context
+        .create_array_zeros(
         &[batch_size, cout, seq_len_out],
         DataType::F32,
         "audio_causal_conv_transpose_output",
-    );
+    )
+        .into_allocation();
     let expected = causal_conv_transpose1d_reference(CausalConvTranspose1dSpec {
         input: &input_values,
         weight: &weight_values,
@@ -307,11 +310,11 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
         borrow_array_buffer_mut!(output_buffer = output);
         borrow_array_buffer!(lengths_buffer = lengths);
         kernel.encode(
-            &*input_buffer,
-            &*weight_buffer,
-            &*bias_buffer,
-            &mut *output_buffer,
-            &*lengths_buffer,
+            input_buffer,
+            weight_buffer,
+            bias_buffer,
+            output_buffer,
+            lengths_buffer,
             cin as i32,
             cout as i32,
             seq_len_in as i32,
@@ -323,7 +326,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
         );
     });
 
-    let got = output.as_slice::<f32>();
+    let got = allocation_as_slice::<f32, Metal>(&output);
     for index in 0..output_len {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -410,11 +413,13 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
             context.create_array_zeros(&[batch_size], DataType::I32, "audio_causal_conv_transpose_lalamo_lengths");
         lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_out);
 
-        let output = context.create_array_zeros(
+        let mut output = context
+            .create_array_zeros(
             &[batch_size, cout, seq_len_out],
             DataType::F32,
             "audio_causal_conv_transpose_lalamo_output",
-        );
+        )
+            .into_allocation();
 
         run_command_buffer(&context, |command_buffer| {
             borrow_array_buffer!(input_buffer = input);
@@ -423,11 +428,11 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
             borrow_array_buffer_mut!(output_buffer = output);
             borrow_array_buffer!(lengths_buffer = lengths);
             kernel.encode(
-                &*input_buffer,
-                &*weight_buffer,
-                &*bias_buffer,
-                &mut *output_buffer,
-                &*lengths_buffer,
+                input_buffer,
+                weight_buffer,
+                bias_buffer,
+                output_buffer,
+                lengths_buffer,
                 cin as i32,
                 cout as i32,
                 seq_len_in as i32,
@@ -441,7 +446,7 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
             );
         });
 
-        let got = output.as_slice::<f32>();
+        let got = allocation_as_slice::<f32, Metal>(&output);
         for index in 0..output_len {
             let delta = (expected[index] - got[index]).abs();
             assert!(
@@ -469,16 +474,16 @@ fn audio_leaky_relu_matches_reference_f32() {
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
     let alpha = context.create_array_zeros(&[1], DataType::F32, "audio_leaky_relu_alpha");
-    let output = context.create_array_zeros(&[1, 1, n], DataType::F32, "audio_leaky_relu_output");
+    let mut output = context.create_array_zeros(&[1, 1, n], DataType::F32, "audio_leaky_relu_output").into_allocation();
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
         borrow_array_buffer!(alpha_buffer = alpha);
         borrow_array_buffer_mut!(output_buffer = output);
         kernel.encode(
-            &*input_buffer,
-            &*alpha_buffer,
-            &mut *output_buffer,
+            input_buffer,
+            alpha_buffer,
+            output_buffer,
             1,
             n as i32,
             0,
@@ -489,7 +494,7 @@ fn audio_leaky_relu_matches_reference_f32() {
         );
     });
 
-    let got = output.as_slice::<f32>();
+    let got = allocation_as_slice::<f32, Metal>(&output);
     for index in 0..n {
         let expected = if input_values[index] >= 0.0 {
             input_values[index]
@@ -513,15 +518,15 @@ fn audio_tanh_matches_reference_f32() {
     let mut input = context.create_array_zeros(&[n], DataType::F32, "audio_tanh_input");
     input.as_slice_mut::<f32>().copy_from_slice(&input_values);
 
-    let output = context.create_array_zeros(&[n], DataType::F32, "audio_tanh_output");
+    let mut output = context.create_array_zeros(&[n], DataType::F32, "audio_tanh_output").into_allocation();
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
         borrow_array_buffer_mut!(output_buffer = output);
-        kernel.encode(Some(&*input_buffer), &mut *output_buffer, n as u32, ActivationType::TANH, command_buffer);
+        kernel.encode(Some(input_buffer), output_buffer, n as u32, ActivationType::TANH, command_buffer);
     });
 
-    let got = output.as_slice::<f32>();
+    let got = allocation_as_slice::<f32, Metal>(&output);
     for index in 0..n {
         let expected = input_values[index].tanh();
         let delta = (expected - got[index]).abs();
@@ -545,16 +550,16 @@ fn audio_add_matches_reference_f32() {
     let mut b = context.create_array_zeros(&[n], DataType::F32, "audio_add_b");
     b.as_slice_mut::<f32>().copy_from_slice(&b_values);
 
-    let sum = context.create_array_zeros(&[n], DataType::F32, "audio_add_sum");
+    let mut sum = context.create_array_zeros(&[n], DataType::F32, "audio_add_sum").into_allocation();
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(a_buffer = a);
         borrow_array_buffer!(b_buffer = b);
         borrow_array_buffer_mut!(sum_buffer = sum);
-        add_kernel.encode(&*a_buffer, &*b_buffer, &mut *sum_buffer, n as i32, command_buffer);
+        add_kernel.encode(a_buffer, b_buffer, sum_buffer, n as i32, command_buffer);
     });
 
-    let sum_got = sum.as_slice::<f32>();
+    let sum_got = allocation_as_slice::<f32, Metal>(&sum);
 
     for index in 0..n {
         let expected_sum = a_values[index] + b_values[index];
@@ -593,16 +598,18 @@ fn audio_half_snake_matches_reference_f32() {
     let mut alpha = context.create_array_zeros(&[snake_channels], DataType::F32, "audio_half_snake_alpha");
     alpha.as_slice_mut::<f32>().copy_from_slice(&alpha_values);
 
-    let output = context.create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_output");
+    let mut output = context
+        .create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_half_snake_output")
+        .into_allocation();
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
         borrow_array_buffer!(alpha_buffer = alpha);
         borrow_array_buffer_mut!(output_buffer = output);
         kernel.encode(
-            &*input_buffer,
-            &*alpha_buffer,
-            &mut *output_buffer,
+            input_buffer,
+            alpha_buffer,
+            output_buffer,
             channels as i32,
             seq_len as i32,
             snake_channels as i32,
@@ -613,7 +620,7 @@ fn audio_half_snake_matches_reference_f32() {
         );
     });
 
-    let got = output.as_slice::<f32>();
+    let got = allocation_as_slice::<f32, Metal>(&output);
     let expected = half_snake_reference(HalfSnakeSpec {
         input: &input_values,
         alpha: &alpha_values,
@@ -704,7 +711,9 @@ fn audio_norm_ncs_matches_reference_f32() {
         let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_norm_lengths");
         lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_values);
 
-        let output = context.create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_output");
+        let mut output = context
+            .create_array_zeros(&[batch_size, channels, seq_len], DataType::F32, "audio_norm_output")
+            .into_allocation();
 
         run_command_buffer(&context, |command_buffer| {
             borrow_array_buffer!(input_buffer = input);
@@ -713,11 +722,11 @@ fn audio_norm_ncs_matches_reference_f32() {
             borrow_array_buffer_mut!(output_buffer = output);
             borrow_array_buffer!(lengths_buffer = lengths);
             kernel.encode(
-                &*input_buffer,
-                &*scales_buffer,
-                &*bias_buffer,
-                &mut *output_buffer,
-                &*lengths_buffer,
+                input_buffer,
+                scales_buffer,
+                bias_buffer,
+                output_buffer,
+                lengths_buffer,
                 channels as i32,
                 seq_len as i32,
                 epsilon,
@@ -731,7 +740,7 @@ fn audio_norm_ncs_matches_reference_f32() {
             );
         });
 
-        let got = output.as_slice::<f32>();
+        let got = allocation_as_slice::<f32, Metal>(&output);
         let expected = reference(subtract_mean);
         for index in 0..input_len {
             let delta = (expected[index] - got[index]).abs();
@@ -767,20 +776,22 @@ fn audio_fsq_decode_matches_reference() {
     let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_fsq_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&[2]);
 
-    let output = context.create_array_zeros(
+    let mut output = context
+        .create_array_zeros(
         &[batch_size, num_groups * codebook_dim, seq_len],
         DataType::F32,
         "audio_fsq_output",
-    );
+    )
+        .into_allocation();
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(tokens_buffer = tokens);
         borrow_array_buffer_mut!(output_buffer = output);
         borrow_array_buffer!(lengths_buffer = lengths);
         kernel.encode(
-            &*tokens_buffer,
-            &mut *output_buffer,
-            &*lengths_buffer,
+            tokens_buffer,
+            output_buffer,
+            lengths_buffer,
             num_groups as i32,
             seq_len as i32,
             codebook_dim as i32,
@@ -794,7 +805,7 @@ fn audio_fsq_decode_matches_reference() {
     let expected =
         fsq_decode_reference(&[0, 7, 11, 3, 5, 9], &[2], batch_size, num_groups, seq_len, codebook_dim, &num_levels)
             .expect("reference decode");
-    let actual = output.as_slice::<f32>();
+    let actual = allocation_as_slice::<f32, Metal>(&output);
 
     for (index, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
         let delta = (a - e).abs();
@@ -834,17 +845,18 @@ fn audio_fsq_encode_matches_reference() {
     let mut lengths = context.create_array_zeros(&[batch_size], DataType::I32, "audio_fsq_encode_lengths");
     lengths.as_slice_mut::<i32>().copy_from_slice(&lengths_values);
 
-    let tokens =
-        context.create_array_zeros(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_encode_tokens");
+    let mut tokens = context
+        .create_array_zeros(&[batch_size, num_groups, seq_len], DataType::I32, "audio_fsq_encode_tokens")
+        .into_allocation();
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
         borrow_array_buffer_mut!(tokens_buffer = tokens);
         borrow_array_buffer!(lengths_buffer = lengths);
         kernel.encode(
-            &*input_buffer,
-            &mut *tokens_buffer,
-            &*lengths_buffer,
+            input_buffer,
+            tokens_buffer,
+            lengths_buffer,
             num_groups as i32,
             seq_len as i32,
             codebook_dim as i32,
@@ -868,7 +880,7 @@ fn audio_fsq_encode_matches_reference() {
         eps,
     )
     .expect("reference encode");
-    let actual = tokens.as_slice::<i32>();
+    let actual = allocation_as_slice::<i32, Metal>(&tokens);
 
     assert_eq!(actual, expected);
 }

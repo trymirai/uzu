@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use half::{bf16, f16};
@@ -66,17 +65,18 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let input_array = context.create_array_from(&[input.input.len()], &input.input, "input");
     let z_bias_array = context.create_array_from(&[input.z_bias.len()], &input.z_bias, "z_bias");
 
-    let conv_out_array = context.create_array_uninitialized(&[conv_out_size], T::data_type(), "conv_out");
-    let z_out_array = context.create_array_uninitialized(&[z_out_size], T::data_type(), "z_out");
-    let dt_out_array = context.create_array_uninitialized(&[dt_out_size], T::data_type(), "dt_out");
+    let mut conv_out =
+        context.create_array_uninitialized(&[conv_out_size], T::data_type(), "conv_out").into_allocation();
+    let mut z_out = context.create_array_uninitialized(&[z_out_size], T::data_type(), "z_out").into_allocation();
+    let mut dt_out = context.create_array_uninitialized(&[dt_out_size], T::data_type(), "dt_out").into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_array.buffer().borrow().deref(),
-        conv_out_array.buffer().borrow_mut().deref_mut(),
-        z_out_array.buffer().borrow_mut().deref_mut(),
-        dt_out_array.buffer().borrow_mut().deref_mut(),
-        z_bias_array.buffer().borrow().deref(),
+        input_array.allocation(),
+        &mut conv_out,
+        &mut z_out,
+        &mut dt_out,
+        z_bias_array.allocation(),
         input.suffix_length,
         input.total_dim,
         input.conv_dim,
@@ -87,9 +87,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        conv_out: conv_out_array.as_slice().to_vec(),
-        z_out: z_out_array.as_slice().to_vec(),
-        dt_out: dt_out_array.as_slice().to_vec(),
+        conv_out: crate::common::helpers::allocation_to_vec(&conv_out),
+        z_out: crate::common::helpers::allocation_to_vec(&z_out),
+        dt_out: crate::common::helpers::allocation_to_vec(&dt_out),
     }
 }
 
