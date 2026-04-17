@@ -8,8 +8,10 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-nagare.workspace = true
 backend-uzu.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+nagare.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

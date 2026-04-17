@@ -99,7 +99,7 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
-            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu --lib --test kernel' || '' }}
+            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu --lib --test kernel' || '' }}
 
   completed:
     name: completed
