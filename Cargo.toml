@@ -133,6 +133,7 @@ wasm-bindgen-futures = "0.4.64"
 tsify = { version = "0.5.6", features = ["js"] }
 openai-harmony = "0.0.8"
 dirs = "6.0.0"
+dotenvy = "0.15.7"
 
 [profile.dev.build-override]
 opt-level = 3

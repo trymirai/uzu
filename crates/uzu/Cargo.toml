@@ -8,7 +8,15 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+nagare.workspace = true
 backend-uzu.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+dotenvy.workspace = true
 
 [features]
 default = ["metal"]
