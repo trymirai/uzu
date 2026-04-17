@@ -1,6 +1,6 @@
 use std::{env, path::Path, rc::Rc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
+use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, SparseBuffer};
 
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;
@@ -24,6 +24,11 @@ pub trait Context: Sized {
         &self,
         size: usize,
     ) -> Result<<Self::Backend as Backend>::Buffer, <Self::Backend as Backend>::Error>;
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
 
     fn create_allocation(
         &self,

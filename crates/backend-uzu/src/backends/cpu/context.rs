@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
 };
 
@@ -55,6 +55,13 @@ impl Context for CpuContext {
         size: usize,
     ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
         Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
+    }
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        todo!()
     }
 
     fn create_allocation(

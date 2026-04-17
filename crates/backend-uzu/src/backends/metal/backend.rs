@@ -2,7 +2,7 @@ use metal::{MTLBuffer, MTLEvent};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::MetalKernels};
-use crate::backends::common::Backend;
+use crate::backends::{common::Backend, metal::sparse_buffer::MetalSparseBuffer};
 
 #[derive(Debug, Clone)]
 pub struct Metal;
@@ -11,6 +11,7 @@ impl Backend for Metal {
     type Context = MetalContext;
     type CommandBuffer = MetalCommandBuffer;
     type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+    type SparseBuffer = MetalSparseBuffer;
     type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;
     type Error = MetalError;

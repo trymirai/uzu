@@ -11,6 +11,7 @@ pub trait Buffer: Debug {
     );
 
     fn cpu_ptr(&self) -> NonNull<c_void>;
+
     fn gpu_ptr(&self) -> usize;
 
     fn length(&self) -> usize;
