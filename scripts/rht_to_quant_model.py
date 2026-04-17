@@ -226,46 +226,6 @@ def base_weight_key_from_inner(weight_key: str) -> str:
     return weight_key.removesuffix(".inner_linear.weights") + ".weights"
 
 
-def config_path_for_weight_key(weight_key: str) -> tuple[str, ...]:
-    parts = weight_key.split(".")
-    assert parts[:3] == ["transformer", "layers", parts[2]]
-    layer_index = parts[2]
-    if parts[3] == "mlp":
-        return ("model_config", "model_config", "transformer_config", "layer_configs", layer_index, "mlp_config", "linear_config")
-    if parts[3] == "mixer":
-        if parts[4] == "in_projection":
-            return (
-                "model_config",
-                "model_config",
-                "transformer_config",
-                "layer_configs",
-                layer_index,
-                "mixer_config",
-                "in_projection_config",
-            )
-        if parts[4] == "out_projection":
-            return (
-                "model_config",
-                "model_config",
-                "transformer_config",
-                "layer_configs",
-                layer_index,
-                "mixer_config",
-                "out_projection_config",
-            )
-        if parts[4] == "qkv_projection":
-            return (
-                "model_config",
-                "model_config",
-                "transformer_config",
-                "layer_configs",
-                layer_index,
-                "mixer_config",
-                "qkv_projection_config",
-            )
-    raise AssertionError(weight_key)
-
-
 def linear_group_size_for_weight_key(weight_key: str, settings: Settings) -> int:
     if ".mlp." in weight_key and settings.mlp_group_size is not None:
         return settings.mlp_group_size
@@ -280,16 +240,6 @@ def linear_group_size_for_config_path(path: tuple[str, ...], settings: Settings)
     if "mixer_config" in path and settings.mixer_group_size is not None:
         return settings.mixer_group_size
     return settings.linear_group_size
-
-
-def set_config_path(root: dict[str, object], path: tuple[str, ...], value: dict[str, object]) -> None:
-    cursor: object = root
-    for part in path[:-1]:
-        cursor = cursor[int(part)] if isinstance(cursor, list) else cursor[part]
-    if isinstance(cursor, list):
-        cursor[int(path[-1])] = value
-    else:
-        cursor[path[-1]] = value
 
 
 def rewrite_rht_config(config: dict[str, object], settings: Settings) -> None:
@@ -314,24 +264,18 @@ def rewrite_rht_config(config: dict[str, object], settings: Settings) -> None:
 def rewrite_embedding_config(config: dict[str, object], settings: Settings) -> None:
     embedding_config = config["model_config"]["model_config"]["embedding_config"]
     assert embedding_config["type"] == "MLXQuantizedTiedEmbeddingConfig"
-    group_size = embedding_config["group_size"]
-    embedding_quantization_mode = embedding_config["embedding_quantization_mode"]
-    activation_precision = embedding_config["activation_precision"]
-    input_scale = embedding_config["input_scale"]
-    logit_soft_cap = embedding_config["logit_soft_cap"]
+    rewritten_embedding_config = {
+        "type": "MLXQuantizedOutputUntiedEmbeddingConfig",
+        "input_scale": embedding_config["input_scale"],
+        "logit_soft_cap": embedding_config["logit_soft_cap"],
+        "group_size": embedding_config["group_size"],
+        "output_group_size": settings.lm_head_group_size,
+        "embedding_quantization_mode": embedding_config["embedding_quantization_mode"],
+        "activation_precision": embedding_config["activation_precision"],
+        "output_quantization_mode": settings.lm_head_mode,
+    }
     embedding_config.clear()
-    embedding_config.update(
-        {
-            "type": "MLXQuantizedOutputUntiedEmbeddingConfig",
-            "input_scale": input_scale,
-            "logit_soft_cap": logit_soft_cap,
-            "group_size": group_size,
-            "output_group_size": settings.lm_head_group_size,
-            "embedding_quantization_mode": embedding_quantization_mode,
-            "activation_precision": activation_precision,
-            "output_quantization_mode": settings.lm_head_mode,
-        }
-    )
+    embedding_config.update(rewritten_embedding_config)
 
 
 def convert_linear(source: safe_open, weight_key: str, settings: Settings) -> ConvertedLinear:
