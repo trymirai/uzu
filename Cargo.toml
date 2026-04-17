@@ -5,6 +5,7 @@ members = [
     "crates/json-transform",
     "crates/token-stream-parser",
     "crates/hanashi",
+    "crates/nagare",
     "crates/download-manager",
     "crates/benchmarks",
     "crates/uzu",
@@ -25,7 +26,8 @@ dsl = { path = "crates/dsl" }
 bindings = { path = "crates/bindings" }
 json-transform = { path = "crates/json-transform" }
 token-stream-parser = { path = "crates/token-stream-parser" }
-hanashi = { path = "crates/hanashi" }
+hanashi = { path = "crates/hanashi", default-features = false }
+nagare = { path = "crates/nagare", default-features = false }
 download-manager = { path = "crates/download-manager" }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
@@ -38,8 +40,9 @@ thiserror = "2.0"
 tokenizers = { version = "0.22", features = [
     "fancy-regex",
 ], default-features = false }
-objc2 = "0.6"
-objc2-foundation = "0.3"
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-security = "0.3.2"
 metal = { package = "mtl-rs", version = "0.1" }
 block2 = "0.6"
 bytemuck = "1.23"
@@ -127,6 +130,7 @@ serde-wasm-bindgen = "0.6.5"
 wasm-bindgen-futures = "0.4.64"
 tsify = { version = "0.5.6", features = ["js"] }
 openai-harmony = "0.0.8"
+dirs = "6.0.0"
 
 [profile.dev.build-override]
 opt-level = 3

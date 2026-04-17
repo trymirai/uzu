@@ -3563,6 +3563,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "nagare"
+version = "0.1.9"
+dependencies = [
+ "chrono",
+ "dirs",
+ "download-manager",
+ "futures",
+ "futures-util",
+ "indexmap 2.14.0",
+ "indicatif",
+ "objc2",
+ "objc2-foundation",
+ "objc2-security",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "napi"
 version = "3.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3921,6 +3949,19 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-security"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
+dependencies = [
+ "bitflags 2.11.1",
+ "block2",
+ "libc",
+ "objc2",
+ "objc2-core-foundation",
 ]
 
 [[package]]

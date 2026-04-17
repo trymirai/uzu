@@ -1,0 +1,32 @@
+[package]
+name = "nagare"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+download-manager.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+dirs.workspace = true
+sysinfo.workspace = true
+reqwest.workspace = true
+indexmap.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-security.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
+indicatif.workspace = true
