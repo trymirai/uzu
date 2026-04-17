@@ -73,6 +73,7 @@ jobs:
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       FEATURE_FLAGS: >-
         ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
         ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}

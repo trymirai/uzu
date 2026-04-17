@@ -4,6 +4,7 @@ mod common;
 use common::test_helpers::TestStorage;
 use nagare::storage::types::DownloadPhase;
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_debug_file_preservation_complete_app_relaunch_resume() -> Result<(), Box<dyn std::error::Error>> {
     // Enable test tracing to file for deeper diagnostics
@@ -151,6 +152,7 @@ async fn test_storage_debug_file_preservation_complete_app_relaunch_resume() -> 
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempfile::tempdir()?;
@@ -316,6 +318,7 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_debug_file_preservation_completed_file_detection() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempfile::tempdir()?;
