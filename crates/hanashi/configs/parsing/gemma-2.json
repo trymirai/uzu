@@ -1,0 +1,26 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<start_of_turn>",
+                "close_tokens": [
+                    "<end_of_turn>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role",
+                        "capturing_limit": 1
+                    },
+                    {
+                        "type": "greedy",
+                        "name": "content"
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {}
+}

@@ -1,0 +1,73 @@
+[
+    {
+        "repo_id": "google/gemma-3-1b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nWhat is the current temperature in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "As of today, November 2, 2023, at 1:47 PM GMT, the temperature in London is **13\u00b0C (55\u00b0F)**. \n\nHere's a more detailed breakdown:\n\n*   **Current conditions:** Partly cloudy\n*   **Feels like:** 10\u00b0C (50\u00b0F)\n*   **Wind:** West at 15 km/h (9 mph)\n\nYou can find more up-to-the-minute weather information here: [https://www.metoffice.gov.uk/weather/weather-forecast](https://www.metoffice.gov.uk/weather/weather-forecast)<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-3-1b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a helpful assistant\n\nWhat is the current wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "I can check the current wind speed in London for you!\n\nAs of right now (November 2, 2023, at 10:46 AM PST), the wind speed in London is approximately **16 km/h (10 mph)**.\n\nYou can find more detailed wind speed information here: [https://www.met-weather.com/wind-speed/london](https://www.met-weather.com/wind-speed/london)\n\nDo you want me to provide you with any other weather information?<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-3-1b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a helpful assistant\n\nWhat is the current temperature and wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "Okay, let me check that for you.\n\nAs of right now (November 3, 2023, 1:15 PM GMT), the temperature in London is 13\u00b0C (55\u00b0F) and the wind speed is 25 km/h (15 mph) from the southwest.\n\nWould you like me to provide you with a forecast?<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

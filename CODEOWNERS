@@ -13,5 +13,10 @@
 /crates/uzu/src/parameters @uuuvn
 /crates/uzu/src/speculators @uuuvn
 /crates/uzu/src/tracer @alexxale
+/crates/json-transform @alexxale
+/crates/token-stream-parser @alexxale
+/crates/hanashi @alexxale
+/crates/nagare @alexxale
+/crates/download-manager @alexxale @eugenebokhan
 /scripts @alexxale
 /tools @alexxale

@@ -1,6 +1,9 @@
 {
   "file_types": {
-    "Metal": ["h", "H"]
+    "Metal": [
+      "h",
+      "H"
+    ]
   },
   "languages": {
     "Metal": {
@@ -21,10 +24,7 @@
           "indexing": {
             "enabled": true,
             "concurrency": 8,
-            "maxFileSizeKb": 1024,
-            "excludePaths": [
-              "external/uzu-plus"
-            ]
+            "maxFileSizeKb": 1024
           },
           "formatting": {
             "enabled": true,

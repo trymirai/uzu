@@ -1,0 +1,184 @@
+[
+    {
+        "name": "llama-3.1",
+        "parsing": "llama-3",
+        "rendering": "llama-3.1",
+        "tokens": "llama-3",
+        "ordering": "default"
+    },
+    {
+        "name": "llama-3.2",
+        "parsing": "llama-3",
+        "rendering": "llama-3.2",
+        "tokens": "llama-3",
+        "ordering": "default"
+    },
+    {
+        "name": "qwen2.5",
+        "parsing": "qwen2.5",
+        "rendering": "qwen2.5",
+        "tokens": "qwen2.5",
+        "ordering": "default"
+    },
+    {
+        "name": "qwen2.5-coder",
+        "parsing": "qwen2.5-coder",
+        "rendering": "qwen2.5-coder",
+        "tokens": "qwen2.5",
+        "ordering": "default-no-tools"
+    },
+    {
+        "name": "qwen3",
+        "parsing": "qwen3",
+        "rendering": "qwen3",
+        "tokens": "qwen3",
+        "ordering": "default"
+    },
+    {
+        "name": "qwen3-instruct",
+        "parsing": "qwen3",
+        "rendering": "qwen3-instruct",
+        "tokens": "qwen3",
+        "ordering": "default"
+    },
+    {
+        "name": "qwen3-thinking",
+        "parsing": "qwen3",
+        "rendering": "qwen3-thinking",
+        "tokens": "qwen3",
+        "ordering": "default"
+    },
+    {
+        "name": "qwen3.5",
+        "parsing": "qwen3.5",
+        "rendering": "qwen3.5",
+        "tokens": "qwen3.5",
+        "ordering": "default"
+    },
+    {
+        "name": "gpt-oss",
+        "parsing": "gpt-oss",
+        "rendering": "gpt-oss",
+        "tokens": "gpt-oss",
+        "ordering": "default"
+    },
+    {
+        "name": "lfm2",
+        "parsing": "lfm2",
+        "rendering": "lfm2",
+        "tokens": "lfm2",
+        "ordering": "default"
+    },
+    {
+        "name": "lfm2.5-instruct",
+        "parsing": "lfm2",
+        "rendering": "lfm2.5-instruct",
+        "tokens": "lfm2",
+        "ordering": "default"
+    },
+    {
+        "name": "lfm2.5-thinking",
+        "parsing": "lfm2",
+        "rendering": "lfm2.5-thinking",
+        "tokens": "lfm2",
+        "ordering": "default"
+    },
+    {
+        "name": "deepseek-r1-distill-qwen",
+        "parsing": "deepseek-r1-distill-qwen",
+        "rendering": "deepseek-r1-distill-qwen",
+        "tokens": "deepseek-r1-distill-qwen",
+        "ordering": "default-no-tools"
+    },
+    {
+        "name": "rnj-1",
+        "parsing": "rnj-1",
+        "rendering": "rnj-1",
+        "tokens": "rnj-1",
+        "ordering": "default"
+    },
+    {
+        "name": "gemma-2",
+        "parsing": "gemma-2",
+        "rendering": "gemma-2",
+        "tokens": "gemma-2",
+        "ordering": "gemma-2"
+    },
+    {
+        "name": "gemma-3",
+        "parsing": "gemma-2",
+        "rendering": "gemma-3",
+        "tokens": "gemma-3",
+        "ordering": "default-no-tools"
+    },
+    {
+        "name": "functiongemma",
+        "parsing": "functiongemma",
+        "rendering": "functiongemma",
+        "tokens": "functiongemma",
+        "ordering": "functiongemma"
+    },
+    {
+        "name": "translategemma",
+        "parsing": "gemma-2",
+        "rendering": "translategemma",
+        "tokens": "translategemma",
+        "ordering": "gemma-2"
+    },
+    {
+        "name": "gemma-4",
+        "parsing": "gemma-4",
+        "rendering": "gemma-4",
+        "tokens": "gemma-4",
+        "ordering": "default"
+    },
+    {
+        "name": "smollm2",
+        "parsing": "smollm2",
+        "rendering": "smollm2",
+        "tokens": "smollm2",
+        "ordering": "default-no-tools"
+    },
+    {
+        "name": "smollm3",
+        "parsing": "qwen3",
+        "rendering": "smollm3",
+        "tokens": "smollm3",
+        "ordering": "default"
+    },
+    {
+        "name": "codestral",
+        "parsing": "mistral-small-3",
+        "rendering": "codestral",
+        "tokens": "codestral",
+        "ordering": "default-no-tools"
+    },
+    {
+        "name": "mistral-small-3",
+        "parsing": "mistral-small-3",
+        "rendering": "mistral-small-3",
+        "tokens": "mistral-small-3",
+        "ordering": "default-no-tools"
+    },
+    {
+        "name": "devstral-small",
+        "parsing": "mistral-small-3",
+        "rendering": "devstral-small",
+        "tokens": "devstral-small",
+        "ordering": "devstral-small"
+    },
+    {
+        "name": "polaris",
+        "parsing": "qwen3",
+        "rendering": "polaris",
+        "tokens": "polaris",
+        "ordering": "default"
+    },
+    {
+        "name": "nanbeige",
+        "parsing": "qwen3",
+        "rendering": "nanbeige",
+        "tokens": "nanbeige",
+        "ordering": "default"
+    }
+]

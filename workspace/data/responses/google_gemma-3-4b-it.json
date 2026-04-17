@@ -1,0 +1,73 @@
+[
+    {
+        "repo_id": "google/gemma-3-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nWhat is the current temperature in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "As of November 3, 2023, at 1:35 PM PST, the temperature in London is **12\u00b0C (54\u00b0F)**.\n\nYou can always find the most up-to-date weather information here:\n\n*   **Google Weather:** [https://www.google.com/search?q=weather+london](https://www.google.com/search?q=weather+london)\n*   **BBC Weather:** [https://www.bbc.com/weather/2643743](https://www.bbc.com/weather/2643743)<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-3-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a helpful assistant\n\nWhat is the current wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "Okay, let's check the current wind speed in London. \n\nAs of 8:38 AM PST on November 3, 2023, the wind speed in London is **17 mph (27 km/h)** with **easterly winds**.\n\nYou can always get the most up-to-the-minute information from these resources:\n\n*   **BBC Weather:** [https://www.bbc.com/weather/weather-in-london](https://www.bbc.com/weather/weather-in-london)\n*   **AccuWeather:** [https://www.accuweather.com/en/gb/london/ec1n/wind/101677](https://www.accuweather.com/en/gb/london/ec1n/wind/101677)\n\nWould you like me to check the wind speed for a specific area within London, or perhaps look for wind forecasts for later today?<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-3-4b-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>user\nYou are a helpful assistant\n\nWhat is the current temperature and wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "Okay, here's the current weather information for London:\n\n*   **Temperature:** 18\u00b0C (64\u00b0F)\n*   **Wind Speed:** 16 km/h (10 mph) from the Southwest\n\n**Source:** [https://www.metoffice.gov.uk/](https://www.metoffice.gov.uk/) (as of 10:22 AM BST on November 3, 2023)\n\nWould you like me to check the weather for a different location, or perhaps provide a longer forecast?<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

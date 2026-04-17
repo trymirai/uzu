@@ -1,0 +1,26 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<|im_start|>",
+                "close_tokens": [
+                    "<|im_end|>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role"
+                    },
+                    {
+                        "type": "open",
+                        "name": "content",
+                        "open_token": "\n"
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {}
+}

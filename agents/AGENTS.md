@@ -17,6 +17,7 @@ The rules below are CRITICAL. Each rule should be respected. Rules can only be o
 - Before using any function from an external library, agent thoroughly inspects the code or documentation for the function to ensure that it uses it correctly.
 - When encountering an error, agent never rushes to quickly fix it. Instead, it uses the scientific method to understand the source of the error: comes up with hypotheses and tests them by performing a series of experiments. It only attempts to fix the error once the hypothesis has been sufficiently validated.
 - Agent avoids creating .md files with explanations unless explicitly requested by the user.
+- When receiving general recommendations from the user, immediately add them to agents/AGENTS.md under the appropriate section.
 
 ## General coding guidelines
 
@@ -47,6 +48,21 @@ The rules below are CRITICAL. Each rule should be respected. Rules can only be o
 - Prefer `Box<[T]>` to `Vec<T>` if the contents of the container are not going to change.
 - Avoid mutable variables as much as possible. Use iterator expressions to collect data into containers.
 - For calling API that was never used before, read the sources of the installed dependencies, otherwise, search in docs.rs.
+- Avoid inline imports in trait bounds or function signatures; always import with `use` at the top of the file
+- In sub-modules use `mod ...;` declarations with explicit `pub use module::{Item1, Item2}` — never global `pub use module::*`
+- Format with `cargo +nightly fmt` to enable unstable rustfmt features
+- Use full names, never abbreviate (e.g. `GroupDefinition` not `GroupDef`, `definition` not `def`)
+- Avoid excessive comments; code should be self-explanatory
+- Always use descriptive variable names; never single-letter names like `a`, `b`, `i`, `s`
+- Do not extract helper methods that are only called from one place; inline the logic instead
+- Avoid `super::` imports; always use `crate::` level imports
+- Derive `Serialize`, `Deserialize`, `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash` on all data types where applicable; all configs must be `Serialize`/`Deserialize`
+- In recursive structures, prefer the base type name for child collections (e.g., `groups: Vec<Group>` not `children: Vec<Group>`)
+- Never panic or force unwrap in library code; use typed errors with `thiserror`; panics/unwraps are only acceptable in tests
+- All tests in `tests/` folder, named `test_<module>.rs`; test functions named `test_<module>_<behavior>`
+- Shared test helpers in `tests/helpers/`; avoid duplicating helpers between test files
+- Move dependencies to `[dev-dependencies]` when only used in tests
+- Always check for unused dependencies and imports
 
 ## Python coding rules
 

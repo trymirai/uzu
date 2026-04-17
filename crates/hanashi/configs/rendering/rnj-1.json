@@ -1,0 +1,74 @@
+{
+    "jinja": {
+        "template": "{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) -%}\n{%- set emit = namespace(started=false) -%}\n\n{# ---------- Build base system message (always emitted) ---------- #}\n{%- set base_system = 'You are rnj-1, a foundation model trained by Essential AI.\\n' -%}\n\n{# ---------- Default system prompt if user system is absent ---------- #}\n{%- set default_system = 'You are a helpful assistant.' -%}\n\n{# Detect whether the first message is a user-provided system message #}\n{%- set has_user_system = (messages\n    and messages[0].role == 'system'\n    and (messages[0].content is string)) -%}\n\n{# The system instruction that should apply (user system wins; else default) #}\n{%- set effective_system = (has_user_system and messages[0].content) or default_system -%}\n\n\n{# ---------- Optional tools preface as a synthetic system message ---------- #}\n{%- if tools %}\n  {%- set sys_preamble -%}\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{%- for tool in tools %}\n{{ \"\\n\" ~ (tool | tojson) }}\n{% endfor %}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n  {%- endset -%}\n\n  {# Always include effective_system; user system prevails over default #}\n  {%- set sys_content = effective_system ~ \"\\n\\n\" ~ sys_preamble -%}\n\n  {%- set content = '<|start_header_id|>system<|end_header_id|>\\n'\n      ~ base_system ~ '\\n' ~ sys_content ~ '<|eot_id|>' -%}\n  {%- if not emit.started -%}{%- set content = bos_token ~ content -%}{%- set emit.started = true -%}{%- endif -%}\n  {{- content -}}\n{%- else %}\n  {# No tools: always emit base_system + effective_system #}\n  {%- set content = '<|start_header_id|>system<|end_header_id|>\\n'\n      ~ base_system ~ '\\n' ~ effective_system ~ '<|eot_id|>' -%}\n  {%- if not emit.started -%}{%- set content = bos_token ~ content -%}{%- set emit.started = true -%}{%- endif -%}\n  {{- content -}}\n{%- endif -%}\n\n{# ---------- Locate last user query for multi-step tool behavior ---------- #}\n{%- for message in messages[::-1] %}\n  {%- set index = (messages|length - 1) - loop.index0 -%}\n  {%- if ns.multi_step_tool\n        and message.role == \"user\"\n        and message.content is string\n        and not (message.content.startswith('<tool_response>') and message.content.endswith('</tool_response>')) -%}\n    {%- set ns.multi_step_tool = false -%}\n    {%- set ns.last_query_index = index -%}\n  {%- endif -%}\n{%- endfor -%}\n\n{# ---------- Walk all messages and emit in Llama-3 format ---------- #}\n{%- for message in messages %}\n  {%- if message.content is string -%}\n    {%- set content = message.content -%}\n  {%- else -%}\n    {%- set content = '' -%}\n  {%- endif -%}\n\n  {# Skip the FIRST system message if it existed, since we already embedded it in effective_system #}\n  {%- if loop.first and message.role == \"system\" -%}\n    {# no-op #}\n\n  {%- elif (message.role == \"user\") or (message.role == \"system\") -%}\n    {%- set block = '<|start_header_id|>' ~ message.role ~ '<|end_header_id|>\\n' ~ content ~ '<|eot_id|>' -%}\n    {%- if not emit.started -%}{%- set block = bos_token ~ block -%}{%- set emit.started = true -%}{%- endif -%}\n    {{- block -}}\n\n  {%- elif message.role == \"assistant\" -%}\n    {%- set body = content -%}\n    {%- set header = '<|start_header_id|>assistant<|end_header_id|>\\n' -%}\n    {%- if not emit.started -%}{{ bos_token }}{%- set emit.started = true -%}{%- endif -%}\n    {{- header -}}\n    \n    {{- body -}}\n    {%- if message.tool_calls -%}\n      {%- for tool_call in message.tool_calls -%}\n        {%- if tool_call.function -%}{%- set tc = tool_call.function -%}{%- else -%}{%- set tc = tool_call -%}{%- endif -%}\n        {%- set args_json = (tc.arguments if (tc.arguments is string) else (tc.arguments | tojson)) -%}\n        {%- if loop.first -%}\n          {{- '<tool_call>\\n{\"name\": \"' ~ tc.name ~ '\", \"arguments\": ' ~ args_json ~ '}\\n</tool_call>' -}}\n        {%- else -%}\n          {{- '\\n<tool_call>\\n{\"name\": \"' ~ tc.name ~ '\", \"arguments\": ' ~ args_json ~ '}\\n</tool_call>' -}}\n        {%- endif -%}\n      {%- endfor -%}\n    {%- endif -%}\n    {{- '<|eot_id|>' -}}\n\n  {%- elif message.role == \"tool\" -%}\n    {%- set open_user = (loop.first or (loop.index0 > 0 and messages[loop.index0 - 1].role != \"tool\")) -%}\n    {%- set close_user = (loop.last or (loop.index0 < messages|length - 1 and messages[loop.index0 + 1].role != \"tool\")) -%}\n\n    {%- if open_user -%}\n      {%- set header = '<|start_header_id|>user<|end_header_id|>\\n' -%}\n      {%- if not emit.started -%}{%- set header = bos_token ~ header -%}{%- set emit.started = true -%}{%- endif -%}\n      {{- header -}}\n    {%- endif -%}\n    {%- if open_user -%}\n      {{- '<tool_response>\\n' -}}\n    {%- else -%}\n      {{- '\\n<tool_response>\\n' -}}\n    {%- endif -%}\n    {{- content -}}\n    {{- '\\n</tool_response>' -}}\n\n    {%- if close_user -%}\n      {{- '<|eot_id|>' -}}\n    {%- endif -%}\n  {%- endif -%}\n{%- endfor -%}\n\n{%- if add_generation_prompt -%}\n  {{- '<|start_header_id|>assistant<|end_header_id|>\\n' -}}\n{%- endif -%}\n",
+        "required_functions": [],
+        "preamble_control_key": "add_generation_prompt",
+        "bos_token_key": "bos_token"
+    },
+    "canonization": {
+        "role_key": "role",
+        "type_key": "type",
+        "text_key": "text",
+        "url_key": "url"
+    },
+    "rendering": {
+        "system": {
+            "role": "system",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "developer": {
+            "role": "developer",
+            "context": {
+                "tools": {
+                    "block": "tools"
+                }
+            }
+        },
+        "user": {
+            "role": "user",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "assistant": {
+            "role": "assistant",
+            "message": {
+                "content": {
+                    "blocks": [
+                        "text"
+                    ]
+                },
+                "tool_calls": {
+                    "blocks": [
+                        "tool_call",
+                        "tool_call_candidate"
+                    ]
+                }
+            }
+        },
+        "tool": {
+            "role": "tool",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "tool_call_result"
+                    ],
+                    "limit": 1
+                }
+            }
+        }
+    }
+}

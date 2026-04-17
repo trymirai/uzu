@@ -1,0 +1,10 @@
+{
+    "bos_token_id": 199998,
+    "eos_token_id": 200002,
+    "stop_token_ids": [
+        199999,
+        200002,
+        200012
+    ],
+    "banned_token_ids": []
+}
