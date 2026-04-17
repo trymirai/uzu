@@ -187,7 +187,7 @@ impl<B: Backend> LayerExecutables<B> {
                 )
             },
             MixerConfig::ShortConv(short_conv_config) => {
-                let (mixer, input_hadamard_factors) = ShortConvMixer::new(
+                let (mixer, input_hadamard_factors, in_proj_adapter_down_prime) = ShortConvMixer::new(
                     context,
                     layer_type.clone(),
                     short_conv_config.clone(),
@@ -200,7 +200,7 @@ impl<B: Backend> LayerExecutables<B> {
                         mixer,
                     },
                     input_hadamard_factors,
-                    None,
+                    in_proj_adapter_down_prime,
                 )
             },
             MixerConfig::DeltaNet(delta_net_config) => {

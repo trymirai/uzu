@@ -237,6 +237,11 @@ impl<B: Backend> dyn Linear<B> {
                 } = inner_config.as_ref()
                 {
                     let lora_rank = *lora_rank;
+                    // The fused RMSNorm+A_down decode kernel and the A_up fused QmvFast
+                    // kernel both hard-code rank 16 (see LORA_RANK in rms_norm.metal and
+                    // h_lora[16] in qmv_fast.metal). Reject other ranks loudly rather
+                    // than silently corrupting output.
+                    assert_eq!(lora_rank, 16, "fused LoRA kernels only support rank 16; got rank {}", lora_rank);
                     let down_weights_leaf = inner_tree.leaf("down_weights")?;
                     // Read a copy of A_down to mutate via the Hadamard kernel.
                     let mut adapter_down_prime = down_weights_leaf.read_buffer()?;
