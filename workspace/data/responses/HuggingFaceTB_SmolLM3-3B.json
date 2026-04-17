@@ -1,0 +1,1636 @@
+[
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracking, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution using the specified format: <think> Thought section </think> Solution section. In the Thought section, detail your reasoning process in steps. Each step should include detailed considerations such as analysing questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The Solution section should be logical, accurate, and concise and detail necessary steps needed to reach the conclusion.\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, the user is asking for the current temperature in London. Let me think about how to approach this. First, I need to recall if I have access to real-time data. Since I don't have live internet access, I can't provide the exact current temperature. But maybe I can guide them on how to find it themselves.\n\nI should mention that they can check reliable weather websites or apps. Some popular ones are the Met Office, AccuWeather, or The Weather Channel. They might also use their smartphone's built-in weather app. If they have a specific time in mind, they can look up the forecast for that hour. \n\nWait, the user might not know which sources are reliable. I should list a few trusted ones. The Met Office is the UK's official weather service, so that's a good one. AccuWeather is another well-known service. Also, mentioning apps like Weather.com or BBC Weather could be helpful.\n\nI should also consider if there's any local context. London is in the UK, so the temperature would be in degrees Celsius or Fahrenheit, depending on the source. Maybe I should note that the units can vary, but most international sources use Celsius. \n\nIs there any other information they might need? Maybe the time of day or a specific location within London, like a park or the city center. But the user just asked for the current temperature in London, so maybe that's not necessary unless they specify. \n\nI should also remind them to check for any weather alerts or special conditions, like fog or rain, which might affect their plans. \n\nWait, but the user might not have access to the internet right now. If they're in a place where they can't check online, maybe I can suggest calling a local weather service or a friend who knows the weather. But that's probably not feasible for everyone. \n\nAlternatively, maybe I can provide a general idea based on historical data. For example, London's typical temperatures range from around 7\u00b0C to 20\u00b0C in January to July. But the user is asking for the current temperature, so historical data might not be helpful unless they specify a date. \n\nI need to make sure my answer is helpful without overstepping my knowledge. Since I can't provide real-time data, the best I can do is direct them to the right sources and explain how to find the information themselves. \n\nSo, putting it all together: explain that I can't provide the exact current temperature, suggest reliable sources, and offer to help with more general information if needed.\n</think>\n\nI don't have real-time access to current weather data, but you can easily check the current temperature in London using these reliable sources:\n\n1. **Met Office (UK's official weather service)**  \n   [https://www.metoffice.gov.uk](https://www.metoffice.gov.uk)  \n   - Search for London or the UK to get the latest forecast.\n\n2. **AccuWeather**  \n   [https://www.accuweather.com](https://www.accuweather.com)  \n   - Search for London and select the current hourly temperature.\n\n3. **BBC Weather**  \n   [https://www.bbc.co.uk/weather](https://www.bbc.co.uk/weather)  \n   - Enter London and view the current temperature and forecast.\n\n4. **Weather.com**  \n   [https://weather.com](https://weather.com)  \n   - Search for London and see the current conditions.\n\nIf you're looking for a general idea of London's typical temperatures, it usually ranges from **7\u00b0C (44\u00b0F)** in January to **20\u00b0C (68\u00b0F)** in July. However, for the most accurate and up-to-date information, use one of the above sources.\n\nLet me know if you'd like help with something else!<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face.\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm sorry, but as of my last update in October 2023, I don't have real-time capabilities to provide the current temperature in London. I recommend checking a reliable weather forecasting website or app for the most accurate and up-to-date information.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracking, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution using the specified format: <think> Thought section </think> Solution section. In the Thought section, detail your reasoning process in steps. Each step should include detailed considerations such as analysing questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The Solution section should be logical, accurate, and concise and detail necessary steps needed to reach the conclusion.\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, the user is asking for the current temperature in London. I need to provide an accurate answer. Since I can't access real-time data, I should inform them that I can't give live updates. But maybe I can suggest where they can find the information. Let me check if there's a common source people use for this. The Met Office is a reliable source for UK weather data. I should mention that. Also, maybe suggest checking a weather app or website. Let me make sure my response is helpful and clear. I don't want to leave them hanging without a way to find the answer themselves. Alright, I'll structure the response to first state my inability to provide real-time data, then recommend checking the Met Office or a weather app. That should cover it.\n</think>\n\nI currently don't have access to real-time data or the internet to provide the current temperature in London. However, you can check the most accurate and up-to-date temperature information by visiting the **Met Office website** (https://www.metoffice.gov.uk) or using a trusted weather app like the one from your phone's weather service. For instant updates, you can also try searching \"London temperature\" on Google or a weather platform like Weather.com. Let me know if you need help with anything else!<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face.\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm sorry, but as an AI, I don't have real-time capabilities to provide the current temperature in London. However, you can easily find this information by checking a reliable weather website, app, or news channel. Websites like BBC Weather, Weather.com, or your phone's weather app should provide accurate and up-to-date information.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracking, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution using the specified format: <think> Thought section </think> Solution section. In the Thought section, detail your reasoning process in steps. Each step should include detailed considerations such as analysing questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The Solution section should be logical, accurate, and concise and detail necessary steps needed to reach the conclusion.\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>I need to retrieve the current temperature in London in Celsius. I'll call the get_current_temperature function with the location as London and the unit as Celsius.</think>\n<tool_call>{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face.\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracking, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution using the specified format: <think> Thought section </think> Solution section. In the Thought section, detail your reasoning process in steps. Each step should include detailed considerations such as analysing questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The Solution section should be logical, accurate, and concise and detail necessary steps needed to reach the conclusion.\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>I don't have the capability to retrieve real-time weather data, so I can't provide the current temperature in London. I suggest checking a reliable weather forecasting website or app for the most accurate and up-to-date information.</think>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, United Kingdom\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face.\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm sorry, but I don't have the capability to retrieve real-time weather data such as the current temperature in London. My functions are limited to retrieving wind speed data at specified locations. For temperature information, you may need to use a different service.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face. Your role as an assistant involves thoroughly exploring questions through a systematic thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracking, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution using the specified format: <think> Thought section </think> Solution section. In the Thought section, detail your reasoning process in steps. Each step should include detailed considerations such as analysing questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The Solution section should be logical, accurate, and concise and detail necessary steps needed to reach the conclusion.\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>I need to call the `get_current_temperature` function with the location \"London, UK\" and the unit \"celsius\" to retrieve the current temperature in Celsius.</think>\n<tool_call>{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face.\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, the user is asking for the current wind speed in London. I need to figure out how to provide the most accurate and up-to-date information. First, I remember that wind speed can vary a lot depending on the time of day, weather conditions, and even the location within London. For example, the wind might be stronger in the city center versus the outskirts.\n\nI should check if there's a reliable source that provides real-time weather data for London. The Met Office is the UK's national weather service, so their website is likely to have the most accurate information. They probably have a live wind map or a section dedicated to wind speed. Alternatively, there might be apps like Weather Underground or other weather services that offer real-time data.\n\nAnother thought: sometimes, when I search for current wind speed in London, I see data from the BBC Weather or other news outlets. They might have a section for London's weather. But I need to be cautious about the accuracy of these sources. The Met Office is more reliable for official data.\n\nWait, but the user might not be able to access the internet right now. In that case, I should mention that for the most accurate and up-to-date information, they should check the official Met Office website or a trusted weather app. Also, I can provide some general information about London's wind patterns, like the prevailing wind direction (usually from the southwest), which might be helpful even if the exact speed isn't available at the moment.\n\nI should also consider that wind speed can be affected by local factors like hills, buildings, and the city's layout. So, the wind speed in central London might differ from that in the suburbs. But again, without real-time data, I can't give specific numbers.\n\nIn summary, the best approach is to direct the user to the Met Office's official website or a reliable weather app. If they can't access those, I can explain how to interpret the data they might find there, like checking for current wind speed in London on the website's live updates or weather maps. Also, mention that wind speed can fluctuate, so it's good to check multiple sources if possible.\n</think>\n\nFor the most accurate and up-to-date wind speed in London, I recommend checking the **Met Office's website** (https://www.metoffice.gov.uk/weather/uk) or a trusted weather app like **Weather Underground** (https://www.wunderground.com/). These platforms provide real-time weather data, including wind speed, direction, and other meteorological details.\n\n### Key Points to Note:\n1. **Met Office**: London's official weather service offers detailed forecasts and live updates. You can filter by location or use their **\"Live\"** feature for current conditions.\n2. **Weather Underground**: This app aggregates data from multiple sources, including local weather stations, and provides real-time wind speed and direction for London.\n3. **Wind Patterns in London**: London typically experiences winds from the **southwest** to **northeast**, influenced by the North Sea and surrounding weather systems. However, wind speeds can vary significantly depending on the time of day, weather events, and local topography.\n\n### How to Check:\n- Visit the **Met Office website** and search for \"London\" in the search bar.\n- Look for the **\"Live\"** tab for current conditions, including wind speed and direction.\n- Use a weather app like **AccuWeather** or **BBC Weather** for similar real-time updates.\n\nIf you're unable to access these sources, keep in mind that wind speed in London can fluctuate rapidly, so it's always best to verify with a reliable weather service. Let me know if you'd like guidance on interpreting the data!<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm sorry, but as an AI, I don't have real-time capabilities to fetch live data or updates. I recommend checking a reliable weather website, app, or service for the current wind speed in London. Some popular options include the BBC Weather or the Met Office's website. They provide detailed weather forecasts, including wind speed, for various locations.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, the user is asking for the current wind speed in London. I need to figure out how to provide an accurate answer. First, I should check if I have real-time data. Since my knowledge is up to 2023, I don't have access to live weather data. So, I can't give the exact current wind speed. \n\nNext, I should consider how to help the user. Maybe suggest checking a reliable weather website or app. Websites like the Met Office or Weather.com are good sources. They provide up-to-date information. Also, mentioning that wind speed can vary based on time of day, weather conditions, and location within London might be helpful. For example, wind speeds near the coast can be different from those inland. \n\nI should also mention that if the user is looking for historical data or specific times, they might need to check those sources. It's important to be clear that I can't provide real-time data but can guide them to where they can find it. \n\nWait, maybe I can add a note about the units. Wind speed is usually measured in kilometers per hour (km/h) or miles per hour (mph). Depending on the source, the user might need to know which unit is used. \n\nAlso, if the user is in a hurry, suggesting a quick search on their phone's weather app could be useful. Many apps have real-time weather updates. \n\nI should make sure the response is helpful and not just a refusal. Providing a few options for where to get the information is better than just saying they can't get it. \n\nLet me structure the answer: first, state that I can't provide real-time data, then suggest specific websites and apps, mention the units, and offer to help with historical data if needed. That should cover the user's needs.\n</think>\n\nI currently don't have access to real-time weather data, so I can't provide the exact current wind speed in London. However, you can check reliable weather sources like:\n\n1. **The Met Office** (www.metoffice.gov.uk) - Offers detailed UK weather forecasts, including wind speed and direction.\n2. **Weather.com** (www.weather.com) - Provides localized forecasts and live updates.\n3. **BBC Weather** (www.bbc.co.uk/weather) - Covers London and nearby areas with up-to-date data.\n\nFor historical or specific time-period wind speed data, you can also explore:\n\n- **UK Met Office Archive** (www.metoffice.gov.uk/archive)\n- **National Weather Service (NOAA)** (www.weather.gov) for U.S. and global data.\n\nWind speed in London typically varies depending on weather conditions, time of day, and location (coastal vs. inland). If you're looking for a general idea, check the weather app on your phone or computer for the most accurate and current information. Let me know if you need help with historical data or other weather-related topics!<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "As an AI, I don't have real-time capabilities to provide current weather updates or wind speeds. However, you can easily check the current wind speed and other weather conditions in London using a reliable weather forecast website or app, such as The Weather Channel, BBC Weather, or AccuWeather. These platforms provide up-to-date weather information based on your location.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, the user is asking for the current wind speed in London. Let me check the tools available. The function signatures include 'get_current_temperature', which is for temperature. But there's no function listed for wind speed. Hmm, maybe the user expects me to use the temperature function somehow, but that doesn't make sense. Wait, maybe there's a misunderstanding. The wind speed isn't part of the current weather data typically provided by the temperature function. So, I should inform the user that the current wind speed in London isn't available with the given tools. Alternatively, maybe the user is expecting me to look up wind speed from another source, but since the tools don't include that, I can't do it. I should respond that the required function isn't available and suggest checking a weather service. Let me make sure there's no other tool I missed. No, the tools provided are only for temperature. So the correct response is to inform the user that the wind speed can't be retrieved with the current tools and recommend checking a weather service instead.\n</think>\n\nThe function 'get_current_temperature' is not capable of retrieving wind speed data. To obtain the current wind speed in London, please use a weather service or API that provides real-time meteorological data. For example, you can check services like Weather.com, AccuWeather, or your local weather app. \n\n<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "To get the current wind speed in London, we need to call the `get_current_temperature` function with the location set to London and the unit to wind speed. However, the provided function only returns temperature. To get wind speed, we would need a different function or data source. Since we don't have a function for wind speed, we can't fulfill this request with the given tools. \n\nHowever, if you meant to ask about the wind speed in London in a different unit, you could use the `get_current_temperature` function and then interpret the result as wind speed. But this is not accurate. For accurate wind speed data, you would need to use a weather service or a specific function that provides wind speed data.\n\nSince we can't fulfill this specific request, I'll return an empty JSON as there's no function available for this task with the given tools. \n\n<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"wind_speed\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\n\n</think>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, United Kingdom\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, the user is asking for the current wind speed in London. Let me check the tools available. There's a function called get_current_wind_speed which takes a location as a parameter. The location needs to be in the format \"City, Country\". So for London, it should be \"London, United Kingdom\".\n\nI need to call that function with the location parameter set to \"London, United Kingdom\". The function returns the wind speed in km/h. Since the user didn't specify a unit, the default is probably km/h, but the function's description mentions km/h, so that's fine.\n\nLet me structure the response as a JSON object with the function name and arguments. The arguments should be a string with the location. Then wrap it in the specified XML tags. I should make sure there are no typos in the location name. \"United Kingdom\" is the correct country code. Alright, that should do it. Let me put it all together.\n</think>\n\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, United Kingdom\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\n\n</think>\nI'm sorry for the inconvenience, but as an AI, I don't have real-time capabilities to fetch live data such as current temperature and wind speed in London. You can easily find this information by checking a reliable weather website or app, such as the Met Office or BBC Weather, which will provide you with accurate and up-to-date data.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm sorry for any inconvenience, but as an AI, I don't have real-time capabilities to provide current weather information. I recommend checking a reliable weather forecasting website or app, such as BBC Weather or Weather.com, for the most accurate and up-to-date information about the current temperature and wind speed in London.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\n\n</think>\nI'm sorry, but as an AI, I don't have real-time capabilities to fetch live data such as current temperature and wind speed in London. However, you can easily find this information by using a search engine like Google or by checking a weather forecast website. Just type \"current temperature and wind speed in London\" into your search engine, and you should find the information you need.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm sorry, but as an AI, I don't have real-time capabilities to provide current weather updates or wind speeds. You can check the current temperature and wind speed in London by using a reliable weather forecasting website or app such as the BBC Weather, Met Office, or Weather Underground.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\n\n</think>\n<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"get_wind_speed\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"United Kingdom\"}, \"unit\": \"celsius\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"United Kingdom\"}}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\n\n</think>\nTo get the current temperature and wind speed in London, we need to call two functions: one to get the current temperature and another to get the current wind speed. \n\nHere's the JSON output for the function calls:\n\n<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": \"London\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "I'm unable to retrieve real-time weather data. However, I can guide you on how to use the provided tool function to get this information.\n\nTo get the current temperature and wind speed in London, you would need to use a separate tool function that can retrieve weather data. Since I don't have such a function, here's how you can do it:\n\n1. Use the `get_current_weather` function to get the current weather data for London.\n2. Use the `get_current_wind_speed` function to get the current wind speed in London.\n\nPlease note that these functions are not provided in the current setup, but they would follow the provided function signatures.\n\nFor example, the JSON output for the function calls would look like this:\n\n<tool_call>\n{\"name\": \"get_current_weather\", \"arguments\": {\"location\": \"London\"}}\n</tool_call>\n\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think>\nOkay, let's see. The user wants to know the current temperature and wind speed in London. I need to call the appropriate functions using the provided tools.\n\nFirst, for the temperature. The function is get_current_temperature. The location is London, and the country is the UK. The unit should be in Celsius since that's the default unless specified otherwise. Wait, the user didn't specify the unit, so maybe I should default to Celsius. But the function parameters require specifying the unit. Oh, right, the user might want both temperature and wind speed. The temperature function needs the unit to be specified. Let me check the function parameters again. The parameters for get_current_temperature include 'unit' as a required field. So I need to include the unit when calling that function.\n\nFor the temperature, London, UK. Let's use Celsius. So the arguments would be location with city London and country UK, and unit Celsius. Then the wind speed function. The wind speed function takes a location as a string in the format \"City, Country\". So London, UK again. The function returns the wind speed in km/h. So the arguments for that would be the same location string.\n\nNow, I need to structure the JSON for each function call. The first call is to get the temperature. The arguments would be:\n\n{\n  \"location\": {\n    \"city\": \"London\",\n    \"country\": \"UK\"\n  },\n  \"unit\": \"celsius\"\n}\n\nThen the wind speed call is:\n\n{\n  \"location\": \"London, UK\"\n}\n\nI need to make sure the function names and arguments are correctly formatted. Then, I'll present the results in a user-friendly way, showing the temperature and wind speed. Let me double-check the function names and parameters to avoid any mistakes. Once that's done, I can output the JSON for each function call as per the instructions.\n</think>\n\n<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<|im_start|>system\n## Metadata\n\nKnowledge Cutoff Date: June 2025\nToday Date: 03 April 2026\nReasoning Mode: /no_think\n\n## Custom Instructions\n\nYou are a helpful assistant\n\n### Tools\n\nYou may call one or more functions to assist with the user query.\nYou are provided with function signatures within <tools></tools> XML tags:\n\n<tools>\n{'type': 'function', 'function': {'name': 'get_current_temperature', 'description': 'Get the current temperature at a location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'object', 'properties': {'city': {'type': 'string', 'description': 'The city name'}, 'country': {'type': 'string', 'description': 'The country name'}}, 'required': ['city', 'country'], 'description': 'The location to get the temperature for'}, 'unit': {'type': 'string', 'enum': ['celsius', 'fahrenheit'], 'description': 'The unit to return the temperature in.'}}, 'required': ['location', 'unit']}, 'return': {'type': 'number'}}}\n{'type': 'function', 'function': {'name': 'get_current_wind_speed', 'description': 'Get the current wind speed in km/h at a given location.', 'parameters': {'type': 'object', 'properties': {'location': {'type': 'string', 'description': 'The location to get the wind speed for, in the format \"City, Country\"'}}, 'required': ['location']}, 'return': {'type': 'number', 'description': 'The current wind speed in km/h'}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n",
+            "completion": "<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]

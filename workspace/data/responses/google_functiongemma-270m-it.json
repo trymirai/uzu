@@ -1,0 +1,659 @@
+[
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_temperature{description:<escape>Get the current temperature at a location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the temperature for<escape>,properties:{city:{description:<escape>The city name<escape>,type:<escape>STRING<escape>},country:{description:<escape>The country name<escape>,type:<escape>STRING<escape>}},required:[<escape>city<escape>,<escape>country<escape>],type:<escape>OBJECT<escape>},unit:{description:<escape>The unit to return the temperature in.<escape>,enum:[<escape>celsius<escape>,<escape>fahrenheit<escape>],type:<escape>STRING<escape>}},required:[<escape>location<escape>,<escape>unit<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current temperature in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "<start_function_call>call:get_current_temperature{location:{city:<escape>London<escape>,country:<escape>UK<escape>},unit:<escape>celsius<escape>}<end_function_call><start_function_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_wind_speed{description:<escape>Get the current wind speed in km/h at a given location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the wind speed for, in the format \"City, Country\"<escape>,type:<escape>STRING<escape>}},required:[<escape>location<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current temperature in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "I apologize, but I cannot assist with retrieving current weather data for London. My available tools are focused on weather-related tasks, such as wind speed and location tracking. I cannot provide historical weather information.<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_temperature{description:<escape>Get the current temperature at a location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the temperature for<escape>,properties:{city:{description:<escape>The city name<escape>,type:<escape>STRING<escape>},country:{description:<escape>The country name<escape>,type:<escape>STRING<escape>}},required:[<escape>city<escape>,<escape>country<escape>],type:<escape>OBJECT<escape>},unit:{description:<escape>The unit to return the temperature in.<escape>,enum:[<escape>celsius<escape>,<escape>fahrenheit<escape>],type:<escape>STRING<escape>}},required:[<escape>location<escape>,<escape>unit<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><start_function_declaration>declaration:get_current_wind_speed{description:<escape>Get the current wind speed in km/h at a given location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the wind speed for, in the format \"City, Country\"<escape>,type:<escape>STRING<escape>}},required:[<escape>location<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current temperature in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "<start_function_call>call:get_current_temperature{location:<escape>London<escape>,city:<escape>London<escape>,country:<escape>UK<escape>}<end_function_call><start_function_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_temperature{description:<escape>Get the current temperature at a location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the temperature for<escape>,properties:{city:{description:<escape>The city name<escape>,type:<escape>STRING<escape>},country:{description:<escape>The country name<escape>,type:<escape>STRING<escape>}},required:[<escape>city<escape>,<escape>country<escape>],type:<escape>OBJECT<escape>},unit:{description:<escape>The unit to return the temperature in.<escape>,enum:[<escape>celsius<escape>,<escape>fahrenheit<escape>],type:<escape>STRING<escape>}},required:[<escape>location<escape>,<escape>unit<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "I apologize, but I cannot provide real-time wind speed data. My current capabilities are limited to assisting with weather-related requests using the provided tools. I cannot access or analyze real-time wind conditions.<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_wind_speed{description:<escape>Get the current wind speed in km/h at a given location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the wind speed for, in the format \"City, Country\"<escape>,type:<escape>STRING<escape>}},required:[<escape>location<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "<start_function_call>call:get_current_wind_speed{location:<escape>London<escape>}<end_function_call><start_function_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_temperature{description:<escape>Get the current temperature at a location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the temperature for<escape>,properties:{city:{description:<escape>The city name<escape>,type:<escape>STRING<escape>},country:{description:<escape>The country name<escape>,type:<escape>STRING<escape>}},required:[<escape>city<escape>,<escape>country<escape>],type:<escape>OBJECT<escape>},unit:{description:<escape>The unit to return the temperature in.<escape>,enum:[<escape>celsius<escape>,<escape>fahrenheit<escape>],type:<escape>STRING<escape>}},required:[<escape>location<escape>,<escape>unit<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><start_function_declaration>declaration:get_current_wind_speed{description:<escape>Get the current wind speed in km/h at a given location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the wind speed for, in the format \"City, Country\"<escape>,type:<escape>STRING<escape>}},required:[<escape>location<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "<start_function_call>call:get_current_wind_speed{location:<escape>London<escape>}<end_function_call><start_function_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_temperature{description:<escape>Get the current temperature at a location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the temperature for<escape>,properties:{city:{description:<escape>The city name<escape>,type:<escape>STRING<escape>},country:{description:<escape>The country name<escape>,type:<escape>STRING<escape>}},required:[<escape>city<escape>,<escape>country<escape>],type:<escape>OBJECT<escape>},unit:{description:<escape>The unit to return the temperature in.<escape>,enum:[<escape>celsius<escape>,<escape>fahrenheit<escape>],type:<escape>STRING<escape>}},required:[<escape>location<escape>,<escape>unit<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current temperature and wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "I can certainly help with that. To get the current temperature and wind speed, could you please specify the location you are interested in?<end_of_turn>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_wind_speed{description:<escape>Get the current wind speed in km/h at a given location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the wind speed for, in the format \"City, Country\"<escape>,type:<escape>STRING<escape>}},required:[<escape>location<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current temperature and wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "<start_function_call>call:get_current_wind_speed{location:<escape>London<escape>}<end_function_call><start_function_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a model that can do function calling with the following functions"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<bos><start_of_turn>developer\nYou are a model that can do function calling with the following functions<start_function_declaration>declaration:get_current_temperature{description:<escape>Get the current temperature at a location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the temperature for<escape>,properties:{city:{description:<escape>The city name<escape>,type:<escape>STRING<escape>},country:{description:<escape>The country name<escape>,type:<escape>STRING<escape>}},required:[<escape>city<escape>,<escape>country<escape>],type:<escape>OBJECT<escape>},unit:{description:<escape>The unit to return the temperature in.<escape>,enum:[<escape>celsius<escape>,<escape>fahrenheit<escape>],type:<escape>STRING<escape>}},required:[<escape>location<escape>,<escape>unit<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><start_function_declaration>declaration:get_current_wind_speed{description:<escape>Get the current wind speed in km/h at a given location.<escape>,parameters:{properties:{location:{description:<escape>The location to get the wind speed for, in the format \"City, Country\"<escape>,type:<escape>STRING<escape>}},required:[<escape>location<escape>],type:<escape>OBJECT<escape>}}<end_function_declaration><end_of_turn>\n<start_of_turn>user\nWhat is the current temperature and wind speed in London?<end_of_turn>\n<start_of_turn>model\n",
+            "completion": "<start_function_call>call:get_current_temperature{location:<escape>London<escape>,unit:<escape>celsius<escape>}<end_function_call><start_function_call>call:get_current_wind_speed{location:<escape>London<escape>}<end_function_call><start_function_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]

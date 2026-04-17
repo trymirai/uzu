@@ -1,0 +1,789 @@
+[
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant.<|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "I don't have real-time access to current weather data or the ability to check the current temperature in London. You can easily find this information by checking a weather website, app, or search engine. Would you like me to help you find a reliable source for current weather information?<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant.<|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "I don't have real-time access to current weather data or the ability to check the current temperature in London. You can easily find this information by checking a weather website, app, or service like the BBC Weather, Weather.com, or your local news station.<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: You asked for the current temperature in London, so I need to use the get_current_temperature function, which requires both a city and a country. Since you only specified the city, I must determine the country to proceed. London is in the United Kingdom, so I'll use \"United Kingdom\" as the country. The function also requires a unit, and since you didn't specify one, I'll default to Celsius, which is the standard in most of the world. With all required parameters now determined\u2014city as London, country as United Kingdom, and unit as celsius\u2014I can make the function call to retrieve the current temperature.<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"unit\": \"celsius\", \"location\": {\"city\": \"London\", \"country\": \"United Kingdom\"}}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: I need to determine the current temperature in London, but I only have access to a tool that provides wind speed, not temperature. Since there's no available function to retrieve temperature data, I can't fulfill your request with the tools at hand. I must inform you that I\u2019m unable to provide the temperature due to this limitation.\n\nRESPONSE: I don't have access to a tool that can retrieve current temperature data. My capabilities are limited to the functions provided, which currently only include getting wind speed. Would you like me to check the wind speed in London instead?<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}\n\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: You asked for the current temperature in London, so I need to use the get_current_temperature function, which requires both city and country. Since you only specified \"London\" and not the country, I must infer it\u2014London is in the UK, so I'll use \"United Kingdom\" as the country. The function requires a unit, and while you didn't specify one, the default is celsius, which I'll use. I'll call the function with location set to {\"city\": \"London\", \"country\": \"United Kingdom\"} and unit as \"celsius\" to retrieve the current temperature.<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"United Kingdom\"}, \"unit\": \"celsius\"}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "I don't have real-time access to current weather data or the ability to browse the internet. To find the current wind speed in London, you can check a weather website or app like the BBC Weather, AccuWeather, or your local meteorological service. If you'd like, I can help you interpret or understand wind speed measurements (e.g., knots, km/h, mph) once you have the data!<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "I don't have access to real-time weather data or the ability to check current wind speeds in London. You can check the current wind speed in London by using a weather website or app like the BBC Weather, Weather.com, or a local news station's weather report.<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: I need to determine the current wind speed in London, but the only available tool is for temperature, not wind speed. Since I can't access wind speed data with the tools provided, I must inform you that I'm unable to retrieve that information. I\u2019ll let you know about this limitation and offer to assist with temperature instead, in case that\u2019s helpful.\n\nRESPONSE: I don't have access to a tool that can retrieve wind speed data. However, I can help you check the current temperature in London if you'd like. Would you like me to provide the temperature instead?<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: You asked for the current wind speed in London, so I need to retrieve that data using the available tool. I identify that the function `get_current_wind_speed` is the right tool for this task and requires a location in the format \"City, Country\". Since you specified London, I format the input as \"London, UK\" to match the required parameter. I then prepare to call the function with this input to obtain the current wind speed in km/h, which will allow me to provide you with an accurate and timely response.<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}\n\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: You asked for the current wind speed in London, so I need to use the get_current_wind_speed function, which requires the location in \"City, Country\" format. Since you specified London, I assume you mean London, UK, so I format the location as \"London, UK\". The function only requires this string input, and no additional parameters are needed. I proceed to call the function with this location to retrieve the current wind speed.<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "I don't have real-time access to current weather data. To check the current temperature and wind speed in London, you can:\n\n1. Use a weather website or app like Weather.com, AccuWeather, or the BBC Weather\n2. Check a weather service integrated into your operating system (like the Weather app on iOS or Android)\n3. Use a voice assistant like Siri, Alexa, or Google Assistant and ask \"What's the weather in London?\"\n\nWould you like me to help you find a reliable weather source or explain how to check weather information through common platforms?<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "I don't have real-time access to current weather data. To check the current temperature and wind speed in London, you can:\n\n1. Use a weather website or app like Weather.com, AccuWeather, or a weather service built into your device\n2. Check a weather service's London forecast page\n3. Use a voice assistant like Siri, Alexa, or Google Assistant and ask \"What's the weather in London?\"\n\nWould you like me to help you find a reliable weather source or explain how to interpret weather forecasts?<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: I need to provide you with the current temperature and wind speed in London, but after reviewing the available tools, I see that only a function to get the current temperature is accessible. Since there's no tool to retrieve wind speed, I can't fulfill that part of your request. I'll use the temperature function with London, UK as the location and default to Celsius for the unit. Once I retrieve the temperature, I'll share it with you, but I'll also let you know that wind speed data isn't available through the current tools.\n\nRESPONSE: I can check the current temperature in London, but I don't have access to wind speed data through the available tools. Let me get the temperature for you:<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"UK\"}, \"unit\": \"celsius\"}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: I need to provide you with the current temperature and wind speed in London, but I only have access to a tool that can retrieve wind speed, not temperature. Since I can't fulfill the full request, I'll use the available tool to get the wind speed for London, UK, and then clearly inform you that temperature data isn't accessible through my current capabilities, so you're aware of the limitation while still receiving the wind speed information.\n\nRESPONSE: I can help you with the wind speed in London, but I don't have access to current temperature data. Let me check the wind speed for you.<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, UK\"}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are rnj-1, a foundation model trained by Essential AI.\n\nYou are a helpful assistant\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}\n\n{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|eot_id|><|start_header_id|>user<|end_header_id|>\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+            "completion": "THOUGHT: I need to provide you with the current temperature and wind speed in London. Since the temperature tool requires both city and country, I'll use \"London, United Kingdom\" as the location and default to Celsius for temperature, as you didn't specify a unit. For wind speed, the tool only needs the location in \"City, Country\" format, so I'll use \"London, United Kingdom\" there as well. I'll make two separate calls: one to get the temperature and another for the wind speed, then combine the results to give you a complete answer.<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": {\"city\": \"London\", \"country\": \"United Kingdom\"}, \"unit\": \"celsius\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"get_current_wind_speed\", \"arguments\": {\"location\": \"London, United Kingdom\"}}\n</tool_call><|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]

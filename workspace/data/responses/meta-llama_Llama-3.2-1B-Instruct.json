@@ -1,0 +1,789 @@
+[
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "However, I'm a large language model, I don't have real-time access to current weather conditions. But I can suggest some ways for you to find out the current temperature in London.\n\nYou can:\n\n1. Check online weather websites: You can visit websites like AccuWeather, Weather.com, or the UK Met Office (Met Office) for the current temperature in London.\n2. Use a mobile app: There are many weather apps available for both iOS and Android devices that provide real-time weather information, including temperature.\n3. Check a news website: Websites like BBC News or The Guardian often have up-to-date weather forecasts and current temperature readings.\n\nPlease note that I'm a text-based AI model, and my knowledge cutoff is December 2023, so I may not have the most recent information.<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"name\": \"get_temperature\", \"parameters\": {\"city\": \"London\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_temperature\",\n        \"description\": \"Get the current temperature at a location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"city\": {\n                            \"type\": \"string\",\n                            \"description\": \"The city name\"\n                        },\n                        \"country\": {\n                            \"type\": \"string\",\n                            \"description\": \"The country name\"\n                        }\n                    },\n                    \"required\": [\n                        \"city\",\n                        \"country\"\n                    ],\n                    \"description\": \"The location to get the temperature for\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"celsius\",\n                        \"fahrenheit\"\n                    ],\n                    \"description\": \"The unit to return the temperature in.\"\n                }\n            },\n            \"required\": [\n                \"location\",\n                \"unit\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\"\n        }\n    }\n}\n\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_temperature\", \"parameters\": {\"location\": \"London\", \"unit\": \"celsius\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_wind_speed\",\n        \"description\": \"Get the current wind speed in km/h at a given location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"string\",\n                    \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"\n                }\n            },\n            \"required\": [\n                \"location\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\",\n            \"description\": \"The current wind speed in km/h\"\n        }\n    }\n}\n\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_wind_speed\", \"parameters\": {\"location\": \"London\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_temperature\",\n        \"description\": \"Get the current temperature at a location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"city\": {\n                            \"type\": \"string\",\n                            \"description\": \"The city name\"\n                        },\n                        \"country\": {\n                            \"type\": \"string\",\n                            \"description\": \"The country name\"\n                        }\n                    },\n                    \"required\": [\n                        \"city\",\n                        \"country\"\n                    ],\n                    \"description\": \"The location to get the temperature for\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"celsius\",\n                        \"fahrenheit\"\n                    ],\n                    \"description\": \"The unit to return the temperature in.\"\n                }\n            },\n            \"required\": [\n                \"location\",\n                \"unit\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\"\n        }\n    }\n}\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_wind_speed\",\n        \"description\": \"Get the current wind speed in km/h at a given location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"string\",\n                    \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"\n                }\n            },\n            \"required\": [\n                \"location\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\",\n            \"description\": \"The current wind speed in km/h\"\n        }\n    }\n}\n\nWhat is the current temperature in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_temperature\", \"parameters\": {\"location\": \"London\", \"country\": \"United Kingdom\", \"unit\": \"celsius\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "I'm just an AI, I don't have real-time access to current weather conditions. However, I can suggest some ways for you to find out the current wind speed in London.\n\nYou can check the current wind speed in London by visiting a weather website or app, such as:\n\n1. Met Office (metoffice.gov.uk)\n2. BBC Weather (bbc.co.uk/weather)\n3. Weather Underground (wunderground.com)\n4. AccuWeather (accuweather.com)\n\nThese websites provide up-to-date wind speed data for London, including gusts, speed, and direction. You can enter your location to get the current wind speed and other weather conditions.\n\nAlternatively, you can also check your mobile phone's weather app or use a voice assistant like Siri, Google Assistant, or Alexa to get the current wind speed in London.<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"name\": \"wind_speed\", \"parameters\": {\"city\": \"London\", \"units\": \"km/h\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_temperature\",\n        \"description\": \"Get the current temperature at a location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"city\": {\n                            \"type\": \"string\",\n                            \"description\": \"The city name\"\n                        },\n                        \"country\": {\n                            \"type\": \"string\",\n                            \"description\": \"The country name\"\n                        }\n                    },\n                    \"required\": [\n                        \"city\",\n                        \"country\"\n                    ],\n                    \"description\": \"The location to get the temperature for\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"celsius\",\n                        \"fahrenheit\"\n                    ],\n                    \"description\": \"The unit to return the temperature in.\"\n                }\n            },\n            \"required\": [\n                \"location\",\n                \"unit\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\"\n        }\n    }\n}\n\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_temperature\", \"parameters\": {\"city\": \"London\", \"country\": \"United Kingdom\", \"unit\": \"celsius\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_wind_speed\",\n        \"description\": \"Get the current wind speed in km/h at a given location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"string\",\n                    \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"\n                }\n            },\n            \"required\": [\n                \"location\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\",\n            \"description\": \"The current wind speed in km/h\"\n        }\n    }\n}\n\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_wind_speed\", \"parameters\": {\"location\": \"London\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_temperature\",\n        \"description\": \"Get the current temperature at a location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"city\": {\n                            \"type\": \"string\",\n                            \"description\": \"The city name\"\n                        },\n                        \"country\": {\n                            \"type\": \"string\",\n                            \"description\": \"The country name\"\n                        }\n                    },\n                    \"required\": [\n                        \"city\",\n                        \"country\"\n                    ],\n                    \"description\": \"The location to get the temperature for\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"celsius\",\n                        \"fahrenheit\"\n                    ],\n                    \"description\": \"The unit to return the temperature in.\"\n                }\n            },\n            \"required\": [\n                \"location\",\n                \"unit\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\"\n        }\n    }\n}\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_wind_speed\",\n        \"description\": \"Get the current wind speed in km/h at a given location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"string\",\n                    \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"\n                }\n            },\n            \"required\": [\n                \"location\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\",\n            \"description\": \"The current wind speed in km/h\"\n        }\n    }\n}\n\nWhat is the current wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_wind_speed\", \"parameters\": {\"location\": \"London\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "However, I'm a large language model, I don't have real-time access to current weather conditions. But I can suggest some ways for you to find out the current temperature and wind speed in London.\n\nYou can:\n\n1. Check online weather websites: You can visit websites like AccuWeather, Weather.com, or the Met Office (UK Met Office) for the current weather conditions in London.\n2. Use a weather app: You can download a weather app on your smartphone, such as Dark Sky or Weather Underground, which can provide you with current weather conditions and forecasts for London.\n3. Tune into local news: You can check the local news websites or TV channels for the current weather forecast for London.\n\nPlease note that the information I provide is based on my training data, which is up to 2023. If you need more up-to-date information, I recommend checking the latest weather forecast for London.\n\nWould you like me to provide you with the current temperature and wind speed in a specific location within London?<|eot_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "{\"name\": \"get_weather\", \"parameters\": {\"city\": \"London\", \"units\": \"metric\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_temperature\",\n        \"description\": \"Get the current temperature at a location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"city\": {\n                            \"type\": \"string\",\n                            \"description\": \"The city name\"\n                        },\n                        \"country\": {\n                            \"type\": \"string\",\n                            \"description\": \"The country name\"\n                        }\n                    },\n                    \"required\": [\n                        \"city\",\n                        \"country\"\n                    ],\n                    \"description\": \"The location to get the temperature for\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"celsius\",\n                        \"fahrenheit\"\n                    ],\n                    \"description\": \"The unit to return the temperature in.\"\n                }\n            },\n            \"required\": [\n                \"location\",\n                \"unit\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\"\n        }\n    }\n}\n\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_temperature\", \"parameters\": {\"location\": \"London\", \"unit\": \"celsius\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_wind_speed\",\n        \"description\": \"Get the current wind speed in km/h at a given location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"string\",\n                    \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"\n                }\n            },\n            \"required\": [\n                \"location\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\",\n            \"description\": \"The current wind speed in km/h\"\n        }\n    }\n}\n\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_wind_speed\", \"parameters\": {\"location\": \"London\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 25 Mar 2026\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_temperature\",\n        \"description\": \"Get the current temperature at a location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"city\": {\n                            \"type\": \"string\",\n                            \"description\": \"The city name\"\n                        },\n                        \"country\": {\n                            \"type\": \"string\",\n                            \"description\": \"The country name\"\n                        }\n                    },\n                    \"required\": [\n                        \"city\",\n                        \"country\"\n                    ],\n                    \"description\": \"The location to get the temperature for\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"celsius\",\n                        \"fahrenheit\"\n                    ],\n                    \"description\": \"The unit to return the temperature in.\"\n                }\n            },\n            \"required\": [\n                \"location\",\n                \"unit\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\"\n        }\n    }\n}\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_current_wind_speed\",\n        \"description\": \"Get the current wind speed in km/h at a given location.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"location\": {\n                    \"type\": \"string\",\n                    \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"\n                }\n            },\n            \"required\": [\n                \"location\"\n            ]\n        },\n        \"return\": {\n            \"type\": \"number\",\n            \"description\": \"The current wind speed in km/h\"\n        }\n    }\n}\n\nWhat is the current temperature and wind speed in London?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            "completion": "<|python_tag|>{\"type\": \"function\", \"function\": \"get_current_temperature\", \"parameters\": {\"city\": \"London\", \"country\": \"United Kingdom\", \"unit\": \"celsius\"}}; {\"type\": \"function\", \"function\": \"get_current_wind_speed\", \"parameters\": {\"location\": \"London\"}}<|eom_id|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]

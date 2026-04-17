@@ -1,0 +1,290 @@
+[
+    {
+        "repo_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "deepseek-r1-distill-qwen"
+            }
+        ]
+    },
+    {
+        "repo_id": "EssentialAI/rnj-1-instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "rnj-1"
+            }
+        ]
+    },
+    {
+        "repo_id": "google/functiongemma-270m-it",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "functiongemma"
+            }
+        ]
+    },
+    {
+        "repo_id": "google/translategemma-4b-it",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "translategemma"
+            }
+        ],
+        "is_translation": true
+    },
+    {
+        "repo_id": "google/gemma-2-2b-it",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "gemma-2"
+            }
+        ]
+    },
+    {
+        "repo_id": "google/gemma-3-1b-it",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "gemma-3"
+            }
+        ]
+    },
+    {
+        "repo_id": "google/gemma-3-4b-it",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "gemma-3"
+            }
+        ]
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "gemma-4"
+            }
+        ]
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "smollm2"
+            }
+        ]
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM3-3B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "smollm3"
+            }
+        ]
+    },
+    {
+        "repo_id": "LiquidAI/LFM2-1.2B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "lfm2"
+            }
+        ]
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "lfm2.5-instruct"
+            }
+        ]
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "lfm2.5-thinking"
+            }
+        ]
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "llama-3.1"
+            }
+        ]
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-1B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "llama-3.2"
+            }
+        ]
+    },
+    {
+        "repo_id": "meta-llama/Llama-3.2-3B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "llama-3.2"
+            }
+        ]
+    },
+    {
+        "repo_id": "mistralai/Codestral-22B-v0.1",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "codestral"
+            }
+        ]
+    },
+    {
+        "repo_id": "openai/gpt-oss-20b",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "gpt-oss"
+            },
+            {
+                "type": "harmony",
+                "name": "gpt-oss"
+            }
+        ],
+        "harmony": {
+            "tokenizer_url": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
+        }
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-3B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen2.5"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen2.5-coder"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen2.5-coder"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen3-0.6B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen3"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen3-4B-Instruct-2507",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen3-instruct"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen3-4B-Thinking-2507",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen3-thinking"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen3-4B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen3"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen3.5-0.8B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen3.5"
+            }
+        ]
+    },
+    {
+        "repo_id": "Qwen/Qwen3.5-2B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "qwen3.5"
+            }
+        ]
+    },
+    {
+        "repo_id": "POLARIS-Project/Polaris-4B-Preview",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "polaris"
+            }
+        ]
+    },
+    {
+        "repo_id": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "mistral-small-3"
+            }
+        ]
+    },
+    {
+        "repo_id": "mistralai/Devstral-Small-2505",
+        "tokeuzer_repo_id": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "devstral-small"
+            }
+        ]
+    },
+    {
+        "repo_id": "Nanbeige/Nanbeige4.1-3B",
+        "encodings": [
+            {
+                "type": "hanashi",
+                "name": "nanbeige"
+            }
+        ]
+    }
+]

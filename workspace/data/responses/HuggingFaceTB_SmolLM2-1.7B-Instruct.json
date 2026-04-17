@@ -1,0 +1,73 @@
+[
+    {
+        "repo_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "I'm sorry for the inconvenience, but as an AI, I don't have real-time capabilities to provide current weather updates. I recommend checking a reliable weather forecast website or app for the most accurate information.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "I'm sorry for the inconvenience, but as an AI, I don't have real-time capabilities to provide current weather updates or specific data such as wind speed. I recommend checking a reliable weather website or app for the most accurate and up-to-date information.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "I'm sorry for the inconvenience, but as an AI, I don't have real-time capabilities to provide current weather updates. I recommend checking a reliable weather website or app for the most accurate and up-to-date information.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

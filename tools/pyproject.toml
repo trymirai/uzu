@@ -1,0 +1,84 @@
+[project]
+name = "tools"
+dynamic = ["version"]
+description = "A collection of tools for development"
+requires-python = ">=3.12"
+dependencies = [
+    "huggingface-hub>=1.4.1",
+    "rich>=14.3.2",
+    "tokenizers>=0.22.2",
+    "torch>=2.10.0",
+    "transformers>=5.5.0",
+    "typer>=0.21.1",
+    "google-crc32c>=1.8.0",
+    "requests>=2.32.5",
+    "cattrs>=24.1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.0.2", "pytest-env>=1.2.0", "ruff>=0.15.0"]
+
+[project.scripts]
+export = "data_exporter.main:app"
+downloader = "downloader.main:app"
+model-compare = "model_compare.main:cli"
+gpu-trace = "gpu_trace.main:cli"
+
+[build-system]
+requires = ["setuptools>=65.5.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data_exporter*", "downloader*", "model_compare*", "gpu_trace*"]
+namespaces = false
+
+[tool.setuptools.dynamic]
+version = { attr = "data_exporter.__version__" }
+
+[tool.uv]
+package = true
+python-preference = "only-managed"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 119
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "C408",
+    "C901",
+    "D",
+    "EM101",
+    "EM102",
+    "ERA001",
+    "FIX002",
+    "F722",
+    "FBT001",
+    "FBT002",
+    "N812",
+    "PD008",
+    "PGH003",
+    "PLC0415",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR2004",
+    "PT",
+    "PTH123",
+    "RET503",
+    "RET504",
+    "RUF005",
+    "S",
+    "SIM108",
+    "T20",
+    "TD003",
+    "TRY003",
+]

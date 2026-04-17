@@ -1,0 +1,73 @@
+[
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "I'm sorry, as an AI language model, I don't have real-time information about the current temperature in London or any other location. I can provide general information about temperature and weather patterns, but for up-to-date data, I would recommend checking a reliable weather website or app.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "As of my last update, I don't have real-time data on current weather conditions. However, you can check the latest wind speed information for London by visiting a weather website or using a weather app on your smartphone.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "The current temperature in London is 12\u00b0C, and the wind speed is 5 km/h.<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]
