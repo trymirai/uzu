@@ -52,8 +52,6 @@ auto gemm_loop(
       MxuTile<T, LEFT_TILE_ROWS, LEFT_TILE_COLS> left_tile;
       MxuTile<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS> right_tile;
 
-      volatile int compiler_barrier;
-
       const int left_offset =
           transpose_a ? inner_k * leading_dimension_a : inner_k;
       const int right_offset =
@@ -94,7 +92,6 @@ auto gemm_loop(
           right_tile,
           metal::bool_constant<transpose_b>{}
       );
-
       (void)compiler_barrier;
     }
 
