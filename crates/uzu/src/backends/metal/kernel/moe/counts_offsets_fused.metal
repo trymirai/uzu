@@ -57,7 +57,7 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
     threadgroup uint scan_shared[BLOCK_SIZE],
     threadgroup uint reduce_shared[BLOCK_SIZE],
     threadgroup uint
-        counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
+        counts_shared[TILE_E], // Cache counts in threadgroup memory (sized for E up to TILE_E)
     threadgroup uint& carry,
     const ThreadContext thread_context,
     const uint lid THREADS(128)
@@ -122,7 +122,7 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
     uint remaining = e_input - base;
     uint chunk_n = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
 
-    uint v = (lid < chunk_n) ? counts_shared[lid] : 0u;
+    uint v = (lid < chunk_n) ? counts_shared[base + lid] : 0u;
 
     uint prefix_local = threadgroup_raking_prefix_exclusive_sum<BLOCK_SIZE>(
         v,
