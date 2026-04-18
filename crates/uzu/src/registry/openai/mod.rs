@@ -24,6 +24,11 @@ impl Registry {
         if let Some(api_key) = config.api_key.clone() {
             client_builder = client_builder.with_api_key(api_key);
         }
+        if let Some(headers) = config.headers.clone() {
+            for (key, value) in headers.iter() {
+                client_builder = client_builder.with_header(key, value);
+            }
+        }
 
         let client = client_builder.build().map_err(|error| Error::UnableToCreate {
             message: error.to_string(),

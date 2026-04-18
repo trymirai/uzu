@@ -87,6 +87,11 @@ impl Engine {
             engine.add_registry(Box::new(baseten_registry)).await?;
         }
 
+        if let Some(anthropic_api_key) = config.anthropic_api_key {
+            let anthropic_registry = OpenAIRegistry::new(OpenAIConfig::anthropic(anthropic_api_key))?;
+            engine.add_registry(Box::new(anthropic_registry)).await?;
+        }
+
         Ok(engine)
     }
 }
