@@ -23,6 +23,7 @@ pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32,
     #[specialize] use_mlx_quant: bool,
     #[specialize] use_hadamard: bool,
 ) {
+    let _ = hadamard_factors;
     if use_hadamard {
         unimplemented!("not supported yet");
     }

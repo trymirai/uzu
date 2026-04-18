@@ -43,7 +43,6 @@ pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
     values
 }
 
-#[allow(dead_code)]
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
     B::Context::new().expect(format!("Failed to create context for {}", std::any::type_name::<B>()).as_str())
 }

@@ -108,9 +108,10 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_barrier(
         &mut self,
-        _after: AccessFlags,
-        _before: AccessFlags,
+        after: AccessFlags,
+        before: AccessFlags,
     ) {
+        let _ = (after, before);
     }
 
     fn encode_wait_for_event(

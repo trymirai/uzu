@@ -142,7 +142,6 @@ fn get_output<
         input_buffer.as_ref(),
         scales_array.allocation(),
         &mut output,
-        0,
         input.batch_size,
         input.model_dim,
         input.epsilon,

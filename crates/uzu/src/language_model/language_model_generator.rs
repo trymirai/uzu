@@ -19,7 +19,7 @@ use crate::{
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{INVALID_POSITION, KVCacheLayerState},
-        state::ForwardPassState,
+        token_inputs::TokenInputs,
     },
     language_model::grammar::CompiledGrammar,
     session::{
@@ -56,7 +56,7 @@ pub struct LanguageModelGenerator<B: Backend> {
     pub tokens: Vec<u64>,
 
     pub context: LanguageModelGeneratorContext<B>,
-    async_in_flight: Vec<Option<(ForwardPassState<B>, Allocation<B>, Allocation<B>, Pending<B>)>>,
+    async_in_flight: Vec<Option<(TokenInputs<B>, Allocation<B>, Allocation<B>, Pending<B>)>>,
     async_token_ids: Option<Array<B>>,
     registered_prefix_len: usize,
     gpu_capture: GpuCaptureManager<B>,
@@ -179,7 +179,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let token_seeds = repeat_n(0, tokens_length - 1).chain(flat_trie.token_seeds()).chunks(prefill_step_size);
 
-        let mut last_state: Option<(ForwardPassState<B>, Option<Allocation<B>>)> = None;
+        let mut last_sampling_output: Option<Allocation<B>> = None;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -261,7 +261,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
             }
 
-            let _ = last_state.take();
+            let _ = last_sampling_output.take();
 
             let task = Task {
                 token_ids: &step_token_ids,
@@ -275,7 +275,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 is_prefilling: !should_sample_after_step,
             };
 
-            let (state, sampling_output, run_time) = self.run_model(task, sampling_method)?;
+            let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
 
             if should_capture {
                 self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
@@ -297,11 +297,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 self.registered_prefix_len = prefix_offset + tokens_start_index + tokens_processed_this_step;
             }
 
-            last_state = Some((state, sampling_output));
+            last_sampling_output = sampling_output;
             run_times.push(run_time);
         }
 
-        let (_final_state, final_sampling_output) = last_state.ok_or(Error::PrefillFailed)?;
+        let final_sampling_output = last_sampling_output;
         if !sample_suffix {
             self.sync_prefix();
             return Ok(PrefillResult {
@@ -402,7 +402,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         let sampling_length = task.sampling_length;
-        let (_state, sampling_output, run_time) = self.run_model(task, sampling_method)?;
+        let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
         let sampled_tokens =
             self.read_sampling_output(sampling_output.as_ref().expect("sampling output must exist"), sampling_length)?;
 
@@ -485,24 +485,17 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
         }
 
-        let mut state = ForwardPassState::new_llm(
-            self.context.context.clone(),
+        let token_inputs = TokenInputs::new_llm(
+            self.context.context.as_ref(),
             &self.context.model_shape,
-            self.context.cache_layers.clone(),
-            self.context.shared_buffers.clone(),
-            &task.token_ids,
+            task.token_ids,
             task.token_subtrie_ranges,
-            &task.token_positions,
+            task.token_positions,
             token_ids_allocation,
             token_positions_allocation,
+            0,
             task.active_row_count,
-            /*sampling_start=*/ 0,
-            /*sampling_length=*/ task.active_row_count,
-            task.is_prefilling,
         );
-        if let Some(sm) = state.sampling_method_mut() {
-            *sm = Some(sampling_method);
-        }
 
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
@@ -512,26 +505,26 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             encoder.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
         }
 
-        let decoder_logits = self.create_decoder_logits(state.sampling_length());
+        let decoder_logits = self.create_decoder_logits(task.active_row_count);
         let mut logits = {
-            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            let mut cache_layers = self.context.cache_layers.borrow_mut();
             self.context
                 .executables
                 .encode_decode(
                     DecoderArguments {
-                        context: state.context(),
-                        activation_data_type: state.model_shape().activation_data_type(),
-                        token_ids: state.token_ids(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        shared_buffers: state.shared_buffers.as_ref(),
-                        cache_layers: cache_layers.as_deref_mut(),
-                        batch_dim: state.active_row_count(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
+                        context: self.context.context.as_ref(),
+                        activation_data_type: self.context.model_shape.activation_data_type(),
+                        token_ids: token_inputs.token_ids(),
+                        token_positions: token_inputs.token_positions(),
+                        token_parents: token_inputs.token_parents(),
+                        token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+                        shared_buffers: self.context.shared_buffers.as_ref(),
+                        cache_layers: Some(&mut *cache_layers),
+                        batch_dim: task.active_row_count,
+                        sampling_start: 0,
+                        sampling_length: task.active_row_count,
+                        rope_max_sequence_length: self.context.model_shape.context_length(),
+                        rope_dim: self.context.model_shape.rope_dim(),
                         #[cfg(feature = "tracing")]
                         trace: None,
                     },
@@ -543,16 +536,16 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         // Encode sampling
-        let mut sampling_output = self.create_sampling_output(state.sampling_length());
+        let mut sampling_output = self.create_sampling_output(task.active_row_count);
         let sampling_result = self.context.gpu_sampler.encode(
             SamplingArguments {
                 logits: &mut logits,
                 seeds: sampling_inputs.seeds.allocation(),
                 bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
                 output: &mut sampling_output,
-                sampling_method: state.sampling_method().unwrap(),
-                batch_size: state.sampling_length(),
-                vocab_size: state.vocab_size(),
+                sampling_method,
+                batch_size: task.active_row_count,
+                vocab_size: self.context.model_config.model_config.vocab_size,
             },
             &mut encoder,
         );
@@ -617,7 +610,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         } else {
             assert!(self.async_in_flight[slot].is_none(), "async slot {slot} still holds an in-flight state");
-            self.async_in_flight[slot] = Some((state, logits, sampling_output, pending));
+            self.async_in_flight[slot] = Some((token_inputs, logits, sampling_output, pending));
         }
 
         Ok(())
@@ -695,9 +688,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     ) {
         let ctx = context.downcast_ref::<LlmContext<B>>().unwrap();
         let mut llm_state = self.context.cache_layers.borrow_mut();
-        for (_layer_idx, (ctx_layer, gen_layer)) in
-            ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()).enumerate()
-        {
+        for (ctx_layer, gen_layer) in ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()) {
             match (ctx_layer, gen_layer) {
                 (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
                     let copy_rows = src.prefix_segment_length();
@@ -766,7 +757,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &mut self,
         task: Task,
         sampling_method: SamplingMethod,
-    ) -> Result<(ForwardPassState<B>, Option<Allocation<B>>, f64), Error> {
+    ) -> Result<(Option<Allocation<B>>, f64), Error> {
         let run_start = Instant::now();
         let sample = !task.is_prefilling;
         let (token_ids_allocation, token_positions_allocation, sampling_inputs) = (
@@ -781,26 +772,17 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 )
             }),
         );
-
-        let mut state = ForwardPassState::new_llm(
-            self.context.context.clone(),
+        let token_inputs = TokenInputs::new_llm(
+            self.context.context.as_ref(),
             &self.context.model_shape,
-            self.context.cache_layers.clone(),
-            self.context.shared_buffers.clone(),
             task.token_ids,
             task.token_subtrie_ranges,
             task.token_positions,
             token_ids_allocation,
             token_positions_allocation,
-            task.active_row_count,
             task.sampling_start,
             task.sampling_length,
-            task.is_prefilling,
         );
-
-        if let Some(method) = state.sampling_method_mut() {
-            *method = Some(sampling_method);
-        }
 
         let is_first_decode = task.token_ids.len() == 1;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -809,8 +791,31 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
-        let encoded_forward_pass =
-            self.encode_forward_pass(&mut state, &EncodingParameters::new(), sample, sampling_inputs.clone())?;
+        let mut cache_layers = self.context.cache_layers.borrow_mut();
+        let decoder_arguments = DecoderArguments {
+            context: self.context.context.as_ref(),
+            activation_data_type: self.context.model_shape.activation_data_type(),
+            token_ids: token_inputs.token_ids(),
+            token_positions: token_inputs.token_positions(),
+            token_parents: token_inputs.token_parents(),
+            token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+            shared_buffers: self.context.shared_buffers.as_ref(),
+            cache_layers: Some(&mut *cache_layers),
+            batch_dim: task.active_row_count,
+            sampling_start: task.sampling_start,
+            sampling_length: task.sampling_length,
+            rope_max_sequence_length: self.context.model_shape.context_length(),
+            rope_dim: self.context.model_shape.rope_dim(),
+            #[cfg(feature = "tracing")]
+            trace: None,
+        };
+        let encoded_forward_pass = self.encode_forward_pass(
+            decoder_arguments,
+            task.is_prefilling,
+            sample.then_some(sampling_method),
+            &EncodingParameters::new(),
+            sampling_inputs.clone(),
+        )?;
 
         let EncodedForwardPass {
             executable,
@@ -828,45 +833,29 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
-        Ok((state, sampling_output, run_time))
+        Ok((sampling_output, run_time))
     }
 
     fn encode_forward_pass(
         &self,
-        state: &mut ForwardPassState<B>,
+        decoder_arguments: DecoderArguments<'_, B>,
+        is_prefilling: bool,
+        sampling_method: Option<SamplingMethod>,
         parameters: &EncodingParameters,
-        sample: bool,
         sampling_inputs: Option<SamplingInputs<B>>,
     ) -> Result<EncodedForwardPass<B>, Error> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
-        let mut sampling_output = sample.then(|| self.create_sampling_output(state.sampling_length()));
-        let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
-        let decoder_arguments = DecoderArguments {
-            context: state.context(),
-            activation_data_type: state.model_shape().activation_data_type(),
-            token_ids: state.token_ids(),
-            token_positions: state.token_positions(),
-            token_parents: state.token_parents(),
-            token_subtrie_ranges: state.token_subtrie_ranges(),
-            shared_buffers: state.shared_buffers.as_ref(),
-            cache_layers: cache_layers.as_deref_mut(),
-            batch_dim: state.active_row_count(),
-            sampling_start: state.sampling_start(),
-            sampling_length: state.sampling_length(),
-            rope_max_sequence_length: state.rope_max_sequence_length(),
-            rope_dim: state.rope_dim(),
-            #[cfg(feature = "tracing")]
-            trace: None,
-        };
-        if state.is_prefilling() {
+        let sampling_length = decoder_arguments.sampling_length;
+        let mut sampling_output = sampling_method.map(|_| self.create_sampling_output(sampling_length));
+        if is_prefilling {
             self.context
                 .executables
                 .encode_prefill(decoder_arguments, parameters, &mut encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
-            let decoder_logits = self.create_decoder_logits(state.sampling_length());
+            let decoder_logits = self.create_decoder_logits(sampling_length);
             let mut logits = self
                 .context
                 .executables
@@ -880,9 +869,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
                     seeds: sampling_inputs.seeds.allocation(),
                     bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
                     output: sampling_output.as_mut().expect("Sampling requires output allocation"),
-                    sampling_method: state.sampling_method().unwrap(),
-                    batch_size: state.sampling_length(),
-                    vocab_size: state.vocab_size(),
+                    sampling_method: sampling_method.expect("Sampling requires method"),
+                    batch_size: sampling_length,
+                    vocab_size: self.context.model_config.model_config.vocab_size,
                 },
                 &mut encoder,
             );

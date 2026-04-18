@@ -21,8 +21,9 @@ pub fn delta_net_prefill<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
     key_dim: u32,
     value_dim: u32,
     suffix_len: u32,
-    #[allow(unused)] num_dv_groups: u32,
+    num_dv_groups: u32,
 ) {
+    let _ = num_dv_groups;
     let state_ptr = state as *const T;
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;

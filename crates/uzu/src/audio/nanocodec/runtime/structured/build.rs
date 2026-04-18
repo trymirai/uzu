@@ -163,7 +163,6 @@ pub(super) fn read_norm_layer<B: Backend>(
     epsilon: f32,
     subtract_mean: bool,
     use_bias: bool,
-    _label_prefix: &str,
 ) -> AudioResult<StructuredAudioNorm<B>> {
     let scales = read_float_vector_exact::<B>(tree, "scales", channels, data_type)?;
     let bias = if use_bias {
@@ -220,7 +219,6 @@ pub(super) fn read_convnext_layer<B: Backend>(
         norm_config.epsilon,
         norm_config.subtract_mean,
         norm_config.use_bias,
-        "structured_audio_convnext_norm",
     )?;
     let (pwconv1_shape, _) = read_float_allocation::<B, 2>(&tree.subtree("pwconv1")?, "weights", data_type)?;
     if pwconv1_shape[1] != channels {

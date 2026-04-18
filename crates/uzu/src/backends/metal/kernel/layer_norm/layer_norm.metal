@@ -124,7 +124,6 @@ PUBLIC KERNEL(LayerNorm) (
     const device IN* input OPTIONAL(!in_place),
     const device SC* scales,
     device OUT* output,
-    constant uint& input_offset_elements,
     constant uint& batch_size,
     constant uint& model_dim,
     constant float& epsilon,
@@ -139,8 +138,6 @@ PUBLIC KERNEL(LayerNorm) (
 ) {
   if (in_place) {
     input = reinterpret_cast<const device IN*>(output);
-  } else {
-    input += input_offset_elements;
   }
   const uint input_offset = batch_idx * model_dim;
   layer_norm_core<IN, SC, OUT, ACC>(

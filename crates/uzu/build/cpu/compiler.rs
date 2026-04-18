@@ -551,7 +551,7 @@ impl CpuCompiler {
             impl crate::backends::common::kernel::#trait_ident for #struct_ident {
                 type Backend = crate::backends::cpu::Cpu;
 
-                fn new(context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
+                fn new(_context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
                     Ok(Self {
                         #(#struct_fields_sets ,)*
                     })

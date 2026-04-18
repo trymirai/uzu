@@ -54,7 +54,6 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let (in_projection, in_proj_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &short_conv_config.in_projection_config,
-            false,
             model_dim,
             [model_dim * 3],
             context,
@@ -64,7 +63,6 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             &short_conv_config.out_projection_config,
-            false,
             model_dim,
             [model_dim],
             context,

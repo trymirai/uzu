@@ -74,7 +74,6 @@ impl<B: Backend> LayerExecutables<B> {
 
                 let (qkv_projection, input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                     &attention_config.qkv_projection_config,
-                    attention_config.has_qkv_biases,
                     model_dim,
                     [q_dim, kv_dim, kv_dim],
                     context,
@@ -91,7 +90,6 @@ impl<B: Backend> LayerExecutables<B> {
                     Some(
                         <dyn Linear<B>>::new(
                             gate_config,
-                            false,
                             model_dim,
                             [q_dim],
                             context,
@@ -124,7 +122,6 @@ impl<B: Backend> LayerExecutables<B> {
 
                 let out_projection = <dyn Linear<B>>::new(
                     &attention_config.out_projection_config,
-                    attention_config.has_out_biases,
                     q_dim,
                     [model_dim],
                     context,
@@ -165,9 +162,6 @@ impl<B: Backend> LayerExecutables<B> {
                     mamba_config.clone(),
                     layer_index,
                     model_dim,
-                    num_heads,
-                    head_dim,
-                    num_groups,
                     decoder_layer_loader,
                 );
                 (
@@ -194,9 +188,8 @@ impl<B: Backend> LayerExecutables<B> {
                 )
             },
             MixerConfig::DeltaNet(delta_net_config) => {
-                let mixer =
-                    DeltaNetMixer::new(context, delta_net_config.clone(), layer_index, model_dim, decoder_layer_loader)
-                        .expect("Failed to create DeltaNet mixer");
+                let mixer = DeltaNetMixer::new(context, delta_net_config.clone(), model_dim, decoder_layer_loader)
+                    .expect("Failed to create DeltaNet mixer");
                 (
                     MixerExecutables::DeltaNet {
                         mixer,

@@ -5,11 +5,11 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType,
-    array::{ArrayContextExt, allocation_as_slice},
+    array::allocation_as_slice,
     backends::common::{Allocation, Backend, Encoder},
     config::ModelMetadata,
     encodable_block::{EncodingParameters, LayerArguments},
-    forward_pass::state::RopeType,
+    forward_pass::token_inputs::TokenInputs,
     session::types::Error,
 };
 
@@ -109,20 +109,7 @@ impl<B: Backend> Classifier<B> {
         #[cfg(feature = "tracing")] trace: Option<&ActivationTrace<B>>,
     ) -> Result<Box<[f32]>, Error> {
         let batch_dim = token_ids.len();
-        let token_ids_array = self.context.context.create_array_from(&[batch_dim], token_ids, "classifier_token_ids");
-        let token_positions_storage: Box<[i32]> = token_positions.iter().map(|&position| position as i32).collect();
-        let token_positions_array = self.context.context.create_array_from(
-            &[batch_dim],
-            token_positions_storage.as_ref(),
-            "classifier_token_positions",
-        );
-        let token_parents_storage = vec![-1_i32; batch_dim].into_boxed_slice();
-        let token_parents_array = self.context.context.create_array_from(
-            &[batch_dim],
-            token_parents_storage.as_ref(),
-            "classifier_token_parents",
-        );
-
+        let token_inputs = TokenInputs::new_classifier(self.context.context.as_ref(), token_ids, token_positions);
         let encoding_params = EncodingParameters::new();
 
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
@@ -132,7 +119,7 @@ impl<B: Backend> Classifier<B> {
             .context
             .embed
             .encode_lookup(
-                token_ids_array.allocation(),
+                token_inputs.token_ids(),
                 batch_dim,
                 self.context.model_shape.activation_data_type(),
                 &mut encoder,
@@ -151,32 +138,18 @@ impl<B: Backend> Classifier<B> {
         let mut shortcut =
             encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         for (layer_index, layer) in self.context.layers.iter().enumerate() {
-            let (rope_cosines, rope_sines) = match layer.rope_type() {
-                RopeType::Global => {
-                    let rope = self.context.shared_buffers.global_rope.as_ref().expect("Global rope not initialized");
-                    (Some(&rope.cosines), Some(&rope.sines))
-                },
-                RopeType::Local => {
-                    let rope = self.context.shared_buffers.local_rope.as_ref().expect("Local rope not initialized");
-                    (Some(&rope.cosines), Some(&rope.sines))
-                },
-            };
+            let rope_type = layer.rope_type();
             main = layer
                 .encode(
                     LayerArguments {
                         context: self.context.context.as_ref(),
                         batch_dim,
-                        token_positions: token_positions_array.allocation(),
-                        token_parents: token_parents_array.allocation(),
+                        token_positions: token_inputs.token_positions(),
+                        token_parents: token_inputs.token_parents(),
                         token_subtrie_ranges: None,
-                        attention_sinks: self
-                            .context
-                            .shared_buffers
-                            .attention_sinks
-                            .as_ref()
-                            .map(|sinks| &sinks[layer_index]),
-                        rope_cosines,
-                        rope_sines,
+                        attention_sinks: self.context.shared_buffers.attention_sinks(layer_index),
+                        rope_cosines: self.context.shared_buffers.rope_cosines(rope_type),
+                        rope_sines: self.context.shared_buffers.rope_sines(rope_type),
                         rope_max_sequence_length: self.context.model_shape.context_length(),
                         rope_dim: self.context.model_shape.rope_dim(),
                         sampling_start: 0,
@@ -220,11 +193,7 @@ impl<B: Backend> Classifier<B> {
             encoder.encode_copy_allocation(&logits, &trace.logits);
         }
 
-        let _completed = encoder
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let logits = self.copy_logits_from_allocation(&logits)?;
 

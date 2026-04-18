@@ -4,7 +4,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            Encoder,
             kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
         },
         cpu::{Cpu, context::CpuContext},

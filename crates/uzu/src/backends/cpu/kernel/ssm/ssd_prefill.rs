@@ -7,48 +7,86 @@ use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
 #[kernel(SSDPrefill64)]
 #[variants(T, f32, f16, bf16)]
 pub fn ssd_prefill64<T: ArrayElement + Float>(
-    #[allow(unused)] x: *const T,
-    #[allow(unused)] dt_raw: *const T,
-    #[allow(unused)] b: *const T,
-    #[allow(unused)] c: *const T,
-    #[allow(unused)] d: *const T,
-    #[allow(unused)] z: *const T,
-    #[allow(unused)] state: *mut T,
-    #[allow(unused)] y: *mut T,
-    #[allow(unused)] suffix_len: u32,
-    #[allow(unused)] group_size: u32,
-    #[allow(unused)] state_size: u32,
-    #[allow(unused)] x_strides: &[u32],
-    #[allow(unused)] dt_strides: &[u32],
-    #[allow(unused)] cb_strides: &[u32],
-    #[allow(unused)] state_strides: &[u32],
-    #[allow(unused)] num_heads: u32,
-    #[allow(unused)] head_dim: u32,
+    x: *const T,
+    dt_raw: *const T,
+    b: *const T,
+    c: *const T,
+    d: *const T,
+    z: *const T,
+    state: *mut T,
+    y: *mut T,
+    suffix_len: u32,
+    group_size: u32,
+    state_size: u32,
+    x_strides: &[u32],
+    dt_strides: &[u32],
+    cb_strides: &[u32],
+    state_strides: &[u32],
+    num_heads: u32,
+    head_dim: u32,
 ) {
+    let _ = (
+        x,
+        dt_raw,
+        b,
+        c,
+        d,
+        z,
+        state,
+        y,
+        suffix_len,
+        group_size,
+        state_size,
+        x_strides,
+        dt_strides,
+        cb_strides,
+        state_strides,
+        num_heads,
+        head_dim,
+    );
     todo!()
 }
 
 #[kernel(SSDPrefill)]
 #[variants(T, f32, f16, bf16)]
 pub fn ssd_prefill<T: ArrayElement + Float>(
-    #[allow(unused)] x: *const T,
-    #[allow(unused)] dt_raw: *const T,
-    #[allow(unused)] b: *const T,
-    #[allow(unused)] c: *const T,
-    #[allow(unused)] d: *const T,
-    #[allow(unused)] z: *const T,
-    #[allow(unused)] state: *mut T,
-    #[allow(unused)] y: *mut T,
-    #[allow(unused)] suffix_len: u32,
-    #[allow(unused)] group_size: u32,
-    #[allow(unused)] state_size: u32,
-    #[allow(unused)] x_strides: &[u32],
-    #[allow(unused)] dt_strides: &[u32],
-    #[allow(unused)] cb_strides: &[u32],
-    #[allow(unused)] state_strides: &[u32],
-    #[allow(unused)] num_heads: u32,
-    #[allow(unused)] head_dim: u32,
+    x: *const T,
+    dt_raw: *const T,
+    b: *const T,
+    c: *const T,
+    d: *const T,
+    z: *const T,
+    state: *mut T,
+    y: *mut T,
+    suffix_len: u32,
+    group_size: u32,
+    state_size: u32,
+    x_strides: &[u32],
+    dt_strides: &[u32],
+    cb_strides: &[u32],
+    state_strides: &[u32],
+    num_heads: u32,
+    head_dim: u32,
 ) {
+    let _ = (
+        x,
+        dt_raw,
+        b,
+        c,
+        d,
+        z,
+        state,
+        y,
+        suffix_len,
+        group_size,
+        state_size,
+        x_strides,
+        dt_strides,
+        cb_strides,
+        state_strides,
+        num_heads,
+        head_dim,
+    );
     todo!()
 }
 
@@ -79,7 +117,6 @@ pub fn ssd_prefill_sequential<T: ArrayElement + Float>(
     let channels = channels as usize;
     let head_dim = head_dim as usize;
 
-    let total_pairs = suffix_len * channels * head_dim;
     let safe_group = group_size.max(1) as usize;
 
     unsafe {

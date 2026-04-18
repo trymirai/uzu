@@ -184,12 +184,12 @@ impl<B: Backend> Pending<B> {
 
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
-    #[allow(unused)]
     allocation_pool: AllocationPool<B>,
 }
 
 impl<B: Backend> Completed<B> {
     pub fn gpu_execution_time(&self) -> Duration {
+        let _ = &self.allocation_pool;
         self.command_buffer.gpu_execution_time()
     }
 }

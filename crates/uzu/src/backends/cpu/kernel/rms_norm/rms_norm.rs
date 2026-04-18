@@ -1,6 +1,6 @@
 use dsl::kernel;
 use half::{bf16, f16};
-use num_traits::{Float, ToPrimitive};
+use num_traits::Float;
 
 use crate::ArrayElement;
 
@@ -20,8 +20,6 @@ pub fn rms_norm<
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
-    input_offset_elements: u32,
-    shortcut_offset_elements: u32,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
@@ -32,23 +30,22 @@ pub fn rms_norm<
     #[specialize] residual_add: bool,
     #[specialize] use_hadamard: bool,
 ) {
+    let _ = hadamard_factors;
     if use_hadamard {
         unimplemented!("not supported yet");
     }
 
     let input = match in_place {
         true => output as *const InputT,
-        false => unsafe { input.unwrap().add(input_offset_elements as usize) },
+        false => input.unwrap(),
     };
     let shortcut = if copy_to_shortcut {
-        Some(unsafe { shortcut.unwrap().add(shortcut_offset_elements as usize) })
+        Some(shortcut.unwrap())
     } else {
         None
     };
 
     let element_count = element_count as usize;
-    let input_size = (batch_size as usize) * element_count;
-    let scales_size = input_size;
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();
     let element_count_accum = AccumT::from(element_count).unwrap();

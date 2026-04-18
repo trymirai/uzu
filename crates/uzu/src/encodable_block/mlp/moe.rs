@@ -196,11 +196,12 @@ impl<B: Backend> MoeBlock<B> {
 impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
-        _context: &B::Context,
+        context: &B::Context,
         input: &Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        let _ = context;
         let suffix_length = batch_dim;
 
         let e = self.moe_config.num_routed_experts;

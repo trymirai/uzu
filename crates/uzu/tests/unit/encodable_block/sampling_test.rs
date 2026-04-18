@@ -131,7 +131,6 @@ fn test_argmax_sampling() {
     test_argmax_sampling_with_strategy(ArgmaxStrategy::SinglePass);
 }
 
-#[allow(dead_code)]
 fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     use std::time::Instant;
 
@@ -212,6 +211,18 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     }
 
     println!("✓ Argmax correctness verified with {:?} strategy", strategy);
+}
+
+#[test]
+#[ignore = "performance-only check"]
+fn perf_argmax_128k_vocab_single_pass() {
+    perf_argmax_128k_vocab_with_strategy(ArgmaxStrategy::SinglePass);
+}
+
+#[test]
+#[ignore = "performance-only check"]
+fn perf_argmax_128k_vocab_two_pass() {
+    perf_argmax_128k_vocab_with_strategy(ArgmaxStrategy::TwoPass);
 }
 
 #[test]

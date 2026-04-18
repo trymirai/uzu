@@ -182,8 +182,7 @@ impl<B: Deref<Target = [u8]> + Send + Sync> NGramSpeculator<B> {
         let mut off = 0;
 
         let max_order = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        // Discount parameter is baked into the exported probabilities at training time.
-        let _discount = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+        // Bytes [4..8] store the discount parameter, but exported probabilities are already discounted.
         off += 8;
 
         let mut tables: Vec<TaggedTableLayout> = Vec::with_capacity(max_order as usize);

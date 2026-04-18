@@ -26,10 +26,7 @@ use crate::{
         EmbeddingConfigCommon, InnerModelConfig, TtsAudioDecoderConfig, TtsConfig,
     },
     encodable_block::{Decoder, EncodingParameters, LayerExecutables, RMSNorm},
-    forward_pass::{
-        model_shape::ModelShape,
-        state::{ForwardPassState, SharedBuffers},
-    },
+    forward_pass::{model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
 };
 
@@ -526,8 +523,9 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
 
     pub fn end_decode_stream(
         &self,
-        _state: AudioDecodeStreamState,
+        state: AudioDecodeStreamState,
     ) -> AudioResult<()> {
+        drop(state);
         Ok(())
     }
 
@@ -654,8 +652,9 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         &self,
         state: &mut AudioDecodeStreamState,
         new_tokens: &AudioTokenGrid,
-        _is_final: bool,
+        is_final: bool,
     ) -> AudioResult<DecodedPaddedAudio> {
+        let _ = is_final;
         if new_tokens.codebooks() != state.codebooks {
             return Err(AudioError::Runtime(format!(
                 "stream delta codebook mismatch: expected {}, got {}",

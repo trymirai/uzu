@@ -11,8 +11,6 @@ pub struct ClassifierPredictionHead<B: Backend> {
     norm: Normalization<B>,
     readout: Box<dyn Linear<B>>,
     hidden_dim: usize,
-    #[allow(dead_code)]
-    num_labels: usize,
 }
 
 impl<B: Backend> ClassifierPredictionHead<B> {
@@ -22,7 +20,6 @@ impl<B: Backend> ClassifierPredictionHead<B> {
         norm: Normalization<B>,
         readout: Box<dyn Linear<B>>,
         hidden_dim: usize,
-        num_labels: usize,
     ) -> Self {
         Self {
             dense,
@@ -30,7 +27,6 @@ impl<B: Backend> ClassifierPredictionHead<B> {
             norm,
             readout,
             hidden_dim,
-            num_labels,
         }
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) type PreInjectionEncodeCallback<'a, B> =
-    dyn FnMut(&mut TokenDecoderRunner<B>, &ForwardPassState<B>, &mut Encoder<B>) -> Result<(), Error> + 'a;
+    dyn FnMut(&mut TokenDecoderRunner<B>, &mut Encoder<B>) -> Result<(), Error> + 'a;
 
 pub(super) enum EmbeddingInjection {
     None,

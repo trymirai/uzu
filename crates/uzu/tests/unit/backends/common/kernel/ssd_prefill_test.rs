@@ -3,7 +3,7 @@ use std::mem::size_of;
 use crate::{
     DataType,
     backends::common::{
-        Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
+        Allocation, Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dScanKernel,
@@ -16,35 +16,15 @@ use crate::{
 #[path = "../../../../common/mod.rs"]
 mod common;
 
-fn zero_allocation<B: Backend>(allocation: &mut Allocation<B>) {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len()).fill(0);
-    }
-}
-
 fn allocation_from_f32_slice<B: Backend>(
     ctx: &B::Context,
     data: &[f32],
 ) -> Allocation<B> {
-    let allocation = ctx
-        .create_allocation(data.len() * size_of::<f32>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-        std::ptr::copy_nonoverlapping(bytemuck::cast_slice(data).as_ptr(), dst, data.len() * size_of::<f32>());
-    }
-    allocation
+    common::helpers::alloc_allocation_with_data(ctx, data)
 }
 
 fn read_allocation<B: Backend>(allocation: &Allocation<B>) -> Vec<f32> {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-        let bytes = std::slice::from_raw_parts(src, range.len());
-        bytemuck::cast_slice(bytes).to_vec()
-    }
+    common::helpers::allocation_to_vec(allocation)
 }
 
 fn ssd_prefill_cpu_reference(
@@ -105,7 +85,6 @@ fn ssd_prefill_cpu_reference(
     (y_out, state)
 }
 
-#[allow(dead_code)]
 struct SSDPrefillFixture {
     suffix_len: usize,
     num_heads: usize,
@@ -113,9 +92,6 @@ struct SSDPrefillFixture {
     state_dim: usize,
     group_size: i32,
     total_x: usize,
-    total_dt: usize,
-    total_cb: usize,
-    total_state: usize,
     x_strides: [usize; 3],
     dt_strides: [usize; 2],
     cb_strides: [usize; 3],
@@ -163,9 +139,6 @@ impl SSDPrefillFixture {
             state_dim,
             group_size,
             total_x,
-            total_dt,
-            total_cb,
-            total_state,
             x_strides,
             dt_strides,
             cb_strides,
@@ -257,11 +230,7 @@ fn run_conv_scan_once<B: Backend>(
     let b_buf = allocation_from_f32_slice(ctx, b_data);
 
     let mut state_buf = allocation_from_f32_slice(ctx, state_init);
-    let mut scratch_buf = allocation_from_f32_slice(ctx, &vec![0.0f32; total_state]);
-
-    if use_scratch && tap_count > 0 {
-        zero_allocation::<B>(&mut scratch_buf);
-    }
+    let scratch_buf = allocation_from_f32_slice::<B>(ctx, &vec![0.0f32; total_state]);
 
     let padded_len = tap_count + suffix_len;
     let mut padded_host = vec![0.0f32; padded_len * channels];

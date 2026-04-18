@@ -7,21 +7,17 @@ use crate::{ArrayElement, backends::common::gpu_types::QuantizationMode};
 #[kernel(QuantizedEmbeddingLookup)]
 #[variants(T, f32, f16, bf16)]
 pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
-    #[allow(unused)] token_ids: *const u64,
-    #[allow(unused)] weights: *const u8,
-    #[allow(unused)] scales: *const T,
-    #[allow(unused)] biases: *const T,
-    #[allow(unused)] output: *mut T,
-    #[allow(unused)] batch_size: u32,
-    #[allow(unused)] vocab_size: u32,
-    #[allow(unused)] model_dim: u32,
-    #[allow(unused)] input_scale: f32,
-    #[allow(unused)]
-    #[specialize]
-    group_size: u32,
-    #[allow(unused)]
-    #[specialize]
-    quant_mode: u32,
+    token_ids: *const u64,
+    weights: *const u8,
+    scales: *const T,
+    biases: *const T,
+    output: *mut T,
+    batch_size: u32,
+    vocab_size: u32,
+    model_dim: u32,
+    input_scale: f32,
+    #[specialize] group_size: u32,
+    #[specialize] quant_mode: u32,
 ) {
     let quant_mode = QuantizationMode::from(quant_mode);
 

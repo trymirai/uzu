@@ -1,6 +1,6 @@
 use half::{bf16, f16};
 
-use super::RopeBuffers;
+use super::{RopeBuffers, RopeType};
 use crate::{
     DataType,
     array::ArrayContextExt,
@@ -91,5 +91,32 @@ impl<B: Backend> SharedBuffers<B> {
                 }
             }
         }
+    }
+
+    pub fn rope_cosines(
+        &self,
+        rope_type: RopeType,
+    ) -> Option<&Allocation<B>> {
+        match rope_type {
+            RopeType::Global => self.global_rope.as_ref().map(|rope| &rope.cosines),
+            RopeType::Local => self.local_rope.as_ref().map(|rope| &rope.cosines),
+        }
+    }
+
+    pub fn rope_sines(
+        &self,
+        rope_type: RopeType,
+    ) -> Option<&Allocation<B>> {
+        match rope_type {
+            RopeType::Global => self.global_rope.as_ref().map(|rope| &rope.sines),
+            RopeType::Local => self.local_rope.as_ref().map(|rope| &rope.sines),
+        }
+    }
+
+    pub fn attention_sinks(
+        &self,
+        layer_index: usize,
+    ) -> Option<&Allocation<B>> {
+        self.attention_sinks.as_ref().map(|sinks| &sinks[layer_index])
     }
 }

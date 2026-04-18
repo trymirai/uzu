@@ -384,8 +384,7 @@ impl<B: Backend> CacheLayers<B> {
         let mut data: Box<[CacheLayer<B>]> = self
             .data
             .iter()
-            .enumerate()
-            .map(|(_layer_index, layer)| match layer {
+            .map(|layer| match layer {
                 CacheLayer::Transformer(layer) => {
                     let shape = layer.shape;
                     let [num_groups, _, head_dim] = shape;

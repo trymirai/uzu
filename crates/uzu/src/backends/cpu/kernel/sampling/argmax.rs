@@ -81,6 +81,7 @@ pub fn argmax_final(
     batch_size: u32,
     vocab_size: u32,
 ) {
+    let _ = vocab_size;
     for batch_idx in 0..batch_size as usize {
         unsafe {
             let pair = *partial_results.add(batch_idx);

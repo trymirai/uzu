@@ -268,15 +268,9 @@ impl<B: Backend> Decoder<B> {
 
         for layer in self.layers.iter() {
             let rope_type = layer.rope_type();
-            let rope_cosines = rope_type.map(|rope_type| match rope_type {
-                RopeType::Global => &shared_buffers.global_rope.as_ref().expect("Global rope not initialized").cosines,
-                RopeType::Local => &shared_buffers.local_rope.as_ref().expect("Local rope not initialized").cosines,
-            });
-            let rope_sines = rope_type.map(|rope_type| match rope_type {
-                RopeType::Global => &shared_buffers.global_rope.as_ref().expect("Global rope not initialized").sines,
-                RopeType::Local => &shared_buffers.local_rope.as_ref().expect("Local rope not initialized").sines,
-            });
-            let attention_sinks = shared_buffers.attention_sinks.as_ref().map(|sinks| &sinks[layer.layer_index]);
+            let rope_cosines = rope_type.and_then(|rope_type| shared_buffers.rope_cosines(rope_type));
+            let rope_sines = rope_type.and_then(|rope_type| shared_buffers.rope_sines(rope_type));
+            let attention_sinks = shared_buffers.attention_sinks(layer.layer_index);
             #[cfg(feature = "tracing")]
             let layer_trace = trace.and_then(|trace| trace.layer_results.get(layer.layer_index));
 
@@ -311,23 +305,14 @@ impl<B: Backend> Decoder<B> {
         Ok((main, shortcut))
     }
 
-    fn encode_hidden(
-        &self,
-        args: DecoderArguments<'_, B>,
-        parameters: &EncodingParameters,
-        encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
-        let main = self.embed.encode_lookup(args.token_ids, args.batch_dim, args.activation_data_type, encoder)?;
-        self.encode_hidden_from_embeddings(args, main, parameters, encoder)
-    }
-
     pub fn encode_prefill(
         &self,
         args: DecoderArguments<'_, B>,
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
-        let (main, _) = self.encode_hidden(args, parameters, encoder)?;
+        let main = self.embed.encode_lookup(args.token_ids, args.batch_dim, args.activation_data_type, encoder)?;
+        let (main, _) = self.encode_hidden_from_embeddings(args, main, parameters, encoder)?;
         Ok(main)
     }
 
@@ -371,7 +356,6 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
         let main = self.embed.encode_lookup(args.token_ids, args.batch_dim, args.activation_data_type, encoder)?;
-        let (logits, _shortcut) = self.encode_decode_from_embeddings(args, main, logits, parameters, encoder)?;
-        Ok(logits)
+        self.encode_decode_from_embeddings(args, main, logits, parameters, encoder).map(|(logits, _)| logits)
     }
 }

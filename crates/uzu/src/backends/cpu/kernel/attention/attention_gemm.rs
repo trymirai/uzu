@@ -31,6 +31,7 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
     #[specialize] is_sliding_window: bool,
     #[specialize] has_sinks: bool,
 ) {
+    let _ = (suffix_length, align_q, align_k, is_sliding_window);
     let q_len = params.q_len as usize;
     let k_len = params.k_len as usize;
     let head_dim = BD as usize;

@@ -61,12 +61,8 @@ impl<B: Backend> MambaMixer<B> {
         mamba_config: Mamba2Config,
         layer_index: usize,
         model_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        num_groups: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Self {
-        let _ = (num_heads, head_dim, num_groups);
         if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
             panic!("Layer {} marked as transformer but Mamba mixer config provided", layer_index);
         }
@@ -77,7 +73,6 @@ impl<B: Backend> MambaMixer<B> {
 
         let in_projection = <dyn Linear<B>>::new(
             &mamba_config.in_projection_config,
-            mamba_config.has_in_biases,
             model_dim,
             [mamba_config.conv_dim(), mamba_config.inner_dim(), mamba_config.num_heads],
             context,
@@ -87,7 +82,6 @@ impl<B: Backend> MambaMixer<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             &mamba_config.out_projection_config,
-            mamba_config.has_out_biases,
             mamba_config.inner_dim(),
             [model_dim],
             context,

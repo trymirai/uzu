@@ -8,8 +8,9 @@ pub struct EmptySpeculator;
 impl Speculator for EmptySpeculator {
     fn speculate(
         &self,
-        _prefix: &[u64],
+        prefix: &[u64],
     ) -> HashMap<u64, f32> {
+        let _ = prefix;
         HashMap::new()
     }
 }

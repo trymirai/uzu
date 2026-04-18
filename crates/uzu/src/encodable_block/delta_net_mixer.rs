@@ -60,7 +60,6 @@ impl<B: Backend> DeltaNetMixer<B> {
     pub(crate) fn new(
         context: &B::Context,
         config: DeltaNetAttentionConfig,
-        _layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Result<Self, DeltaNetMixerError<B>> {
@@ -92,7 +91,6 @@ impl<B: Backend> DeltaNetMixer<B> {
 
         let in_projection = <dyn Linear<B>>::new(
             &config.in_proj_config,
-            false,
             model_dim,
             [config.total_proj_dim()],
             context,
@@ -102,7 +100,6 @@ impl<B: Backend> DeltaNetMixer<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             &config.out_proj_config,
-            false,
             config.value_dim(),
             [model_dim],
             context,

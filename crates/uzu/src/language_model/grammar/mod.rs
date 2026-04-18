@@ -21,9 +21,9 @@ pub trait CompiledGrammar {
 }
 
 pub fn create_compiled_grammar(
-    #[allow(unused)] config: &GrammarConfig,
-    #[allow(unused)] tokenizer: &Tokenizer,
-    #[allow(unused)] stop_token_ids: Option<&[i32]>,
+    config: &GrammarConfig,
+    tokenizer: &Tokenizer,
+    stop_token_ids: Option<&[i32]>,
 ) -> Result<Box<dyn CompiledGrammar>, Error> {
     #[cfg(grammar_xgrammar)]
     {
@@ -38,5 +38,8 @@ pub fn create_compiled_grammar(
     }
 
     #[cfg(not(grammar_xgrammar))]
-    Err(Error::GrammarNoBackendAvailable)
+    {
+        let _ = (config, tokenizer, stop_token_ids);
+        Err(Error::GrammarNoBackendAvailable)
+    }
 }

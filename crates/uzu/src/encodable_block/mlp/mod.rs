@@ -48,7 +48,6 @@ impl<B: Backend> dyn Mlp<B> {
 
             let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                 &dense_config.linear_config,
-                false,
                 model_dimension,
                 [2 * hidden_dimension],
                 context,
@@ -57,7 +56,6 @@ impl<B: Backend> dyn Mlp<B> {
 
             let (down_projection, down_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                 &dense_config.linear_config,
-                false,
                 hidden_dimension,
                 [model_dimension],
                 context,

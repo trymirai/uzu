@@ -13,6 +13,7 @@ fn moe_gather<T: ArrayElement + Float>(
     t: u32,
     k: u32,
 ) {
+    let _ = (t, k);
     let total_rows = unsafe { *sumk_buf } as usize;
     let d_model = d_model as usize;
     if total_rows == 0 || d_model == 0 {

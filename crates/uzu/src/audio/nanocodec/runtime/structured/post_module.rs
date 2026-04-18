@@ -3,6 +3,7 @@ use crate::{
     array::{Array, ArrayContextExt},
     backends::common::Allocation,
     encodable_block::LayerArguments,
+    forward_pass::token_inputs::TokenInputs,
 };
 
 impl StructuredAudioCodecGraph {
@@ -311,7 +312,8 @@ impl StructuredAudioCodecGraph {
 
     pub(super) fn encode_post_module_layers<B: Backend>(
         runtime: &StructuredAudioPostModuleRuntime<B>,
-        state: &mut ForwardPassState<B>,
+        token_inputs: &TokenInputs<B>,
+        batch_dim: usize,
         main: Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> AudioResult<Allocation<B>> {
@@ -322,29 +324,22 @@ impl StructuredAudioCodecGraph {
             .map_err(|err| AudioError::Runtime(format!("post_module shortcut allocation failed: {err}")))?;
         for layer in runtime.layers.iter() {
             let rope_type = layer.rope_type();
-            let rope_cosines = rope_type.map(|rope_type| state.rope_cosines(rope_type));
-            let rope_sines = rope_type.map(|rope_type| state.rope_sines(rope_type));
-            let mut cache_layer = state.cache_layers().map(|cache_layers| {
-                std::cell::RefMut::map(cache_layers.borrow_mut(), |cache_layers| {
-                    &mut cache_layers.data[layer.layer_index]
-                })
-            });
             main = layer
                 .encode(
                     LayerArguments {
-                        context: state.context(),
-                        batch_dim: state.active_row_count(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        attention_sinks: state.attention_sinks(layer.layer_index),
-                        rope_cosines,
-                        rope_sines,
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        cache_layer: cache_layer.as_deref_mut(),
+                        context: runtime.context.as_ref(),
+                        batch_dim,
+                        token_positions: token_inputs.token_positions(),
+                        token_parents: token_inputs.token_parents(),
+                        token_subtrie_ranges: None,
+                        attention_sinks: runtime.shared_buffers.attention_sinks(layer.layer_index),
+                        rope_cosines: rope_type.and_then(|rope_type| runtime.shared_buffers.rope_cosines(rope_type)),
+                        rope_sines: rope_type.and_then(|rope_type| runtime.shared_buffers.rope_sines(rope_type)),
+                        rope_max_sequence_length: runtime.model_shape.context_length(),
+                        rope_dim: runtime.model_shape.rope_dim(),
+                        sampling_start: 0,
+                        sampling_length: batch_dim,
+                        cache_layer: None,
                         #[cfg(feature = "tracing")]
                         trace: None,
                     },
@@ -357,7 +352,7 @@ impl StructuredAudioCodecGraph {
         }
         runtime
             .output_norm
-            .encode(&main, 0, state.active_row_count(), Some(&mut shortcut), encoder)
+            .encode(&main, 0, batch_dim, Some(&mut shortcut), encoder)
             .map_err(|err| AudioError::Runtime(format!("post_module output norm encode failed: {err}")))
     }
 
@@ -383,15 +378,9 @@ impl StructuredAudioCodecGraph {
         let runtime = self.post_module_runtime(resources, frames.max(1))?;
         let token_ids = vec![0_u64; frames];
         let token_positions = (0..frames).collect::<Vec<_>>();
-        let mut state = ForwardPassState::new_classifier(
-            runtime.context.clone(),
-            &runtime.model_shape,
-            runtime.shared_buffers.clone(),
-            &token_ids,
-            &token_positions,
-        );
-
-        let main = Self::encode_post_module_layers(&runtime, &mut state, latent_nsc.into_allocation(), encoder)?;
+        let token_inputs = TokenInputs::new_classifier(runtime.context.as_ref(), &token_ids, &token_positions);
+        let main =
+            Self::encode_post_module_layers(&runtime, &token_inputs, frames, latent_nsc.into_allocation(), encoder)?;
         Ok(unsafe { Array::from_allocation(main, 0, &[frames, self.input_dim], self.vocoder_data_type) })
     }
 
@@ -456,13 +445,7 @@ impl StructuredAudioCodecGraph {
             let runtime = self.post_module_runtime(resources, active_len.max(1))?;
             let token_ids = vec![0_u64; active_len];
             let token_positions = (0..active_len).collect::<Vec<_>>();
-            let mut state = ForwardPassState::new_classifier(
-                runtime.context.clone(),
-                &runtime.model_shape,
-                runtime.shared_buffers.clone(),
-                &token_ids,
-                &token_positions,
-            );
+            let token_inputs = TokenInputs::new_classifier(runtime.context.as_ref(), &token_ids, &token_positions);
 
             let main_shape = runtime.model_shape.main_shape(active_len);
             if main_shape != [active_len, self.input_dim] {
@@ -500,8 +483,13 @@ impl StructuredAudioCodecGraph {
                 let (source_buffer, source_range) = source.as_buffer_range();
                 let (main_buffer, main_range) = main_array.as_buffer_range();
                 encoder.encode_copy(source_buffer, source_range, main_buffer, main_range);
-                let main =
-                    Self::encode_post_module_layers(&runtime, &mut state, main_array.into_allocation(), encoder)?;
+                let main = Self::encode_post_module_layers(
+                    &runtime,
+                    &token_inputs,
+                    active_len,
+                    main_array.into_allocation(),
+                    encoder,
+                )?;
                 let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
                 let (main_buffer, main_range) = main.as_buffer_range();
                 let (destination_buffer, destination_range) = destination.as_buffer_range();

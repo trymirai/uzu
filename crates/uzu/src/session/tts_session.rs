@@ -39,11 +39,7 @@ use crate::{
     },
     config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
     encodable_block::{Decoder, EncodingParameters, Sampling as GpuSampling},
-    forward_pass::{
-        cache_layers::CacheLayers,
-        model_shape::ModelShape,
-        state::{ForwardPassState, SharedBuffers},
-    },
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
     session::{
         config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions},

@@ -685,19 +685,18 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let slow_model_dim = self.slow_model_dim;
         let fast_model_dim = self.fast_model_dim;
 
-        let mut pre_projection =
-            |runner: &mut TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
-                let runner_context = Rc::clone(runner.context());
-                Self::encode_project_slow_hidden_to_fast_on(
-                    runner_context.as_ref(),
-                    semantic_bridge,
-                    slow_hidden_capture,
-                    &mut runner.single_override_embedding,
-                    slow_model_dim,
-                    fast_model_dim,
-                    encoder,
-                )
-            };
+        let mut pre_projection = |runner: &mut TokenDecoderRunner<B>, encoder: &mut Encoder<B>| {
+            let runner_context = Rc::clone(runner.context());
+            Self::encode_project_slow_hidden_to_fast_on(
+                runner_context.as_ref(),
+                semantic_bridge,
+                slow_hidden_capture,
+                &mut runner.single_override_embedding,
+                slow_model_dim,
+                fast_model_dim,
+                encoder,
+            )
+        };
 
         fast_runner.encode_first_and_followup_tokens_on(
             encoder,
@@ -739,20 +738,19 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             None
         };
 
-        let mut pre_codebook_sum =
-            |runner: &mut TokenDecoderRunner<B>, _state: &ForwardPassState<B>, encoder: &mut Encoder<B>| {
-                Self::encode_slow_codebook_sum_from_gpu_tokens_on(
-                    semantic_bridge,
-                    &mut runner.single_override_embedding,
-                    first_code,
-                    fast_runner,
-                    0,
-                    num_codebooks,
-                    codebook_size,
-                    slow_model_dim,
-                    encoder,
-                )
-            };
+        let mut pre_codebook_sum = |runner: &mut TokenDecoderRunner<B>, encoder: &mut Encoder<B>| {
+            Self::encode_slow_codebook_sum_from_gpu_tokens_on(
+                semantic_bridge,
+                &mut runner.single_override_embedding,
+                first_code,
+                fast_runner,
+                0,
+                num_codebooks,
+                codebook_size,
+                slow_model_dim,
+                encoder,
+            )
+        };
 
         slow_runner.encode_next_step_on(
             encoder,

@@ -2,7 +2,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, Backend, Buffer, Encoder,
+        Allocation, Backend, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -261,6 +261,9 @@ impl<B: Backend> KVCacheLayer<B> {
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
                 let mut slice_values =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let source_keys = unsafe { Array::from_allocation(self.keys.clone(), 0, &self.shape, self.data_type) };
+                let source_values =
+                    unsafe { Array::from_allocation(self.values.clone(), 0, &self.shape, self.data_type) };
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
@@ -275,8 +278,8 @@ impl<B: Backend> KVCacheLayer<B> {
                     .collect();
 
                 for (i, &slot) in slots.iter().enumerate() {
-                    copy_allocation_slot_to_array(&self.keys, self.shape, self.data_type, slot, &mut slice_keys, i);
-                    copy_allocation_slot_to_array(&self.values, self.shape, self.data_type, slot, &mut slice_values, i);
+                    slice_keys.copy_slice(&source_keys, 1, slot..slot + 1, i);
+                    slice_values.copy_slice(&source_values, 1, slot..slot + 1, i);
                 }
 
                 Some(KVSlice::Window {
@@ -328,21 +331,18 @@ impl<B: Backend> KVCacheLayer<B> {
                 },
             ) => {
                 *w_len = *window_length;
+                let mut destination_keys =
+                    unsafe { Array::from_allocation(self.keys.clone(), 0, &self.shape, self.data_type) };
+                let mut destination_values =
+                    unsafe { Array::from_allocation(self.values.clone(), 0, &self.shape, self.data_type) };
                 match range {
                     None => {
                         *ring_offset = *base_ring_offset;
                         *ring_length = *base_ring_length;
 
                         for (i, &slot) in slots.iter().enumerate() {
-                            copy_array_slot_to_allocation(keys, i, &mut self.keys, self.shape, self.data_type, slot);
-                            copy_array_slot_to_allocation(
-                                values,
-                                i,
-                                &mut self.values,
-                                self.shape,
-                                self.data_type,
-                                slot,
-                            );
+                            destination_keys.copy_slice(keys, 1, i..i + 1, slot);
+                            destination_values.copy_slice(values, 1, i..i + 1, slot);
                         }
                     },
                     Some(r) => {
@@ -372,84 +372,13 @@ impl<B: Backend> KVCacheLayer<B> {
 
                         for (i, &slot) in slots[r.clone()].iter().enumerate() {
                             let src_i = r.start + i;
-                            copy_array_slot_to_allocation(
-                                keys,
-                                src_i,
-                                &mut self.keys,
-                                self.shape,
-                                self.data_type,
-                                slot,
-                            );
-                            copy_array_slot_to_allocation(
-                                values,
-                                src_i,
-                                &mut self.values,
-                                self.shape,
-                                self.data_type,
-                                slot,
-                            );
+                            destination_keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
+                            destination_values.copy_slice(values, 1, src_i..src_i + 1, slot);
                         }
                     },
                 }
             },
             _ => {},
-        }
-    }
-}
-
-fn copy_allocation_slot_to_array<B: Backend>(
-    source: &Allocation<B>,
-    source_shape: [usize; 3],
-    data_type: DataType,
-    source_slot: usize,
-    destination: &mut Array<B>,
-    destination_slot: usize,
-) {
-    let [num_groups, source_seq, head_dim] = source_shape;
-    let row_size = size_for_shape(&[1, 1, head_dim], data_type);
-    let block_size = source_seq * row_size;
-    let destination_seq = destination.shape()[1];
-    let destination_block_size = destination_seq * row_size;
-    let (source_buffer, source_range) = source.as_buffer_range();
-    let destination_bytes = destination.as_bytes_mut();
-
-    for group in 0..num_groups {
-        let source_offset = source_range.start + group * block_size + source_slot * row_size;
-        let destination_offset = group * destination_block_size + destination_slot * row_size;
-        unsafe {
-            let source_bytes = std::slice::from_raw_parts(
-                (source_buffer.cpu_ptr().as_ptr() as *const u8).add(source_offset),
-                row_size,
-            );
-            destination_bytes[destination_offset..destination_offset + row_size].copy_from_slice(source_bytes);
-        }
-    }
-}
-
-fn copy_array_slot_to_allocation<B: Backend>(
-    source: &Array<B>,
-    source_slot: usize,
-    destination: &mut Allocation<B>,
-    destination_shape: [usize; 3],
-    data_type: DataType,
-    destination_slot: usize,
-) {
-    let [num_groups, destination_seq, head_dim] = destination_shape;
-    let row_size = size_for_shape(&[1, 1, head_dim], data_type);
-    let source_block_size = source.shape()[1] * row_size;
-    let destination_block_size = destination_seq * row_size;
-    let source_bytes = source.as_bytes();
-    let (destination_buffer, destination_range) = destination.as_buffer_range();
-
-    for group in 0..num_groups {
-        let source_offset = group * source_block_size + source_slot * row_size;
-        let destination_offset = destination_range.start + group * destination_block_size + destination_slot * row_size;
-        unsafe {
-            let destination_bytes = std::slice::from_raw_parts_mut(
-                (destination_buffer.cpu_ptr().as_ptr() as *mut u8).add(destination_offset),
-                row_size,
-            );
-            destination_bytes.copy_from_slice(&source_bytes[source_offset..source_offset + row_size]);
         }
     }
 }

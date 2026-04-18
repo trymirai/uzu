@@ -42,7 +42,6 @@ pub enum LinearBlockError<B: Backend> {
 impl<B: Backend> dyn Linear<B> {
     pub fn new<const N: usize>(
         config: &LinearConfig,
-        _has_biases: bool,
         input_dimension: usize,
         output_dimensions: [usize; N],
         context: &B::Context,
@@ -144,7 +143,6 @@ impl<B: Backend> dyn Linear<B> {
 
     pub fn new_extracting_input_hadamard<const N: usize>(
         config: &LinearConfig,
-        _has_biases: bool,
         input_dimension: usize,
         output_dimensions: [usize; N],
         context: &B::Context,
@@ -170,8 +168,7 @@ impl<B: Backend> dyn Linear<B> {
                 Ok((inner_linear, Some(input_factors)))
             },
             other => {
-                let linear =
-                    Self::new(other, _has_biases, input_dimension, output_dimensions, context, parameter_tree)?;
+                let linear = Self::new(other, input_dimension, output_dimensions, context, parameter_tree)?;
                 Ok((linear, None))
             },
         }

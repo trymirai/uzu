@@ -73,7 +73,6 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let qkv_projection = <dyn Linear<B>>::new(
             &attention_config.qkv_projection_config,
-            attention_config.has_qkv_biases,
             model_dim,
             [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
             ctx,
@@ -101,7 +100,6 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             &attention_config.out_projection_config,
-            attention_config.has_out_biases,
             num_heads * head_dim,
             [model_dim],
             ctx,

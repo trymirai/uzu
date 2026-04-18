@@ -146,9 +146,10 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_barrier(
         &mut self,
-        _after: AccessFlags,
-        _before: AccessFlags,
+        after: AccessFlags,
+        before: AccessFlags,
     ) {
+        let _ = (after, before);
         self.ensure_none();
     }
 

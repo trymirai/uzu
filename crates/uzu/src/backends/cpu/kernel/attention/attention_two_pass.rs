@@ -38,6 +38,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[specialize] is_trie: bool,
     #[specialize] is_sliding_window: bool,
 ) {
+    let _ = (is_kv_cache_ring, is_sliding_window);
     let value_dim = HEAD_DIM;
     let mut q = vec![0.0f32; HEAD_DIM as usize];
     let mut o = vec![0.0f32; HEAD_DIM as usize];

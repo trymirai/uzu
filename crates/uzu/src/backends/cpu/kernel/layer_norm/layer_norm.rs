@@ -18,7 +18,6 @@ pub fn layer_norm<
     #[optional(!in_place)] input: Option<*const IN>,
     scales: *const SC,
     output: *mut OUT,
-    input_offset_elements: u32,
     batch_size: u32,
     model_dim: u32,
     epsilon: f32,
@@ -28,7 +27,7 @@ pub fn layer_norm<
 ) {
     let input = match in_place {
         true => output as *const IN,
-        false => unsafe { input.unwrap().add(input_offset_elements as usize) },
+        false => input.unwrap(),
     };
 
     let model_dim = model_dim as usize;

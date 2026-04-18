@@ -22,7 +22,7 @@ use crate::{
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{DecoderArguments, EncodingParameters, Sampling},
-    forward_pass::{cache_layers::CacheLayers, state::ForwardPassState, traces::ActivationTrace},
+    forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -241,20 +241,16 @@ impl<B: Backend> TraceValidator<B> {
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
         let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
-        let state = ForwardPassState::new_llm(
-            ctx.context.clone(),
+        let token_inputs = TokenInputs::new_llm(
+            ctx.context.as_ref(),
             &ctx.model_shape,
-            ctx.cache_layers.clone(),
-            ctx.shared_buffers.clone(),
             &token_ids,
             None,
             &token_positions,
             None,
             None,
-            token_ids.len(),
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
-            false,
         );
         let traces = ActivationTrace::new_llm(ctx.context.as_ref(), &ctx.model_shape, token_ids.len());
 
@@ -269,23 +265,23 @@ impl<B: Backend> TraceValidator<B> {
             )
             .into_allocation();
         {
-            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            let mut cache_layers = ctx.cache_layers.borrow_mut();
             ctx.executables
                 .encode_decode(
                     DecoderArguments {
-                        context: state.context(),
-                        activation_data_type: state.model_shape().activation_data_type(),
-                        token_ids: state.token_ids(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
-                        shared_buffers: state.shared_buffers.as_ref(),
-                        cache_layers: cache_layers.as_deref_mut(),
-                        batch_dim: state.active_row_count(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
+                        context: ctx.context.as_ref(),
+                        activation_data_type: ctx.model_shape.activation_data_type(),
+                        token_ids: token_inputs.token_ids(),
+                        token_positions: token_inputs.token_positions(),
+                        token_parents: token_inputs.token_parents(),
+                        token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+                        shared_buffers: ctx.shared_buffers.as_ref(),
+                        cache_layers: Some(&mut *cache_layers),
+                        batch_dim: token_ids.len(),
+                        sampling_start: 0,
+                        sampling_length: token_ids.len(),
+                        rope_max_sequence_length: ctx.model_shape.context_length(),
+                        rope_dim: ctx.model_shape.rope_dim(),
                         #[cfg(feature = "tracing")]
                         trace: Some(&traces),
                     },
@@ -305,136 +301,127 @@ impl<B: Backend> TraceValidator<B> {
 
         // LLM-specific: KV cache validation
         let transformer_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache = ctx.cache_layers.borrow();
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_transformer().map(|_| index)).collect()
         };
 
         for index in transformer_layers {
-            state.with_cache_layer(index, |layer| {
-                let kv = layer.as_transformer().expect("Expected transformer layer");
+            let cache = ctx.cache_layers.borrow();
+            let kv = cache.data[index].as_transformer().expect("Expected transformer layer");
 
-                if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
-                    results.push(TracerValidationResult {
-                        name: format!("updated_kv_cache.{}.keys", index),
-                        metrics: Self::validate_allocation(
-                            data_type,
-                            &expected,
-                            &kv.keys,
-                            &kv.shape,
-                            Some(ArrayTransform::KVCacheSlice),
-                        ),
-                    });
-                }
+            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
+                results.push(TracerValidationResult {
+                    name: format!("updated_kv_cache.{}.keys", index),
+                    metrics: Self::validate_allocation(
+                        data_type,
+                        &expected,
+                        &kv.keys,
+                        &kv.shape,
+                        Some(ArrayTransform::KVCacheSlice),
+                    ),
+                });
+            }
 
-                if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
-                    results.push(TracerValidationResult {
-                        name: format!("updated_kv_cache.{}.values", index),
-                        metrics: Self::validate_allocation(
-                            data_type,
-                            &expected,
-                            &kv.values,
-                            &kv.shape,
-                            Some(ArrayTransform::KVCacheSlice),
-                        ),
-                    });
-                }
-            });
+            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
+                results.push(TracerValidationResult {
+                    name: format!("updated_kv_cache.{}.values", index),
+                    metrics: Self::validate_allocation(
+                        data_type,
+                        &expected,
+                        &kv.values,
+                        &kv.shape,
+                        Some(ArrayTransform::KVCacheSlice),
+                    ),
+                });
+            }
         }
 
         // LLM-specific: SSM state validation
         let ssm_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache = ctx.cache_layers.borrow();
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_state_space().map(|_| index)).collect()
         };
 
         for index in ssm_layers {
-            state.with_cache_layer(index, |layer| {
-                let ssm = layer.as_state_space().expect("Expected SSM layer");
+            let cache = ctx.cache_layers.borrow();
+            let ssm = cache.data[index].as_state_space().expect("Expected SSM layer");
 
-                for path in [
-                    format!("updated_state.{}.conv_state", index),
-                    format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
-                ] {
-                    if let Ok(expected) = traces_view.leaf_array(&path) {
-                        results.push(TracerValidationResult {
-                            name: path,
-                            metrics: Self::validate_allocation(
-                                data_type,
-                                &expected,
-                                &ssm.conv_state,
-                                &ssm.conv_shape,
-                                Some(ArrayTransform::SsmConvState),
-                            ),
-                        });
-                    }
+            for path in [
+                format!("updated_state.{}.conv_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_allocation(
+                            data_type,
+                            &expected,
+                            &ssm.conv_state,
+                            &ssm.conv_shape,
+                            Some(ArrayTransform::SsmConvState),
+                        ),
+                    });
                 }
+            }
 
-                for path in [
-                    format!("updated_state.{}.ssm_state", index),
-                    format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
-                ] {
-                    if let Ok(expected) = traces_view.leaf_array(&path) {
-                        results.push(TracerValidationResult {
-                            name: path,
-                            metrics: Self::validate_allocation(
-                                data_type,
-                                &expected,
-                                &ssm.ssm_state,
-                                &ssm.ssm_shape,
-                                None,
-                            ),
-                        });
-                    }
+            for path in [
+                format!("updated_state.{}.ssm_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_allocation(data_type, &expected, &ssm.ssm_state, &ssm.ssm_shape, None),
+                    });
                 }
-            });
+            }
         }
 
         // LLM-specific: DeltaNet state validation
         let delta_net_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache = ctx.cache_layers.borrow();
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
         };
 
         for index in delta_net_layers {
-            state.with_cache_layer(index, |layer| {
-                let delta = layer.as_delta_net().expect("Expected DeltaNet layer");
+            let cache = ctx.cache_layers.borrow();
+            let delta = cache.data[index].as_delta_net().expect("Expected DeltaNet layer");
 
-                for path in [
-                    format!("updated_state.{}.conv_state", index),
-                    format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
-                ] {
-                    if let Ok(expected) = traces_view.leaf_array(&path) {
-                        results.push(TracerValidationResult {
-                            name: path,
-                            metrics: Self::validate_allocation(
-                                data_type,
-                                &expected,
-                                &delta.conv_state,
-                                &delta.conv_shape,
-                                Some(ArrayTransform::SsmConvState),
-                            ),
-                        });
-                    }
+            for path in [
+                format!("updated_state.{}.conv_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_allocation(
+                            data_type,
+                            &expected,
+                            &delta.conv_state,
+                            &delta.conv_shape,
+                            Some(ArrayTransform::SsmConvState),
+                        ),
+                    });
                 }
+            }
 
-                for path in [
-                    format!("updated_state.{}.ssm_state", index),
-                    format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
-                ] {
-                    if let Ok(expected) = traces_view.leaf_array(&path) {
-                        results.push(TracerValidationResult {
-                            name: path,
-                            metrics: Self::validate_allocation(
-                                data_type,
-                                &expected,
-                                &delta.ssm_state,
-                                &delta.ssm_shape,
-                                None,
-                            ),
-                        });
-                    }
+            for path in [
+                format!("updated_state.{}.ssm_state", index),
+                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
+            ] {
+                if let Ok(expected) = traces_view.leaf_array(&path) {
+                    results.push(TracerValidationResult {
+                        name: path,
+                        metrics: Self::validate_allocation(
+                            data_type,
+                            &expected,
+                            &delta.ssm_state,
+                            &delta.ssm_shape,
+                            None,
+                        ),
+                    });
                 }
-            });
+            }
         }
 
         // LLM-specific: Token comparison

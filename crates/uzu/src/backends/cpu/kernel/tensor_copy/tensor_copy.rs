@@ -7,9 +7,9 @@ use crate::ArrayElement;
 #[kernel(TensorCopy)]
 #[variants(T, f32, f16, bf16)]
 pub fn tensor_copy<T: ArrayElement + Float>(
-    #[allow(unused)] src_buffer: *const T,
-    #[allow(unused)] dst_buffer: *mut T,
-    #[allow(unused)] length: u32,
+    src_buffer: *const T,
+    dst_buffer: *mut T,
+    length: u32,
 ) {
     unsafe {
         for i in 0usize..(length as usize) {

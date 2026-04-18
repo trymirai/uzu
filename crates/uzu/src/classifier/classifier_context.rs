@@ -179,7 +179,6 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
         let prediction_head_dense = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.dense_config,
-            prediction_head_config.use_dense_bias,
             model_dim,
             [model_dim],
             context.as_ref(),
@@ -213,7 +212,6 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
         let prediction_head_final_linear = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.readout_config,
-            true,
             model_dim,
             [num_labels],
             context.as_ref(),
@@ -242,7 +240,6 @@ impl<B: Backend> ClassifierContext<B> {
             prediction_head_norm,
             prediction_head_final_linear,
             model_dim,
-            num_labels,
         );
 
         Ok(Self {

@@ -322,8 +322,9 @@ impl<C: Context> ArrayContextExt for C {
         &self,
         shape: &[usize],
         data_type: DataType,
-        _label: &str,
+        label: &str,
     ) -> Array<Self::Backend> {
+        let _ = label;
         let allocation = self
             .create_allocation(size_for_shape(shape, data_type), AllocationType::Global)
             .expect("Failed to create allocation");

@@ -7,25 +7,41 @@ use crate::ArrayElement;
 #[kernel(MoeExpertsDecodePassA)]
 #[variants(T, f32, f16, bf16)]
 pub fn moe_experts_decode_pass_a<T: ArrayElement + Float>(
-    #[allow(unused)] x_perm: *const T,
-    #[allow(unused)] expert_offsets: *const u32,
-    #[allow(unused)] w13_all: *const T,
-    #[allow(unused)] hidden_out: *mut f32,
-    #[allow(unused)] up_biases: *const T,
-    #[allow(unused)] d_model: u32,
-    #[allow(unused)] d_ff: u32,
-    #[allow(unused)] e: u32,
-    #[allow(unused)] gate_clip_min: f32,
-    #[allow(unused)] gate_clip_max: f32,
-    #[allow(unused)] up_clip_min: f32,
-    #[allow(unused)] up_clip_max: f32,
-    #[allow(unused)] silu_alpha: f32,
-    #[allow(unused)] tile_map: *const u32,
-    #[allow(unused)]
-    #[specialize]
-    gating_sel: u32,
-    #[allow(unused)] __dsl_indirect_dispatch_buffer: *const u32,
+    x_perm: *const T,
+    expert_offsets: *const u32,
+    w13_all: *const T,
+    hidden_out: *mut f32,
+    up_biases: *const T,
+    d_model: u32,
+    d_ff: u32,
+    e: u32,
+    gate_clip_min: f32,
+    gate_clip_max: f32,
+    up_clip_min: f32,
+    up_clip_max: f32,
+    silu_alpha: f32,
+    tile_map: *const u32,
+    #[specialize] gating_sel: u32,
+    __dsl_indirect_dispatch_buffer: *const u32,
 ) {
+    let _ = (
+        x_perm,
+        expert_offsets,
+        w13_all,
+        hidden_out,
+        up_biases,
+        d_model,
+        d_ff,
+        e,
+        gate_clip_min,
+        gate_clip_max,
+        up_clip_min,
+        up_clip_max,
+        silu_alpha,
+        tile_map,
+        gating_sel,
+        __dsl_indirect_dispatch_buffer,
+    );
     todo!()
 }
 
@@ -43,6 +59,7 @@ pub fn moe_experts_decode_down_fused2_d<T: ArrayElement + Float, AccumT: ArrayEl
     d_ff: u32,
     e: u32,
 ) {
+    let _ = e;
     let dm = d_model as usize;
     let df = d_ff as usize;
 

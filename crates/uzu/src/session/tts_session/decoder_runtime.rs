@@ -3,6 +3,7 @@ use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, Buffer},
     encodable_block::{DecoderArguments, SamplingInputs},
+    forward_pass::token_inputs::TokenInputs,
     session::types::TtsModelConfigError,
 };
 
@@ -257,21 +258,16 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_count = token_ids.len();
 
             let positions: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
-
-            let state = ForwardPassState::new_llm(
-                self.ctx.context.clone(),
+            let token_inputs = TokenInputs::new_llm(
+                self.ctx.context.as_ref(),
                 &self.ctx.model_shape,
-                self.ctx.cache_layers.clone(),
-                self.ctx.shared_buffers.clone(),
                 token_ids,
                 None,
                 &positions,
                 None,
                 None,
-                token_count,
-                0, // sampling_start: irrelevant
-                0, // sampling_length: no sampling
-                false,
+                0,
+                0,
             );
 
             let encoding_parameters = EncodingParameters::new();
@@ -279,21 +275,21 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let context = Rc::clone(&self.ctx.context);
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
-            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            let mut cache_layers = self.ctx.cache_layers.borrow_mut();
             let decoder_arguments = DecoderArguments {
-                context: state.context(),
-                activation_data_type: state.model_shape().activation_data_type(),
-                token_ids: state.token_ids(),
-                token_positions: state.token_positions(),
-                token_parents: state.token_parents(),
-                token_subtrie_ranges: state.token_subtrie_ranges(),
+                context: self.ctx.context.as_ref(),
+                activation_data_type: self.ctx.model_shape.activation_data_type(),
+                token_ids: token_inputs.token_ids(),
+                token_positions: token_inputs.token_positions(),
+                token_parents: token_inputs.token_parents(),
+                token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
                 shared_buffers: self.ctx.shared_buffers.as_ref(),
-                cache_layers: cache_layers.as_deref_mut(),
-                batch_dim: state.active_row_count(),
-                sampling_start: state.sampling_start(),
-                sampling_length: state.sampling_length(),
-                rope_max_sequence_length: state.rope_max_sequence_length(),
-                rope_dim: state.rope_dim(),
+                cache_layers: Some(&mut *cache_layers),
+                batch_dim: token_count,
+                sampling_start: 0,
+                sampling_length: 0,
+                rope_max_sequence_length: self.ctx.model_shape.context_length(),
+                rope_dim: self.ctx.model_shape.rope_dim(),
                 #[cfg(feature = "tracing")]
                 trace: None,
             };
@@ -301,6 +297,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 .executables
                 .encode_prefill(decoder_arguments, &encoding_parameters, &mut encoder)
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+            drop(cache_layers);
             self.encode_cache_acceptance_update_on(&mut encoder, token_count);
 
             self.submit_and_wait_command_buffer(encoder)?;
@@ -411,7 +408,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         }
 
         // Encode the initial forward pass (no new CB, no submit).
-        let (_state, sampling_output) = self.encode_single_forward_pass_on(
+        let sampling_output = self.encode_single_forward_pass_on(
             encoder,
             initial_token_ids,
             initial_embedding_injection,
@@ -501,46 +498,39 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 seeds: self.ctx.async_chain_seeds.view_at_offset(pass * std::mem::size_of::<u64>(), &[1]),
                 bitmask: token_bitmask_array.clone(),
             };
-            let mut state = ForwardPassState::new_llm(
-                context_rc.clone(),
+            let token_inputs = TokenInputs::new_llm(
+                context_rc.as_ref(),
                 &self.ctx.model_shape,
-                cache_layers_rc.clone(),
-                shared_buffers_rc.clone(),
                 &token_ids,
                 None,
                 &[self.next_position + pass],
                 next_token_ids.take(),
                 token_positions_allocation,
-                1,
                 0,
                 1,
-                false,
             );
-            if let Some(method) = state.sampling_method_mut() {
-                *method = Some(sampling_method);
-            }
 
             {
-                let decoder_logits = self.create_decoder_logits(state.sampling_length());
+                let decoder_logits = self.create_decoder_logits(1);
                 let mut logits = {
-                    let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+                    let mut cache_layers = cache_layers_rc.borrow_mut();
                     self.ctx
                         .executables
                         .encode_decode(
                             DecoderArguments {
-                                context: state.context(),
-                                activation_data_type: state.model_shape().activation_data_type(),
-                                token_ids: state.token_ids(),
-                                token_positions: state.token_positions(),
-                                token_parents: state.token_parents(),
-                                token_subtrie_ranges: state.token_subtrie_ranges(),
-                                shared_buffers: self.ctx.shared_buffers.as_ref(),
-                                cache_layers: cache_layers.as_deref_mut(),
-                                batch_dim: state.active_row_count(),
-                                sampling_start: state.sampling_start(),
-                                sampling_length: state.sampling_length(),
-                                rope_max_sequence_length: state.rope_max_sequence_length(),
-                                rope_dim: state.rope_dim(),
+                                context: context_rc.as_ref(),
+                                activation_data_type: self.ctx.model_shape.activation_data_type(),
+                                token_ids: token_inputs.token_ids(),
+                                token_positions: token_inputs.token_positions(),
+                                token_parents: token_inputs.token_parents(),
+                                token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+                                shared_buffers: shared_buffers_rc.as_ref(),
+                                cache_layers: Some(&mut *cache_layers),
+                                batch_dim: 1,
+                                sampling_start: 0,
+                                sampling_length: 1,
+                                rope_max_sequence_length: self.ctx.model_shape.context_length(),
+                                rope_dim: self.ctx.model_shape.rope_dim(),
                                 #[cfg(feature = "tracing")]
                                 trace: None,
                             },
@@ -550,7 +540,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         )
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?
                 };
-                let mut sampling_output = self.create_sampling_output(state.sampling_length());
+                let mut sampling_output = self.create_sampling_output(1);
                 pending_sampling_inputs.push(sampling_inputs);
                 let sampling_inputs = pending_sampling_inputs.last().expect("sampling inputs must be pending");
                 let sampling_result = self.ctx.sampler.encode(
@@ -560,8 +550,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
                         output: &mut sampling_output,
                         sampling_method,
-                        batch_size: state.sampling_length(),
-                        vocab_size: state.vocab_size(),
+                        batch_size: 1,
+                        vocab_size: self.ctx.decoder_config.vocab_size,
                     },
                     encoder,
                 );
@@ -693,7 +683,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
         preconsumed_seed: Option<u64>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
-    ) -> Result<(ForwardPassState<B>, Allocation<B>), Error> {
+    ) -> Result<Allocation<B>, Error> {
         if token_ids.is_empty() {
             return Err(Error::GenerateFailed);
         }
@@ -752,40 +742,27 @@ impl<B: Backend> TokenDecoderRunner<B> {
         }
 
         let sampling_inputs = self.create_sampling_inputs_from_slices(token_count, token_seeds, token_bitmask);
-
-        let mut state = ForwardPassState::new_llm(
-            self.ctx.context.clone(),
+        let token_inputs = TokenInputs::new_llm(
+            self.ctx.context.as_ref(),
             &self.ctx.model_shape,
-            self.ctx.cache_layers.clone(),
-            self.ctx.shared_buffers.clone(),
             token_ids,
             None,
             positions,
             None,
             None,
-            token_count,
             sampling_start,
             sampling_length,
-            false,
         );
-        if let Some(method) = state.sampling_method_mut() {
-            *method = Some(sampling.method());
-        }
 
         let encoding_parameters = EncodingParameters::new();
         let mut main = self
             .ctx
             .executables
             .embed
-            .encode_lookup(
-                state.token_ids(),
-                state.active_row_count(),
-                state.model_shape().activation_data_type(),
-                encoder,
-            )
+            .encode_lookup(token_inputs.token_ids(), token_count, self.ctx.model_shape.activation_data_type(), encoder)
             .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         if let Some(pre_encode) = pre_injection_encode.as_mut() {
-            pre_encode(self, &state, encoder)?;
+            pre_encode(self, encoder)?;
         }
         match embedding_injection {
             EmbeddingInjection::None => {},
@@ -798,26 +775,26 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 self.encode_override_first_row_from_device_on(encoder, &mut main, &self.single_override_embedding)?;
             },
         }
-        let decoder_logits = self.create_decoder_logits(state.sampling_length());
+        let decoder_logits = self.create_decoder_logits(sampling_length);
         let (mut logits, shortcut) = {
-            let mut cache_layers = state.cache_layers().map(|cache_layers| cache_layers.borrow_mut());
+            let mut cache_layers = self.ctx.cache_layers.borrow_mut();
             self.ctx
                 .executables
                 .encode_decode_from_embeddings(
                     DecoderArguments {
-                        context: state.context(),
-                        activation_data_type: state.model_shape().activation_data_type(),
-                        token_ids: state.token_ids(),
-                        token_positions: state.token_positions(),
-                        token_parents: state.token_parents(),
-                        token_subtrie_ranges: state.token_subtrie_ranges(),
+                        context: self.ctx.context.as_ref(),
+                        activation_data_type: self.ctx.model_shape.activation_data_type(),
+                        token_ids: token_inputs.token_ids(),
+                        token_positions: token_inputs.token_positions(),
+                        token_parents: token_inputs.token_parents(),
+                        token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
                         shared_buffers: self.ctx.shared_buffers.as_ref(),
-                        cache_layers: cache_layers.as_deref_mut(),
-                        batch_dim: state.active_row_count(),
-                        sampling_start: state.sampling_start(),
-                        sampling_length: state.sampling_length(),
-                        rope_max_sequence_length: state.rope_max_sequence_length(),
-                        rope_dim: state.rope_dim(),
+                        cache_layers: Some(&mut *cache_layers),
+                        batch_dim: token_count,
+                        sampling_start,
+                        sampling_length,
+                        rope_max_sequence_length: self.ctx.model_shape.context_length(),
+                        rope_dim: self.ctx.model_shape.rope_dim(),
                         #[cfg(feature = "tracing")]
                         trace: None,
                     },
@@ -832,7 +809,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             // After output norm with residual_add, Shortcut holds the un-normalized full residual
             self.encode_capture_last_hidden_into_single_buffer_on(encoder, &shortcut, token_count)?;
         }
-        let mut sampling_output = self.create_sampling_output(state.sampling_length());
+        let mut sampling_output = self.create_sampling_output(sampling_length);
         pending_sampling_inputs.push(sampling_inputs);
         let sampling_inputs = pending_sampling_inputs.last().expect("sampling inputs must be pending");
         let sampling_result = self.ctx.sampler.encode(
@@ -842,14 +819,14 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
                 output: &mut sampling_output,
                 sampling_method: sampling.method(),
-                batch_size: state.sampling_length(),
-                vocab_size: state.vocab_size(),
+                batch_size: sampling_length,
+                vocab_size: self.ctx.decoder_config.vocab_size,
             },
             encoder,
         );
         sampling_result.map_err(|err| Error::EncodeFailed(Box::new(err)))?;
 
-        Ok((state, sampling_output))
+        Ok(sampling_output)
     }
 
     /// Encode the KV-cache acceptance update for `token_count` tokens onto
@@ -985,7 +962,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
             let mut pending_sampling_inputs = Vec::new();
 
-            let (_state, sampling_output) = self.encode_single_forward_pass_on(
+            let sampling_output = self.encode_single_forward_pass_on(
                 &mut encoder,
                 token_ids,
                 embedding_injection,
@@ -1119,7 +1096,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     ) -> Result<(), Error> {
         let token_count = token_ids.len();
 
-        let (_state, sampling_output) = self.encode_single_forward_pass_on(
+        let sampling_output = self.encode_single_forward_pass_on(
             encoder,
             token_ids,
             embedding_injection,
