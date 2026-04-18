@@ -267,7 +267,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
       vec<T, 4> prod = new_state * c_vec;
       acc += prod.x + prod.y + prod.z + prod.w;
     }
-    for (; s < state_size; ++s) {
+    for (; uint(s) < state_size; ++s) {
       const uint state_idx = s * state_strides[2];
       const T prev_state = state_row[state_idx];
       const uint cb_idx = cb_base + s * cb_strides[2];
