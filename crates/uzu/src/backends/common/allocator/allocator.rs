@@ -106,7 +106,8 @@ impl<B: Backend> Allocator<B> {
         size: usize,
         allocation_type: AllocationType<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let alignment = usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, 16_384);
+        let allocation_size = size.max(1);
+        let alignment = usize::clamp(allocation_size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, 16_384);
         let allocation_type = match allocation_type {
             AllocationType::Global => RangeAllocationType::Global,
             AllocationType::Pooled {
@@ -124,9 +125,11 @@ impl<B: Backend> Allocator<B> {
         let mut found: Option<(*const B::Buffer, Range<usize>)> = None;
 
         for allocator_buffer in allocator_buffers.iter_mut() {
-            if let Some(range) =
-                allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type.clone())
-            {
+            if let Some(range) = allocator_buffer.range_allocator.allocate_range_aligned(
+                allocation_size,
+                alignment,
+                allocation_type.clone(),
+            ) {
                 found = Some((allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer, range));
                 break;
             }
@@ -135,7 +138,11 @@ impl<B: Backend> Allocator<B> {
         let (buffer, range) = if let Some((buffer, range)) = found {
             (buffer, range)
         } else {
-            let new_allocator_buffer_size = usize::max(size, 268_435_456);
+            let new_allocator_buffer_size = if size == 0 {
+                B::MIN_ALLOCATION_ALIGNMENT
+            } else {
+                usize::max(allocation_size, 268_435_456)
+            };
 
             let mut allocator_buffer = AllocatorBuffer::<B> {
                 buffer: Box::pin(self.context.upgrade().unwrap().create_buffer(new_allocator_buffer_size)?), // Upgrade can never fail
@@ -143,8 +150,10 @@ impl<B: Backend> Allocator<B> {
             };
 
             let buffer = allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer;
-            let range =
-                allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type).unwrap(); // Can never fail
+            let range = allocator_buffer
+                .range_allocator
+                .allocate_range_aligned(allocation_size, alignment, allocation_type)
+                .unwrap(); // Can never fail
 
             allocator_buffers.push(allocator_buffer);
 
@@ -157,6 +166,11 @@ impl<B: Backend> Allocator<B> {
         allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
 
         let owner_range = range.clone();
+        let range = if size == 0 {
+            range.start..range.start
+        } else {
+            range
+        };
 
         Ok(Allocation {
             allocator: self.clone(),

@@ -258,15 +258,13 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         context: &B::Context,
     ) {
-        let mut encoder = Encoder::new(context).expect("Failed to create cache clear encoder");
+        let mut encoder = None;
         for layer in self.data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => match &mut layer.state {
                     KVCacheLayerState::Full {
                         prefix_len,
                     } => {
-                        encoder.encode_fill_allocation(&layer.keys, 0);
-                        encoder.encode_fill_allocation(&layer.values, 0);
                         *prefix_len = 0;
                     },
                     KVCacheLayerState::Windowed {
@@ -274,28 +272,34 @@ impl<B: Backend> CacheLayers<B> {
                         ring_length,
                         ..
                     } => {
-                        encoder.encode_fill_allocation(&layer.keys, 0);
-                        encoder.encode_fill_allocation(&layer.values, 0);
                         *ring_offset = 0;
                         *ring_length = 0;
                     },
                 },
                 CacheLayer::StateSpace(layer) => {
+                    let encoder = encoder
+                        .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
                     encoder.encode_fill_allocation(&layer.conv_state, 0);
                     encoder.encode_fill_allocation(&layer.ssm_state, 0);
                 },
                 CacheLayer::ShortConv(layer) => {
+                    let encoder = encoder
+                        .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
                     encoder.encode_fill_allocation(&layer.conv_state, 0);
                     encoder.encode_fill_allocation(&layer.suffix_state, 0);
                     layer.clear_suffix_state_valid_range();
                 },
                 CacheLayer::DeltaNet(layer) => {
+                    let encoder = encoder
+                        .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
                     encoder.encode_fill_allocation(&layer.conv_state, 0);
                     encoder.encode_fill_allocation(&layer.ssm_state, 0);
                 },
             }
         }
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to clear cache layers");
+        if let Some(encoder) = encoder {
+            encoder.end_encoding().submit().wait_until_completed().expect("Failed to clear cache layers");
+        }
     }
 
     pub fn max_suffix_length(&self) -> usize {
