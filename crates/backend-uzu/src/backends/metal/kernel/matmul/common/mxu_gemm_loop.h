@@ -92,7 +92,6 @@ auto gemm_loop(
           right_tile,
           metal::bool_constant<transpose_b>{}
       );
-      (void)compiler_barrier;
     }
 
     left_ptr += transpose_a ? (BLOCK_K * leading_dimension_a) : BLOCK_K;
