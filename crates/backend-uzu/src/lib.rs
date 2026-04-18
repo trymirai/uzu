@@ -8,6 +8,7 @@ mod config;
 mod data_type;
 mod encodable_block;
 mod forward_pass;
+pub mod inference_backend;
 mod language_model;
 mod parameters;
 mod speculators;
@@ -29,4 +30,4 @@ pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
 #[cfg(feature = "tracing")]
 pub use tracer::TraceValidator;
-pub use utils::VERSION;
+pub use utils::{TOOLCHAIN_VERSION, VERSION};

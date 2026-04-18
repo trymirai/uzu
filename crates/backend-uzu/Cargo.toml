@@ -10,6 +10,7 @@ build = "build/main.rs"
 
 [dependencies]
 dsl.workspace = true
+shoji.workspace = true
 half.workspace = true
 ndarray.workspace = true
 serde.workspace = true

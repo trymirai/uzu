@@ -14,9 +14,6 @@ fn raw_string_delimiter(content: &str) -> String {
 }
 
 fn main() {
-    #[cfg(feature = "bindings-napi")]
-    napi_build::setup();
-
     let manifest_directory = env::var("CARGO_MANIFEST_DIR").unwrap();
     let configs_directory = Path::new(&manifest_directory).join("configs");
 

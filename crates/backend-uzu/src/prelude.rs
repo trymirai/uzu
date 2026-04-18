@@ -14,7 +14,7 @@ pub use crate::backends::metal::MetalContext;
 #[cfg(metal_backend)]
 pub use crate::session::TtsSession;
 pub use crate::{
-    VERSION,
+    TOOLCHAIN_VERSION, VERSION,
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     classifier::{ClassificationOutput, ClassificationStats},
     parameters::{HeaderLoadingError, ParameterLeaf, ParameterLoaderError, ParameterTree},

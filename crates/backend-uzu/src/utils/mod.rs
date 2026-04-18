@@ -6,4 +6,4 @@ pub mod model_size;
 pub mod pointers;
 pub mod version;
 
-pub use version::VERSION;
+pub use version::{TOOLCHAIN_VERSION, VERSION};

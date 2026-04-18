@@ -1,7 +1,7 @@
-#[cfg(not(target_family = "wasm"))]
+#![cfg(not(target_family = "wasm"))]
+
 use uzu::engine::{Config, Engine};
 
-#[cfg(not(target_family = "wasm"))]
 #[tokio::test]
 async fn test_engine() {
     dotenvy::dotenv().ok();
