@@ -68,6 +68,8 @@ pub struct ScratchBuffers<B: Backend> {
     pub moe_scatter_partials: Option<Array<B>>,
     pub moe_scatter_block_bases: Option<Array<B>>,
     pub moe_block_alloc: Option<Array<B>>,
+    pub moe_shared_output: Option<Array<B>>,
+    pub moe_shared_gate_logits: Option<Array<B>>,
 }
 
 impl<B: Backend> ScratchBuffers<B> {
@@ -90,6 +92,10 @@ impl<B: Backend> ScratchBuffers<B> {
             _ => None,
         };
         let moe_max_routed = moe.map(|moe| max_suffix_len * moe.num_active_routed_experts);
+        let moe_shared = moe.and_then(|moe| match moe.num_shared_experts {
+            Some(n) if n > 0 => Some(n),
+            _ => None,
+        });
         let moe_scatter_entries = moe.map(|moe| {
             let num_blocks = ((max_suffix_len + 255) / 256).max(1);
             let num_tiles = ((moe.num_routed_experts + 512 - 1) / 512).max(1);
@@ -211,6 +217,16 @@ impl<B: Backend> ScratchBuffers<B> {
             moe_scatter_block_bases: moe_scatter_entries
                 .map(|entries| alloc(&[entries], DataType::U32, "moe_scatter_block_bases")),
             moe_block_alloc: moe_scatter_entries.map(|entries| alloc(&[entries], DataType::U32, "moe_block_alloc")),
+            moe_shared_output: moe_shared.map(|_| {
+                alloc(&model_shape.moe_shared_output_shape(max_suffix_len), act_ty, "moe_shared_output")
+            }),
+            moe_shared_gate_logits: moe_shared.map(|num_shared| {
+                alloc(
+                    &model_shape.moe_shared_gate_logits_shape(max_suffix_len, num_shared),
+                    act_ty,
+                    "moe_shared_gate_logits",
+                )
+            }),
         }
     }
 }

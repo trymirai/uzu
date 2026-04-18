@@ -14,8 +14,9 @@ use crate::{
         Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
-            MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
-            MoeScatterBucketsMapKernel,
+            MoeAddSharedExpertKernel, MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel,
+            MoeRouterTopKKernel, MoeScatterBucketsMapKernel,
+            mlp_gate_act_mul::MlpGateActMulEncodable,
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
                 MoeGatherArguments, MoeGatherKernels,
@@ -23,7 +24,7 @@ use crate::{
         },
     },
     config::{LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig},
-    encodable_block::mlp::Mlp,
+    encodable_block::{linear::Linear, mlp::Mlp},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -31,6 +32,15 @@ use crate::{
 struct RouterBlock<B: Backend> {
     weights_buf: Rc<RefCell<B::Buffer>>,
     biases_buf: Rc<RefCell<B::Buffer>>,
+}
+
+struct SharedExpertBlock<B: Backend> {
+    up_projection: Box<dyn Linear<B>>,
+    gate_act_mul: MlpGateActMulEncodable<B>,
+    down_projection: Box<dyn Linear<B>>,
+    gate_router: Box<dyn Linear<B>>,
+    add_kernel: <B::Kernels as Kernels>::MoeAddSharedExpertKernel,
+    num_shared: usize,
 }
 
 #[derive(Clone)]
@@ -57,6 +67,7 @@ pub struct MoeBlock<B: Backend> {
     hidden_dim: usize,
     data_type: DataType,
     shared_weights: SharedMoeWeights<B>,
+    shared_expert: Option<SharedExpertBlock<B>>,
 }
 
 #[derive(Debug, Error)]
@@ -65,6 +76,8 @@ pub enum MoeBlockError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[source] ParameterLoaderError<B>),
+    #[error("Linear block error: {0}")]
+    LinearBlockError(#[source] crate::encodable_block::linear::LinearBlockError<B>),
 }
 
 impl<B: Backend> MoeBlock<B> {
@@ -191,6 +204,77 @@ impl<B: Backend> MoeBlock<B> {
             down_biases_buf,
         };
 
+        let shared_expert = match moe_config.num_shared_experts {
+            Some(num_shared) if num_shared > 0 => {
+                let shared_tree =
+                    parameter_tree.subtree("shared_expert").map_err(MoeBlockError::ParameterLoaderError)?;
+                let shared_hidden_dim = moe_config.expert_hidden_dim.unwrap_or(hidden_dim);
+                let shared_linear_config = &moe_config.expert_config.linear_config;
+                let gate_linear_config = moe_config
+                    .gate_config
+                    .as_ref()
+                    .unwrap_or(shared_linear_config);
+
+                let up_projection = <dyn Linear<B>>::new(
+                    shared_linear_config,
+                    moe_config.expert_config.has_up_biases,
+                    model_dim,
+                    [shared_hidden_dim, shared_hidden_dim],
+                    context,
+                    &shared_tree.subtree("up_projection").map_err(MoeBlockError::ParameterLoaderError)?,
+                    ArrayId::Main,
+                    ArrayId::MlpFusedUp,
+                )
+                .map_err(MoeBlockError::LinearBlockError)?;
+
+                let down_projection = <dyn Linear<B>>::new(
+                    shared_linear_config,
+                    moe_config.expert_config.has_down_biases,
+                    shared_hidden_dim,
+                    [model_dim],
+                    context,
+                    &shared_tree.subtree("down_projection").map_err(MoeBlockError::ParameterLoaderError)?,
+                    ArrayId::MlpHidden,
+                    ArrayId::MoeSharedOutput,
+                )
+                .map_err(MoeBlockError::LinearBlockError)?;
+
+                let gate_router = <dyn Linear<B>>::new(
+                    gate_linear_config,
+                    false,
+                    model_dim,
+                    [num_shared],
+                    context,
+                    &shared_tree.subtree("gate").map_err(MoeBlockError::ParameterLoaderError)?,
+                    ArrayId::Main,
+                    ArrayId::MoeSharedGateLogits,
+                )
+                .map_err(MoeBlockError::LinearBlockError)?;
+
+                let gate_act_mul = MlpGateActMulEncodable::new(
+                    context,
+                    data_type,
+                    moe_config.expert_config.activation.clone(),
+                    shared_hidden_dim,
+                    None,
+                )
+                .map_err(MoeBlockError::BackendError)?;
+
+                let add_kernel = <B::Kernels as Kernels>::MoeAddSharedExpertKernel::new(context, data_type)
+                    .map_err(MoeBlockError::BackendError)?;
+
+                Some(SharedExpertBlock {
+                    up_projection,
+                    gate_act_mul,
+                    down_projection,
+                    gate_router,
+                    add_kernel,
+                    num_shared,
+                })
+            },
+            _ => None,
+        };
+
         Ok(Self {
             router,
             router_renorm,
@@ -207,6 +291,7 @@ impl<B: Backend> MoeBlock<B> {
             hidden_dim,
             data_type,
             shared_weights,
+            shared_expert,
         })
     }
 
@@ -230,6 +315,26 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let suffix_length = state.active_row_count();
+
+        // Compute shared expert output into scratch (MoeSharedOutput) before the
+        // routed path overwrites Main via finalize. The gate router is also
+        // evaluated from Main while it still holds the normalized input x.
+        if let Some(shared) = &self.shared_expert {
+            shared.up_projection.encode(state, encoder)?;
+            {
+                let fused = state.array(ArrayId::MlpFusedUp);
+                let hidden = state.array(ArrayId::MlpHidden);
+                let m = fused.shape()[0] as i32;
+                shared.gate_act_mul.encode(
+                    encoder,
+                    fused.buffer().borrow().deref(),
+                    hidden.buffer().borrow_mut().deref_mut(),
+                    m,
+                )?;
+            }
+            shared.down_projection.encode(state, encoder)?;
+            shared.gate_router.encode(state, encoder)?;
+        }
 
         let main_buf = state.array(ArrayId::Main).buffer();
         let topk_ids_buf = state.array(ArrayId::MoeTopkIds).buffer();
@@ -477,6 +582,21 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             k as u32,
             encoder,
         );
+
+        // Fold the shared-expert contribution into Main after the routed path.
+        if let Some(shared) = &self.shared_expert {
+            let shared_out_buf = state.array(ArrayId::MoeSharedOutput).buffer();
+            let shared_gate_buf = state.array(ArrayId::MoeSharedGateLogits).buffer();
+            shared.add_kernel.encode(
+                shared_out_buf.borrow().deref(),
+                shared_gate_buf.borrow().deref(),
+                main_buf.borrow_mut().deref_mut(),
+                suffix_length as u32,
+                self.model_dim as u32,
+                shared.num_shared as u32,
+                encoder,
+            );
+        }
 
         Ok(())
     }

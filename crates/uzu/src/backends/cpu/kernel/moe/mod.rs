@@ -1,3 +1,4 @@
+pub mod add_shared_expert;
 pub mod counts_offsets_fused;
 pub mod experts_single;
 pub mod experts_two_pass_decode;

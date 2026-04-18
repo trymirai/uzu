@@ -562,6 +562,16 @@ impl<B: Backend> ForwardPassState<B> {
                 .as_ref()
                 .and_then(|aux| aux.moe_block_alloc.clone())
                 .expect("MoE block_alloc not initialized"),
+            ArrayId::MoeSharedOutput => self
+                .llm_aux
+                .as_ref()
+                .and_then(|aux| aux.moe_shared_output.clone())
+                .expect("MoE shared_output not initialized"),
+            ArrayId::MoeSharedGateLogits => self
+                .llm_aux
+                .as_ref()
+                .and_then(|aux| aux.moe_shared_gate_logits.clone())
+                .expect("MoE shared_gate_logits not initialized"),
 
             // Classifier-specific arrays
             ArrayId::ClassifierPooling => self.classifier_state().pooling.clone(),

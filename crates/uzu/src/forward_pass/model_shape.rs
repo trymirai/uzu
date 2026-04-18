@@ -438,6 +438,21 @@ impl ModelShape {
         [max_routed_tokens, self.model_dim]
     }
 
+    pub fn moe_shared_output_shape(
+        &self,
+        suffix_length: usize,
+    ) -> [usize; 2] {
+        [suffix_length, self.model_dim]
+    }
+
+    pub fn moe_shared_gate_logits_shape(
+        &self,
+        suffix_length: usize,
+        num_shared: usize,
+    ) -> [usize; 2] {
+        [suffix_length, num_shared]
+    }
+
     pub fn moe_hidden_shape(
         &self,
         max_routed_tokens: usize,

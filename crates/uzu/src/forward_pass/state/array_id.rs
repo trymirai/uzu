@@ -67,6 +67,8 @@ pub enum ArrayId {
     MoeScatterPartials,
     MoeScatterBlockBases,
     MoeBlockAlloc,
+    MoeSharedOutput,
+    MoeSharedGateLogits,
 
     // Classifier prediction head buffers
     ClassifierPooling,

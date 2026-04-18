@@ -39,6 +39,8 @@ pub struct LanguageModelGeneratorAuxBuffers<B: Backend> {
     pub moe_scatter_partials: Option<Array<B>>,
     pub moe_scatter_block_bases: Option<Array<B>>,
     pub moe_block_alloc: Option<Array<B>>,
+    pub moe_shared_output: Option<Array<B>>,
+    pub moe_shared_gate_logits: Option<Array<B>>,
 }
 
 impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
@@ -53,6 +55,10 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
             _ => None,
         };
         let max_routed = moe.map(|moe| suffix_length * moe.num_active_routed_experts);
+        let moe_shared = moe.and_then(|moe| match moe.num_shared_experts {
+            Some(n) if n > 0 => Some(n),
+            _ => None,
+        });
         let num_blocks = suffix_length.div_ceil(256).max(1);
         let scatter_entries = moe.map(|moe| num_blocks * moe.num_routed_experts.div_ceil(512).max(1) * 512);
         let block_alloc_entries = moe.map(|moe| num_blocks * moe.num_routed_experts.div_ceil(512).max(1));
@@ -173,6 +179,12 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
             moe_block_alloc: block_alloc_entries
                 .zip(scratch.moe_block_alloc.as_ref())
                 .map(|(entries, buf)| buf.view(&[entries])),
+            moe_shared_output: moe_shared
+                .and(scratch.moe_shared_output.as_ref())
+                .map(|buf| buf.view(&model_shape.moe_shared_output_shape(suffix_length))),
+            moe_shared_gate_logits: moe_shared.zip(scratch.moe_shared_gate_logits.as_ref()).map(|(num_shared, buf)| {
+                buf.view(&model_shape.moe_shared_gate_logits_shape(suffix_length, num_shared))
+            }),
         }
     }
 }
