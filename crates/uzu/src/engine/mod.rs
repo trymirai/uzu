@@ -82,6 +82,11 @@ impl Engine {
             engine.add_registry(Box::new(ollama_registry)).await?;
         }
 
+        if let Some(baseten_api_key) = config.baseten_api_key {
+            let baseten_registry = OpenAIRegistry::new(OpenAIConfig::baseten(baseten_api_key))?;
+            engine.add_registry(Box::new(baseten_registry)).await?;
+        }
+
         Ok(engine)
     }
 }

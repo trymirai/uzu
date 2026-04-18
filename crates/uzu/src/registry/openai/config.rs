@@ -40,4 +40,14 @@ impl Config {
     pub fn ollama() -> Self {
         Self::new("ollama".to_string(), "Ollama".to_string(), "http://localhost:11434/v1".to_string(), None, None)
     }
+
+    pub fn baseten(api_key: String) -> Self {
+        Self::new(
+            "baseten".to_string(),
+            "Baseten".to_string(),
+            "https://inference.baseten.co/v1".to_string(),
+            Some(api_key),
+            None,
+        )
+    }
 }
