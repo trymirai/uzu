@@ -32,8 +32,6 @@ PUBLIC KERNEL(DeltaNetConvScan)(
     const uint token_idx AXIS(suffix_len + kernel_size - 1, 1),
     const uint channel_idx AXIS(conv_dim, 32)
 ) {
-  const uint tap_count = kernel_size - 1;
-
   if (token_idx < suffix_len) {
     const device T* weight_row = conv_weight + channel_idx * kernel_size;
 

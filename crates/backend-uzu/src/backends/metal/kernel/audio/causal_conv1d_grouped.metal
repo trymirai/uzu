@@ -5,7 +5,6 @@ using namespace metal;
 
 constant uint AUDIO_TIME_TILE = 8;
 constant int AUDIO_LAYOUT_NCS = 0;
-constant int AUDIO_LAYOUT_NSC = 1;
 
 template <typename T>
 void causal_conv1d_grouped_ncs(
