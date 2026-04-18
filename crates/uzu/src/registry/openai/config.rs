@@ -71,4 +71,15 @@ impl Config {
             ])),
         )
     }
+
+    pub fn open_router(api_key: String) -> Self {
+        Self::new(
+            "openrouter".to_string(),
+            "OpenRouter".to_string(),
+            "https://openrouter.ai/api/v1".to_string(),
+            Some(api_key.clone()),
+            None,
+            None,
+        )
+    }
 }

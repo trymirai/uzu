@@ -7255,6 +7255,7 @@ name = "uzu"
 version = "0.1.9"
 dependencies = [
  "backend-uzu",
+ "bindings",
  "chrono",
  "dirs",
  "dotenvy",

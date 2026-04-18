@@ -92,6 +92,11 @@ impl Engine {
             engine.add_registry(Box::new(anthropic_registry)).await?;
         }
 
+        if let Some(openrouter_api_key) = config.openrouter_api_key {
+            let openrouter_registry = OpenAIRegistry::new(OpenAIConfig::open_router(openrouter_api_key))?;
+            engine.add_registry(Box::new(openrouter_registry)).await?;
+        }
+
         Ok(engine)
     }
 }

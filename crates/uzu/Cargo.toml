@@ -38,6 +38,7 @@ bindings-wasm = [
 ]
 
 [dependencies]
+bindings.workspace = true
 backend-uzu.workspace = true
 shoji.workspace = true
 uniffi = { workspace = true, optional = true }
