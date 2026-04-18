@@ -1,4 +1,4 @@
-use std::ptr::NonNull;
+use std::{cell::RefCell, ops::Deref, ptr::NonNull, rc::Rc};
 
 use metal::{
     MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
@@ -17,7 +17,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
-    buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buffer: Rc<RefCell<Retained<ProtocolObject<dyn MTLBuffer>>>>,
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
     queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
 
@@ -52,7 +52,7 @@ impl MetalSparseBuffer {
         };
 
         Ok(Self {
-            buffer,
+            buffer: Rc::new(RefCell::new(buffer)),
             heap,
             queue: context.command_queue4.clone(),
             capacity: aligned_capacity,
@@ -72,7 +72,7 @@ impl MetalSparseBuffer {
         };
         self.length += length;
         self.queue.update_buffer_mappings_heap_operations_count(
-            &self.buffer,
+            &self.buffer.borrow().deref(),
             Some(&self.heap),
             NonNull::from_ref(&op),
             1,
@@ -91,7 +91,7 @@ impl MetalSparseBuffer {
             heap_offset: 0,
         };
         self.queue.update_buffer_mappings_heap_operations_count(
-            &self.buffer,
+            &self.buffer.borrow().deref(),
             Some(&self.heap),
             NonNull::from_ref(&op),
             1,
@@ -110,8 +110,8 @@ impl MetalSparseBuffer {
 impl SparseBuffer for MetalSparseBuffer {
     type Backend = Metal;
 
-    fn buffer(&self) -> &<Self::Backend as Backend>::Buffer {
-        &self.buffer
+    fn buffer(&self) -> Rc<RefCell<<Self::Backend as Backend>::Buffer>> {
+        self.buffer.clone()
     }
 
     fn capacity(&self) -> usize {

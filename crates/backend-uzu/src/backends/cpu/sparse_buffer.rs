@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::backends::{
     common::{Backend, SparseBuffer},
     cpu::Cpu,
@@ -9,7 +11,7 @@ pub struct CpuSparseBuffer {}
 impl SparseBuffer for CpuSparseBuffer {
     type Backend = Cpu;
 
-    fn buffer(&self) -> &<Self::Backend as Backend>::Buffer {
+    fn buffer(&self) -> Rc<RefCell<<Self::Backend as Backend>::Buffer>> {
         todo!()
     }
 
