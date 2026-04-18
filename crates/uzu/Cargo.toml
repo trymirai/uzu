@@ -67,6 +67,8 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 uuid.workspace = true
 futures-util.workspace = true
+openai-api-rs.workspace = true
+regex.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true

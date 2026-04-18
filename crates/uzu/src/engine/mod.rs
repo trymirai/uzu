@@ -17,11 +17,12 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     device::Device,
-    helpers::SharedAccess,
+    helpers::{SharedAccess, is_endpoint_reachable},
     logs,
     registry::{
         CachedRegistry, Error as RegistryError, MergedRegistry,
         mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
+        openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
     storage::{Config as StorageConfig, Storage, types::DownloadState},
 };
@@ -70,10 +71,16 @@ impl Engine {
         engine.add_backend(uzu_backend);
         engine.add_registry(mirai_registry).await?;
 
-        // if let Some(openai_api_key) = config.openai_api_key {
-        //     let openai_registry = OpenAIRegistry::new(OpenAIConfig::openai(openai_api_key))?;
-        //     engine.add_registry(Box::new(openai_registry)).await?;
-        // }
+        if let Some(openai_api_key) = config.openai_api_key {
+            let openai_registry = OpenAIRegistry::new(OpenAIConfig::openai(openai_api_key))?;
+            engine.add_registry(Box::new(openai_registry)).await?;
+        }
+
+        let ollama_config = OpenAIConfig::ollama();
+        if is_endpoint_reachable(&ollama_config.api_endpoint).await {
+            let ollama_registry = OpenAIRegistry::new(ollama_config)?;
+            engine.add_registry(Box::new(ollama_registry)).await?;
+        }
 
         Ok(engine)
     }

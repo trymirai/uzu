@@ -31,7 +31,7 @@ impl App {
         engine: Arc<Engine>,
         tokio_handle: tokio::runtime::Handle,
     ) -> Self {
-        let models = engine.models().await.unwrap();
+        let models = engine.models().await.unwrap().into_iter().filter(|model| model.is_local()).collect::<Vec<_>>();
 
         // Fetch initial state for all models
         let mut models_with_state = HashMap::new();
