@@ -4,12 +4,12 @@ mod error;
 
 use std::{collections::HashMap, path::PathBuf};
 
-use backend_uzu::inference_backend::{Backend as UzuBackend, Config as UzuBackendConfig};
+use backend_uzu::inference_backend::{Backend as UzuBackend, BackendInstance as UzuBackendInstance};
 pub use config::Config;
 pub use downloader::Downloader;
 pub use error::Error;
 use shoji::{
-    traits::{Backend, BackendInstance, Registry},
+    traits::{Backend, BackendInstance, Registry, backend::erased::AnyBackend},
     types::Model,
 };
 use tokio::runtime::Handle;
@@ -34,7 +34,7 @@ use crate::{
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
-    backends: HashMap<String, Box<dyn Backend>>,
+    backends: HashMap<String, AnyBackend>,
 }
 
 impl Engine {
@@ -57,25 +57,26 @@ impl Engine {
         };
 
         {
-            let uzu_backend_config = UzuBackendConfig {};
-            let uzu_backend: Box<dyn Backend> =
-                Box::new(UzuBackend::new(uzu_backend_config).map_err(|error| Error::Backend {
-                    message: error.to_string(),
-                })?);
+            let uzu_backend = UzuBackend;
             let uzu_backend_identifier = uzu_backend.identifier();
+            let uzu_backend_version = uzu_backend.version();
+
+            let uzu_instance = UzuBackendInstance::new().map_err(|error| Error::Backend {
+                message: error.to_string(),
+            })?;
 
             let mirai_registry_config = MiraiRegistryConfig {
                 api_key: config.mirai_api_key,
                 device: device.clone(),
                 backends: vec![MiraiBackend {
-                    identifier: uzu_backend.identifier(),
-                    version: uzu_backend.version(),
+                    identifier: uzu_backend_identifier.clone(),
+                    version: uzu_backend_version,
                 }],
                 include_traces: false,
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
-            engine.add_backend(uzu_backend);
+            engine.add_backend(AnyBackend::Message(Box::new(uzu_instance)));
             engine.add_registry(mirai_registry).await?;
 
             if let Some(lalamo_path) = config.lalamo_path {
@@ -154,7 +155,7 @@ impl Engine {
 impl Engine {
     pub fn add_backend(
         &mut self,
-        backend: Box<dyn Backend>,
+        backend: AnyBackend,
     ) {
         self.backends.insert(backend.identifier(), backend);
     }

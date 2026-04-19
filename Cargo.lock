@@ -503,6 +503,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend-remote"
+version = "0.1.9"
+dependencies = [
+ "openai-api-rs",
+ "shoji",
+]
+
+[[package]]
 name = "backend-uzu"
 version = "0.1.9"
 dependencies = [
@@ -5973,6 +5981,7 @@ name = "shoji"
 version = "0.1.9"
 dependencies = [
  "bindings",
+ "futures",
  "indexmap 2.14.0",
  "napi",
  "napi-build",
