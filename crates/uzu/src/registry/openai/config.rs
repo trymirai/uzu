@@ -72,7 +72,7 @@ impl Config {
         )
     }
 
-    pub fn open_router(api_key: String) -> Self {
+    pub fn openrouter(api_key: String) -> Self {
         Self::new(
             "openrouter".to_string(),
             "OpenRouter".to_string(),
