@@ -7,12 +7,9 @@ use std::{future::Future, pin::Pin, time::Duration};
 pub use api::Endpoint;
 pub use config::{Backend, Config};
 use indexmap::IndexMap;
+use nagare::api::{Client, Config as ClientConfig};
 use reqwest::header::AUTHORIZATION;
-use shoji::{
-    api::{Client, Config as ClientConfig},
-    traits::Registry as RegistryTrait,
-    types::Model,
-};
+use shoji::{traits::Registry as RegistryTrait, types::Model};
 pub use types::Response;
 
 use crate::registry::Error;

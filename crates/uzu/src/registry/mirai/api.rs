@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
+use nagare::api::{Config, Endpoint as EndpointTrait, Payload};
 use reqwest::{Method, header::CONTENT_TYPE};
 use serde_json::json;
-use shoji::api::{Config, Endpoint as EndpointTrait, Payload};
 
 use crate::{device::Device, registry::mirai::config::Backend};
 

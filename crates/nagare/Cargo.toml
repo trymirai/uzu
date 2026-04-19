@@ -10,3 +10,8 @@ repository.workspace = true
 [dependencies]
 shoji.workspace = true
 hanashi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+indexmap.workspace = true
+reqwest.workspace = true
