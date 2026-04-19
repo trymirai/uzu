@@ -32,6 +32,21 @@ impl Config {
         }
     }
 
+    pub fn ollama() -> Self {
+        Self::new("ollama".to_string(), "Ollama".to_string(), "http://localhost:11434/v1".to_string(), None, None, None)
+    }
+
+    pub fn lmstudio() -> Self {
+        Self::new(
+            "lmstudio".to_string(),
+            "LM Studio".to_string(),
+            "http://localhost:1234/v1".to_string(),
+            None,
+            Some(r"^(?!.*embedding).+$".to_string()),
+            None,
+        )
+    }
+
     pub fn openai(api_key: String) -> Self {
         Self::new(
             "openai".to_string(),
@@ -39,21 +54,6 @@ impl Config {
             "https://api.openai.com/v1".to_string(),
             Some(api_key),
             Some(r"^(?:gpt-\d[\d.]*[a-z]?|o\d+)(?:-(?:mini|nano|pro|turbo|codex(?:-mini|-max)?))*$".to_string()),
-            None,
-        )
-    }
-
-    pub fn ollama() -> Self {
-        Self::new("ollama".to_string(), "Ollama".to_string(), "http://localhost:11434/v1".to_string(), None, None, None)
-    }
-
-    pub fn baseten(api_key: String) -> Self {
-        Self::new(
-            "baseten".to_string(),
-            "Baseten".to_string(),
-            "https://inference.baseten.co/v1".to_string(),
-            Some(api_key),
-            None,
             None,
         )
     }
@@ -69,6 +69,39 @@ impl Config {
                 ("X-Api-Key".to_string(), api_key.clone()),
                 ("anthropic-version".to_string(), "2023-06-01".to_string()),
             ])),
+        )
+    }
+
+    pub fn gemini(api_key: String) -> Self {
+        Self::new(
+            "gemini".to_string(),
+            "Gemini".to_string(),
+            "https://generativelanguage.googleapis.com/v1beta/openai/".to_string(),
+            Some(api_key),
+            Some(r"^models/(?:gemini|gemma)-(?!.*(?:image|audio|tts|live|embedding|computer-use|robotics|preview|latest|-\d{3}$|-\d{2}-\d{4}$)).+$".to_string()),
+            None,
+        )
+    }
+
+    pub fn xai(api_key: String) -> Self {
+        Self::new(
+            "xai".to_string(),
+            "xAI".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            Some(api_key),
+            Some(r"^grok-(?!.*(?:imagine|-\d{4})).+$".to_string()),
+            None,
+        )
+    }
+
+    pub fn baseten(api_key: String) -> Self {
+        Self::new(
+            "baseten".to_string(),
+            "Baseten".to_string(),
+            "https://inference.baseten.co/v1".to_string(),
+            Some(api_key),
+            None,
+            None,
         )
     }
 

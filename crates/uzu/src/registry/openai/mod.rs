@@ -3,8 +3,8 @@ mod config;
 use std::{future::Future, pin::Pin};
 
 pub use config::Config;
+use fancy_regex::Regex;
 use openai_api_rs::v1::api::OpenAIClient;
-use regex::Regex;
 use shoji::{
     traits::Registry as RegistryTrait,
     types::{Accessibility, Entity, EntityType, Model, Specialization},
@@ -71,7 +71,9 @@ impl RegistryTrait for Registry {
 
             let models = identifiers
                 .into_iter()
-                .filter(|identifier| self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier)))
+                .filter(|identifier| {
+                    self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier).unwrap_or(false))
+                })
                 .map(|identifier| {
                     let variant_entity = Entity {
                         r#type: EntityType::Variant,

@@ -26,7 +26,8 @@ use crate::{
 };
 
 pub struct Storage {
-    config: Config,
+    pub config: Config,
+
     download_manager: SharedAccess<Arc<dyn FileDownloadManager>>,
     items: SharedAccess<HashMap<String, Item>>,
     items_broadcast_sender: Sender<(String, DownloadState)>,
@@ -74,7 +75,7 @@ impl Storage {
         &self,
         models: Vec<Model>,
     ) -> Result<(), Error> {
-        let models = models.into_iter().filter(|model| model.is_local()).collect::<Vec<_>>();
+        let models = models.into_iter().filter(|model| model.is_downloadable()).collect::<Vec<_>>();
         let actual_model_identifiers: HashSet<String> = models.iter().map(|model| model.identifier()).collect();
 
         let download_manager = { self.download_manager.lock().await.clone() };
@@ -260,6 +261,11 @@ impl Storage {
                     ..
                 } => Ok(files.clone()),
                 Reference::HuggingFace {
+                    ..
+                } => Err(Error::UnsupportedItem {
+                    identifier: model.identifier(),
+                }),
+                Reference::Local {
                     ..
                 } => Err(Error::UnsupportedItem {
                     identifier: model.identifier(),

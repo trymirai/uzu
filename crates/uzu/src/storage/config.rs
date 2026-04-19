@@ -38,9 +38,9 @@ impl Config {
         &self,
         model: &Model,
     ) -> Option<PathBuf> {
-        let reference_type = model.reference_type()?;
+        let reference_name = model.reference_name()?;
         let checkpoint_version = model.checkpoint_version()?;
-        Some(self.cache_models_path().join(reference_type).join(model.cache_identifier()).join(checkpoint_version))
+        Some(self.cache_models_path().join(reference_name).join(model.cache_identifier()).join(checkpoint_version))
     }
 
     pub fn log_name(&self) -> String {

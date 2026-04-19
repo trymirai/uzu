@@ -20,7 +20,7 @@ impl Model {
     }
 
     pub fn cache_identifier(&self) -> String {
-        self.identifier.replace(":", "-")
+        self.identifier.replace(":", "-").replace("/", "-")
     }
 
     pub fn is_local(&self) -> bool {
@@ -29,6 +29,15 @@ impl Model {
 
     pub fn is_remote(&self) -> bool {
         matches!(self.accessibility, Accessibility::Remote { .. })
+    }
+
+    pub fn is_downloadable(&self) -> bool {
+        matches!(
+            self.accessibility,
+            Accessibility::Local {
+                reference: Reference::Mirai { .. } | Reference::HuggingFace { .. }
+            }
+        )
     }
 
     pub fn repo_ids(&self) -> Vec<String> {
@@ -54,6 +63,9 @@ impl Model {
                 Reference::HuggingFace {
                     repository,
                 } => vec![repository.identifier.clone()],
+                Reference::Local {
+                    ..
+                } => vec![],
             },
             Accessibility::Remote {
                 repository,
@@ -68,12 +80,34 @@ impl Model {
         }
     }
 
-    pub fn reference_type(&self) -> Option<String> {
+    pub fn local_external_path(&self) -> Option<String> {
         match &self.accessibility {
             Accessibility::Local {
                 reference,
                 ..
-            } => Some(reference.r#type()),
+            } => match reference {
+                Reference::Mirai {
+                    ..
+                } => None,
+                Reference::HuggingFace {
+                    ..
+                } => None,
+                Reference::Local {
+                    path,
+                } => Some(path.clone()),
+            },
+            Accessibility::Remote {
+                ..
+            } => None,
+        }
+    }
+
+    pub fn reference_name(&self) -> Option<String> {
+        match &self.accessibility {
+            Accessibility::Local {
+                reference,
+                ..
+            } => Some(reference.name()),
             Accessibility::Remote {
                 ..
             } => None,
@@ -93,6 +127,9 @@ impl Model {
                 Reference::HuggingFace {
                     repository,
                 } => Some(repository.commit_hash.clone()),
+                Reference::Local {
+                    ..
+                } => None,
             },
             Accessibility::Remote {
                 ..
