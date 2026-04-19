@@ -2,6 +2,7 @@
 members = [
     "crates/dsl",
     "crates/bindings",
+    "crates/shoji",
     "crates/json-transform",
     "crates/token-stream-parser",
     "crates/hanashi",
@@ -11,6 +12,7 @@ members = [
     "crates/uzu",
     "crates/benchmarks",
     "crates/cli",
+    "crates/cli-storage",
 ]
 resolver = "3"
 
@@ -25,6 +27,7 @@ repository = "https://github.com/trymirai/uzu"
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
 bindings = { path = "crates/bindings", default-features = false }
+shoji = { path = "crates/shoji", default-features = false }
 json-transform = { path = "crates/json-transform", default-features = false }
 token-stream-parser = { path = "crates/token-stream-parser", default-features = false }
 hanashi = { path = "crates/hanashi", default-features = false }
@@ -134,6 +137,9 @@ tsify = { version = "0.5.6", features = ["js"] }
 openai-harmony = "0.0.8"
 dirs = "6.0.0"
 dotenvy = "0.15.7"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+openai-api-rs = "10.0.0"
 
 [profile.dev.build-override]
 opt-level = 3

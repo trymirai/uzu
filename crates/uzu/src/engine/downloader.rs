@@ -1,13 +1,13 @@
-use nagare::{
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+
+use crate::{
+    engine::Error,
     helpers::SharedAccess,
     storage::{
         Error as StorageError, Storage,
         types::{DownloadPhase, DownloadState},
     },
 };
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-
-use crate::engine::Error;
 
 pub struct Downloader {
     identifier: String,

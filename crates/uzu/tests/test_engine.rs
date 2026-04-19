@@ -1,7 +1,7 @@
-#[cfg(not(target_family = "wasm"))]
+#![cfg(not(target_family = "wasm"))]
+
 use uzu::engine::{Config, Engine};
 
-#[cfg(not(target_family = "wasm"))]
 #[tokio::test]
 async fn test_engine() {
     dotenvy::dotenv().ok();
@@ -12,7 +12,8 @@ async fn test_engine() {
     let models = engine.models().await.unwrap();
     for model in models {
         let identifier = model.identifier();
-        let download_state = engine.downloader(&model).state().await.unwrap();
-        println!("{}: {:?}", identifier, download_state.phase);
+        let registry_identifier = model.registry_entity().map(|entity| entity.identifier);
+        let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
+        println!("{:?}, {}, {:?}", registry_identifier, identifier, download_phase);
     }
 }

@@ -2,12 +2,16 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Config {
     pub mirai_api_key: Option<String>,
     pub huggingface_api_key: Option<String>,
     pub openai_api_key: Option<String>,
+    pub baseten_api_key: Option<String>,
+    pub anthropic_api_key: Option<String>,
+    pub openrouter_api_key: Option<String>,
 }
 
 impl Default for Config {
@@ -16,6 +20,9 @@ impl Default for Config {
             mirai_api_key: env::var("MIRAI_API_KEY").ok(),
             huggingface_api_key: env::var("HF_TOKEN").ok(),
             openai_api_key: env::var("OPENAI_API_KEY").ok(),
+            baseten_api_key: env::var("BASETEN_API_KEY").ok(),
+            anthropic_api_key: env::var("ANTHROPIC_API_KEY").ok(),
+            openrouter_api_key: env::var("OPENROUTER_API_KEY").ok(),
         }
     }
 }
@@ -42,6 +49,30 @@ impl Config {
         openai_api_key: String,
     ) -> Self {
         self.openai_api_key = Some(openai_api_key);
+        self
+    }
+
+    pub fn with_baseten_api_key(
+        mut self,
+        baseten_api_key: String,
+    ) -> Self {
+        self.baseten_api_key = Some(baseten_api_key);
+        self
+    }
+
+    pub fn with_anthropic_api_key(
+        mut self,
+        anthropic_api_key: String,
+    ) -> Self {
+        self.anthropic_api_key = Some(anthropic_api_key);
+        self
+    }
+
+    pub fn with_openrouter_api_key(
+        mut self,
+        openrouter_api_key: String,
+    ) -> Self {
+        self.openrouter_api_key = Some(openrouter_api_key);
         self
     }
 }

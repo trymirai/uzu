@@ -10,7 +10,13 @@ pub struct Client {
 
 impl Client {
     pub fn new(config: Config) -> Result<Self, Error> {
-        let client = reqwest::Client::builder().timeout(config.timeout).build().map_err(Error::from)?;
+        #[allow(unused_mut)]
+        let mut client_builder = reqwest::Client::builder();
+        #[cfg(not(target_family = "wasm"))]
+        {
+            client_builder = client_builder.timeout(config.timeout);
+        }
+        let client = client_builder.build().map_err(Error::from)?;
 
         Ok(Self {
             config,
@@ -51,7 +57,7 @@ impl Client {
                 body,
             });
         }
-        response.json::<T>().await.map_err(|e| Error::Decode(e.to_string()))
+        response.json::<T>().await.map_err(|error| Error::Decode(error.to_string()))
     }
 }
 
