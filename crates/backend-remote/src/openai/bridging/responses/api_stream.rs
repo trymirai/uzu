@@ -37,7 +37,7 @@ impl bridging::ApiStream for ApiStream {
             };
             match client.responses().create_stream(request).await {
                 Ok(upstream) => {
-                    let mut state = StreamState::default();
+                    let mut state = StreamState::new();
                     upstream
                         .filter_map(move |event| {
                             let item = match event {

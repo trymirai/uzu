@@ -1,4 +1,6 @@
-use async_openai::types::chat::{ChatCompletionToolChoiceOption, CreateChatCompletionRequest, ToolChoiceOptions};
+use async_openai::types::chat::{
+    ChatCompletionStreamOptions, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, ToolChoiceOptions,
+};
 use shoji::{
     traits::backend::chat::StreamConfig,
     types::{
@@ -32,6 +34,10 @@ pub fn build(
         messages: completion_messages,
         model: model.to_string(),
         stream: Some(true),
+        stream_options: Some(ChatCompletionStreamOptions {
+            include_usage: Some(true),
+            include_obfuscation: None,
+        }),
         ..Default::default()
     };
     if !tools.is_empty() {

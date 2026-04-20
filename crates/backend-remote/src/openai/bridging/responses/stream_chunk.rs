@@ -42,14 +42,20 @@ pub fn build(event: ResponseStreamEvent) -> Option<StreamChunk> {
         }),
         ResponseStreamEvent::ResponseCompleted(event) => Some(StreamChunk {
             finish_reason: finish_reason::build(&event.response.status),
+            tokens_input: event.response.usage.as_ref().map(|usage| usage.input_tokens),
+            tokens_output: event.response.usage.as_ref().map(|usage| usage.output_tokens),
             ..StreamChunk::default()
         }),
         ResponseStreamEvent::ResponseFailed(event) => Some(StreamChunk {
             finish_reason: finish_reason::build(&event.response.status),
+            tokens_input: event.response.usage.as_ref().map(|usage| usage.input_tokens),
+            tokens_output: event.response.usage.as_ref().map(|usage| usage.output_tokens),
             ..StreamChunk::default()
         }),
         ResponseStreamEvent::ResponseIncomplete(event) => Some(StreamChunk {
             finish_reason: finish_reason::build(&event.response.status),
+            tokens_input: event.response.usage.as_ref().map(|usage| usage.input_tokens),
+            tokens_output: event.response.usage.as_ref().map(|usage| usage.output_tokens),
             ..StreamChunk::default()
         }),
         _ => None,

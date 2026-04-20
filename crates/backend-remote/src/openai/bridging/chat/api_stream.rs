@@ -37,7 +37,7 @@ impl bridging::ApiStream for ApiStream {
             };
             match client.chat().create_stream_byot::<_, stream_chunk::Response>(request).await {
                 Ok(upstream) => {
-                    let mut state = StreamState::default();
+                    let mut state = StreamState::new();
                     upstream
                         .filter_map(move |response| {
                             let item = match response {

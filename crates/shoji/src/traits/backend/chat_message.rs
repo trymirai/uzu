@@ -6,7 +6,7 @@ use crate::{
     traits::backend::{Error, Instance as InstanceTrait, chat::StreamConfig},
     types::{
         encoding::{Message, ToolCall},
-        session::chat::FinishReason,
+        session::chat::{FinishReason, Stats},
     },
 };
 
@@ -23,6 +23,7 @@ pub struct Output {
     pub text: Option<String>,
     pub tool_calls: Vec<ToolCallState>,
     pub finish_reason: Option<FinishReason>,
+    pub stats: Stats,
 }
 
 pub type Config = ();
