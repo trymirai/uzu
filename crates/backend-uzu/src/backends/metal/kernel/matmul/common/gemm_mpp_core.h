@@ -19,7 +19,7 @@ template <
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
     bool APPLY_AB_SCALE,
-    bool SUPPORTS_ACCUMULATE>
+    bool IS_ACCUMULATE>
 struct GemmMppCore {
   METAL_CONST ushort SIMDGROUP_BLOCK_M = BLOCK_ROWS / SIMDGROUPS_PER_ROW;
   METAL_CONST ushort SIMDGROUP_BLOCK_N = BLOCK_COLS / SIMDGROUPS_PER_COLUMN;
@@ -40,7 +40,6 @@ struct GemmMppCore {
       const bool align_m,
       const bool align_n,
       const bool align_k,
-      const bool is_accumulate,
       const float ab_scale,
       uint simd_group_id,
       uint2 threadgroup_position
@@ -152,27 +151,25 @@ struct GemmMppCore {
                     }
                   }
 
-                  if constexpr (SUPPORTS_ACCUMULATE) {
-                    if (is_accumulate) {
-                      MxuTile<T, TILES_M, TILES_N> existing_output;
-                      if constexpr (aligned_m.value && aligned_n.value) {
-                        existing_output.load(
-                            output_ptr,
-                            int(params->leading_dimension_d)
-                        );
-                      } else {
-                        existing_output.load_safe(
-                            output_ptr,
-                            int(params->leading_dimension_d),
-                            short2(simdgroup_limit_n, simdgroup_limit_m)
-                        );
-                      }
-                      METAL_PRAGMA_UNROLL
-                      for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
-                           i++) {
-                        accumulator_tile.elems()[i] +=
-                            AccumulatorType(existing_output.elems()[i]);
-                      }
+                  if constexpr (IS_ACCUMULATE) {
+                    MxuTile<T, TILES_M, TILES_N> existing_output;
+                    if constexpr (aligned_m.value && aligned_n.value) {
+                      existing_output.load(
+                          output_ptr,
+                          int(params->leading_dimension_d)
+                      );
+                    } else {
+                      existing_output.load_safe(
+                          output_ptr,
+                          int(params->leading_dimension_d),
+                          short2(simdgroup_limit_n, simdgroup_limit_m)
+                      );
+                    }
+                    METAL_PRAGMA_UNROLL
+                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
+                         i++) {
+                      accumulator_tile.elems()[i] +=
+                          AccumulatorType(existing_output.elems()[i]);
                     }
                   }
 
