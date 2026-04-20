@@ -127,6 +127,7 @@ impl Message {
                 value,
             } => serde_json::to_value(value.clone()),
             OriginalContentBlock::ToolCallResult {
+                identifier: _,
                 name: _,
                 value,
             } => serde_json::to_value(value.clone()),

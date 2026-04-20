@@ -47,52 +47,52 @@ impl Message {
 }
 
 impl Message {
+    fn with_block(
+        self,
+        block: ContentBlock,
+    ) -> Self {
+        let mut content = self.content;
+        content.push(block);
+        Self {
+            content,
+            ..self
+        }
+    }
+
     pub fn with_reasoning_effort(
         self,
         reasoning_effort: ReasoningEffort,
     ) -> Self {
-        Self {
-            content: vec![ContentBlock::ReasoningEffort {
-                value: reasoning_effort,
-            }],
-            ..self
-        }
+        self.with_block(ContentBlock::ReasoningEffort {
+            value: reasoning_effort,
+        })
     }
 
     pub fn with_tool_namespaces(
         self,
         tool_namespaces: Vec<ToolNamespace>,
     ) -> Self {
-        Self {
-            content: vec![ContentBlock::Tools {
-                namespaces: tool_namespaces,
-            }],
-            ..self
-        }
+        self.with_block(ContentBlock::Tools {
+            namespaces: tool_namespaces,
+        })
     }
 
     pub fn with_text(
         self,
         text: String,
     ) -> Self {
-        Self {
-            content: vec![ContentBlock::Text {
-                value: text,
-            }],
-            ..self
-        }
+        self.with_block(ContentBlock::Text {
+            value: text,
+        })
     }
 
     pub fn with_reasoning(
         self,
         reasoning: String,
     ) -> Self {
-        Self {
-            content: vec![ContentBlock::Reasoning {
-                value: reasoning,
-            }],
-            ..self
-        }
+        self.with_block(ContentBlock::Reasoning {
+            value: reasoning,
+        })
     }
 }
 
@@ -128,14 +128,15 @@ impl Message {
         blocks_by_type!(self, ToolCall, value).collect()
     }
 
-    pub fn tool_call_results(&self) -> Vec<(Option<String>, Value)> {
+    pub fn tool_call_results(&self) -> Vec<(Option<String>, Option<String>, Value)> {
         self.content
             .iter()
             .filter_map(|block| match block {
                 ContentBlock::ToolCallResult {
+                    identifier,
                     name,
                     value,
-                } => Some((name.clone(), value.clone())),
+                } => Some((identifier.clone(), name.clone(), value.clone())),
                 _ => None,
             })
             .collect()

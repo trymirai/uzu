@@ -23,6 +23,7 @@ impl Content {
             }],
             Content::Value(value) => match role {
                 Role::Tool {} => vec![ContentBlock::ToolCallResult {
+                    identifier: None,
                     name: None,
                     value: value.into(),
                 }],

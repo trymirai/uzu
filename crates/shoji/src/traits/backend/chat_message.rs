@@ -4,14 +4,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait, chat::StreamConfig},
-    types::{basic::Value, encoding::Message},
+    types::{
+        encoding::{Message, ToolCall},
+        session::chat::FinishReason,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Output {
-    Content(String),
-    Reasoning(String),
-    ToolCalls(Vec<Value>),
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ToolCallState {
+    Candidate(String),
+    Finished(ToolCall),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Output {
+    pub reasoning: Option<String>,
+    pub text: Option<String>,
+    pub tool_calls: Vec<ToolCallState>,
+    pub finish_reason: Option<FinishReason>,
 }
 
 pub type Config = ();

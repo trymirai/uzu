@@ -141,7 +141,7 @@ dirs = "6.0.0"
 dotenvy = "0.15.7"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
-openai-api-rs = "10.0.0"
+async-openai = { version = "0.35.0", features = ["chat-completion", "model", "byot", "responses"] }
 
 [profile.dev.build-override]
 opt-level = 3

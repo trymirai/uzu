@@ -1,45 +1,48 @@
+mod bridging;
 mod config;
 mod error;
 mod instance;
+mod stream_state;
+mod tool_call_state;
 
 use std::{pin::Pin, sync::Arc};
 
-pub use config::Config;
+use async_openai::{Client, config::OpenAIConfig};
+pub use config::{ApiType, Config};
 pub use error::Error;
 pub use instance::Instance;
-use openai_api_rs::v1::api::OpenAIClient;
 use shoji::traits::{
     Backend as BackendTrait,
-    backend::{
-        Error as BackendError,
-        chat_message::{self},
-    },
+    backend::{Error as BackendError, chat_message},
 };
 
 pub struct Backend {
     config: Config,
-    client: Arc<OpenAIClient>,
+    client: Arc<Client<OpenAIConfig>>,
 }
 
 impl Backend {
     pub fn new(config: Config) -> Result<Self, Error> {
-        let mut client_builder = OpenAIClient::builder().with_endpoint(config.api_endpoint.clone());
-        if let Some(api_key) = config.api_key.clone() {
-            client_builder = client_builder.with_api_key(api_key);
+        let mut openai_config = OpenAIConfig::new().with_api_base(&config.api_endpoint);
+        if let Some(api_key) = config.api_key.as_ref() {
+            openai_config = openai_config.with_api_key(api_key);
         }
-        if let Some(headers) = config.headers.clone() {
-            for (key, value) in headers.iter() {
-                client_builder = client_builder.with_header(key, value);
+        if let Some(headers) = config.headers.as_ref() {
+            for (key, value) in headers {
+                let name =
+                    reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|error| Error::UnableToCreate {
+                        message: error.to_string(),
+                    })?;
+                openai_config =
+                    openai_config.with_header(name, value.as_str()).map_err(|error| Error::UnableToCreate {
+                        message: error.to_string(),
+                    })?;
             }
         }
 
-        let client = client_builder.build().map_err(|error| Error::UnableToCreate {
-            message: error.to_string(),
-        })?;
-
         Ok(Self {
             config,
-            client: Arc::new(client),
+            client: Arc::new(Client::with_config(openai_config)),
         })
     }
 }
@@ -65,6 +68,9 @@ impl chat_message::Backend for Backend {
         _config: chat_message::Config,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn chat_message::Instance>, BackendError>> + Send + '_>> {
         let client = self.client.clone();
-        Box::pin(async move { Ok(Box::new(Instance::new(client, reference)) as Box<dyn chat_message::Instance>) })
+        let api_type = self.config.api_type.clone();
+        Box::pin(
+            async move { Ok(Box::new(Instance::new(client, reference, api_type)) as Box<dyn chat_message::Instance>) },
+        )
     }
 }

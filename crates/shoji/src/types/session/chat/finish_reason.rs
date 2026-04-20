@@ -7,4 +7,6 @@ pub enum FinishReason {
     Length,
     Cancelled,
     ContextLimitReached,
+    ToolCalls,
+    Rejected,
 }

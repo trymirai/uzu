@@ -150,6 +150,8 @@ pub enum ContentBlock {
         value: Value,
     },
     ToolCallResult {
+        #[serde(rename = "id")]
+        identifier: Option<String>,
         name: Option<String>,
         value: Value,
     },

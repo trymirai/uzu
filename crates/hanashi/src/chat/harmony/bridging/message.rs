@@ -251,6 +251,7 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
 
                 let block = &message.content[0];
                 let ContentBlock::ToolCallResult {
+                    identifier: _,
                     name,
                     value,
                 } = block
@@ -432,6 +433,7 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                                 Ok(json_value) => {
                                     content.push(ContentBlock::ToolCall {
                                         value: ToolCall {
+                                            identifier: None,
                                             name: name.to_string(),
                                             arguments: Value::from(json_value),
                                         },
@@ -474,6 +476,7 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                 result.push(Message {
                     role: Role::Tool {},
                     content: vec![ContentBlock::ToolCallResult {
+                        identifier: None,
                         name: Some(name.to_string()),
                         value,
                     }],
