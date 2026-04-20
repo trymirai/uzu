@@ -26,7 +26,6 @@ pub struct ShortConvMixer<B: Backend> {
 }
 
 pub(crate) struct ShortConvArguments<'a, B: Backend> {
-    pub context: &'a B::Context,
     pub active_row_count: usize,
     pub sampling_start: usize,
     pub sampling_length: usize,
@@ -291,7 +290,6 @@ impl<B: Backend> ShortConvMixer<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let ShortConvArguments {
-            context,
             active_row_count,
             sampling_start,
             sampling_length,
@@ -300,7 +298,7 @@ impl<B: Backend> ShortConvMixer<B> {
         } = args;
         assert!(active_row_count > 0, "ShortConv mixer requires at least one active row");
 
-        let in_proj = self.in_projection.encode(context, input, active_row_count, encoder)?;
+        let in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
         let mut conv_output =
             encoder.allocate_scratch(size_for_shape(&[active_row_count, self.model_dim], self.data_type))?;
 
@@ -315,6 +313,6 @@ impl<B: Backend> ShortConvMixer<B> {
             active_row_count,
         )?;
 
-        self.out_projection.encode(context, &mut conv_output, active_row_count, encoder)
+        self.out_projection.encode(&mut conv_output, active_row_count, encoder)
     }
 }

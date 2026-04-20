@@ -246,6 +246,100 @@ impl<B: Backend> TokenDecoderRunner<B> {
         SamplingInputs::from_slices(self.ctx.context.as_ref(), token_seeds, token_bitmask, bitmask_row_len)
     }
 
+    fn llm_token_inputs(
+        &self,
+        token_ids: &[u64],
+        token_positions: &[usize],
+        token_ids_array: Option<Array<B>>,
+        token_positions_array: Option<Array<B>>,
+        sampling_start: usize,
+        sampling_length: usize,
+    ) -> TokenInputs<B> {
+        TokenInputs::new_llm(
+            self.ctx.context.as_ref(),
+            &self.ctx.model_shape,
+            token_ids,
+            None,
+            token_positions,
+            token_ids_array,
+            token_positions_array,
+            sampling_start,
+            sampling_length,
+        )
+    }
+
+    fn decoder_arguments<'a>(
+        &'a self,
+        token_inputs: &'a TokenInputs<B>,
+        batch_dim: usize,
+        sampling_start: usize,
+        sampling_length: usize,
+        cache_layers: &'a mut CacheLayers<B>,
+    ) -> DecoderArguments<'a, B> {
+        DecoderArguments {
+            activation_data_type: self.ctx.model_shape.activation_data_type(),
+            token_ids: token_inputs.token_ids(),
+            token_positions: token_inputs.token_positions(),
+            token_parents: token_inputs.token_parents(),
+            token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+            shared_buffers: self.ctx.shared_buffers.as_ref(),
+            cache_layers: Some(cache_layers),
+            batch_dim,
+            sampling_start,
+            sampling_length,
+            rope_max_sequence_length: self.ctx.model_shape.context_length(),
+            rope_dim: self.ctx.model_shape.rope_dim(),
+            #[cfg(feature = "tracing")]
+            trace: None,
+        }
+    }
+
+    fn encode_sampling_on(
+        &self,
+        encoder: &mut Encoder<B>,
+        logits: &mut Allocation<B>,
+        output: &mut Allocation<B>,
+        sampling_method: SamplingMethod,
+        batch_size: usize,
+        sampling_inputs: SamplingInputs<B>,
+        pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
+    ) -> Result<(), Error> {
+        pending_sampling_inputs.push(sampling_inputs);
+        let sampling_inputs = pending_sampling_inputs.last().expect("sampling inputs must be pending");
+        self.ctx
+            .sampler
+            .encode(
+                crate::encodable_block::SamplingArguments {
+                    logits,
+                    seeds: sampling_inputs.seeds.allocation(),
+                    bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
+                    output,
+                    sampling_method,
+                    batch_size,
+                    vocab_size: self.ctx.decoder_config.vocab_size,
+                },
+                encoder,
+            )
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))
+    }
+
+    fn copy_sampling_output_to_async_result_on(
+        &self,
+        encoder: &mut Encoder<B>,
+        sampling_output: &Allocation<B>,
+        result_slot: usize,
+    ) {
+        let results_slot = self.ctx.async_chain_results.view_at_offset(result_slot * std::mem::size_of::<u32>(), &[1]);
+        let (sampling_output_buffer, sampling_output_range) = sampling_output.as_buffer_range();
+        let (results_buffer, results_range) = results_slot.as_buffer_range();
+        encoder.encode_copy(
+            sampling_output_buffer,
+            sampling_output_range.start..sampling_output_range.start + std::mem::size_of::<u32>(),
+            results_buffer,
+            results_range.start..results_range.start + std::mem::size_of::<u32>(),
+        );
+    }
+
     pub(super) fn prefill_without_sampling(
         &mut self,
         token_ids: &[u64],
@@ -258,17 +352,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_count = token_ids.len();
 
             let positions: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
-            let token_inputs = TokenInputs::new_llm(
-                self.ctx.context.as_ref(),
-                &self.ctx.model_shape,
-                token_ids,
-                None,
-                &positions,
-                None,
-                None,
-                0,
-                0,
-            );
+            let token_inputs = self.llm_token_inputs(token_ids, &positions, None, None, 0, 0);
 
             let encoding_parameters = EncodingParameters::new();
 
@@ -276,26 +360,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
-            let decoder_arguments = DecoderArguments {
-                context: self.ctx.context.as_ref(),
-                activation_data_type: self.ctx.model_shape.activation_data_type(),
-                token_ids: token_inputs.token_ids(),
-                token_positions: token_inputs.token_positions(),
-                token_parents: token_inputs.token_parents(),
-                token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-                shared_buffers: self.ctx.shared_buffers.as_ref(),
-                cache_layers: Some(&mut *cache_layers),
-                batch_dim: token_count,
-                sampling_start: 0,
-                sampling_length: 0,
-                rope_max_sequence_length: self.ctx.model_shape.context_length(),
-                rope_dim: self.ctx.model_shape.rope_dim(),
-                #[cfg(feature = "tracing")]
-                trace: None,
-            };
             self.ctx
                 .executables
-                .encode_prefill(decoder_arguments, &encoding_parameters, &mut encoder)
+                .encode_prefill(
+                    self.decoder_arguments(&token_inputs, token_count, 0, 0, &mut *cache_layers),
+                    &encoding_parameters,
+                    &mut encoder,
+                )
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             drop(cache_layers);
             self.encode_cache_acceptance_update_on(&mut encoder, token_count);
@@ -441,15 +512,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     pending_sampling_inputs,
                 )?;
             }
-            let results_slot = self.ctx.async_chain_results.view_at_offset(0, &[1]);
-            let (sampling_output_buffer, sampling_output_range) = sampling_output.as_buffer_range();
-            let (results_buffer, results_range) = results_slot.as_buffer_range();
-            encoder.encode_copy(
-                sampling_output_buffer,
-                sampling_output_range.start..sampling_output_range.start + std::mem::size_of::<u32>(),
-                results_buffer,
-                results_range.start..results_range.start + std::mem::size_of::<u32>(),
-            );
+            self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, 0);
         }
 
         self.encode_cache_acceptance_update_on(encoder, initial_token_count);
@@ -479,9 +542,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
     ) -> Result<(), Error> {
         let encoding_parameters = EncodingParameters::new();
-        let context_rc = self.ctx.context.clone();
         let cache_layers_rc = self.ctx.cache_layers.clone();
-        let shared_buffers_rc = self.ctx.shared_buffers.clone();
         let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
         let bitmask_row_len = token_bitmask.map(|_| self.ctx.decoder_config.vocab_size.div_ceil(32));
         let token_bitmask_array = token_bitmask.zip(bitmask_row_len).map(|(mask, row_len)| {
@@ -498,11 +559,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 seeds: self.ctx.async_chain_seeds.view_at_offset(pass * std::mem::size_of::<u64>(), &[1]),
                 bitmask: token_bitmask_array.clone(),
             };
-            let token_inputs = TokenInputs::new_llm(
-                context_rc.as_ref(),
-                &self.ctx.model_shape,
+            let token_inputs = self.llm_token_inputs(
                 &token_ids,
-                None,
                 &[self.next_position + pass],
                 next_token_ids.take(),
                 token_positions_allocation,
@@ -517,23 +575,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     self.ctx
                         .executables
                         .encode_decode(
-                            DecoderArguments {
-                                context: context_rc.as_ref(),
-                                activation_data_type: self.ctx.model_shape.activation_data_type(),
-                                token_ids: token_inputs.token_ids(),
-                                token_positions: token_inputs.token_positions(),
-                                token_parents: token_inputs.token_parents(),
-                                token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-                                shared_buffers: shared_buffers_rc.as_ref(),
-                                cache_layers: Some(&mut *cache_layers),
-                                batch_dim: 1,
-                                sampling_start: 0,
-                                sampling_length: 1,
-                                rope_max_sequence_length: self.ctx.model_shape.context_length(),
-                                rope_dim: self.ctx.model_shape.rope_dim(),
-                                #[cfg(feature = "tracing")]
-                                trace: None,
-                            },
+                            self.decoder_arguments(&token_inputs, 1, 0, 1, &mut *cache_layers),
                             decoder_logits,
                             &encoding_parameters,
                             encoder,
@@ -541,21 +583,15 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?
                 };
                 let mut sampling_output = self.create_sampling_output(1);
-                pending_sampling_inputs.push(sampling_inputs);
-                let sampling_inputs = pending_sampling_inputs.last().expect("sampling inputs must be pending");
-                let sampling_result = self.ctx.sampler.encode(
-                    crate::encodable_block::SamplingArguments {
-                        logits: &mut logits,
-                        seeds: sampling_inputs.seeds.allocation(),
-                        bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
-                        output: &mut sampling_output,
-                        sampling_method,
-                        batch_size: 1,
-                        vocab_size: self.ctx.decoder_config.vocab_size,
-                    },
+                self.encode_sampling_on(
                     encoder,
-                );
-                sampling_result.map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+                    &mut logits,
+                    &mut sampling_output,
+                    sampling_method,
+                    1,
+                    sampling_inputs,
+                    pending_sampling_inputs,
+                )?;
                 if pass + 1 < followup_count {
                     let token_ids_shape = [1];
                     let token_ids_data_type = crate::DataType::U64;
@@ -569,16 +605,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         Array::from_allocation(updated_token_ids, 0, &token_ids_shape, token_ids_data_type)
                     });
                 }
-                let results_slot =
-                    self.ctx.async_chain_results.view_at_offset(results_slot * std::mem::size_of::<u32>(), &[1]);
-                let (sampling_output_buffer, sampling_output_range) = sampling_output.as_buffer_range();
-                let (results_buffer, results_range) = results_slot.as_buffer_range();
-                encoder.encode_copy(
-                    sampling_output_buffer,
-                    sampling_output_range.start..sampling_output_range.start + std::mem::size_of::<u32>(),
-                    results_buffer,
-                    results_range.start..results_range.start + std::mem::size_of::<u32>(),
-                );
+                self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, results_slot);
             }
 
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
@@ -742,17 +769,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         }
 
         let sampling_inputs = self.create_sampling_inputs_from_slices(token_count, token_seeds, token_bitmask);
-        let token_inputs = TokenInputs::new_llm(
-            self.ctx.context.as_ref(),
-            &self.ctx.model_shape,
-            token_ids,
-            None,
-            positions,
-            None,
-            None,
-            sampling_start,
-            sampling_length,
-        );
+        let token_inputs = self.llm_token_inputs(token_ids, positions, None, None, sampling_start, sampling_length);
 
         let encoding_parameters = EncodingParameters::new();
         let mut main = self
@@ -781,23 +798,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
             self.ctx
                 .executables
                 .encode_decode_from_embeddings(
-                    DecoderArguments {
-                        context: self.ctx.context.as_ref(),
-                        activation_data_type: self.ctx.model_shape.activation_data_type(),
-                        token_ids: token_inputs.token_ids(),
-                        token_positions: token_inputs.token_positions(),
-                        token_parents: token_inputs.token_parents(),
-                        token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-                        shared_buffers: self.ctx.shared_buffers.as_ref(),
-                        cache_layers: Some(&mut *cache_layers),
-                        batch_dim: token_count,
+                    self.decoder_arguments(
+                        &token_inputs,
+                        token_count,
                         sampling_start,
                         sampling_length,
-                        rope_max_sequence_length: self.ctx.model_shape.context_length(),
-                        rope_dim: self.ctx.model_shape.rope_dim(),
-                        #[cfg(feature = "tracing")]
-                        trace: None,
-                    },
+                        &mut *cache_layers,
+                    ),
                     main,
                     decoder_logits,
                     &encoding_parameters,
@@ -810,21 +817,15 @@ impl<B: Backend> TokenDecoderRunner<B> {
             self.encode_capture_last_hidden_into_single_buffer_on(encoder, &shortcut, token_count)?;
         }
         let mut sampling_output = self.create_sampling_output(sampling_length);
-        pending_sampling_inputs.push(sampling_inputs);
-        let sampling_inputs = pending_sampling_inputs.last().expect("sampling inputs must be pending");
-        let sampling_result = self.ctx.sampler.encode(
-            crate::encodable_block::SamplingArguments {
-                logits: &mut logits,
-                seeds: sampling_inputs.seeds.allocation(),
-                bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
-                output: &mut sampling_output,
-                sampling_method: sampling.method(),
-                batch_size: sampling_length,
-                vocab_size: self.ctx.decoder_config.vocab_size,
-            },
+        self.encode_sampling_on(
             encoder,
-        );
-        sampling_result.map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+            &mut logits,
+            &mut sampling_output,
+            sampling.method(),
+            sampling_length,
+            sampling_inputs,
+            pending_sampling_inputs,
+        )?;
 
         Ok(sampling_output)
     }
@@ -1110,17 +1111,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
         // Copy sampled token to async_chain_results[0] so the caller can
         // read it after the eventual submit.
-        {
-            let results_slot = self.ctx.async_chain_results.view_at_offset(0, &[1]);
-            let (sampling_output_buffer, sampling_output_range) = sampling_output.as_buffer_range();
-            let (results_buffer, results_range) = results_slot.as_buffer_range();
-            encoder.encode_copy(
-                sampling_output_buffer,
-                sampling_output_range.start..sampling_output_range.start + std::mem::size_of::<u32>(),
-                results_buffer,
-                results_range.start..results_range.start + std::mem::size_of::<u32>(),
-            );
-        }
+        self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, 0);
 
         self.encode_cache_acceptance_update_on(encoder, token_count);
         // Do NOT submit -- the caller will submit.

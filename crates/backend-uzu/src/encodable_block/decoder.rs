@@ -37,7 +37,6 @@ pub struct Decoder<B: Backend> {
 }
 
 pub struct DecoderArguments<'a, B: Backend> {
-    pub context: &'a B::Context,
     pub activation_data_type: DataType,
     pub token_ids: &'a Allocation<B>,
     pub token_positions: &'a Allocation<B>,
@@ -246,7 +245,6 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
         let DecoderArguments {
-            context,
             activation_data_type: _,
             token_ids: _,
             token_positions,
@@ -278,7 +276,6 @@ impl<B: Backend> Decoder<B> {
             main = layer
                 .encode(
                     LayerArguments {
-                        context,
                         batch_dim,
                         token_positions,
                         token_parents,
@@ -324,7 +321,6 @@ impl<B: Backend> Decoder<B> {
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
-        let context = args.context;
         let sampling_start = args.sampling_start;
         let sampling_length = args.sampling_length;
         #[cfg(feature = "tracing")]
@@ -340,7 +336,7 @@ impl<B: Backend> Decoder<B> {
             encoder.encode_copy_allocation(&main, &trace.output_norm);
         }
 
-        self.embed.encode_readout(context, sampling_length, &main, &mut logits, encoder)?;
+        self.embed.encode_readout(sampling_length, &main, &mut logits, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
             encoder.encode_copy_allocation(&logits, &trace.logits);

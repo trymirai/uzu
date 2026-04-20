@@ -32,14 +32,13 @@ impl<B: Backend> ClassifierPredictionHead<B> {
 
     pub fn encode(
         &self,
-        context: &B::Context,
         mut input: Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let batch_dim = 1;
-        let dense = self.dense.encode(context, &mut input, batch_dim, encoder)?;
+        let dense = self.dense.encode(&mut input, batch_dim, encoder)?;
         let activated = self.activation.encode(&dense, self.hidden_dim, encoder)?;
         let mut normalized = self.norm.encode(&activated, 0, batch_dim, encoder)?;
-        self.readout.encode(context, &mut normalized, batch_dim, encoder)
+        self.readout.encode(&mut normalized, batch_dim, encoder)
     }
 }

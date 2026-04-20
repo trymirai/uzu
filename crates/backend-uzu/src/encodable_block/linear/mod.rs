@@ -18,7 +18,6 @@ use crate::{
 pub trait Linear<B: Backend> {
     fn encode(
         &self,
-        context: &B::Context,
         input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,

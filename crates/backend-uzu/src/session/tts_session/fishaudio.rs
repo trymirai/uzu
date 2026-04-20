@@ -500,7 +500,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     }
 
     fn encode_project_slow_hidden_to_fast_on(
-        context: &B::Context,
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
         slow_hidden_capture: &Allocation<B>,
         output_embedding: &mut Allocation<B>,
@@ -513,7 +512,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                 return Err(Error::GenerateFailed);
             }
             semantic_bridge.projection.encode(
-                context,
                 MatmulArguments {
                     a: slow_hidden_capture,
                     b: weights,
@@ -681,9 +679,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let fast_model_dim = self.fast_model_dim;
 
         let mut pre_projection = |runner: &mut TokenDecoderRunner<B>, encoder: &mut Encoder<B>| {
-            let runner_context = Rc::clone(runner.context());
             Self::encode_project_slow_hidden_to_fast_on(
-                runner_context.as_ref(),
                 semantic_bridge,
                 slow_hidden_capture,
                 &mut runner.single_override_embedding,

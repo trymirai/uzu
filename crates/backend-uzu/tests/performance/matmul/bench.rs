@@ -42,7 +42,6 @@ fn encode_and_run(
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
     kernel.encode(
-        context,
         MatmulArguments {
             a: a_buffer,
             b: b_buffer,

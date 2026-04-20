@@ -121,19 +121,17 @@ impl<B: Backend> QLoRALinearWrapper<B> {
 impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     fn encode(
         &self,
-        context: &B::Context,
         input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {
-        let mut output = self.base_linear.encode(context, input, batch_dim, encoder)?;
+        let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
 
         let mut adapter_kernel = self.adapter_kernel.borrow_mut();
         let mut intermediate =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
 
         adapter_kernel.encode(
-            context,
             MatmulArguments {
                 a: input,
                 b: &self.adapter_down,
@@ -148,7 +146,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         );
 
         adapter_kernel.encode(
-            context,
             MatmulArguments {
                 a: &intermediate,
                 b: &self.adapter_up,

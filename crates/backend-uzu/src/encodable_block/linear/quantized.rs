@@ -244,12 +244,10 @@ impl<B: Backend> QuantizedLinear<B> {
 impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     fn encode(
         &self,
-        context: &B::Context,
         input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let _ = context;
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 

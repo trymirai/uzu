@@ -129,7 +129,6 @@ impl StructuredAudioCodecGraph {
             codebooks,
             frames,
         )?;
-        let _ = codebooks;
         x = self.apply_post_module_enqueued(resources, &mut encoder, quantized_nsc, lengths, batch_size, frames)?;
 
         let vocoder_graph = self.vocoder_graph(resources)?;

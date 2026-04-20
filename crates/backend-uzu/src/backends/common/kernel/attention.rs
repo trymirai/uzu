@@ -50,10 +50,10 @@ impl<B: Backend> AttentionGemmBlock<B> {
 
     pub fn encode(
         &self,
-        context: &B::Context,
         encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<'_, B>,
     ) -> Result<(), B::Error> {
+        let context = encoder.context();
         let bk: usize = if args.head_dim < 128 {
             32
         } else {

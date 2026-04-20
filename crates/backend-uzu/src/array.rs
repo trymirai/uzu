@@ -306,7 +306,7 @@ pub trait ArrayContextExt {
         &self,
         shape: &[usize],
         data_type: DataType,
-        label: &str,
+        _label: &str,
     ) -> Array<Self::Backend>;
 
     fn create_array_zeros(
@@ -348,9 +348,8 @@ impl<C: Context> ArrayContextExt for C {
         &self,
         shape: &[usize],
         data_type: DataType,
-        label: &str,
+        _label: &str,
     ) -> Array<Self::Backend> {
-        let _ = label;
         let allocation = self
             .create_allocation(size_for_shape(shape, data_type), AllocationType::Global)
             .expect("Failed to create allocation");

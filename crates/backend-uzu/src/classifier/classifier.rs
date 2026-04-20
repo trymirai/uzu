@@ -142,7 +142,6 @@ impl<B: Backend> Classifier<B> {
             main = layer
                 .encode(
                     LayerArguments {
-                        context: self.context.context.as_ref(),
                         batch_dim,
                         token_positions: token_inputs.token_positions(),
                         token_parents: token_inputs.token_parents(),
@@ -183,11 +182,8 @@ impl<B: Backend> Classifier<B> {
         if let Some(trace) = trace {
             encoder.encode_copy_allocation(&pooling, trace.output_pooling());
         }
-        let logits = self
-            .context
-            .prediction_head
-            .encode(self.context.context.as_ref(), pooling, &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let logits =
+            self.context.prediction_head.encode(pooling, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace {
             encoder.encode_copy_allocation(&logits, &trace.logits);

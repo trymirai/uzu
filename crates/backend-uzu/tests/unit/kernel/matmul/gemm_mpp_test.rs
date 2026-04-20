@@ -94,7 +94,6 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
 
     let mut encoder = Encoder::new(cpu_context.as_ref()).expect("encoder");
     matmul_kernel.encode(
-        &cpu_context,
         MatmulArguments {
             a: &left_allocation,
             b: right_array.allocation(),
@@ -137,7 +136,6 @@ fn get_mpp_output(
 
     let mut encoder = Encoder::new(metal_context).expect("encoder");
     matmul_kernel.encode_with_path(
-        metal_context,
         MatmulArguments {
             a: &left_allocation,
             b: right_array.allocation(),
@@ -271,7 +269,6 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
 
                     for _ in 0..iteration_count {
                         matmul_kernel.encode_with_path(
-                            &metal_context,
                             MatmulArguments {
                                 a: &left_allocation,
                                 b: right_array.allocation(),

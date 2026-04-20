@@ -327,7 +327,6 @@ impl StructuredAudioCodecGraph {
             main = layer
                 .encode(
                     LayerArguments {
-                        context: runtime.context.as_ref(),
                         batch_dim,
                         token_positions: token_inputs.token_positions(),
                         token_parents: token_inputs.token_parents(),

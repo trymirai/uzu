@@ -52,7 +52,6 @@ pub trait MatmulKernel: Sized {
 
     fn encode(
         &mut self,
-        context: &<Self::Backend as Backend>::Context,
         arguments: MatmulArguments<'_, Self::Backend>,
         encoder: &mut Encoder<Self::Backend>,
     );

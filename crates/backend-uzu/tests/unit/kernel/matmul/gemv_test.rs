@@ -69,7 +69,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        &context,
         MatmulArguments {
             a: &a_allocation,
             b: b_array.allocation(),

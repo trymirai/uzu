@@ -315,7 +315,6 @@ impl<B: Backend> LayerExecutables<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let LayerArguments {
-            context,
             batch_dim,
             token_positions,
             token_parents,
@@ -353,9 +352,9 @@ impl<B: Backend> LayerExecutables<B> {
                 num_groups,
                 head_dim,
             } => {
-                let mut qkv = qkv_projection.encode(context, &mut main, batch_dim, encoder)?;
+                let mut qkv = qkv_projection.encode(&mut main, batch_dim, encoder)?;
                 let gate = if let Some(gate_proj) = gate_projection {
-                    Some(gate_proj.encode(context, &mut main, batch_dim, encoder)?)
+                    Some(gate_proj.encode(&mut main, batch_dim, encoder)?)
                 } else {
                     None
                 };
@@ -382,7 +381,6 @@ impl<B: Backend> LayerExecutables<B> {
                     .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
                 let mut attention_output = attention.encode(
                     AttentionArguments {
-                        context,
                         projection_step: parameters.projection_step.unwrap_or(0),
                         token_subtrie_ranges,
                         attention_sinks,
@@ -398,7 +396,7 @@ impl<B: Backend> LayerExecutables<B> {
                     *head_dim,
                     encoder,
                 )?;
-                out_projection.encode(context, &mut attention_output, batch_dim, encoder)?
+                out_projection.encode(&mut attention_output, batch_dim, encoder)?
             },
             MixerExecutables::StateSpace {
                 mixer,
@@ -410,7 +408,6 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("State-space mixer expects SSM cache layer");
                 mixer.encode(
                     MambaArguments {
-                        context,
                         active_row_count: batch_dim,
                         layer,
                     },
@@ -428,7 +425,6 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("ShortConv mixer expects ShortConv cache layer");
                 mixer.encode(
                     ShortConvArguments {
-                        context,
                         active_row_count: batch_dim,
                         sampling_start,
                         sampling_length,
@@ -449,7 +445,6 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("DeltaNet mixer expects DeltaNet cache layer");
                 mixer.encode(
                     DeltaNetArguments {
-                        context,
                         active_row_count: batch_dim,
                         layer,
                     },
@@ -478,7 +473,7 @@ impl<B: Backend> LayerExecutables<B> {
             encoder.encode_copy_allocation(&main, &layer_traces.pre_mlp_norm);
         }
 
-        main = self.mlp.encode(context, &mut main, batch_dim, encoder)?;
+        main = self.mlp.encode(&mut main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             encoder.encode_copy_allocation(&main, &layer_traces.mlp);
@@ -522,7 +517,6 @@ impl<B: Backend> LayerExecutables<B> {
 }
 
 pub struct LayerArguments<'a, B: Backend> {
-    pub context: &'a B::Context,
     pub batch_dim: usize,
     pub token_positions: &'a Allocation<B>,
     pub token_parents: &'a Allocation<B>,

@@ -51,7 +51,6 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
 }
 
 pub(crate) struct DeltaNetArguments<'a, B: Backend> {
-    pub context: &'a B::Context,
     pub active_row_count: usize,
     pub layer: &'a mut DeltaNetLayer<B>,
 }
@@ -314,13 +313,12 @@ impl<B: Backend> DeltaNetMixer<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let DeltaNetArguments {
-            context,
             active_row_count,
             layer,
         } = args;
         assert!(active_row_count > 0, "DeltaNet mixer requires at least one active row");
 
-        let mut in_proj = self.in_projection.encode(context, input, active_row_count, encoder)?;
+        let mut in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
         let mut delta_output =
             encoder.allocate_scratch(size_for_shape(&[active_row_count, self.config.value_dim()], self.data_type))?;
 
@@ -356,6 +354,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             );
         }
 
-        self.out_projection.encode(context, &mut delta_output, active_row_count, encoder)
+        self.out_projection.encode(&mut delta_output, active_row_count, encoder)
     }
 }

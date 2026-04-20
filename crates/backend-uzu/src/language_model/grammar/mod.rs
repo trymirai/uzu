@@ -20,6 +20,7 @@ pub trait CompiledGrammar {
     fn is_terminated(&self) -> bool;
 }
 
+#[cfg_attr(not(grammar_xgrammar), allow(unused_variables))]
 pub fn create_compiled_grammar(
     config: &GrammarConfig,
     tokenizer: &Tokenizer,
@@ -39,7 +40,6 @@ pub fn create_compiled_grammar(
 
     #[cfg(not(grammar_xgrammar))]
     {
-        let _ = (config, tokenizer, stop_token_ids);
         Err(Error::GrammarNoBackendAvailable)
     }
 }

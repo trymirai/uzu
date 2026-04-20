@@ -360,7 +360,7 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
             let ready_frames = pending.ready_frames;
             let next_chunk_frames = pending.next_chunk_frames;
             let submission_decode_duration = pending.submission_decode_duration;
-            let _ = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+            self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
             (
                 step_stats,
                 ready_frames,

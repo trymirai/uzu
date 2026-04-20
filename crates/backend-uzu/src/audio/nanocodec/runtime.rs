@@ -652,9 +652,8 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         &self,
         state: &mut AudioDecodeStreamState,
         new_tokens: &AudioTokenGrid,
-        is_final: bool,
+        _is_final: bool,
     ) -> AudioResult<DecodedPaddedAudio> {
-        let _ = is_final;
         if new_tokens.codebooks() != state.codebooks {
             return Err(AudioError::Runtime(format!(
                 "stream delta codebook mismatch: expected {}, got {}",

@@ -66,7 +66,6 @@ impl<B: Backend> RHTLinearWrapper<B> {
 impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
-        context: &B::Context,
         input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
@@ -78,6 +77,6 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             batch_dim as u32,
             encoder,
         );
-        self.inner_linear.encode(context, input, batch_dim, encoder)
+        self.inner_linear.encode(input, batch_dim, encoder)
     }
 }

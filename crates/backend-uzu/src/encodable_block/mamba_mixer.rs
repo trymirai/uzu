@@ -37,7 +37,6 @@ pub(crate) struct MambaMixer<B: Backend> {
 }
 
 pub(crate) struct MambaArguments<'a, B: Backend> {
-    pub context: &'a B::Context,
     pub active_row_count: usize,
     pub layer: &'a mut SSMLayer<B>,
 }
@@ -334,13 +333,12 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let MambaArguments {
-            context,
             active_row_count,
             layer,
         } = args;
         assert!(active_row_count > 0, "Mamba mixer requires at least one active row");
 
-        let in_proj = self.in_projection.encode(context, input, active_row_count, encoder)?;
+        let in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
         let mut conv_inputs =
             encoder.allocate_scratch(size_for_shape(&[active_row_count, self.config.conv_dim()], self.data_type))?;
         let mut z = encoder.allocate_scratch(size_for_shape(
@@ -377,6 +375,6 @@ impl<B: Backend> MambaMixer<B> {
             self.run_prefill_ssm(layer, &x, &b, &c, &dt, &z, &mut ssm_output, encoder, active_row_count);
         }
 
-        self.out_projection.encode(context, &mut ssm_output, active_row_count, encoder)
+        self.out_projection.encode(&mut ssm_output, active_row_count, encoder)
     }
 }

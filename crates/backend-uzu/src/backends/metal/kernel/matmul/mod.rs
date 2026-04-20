@@ -306,17 +306,20 @@ pub enum MatmulDispatchPath {
 impl MatmulMetalKernel {
     pub fn encode_with_path(
         &mut self,
-        context: &MetalContext,
         arguments: MatmulArguments<'_, Metal>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) {
         match path {
-            MatmulDispatchPath::Auto => self.encode(context, arguments, encoder),
-            MatmulDispatchPath::Gemv => self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV"),
-            MatmulDispatchPath::Gemm => self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM"),
+            MatmulDispatchPath::Auto => self.encode(arguments, encoder),
+            MatmulDispatchPath::Gemv => {
+                self.encode_gemv(encoder.context(), encoder, arguments).expect("Failed to encode GEMV")
+            },
+            MatmulDispatchPath::Gemm => {
+                self.encode_gemm(encoder.context(), encoder, arguments).expect("Failed to encode GEMM")
+            },
             MatmulDispatchPath::GemmMpp => {
-                self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP")
+                self.encode_gemm_mpp(encoder.context(), encoder, arguments).expect("Failed to encode GEMM MPP")
             },
         }
     }
@@ -360,10 +363,10 @@ impl MatmulKernel for MatmulMetalKernel {
 
     fn encode(
         &mut self,
-        context: &MetalContext,
         arguments: MatmulArguments<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
+        let context = encoder.context();
         if arguments.batch_dim <= max_gemv_batch_threshold() {
             self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV kernel");
         } else if self.is_mpp_eligible(context) {

@@ -21,8 +21,8 @@ use crate::{
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
-    encodable_block::{DecoderArguments, EncodingParameters, Sampling},
-    forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
+    encodable_block::{EncodingParameters, Sampling},
+    forward_pass::{cache_layers::CacheLayers, token_inputs::LlmDecoderPass, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -241,7 +241,7 @@ impl<B: Backend> TraceValidator<B> {
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
         let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
-        let token_inputs = TokenInputs::new_llm(
+        let pass = LlmDecoderPass::new(
             ctx.context.as_ref(),
             &ctx.model_shape,
             &token_ids,
@@ -249,6 +249,7 @@ impl<B: Backend> TraceValidator<B> {
             &token_positions,
             None,
             None,
+            token_ids.len(),
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
         );
@@ -266,29 +267,15 @@ impl<B: Backend> TraceValidator<B> {
             .into_allocation();
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
+            let decoder_arguments = pass.decoder_arguments(
+                &ctx.model_shape,
+                ctx.shared_buffers.as_ref(),
+                Some(&mut *cache_layers),
+                #[cfg(feature = "tracing")]
+                Some(&traces),
+            );
             ctx.executables
-                .encode_decode(
-                    DecoderArguments {
-                        context: ctx.context.as_ref(),
-                        activation_data_type: ctx.model_shape.activation_data_type(),
-                        token_ids: token_inputs.token_ids(),
-                        token_positions: token_inputs.token_positions(),
-                        token_parents: token_inputs.token_parents(),
-                        token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-                        shared_buffers: ctx.shared_buffers.as_ref(),
-                        cache_layers: Some(&mut *cache_layers),
-                        batch_dim: token_ids.len(),
-                        sampling_start: 0,
-                        sampling_length: token_ids.len(),
-                        rope_max_sequence_length: ctx.model_shape.context_length(),
-                        rope_dim: ctx.model_shape.rope_dim(),
-                        #[cfg(feature = "tracing")]
-                        trace: Some(&traces),
-                    },
-                    logits,
-                    &EncodingParameters::new(),
-                    &mut encoder,
-                )
+                .encode_decode(decoder_arguments, logits, &EncodingParameters::new(), &mut encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
         let pending = encoder.end_encoding().submit();

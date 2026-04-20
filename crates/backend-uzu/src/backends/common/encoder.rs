@@ -148,6 +148,10 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self.command_buffer
     }
 
+    pub fn context(&self) -> &'encoding B::Context {
+        self.context
+    }
+
     pub fn end_encoding(self) -> Executable<B> {
         Executable {
             command_buffer: self.command_buffer.end_encoding(),

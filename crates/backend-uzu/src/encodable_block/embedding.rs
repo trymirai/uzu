@@ -560,7 +560,6 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_readout(
         &self,
-        context: &B::Context,
         batch_dim: usize,
         input_allocation: &Allocation<B>,
         output_allocation: &mut Allocation<B>,
@@ -590,7 +589,6 @@ impl<B: Backend> Embedding<B> {
                 let input_dim = self.model_dim as usize;
                 let output_dim = self.vocab_size as usize;
                 readout.borrow_mut().encode(
-                    context,
                     MatmulArguments {
                         a: input_allocation,
                         b: weights,

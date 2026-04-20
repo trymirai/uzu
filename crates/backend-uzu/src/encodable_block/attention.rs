@@ -50,7 +50,6 @@ pub struct Attention<B: Backend> {
 }
 
 pub struct AttentionArguments<'a, B: Backend> {
-    pub context: &'a B::Context,
     pub projection_step: usize,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
@@ -276,7 +275,6 @@ impl<B: Backend> Attention<B> {
 
         Self::encode_attention_variant(
             self,
-            args.context,
             variant,
             &kernel_key,
             queries,
@@ -314,7 +312,6 @@ impl<B: Backend> Attention<B> {
     #[allow(clippy::too_many_arguments)]
     fn encode_attention_variant(
         &self,
-        context: &B::Context,
         variant: KernelVariant,
         kernel_key: &KernelKey,
         queries: &Allocation<B>,
@@ -360,7 +357,7 @@ impl<B: Backend> Attention<B> {
                     sliding_window_size: self.sliding_window_size,
                     scale,
                 };
-                self.gemm_block.encode(context, encoder, args)?;
+                self.gemm_block.encode(encoder, args)?;
             },
             KernelVariant::SinglePass => {
                 let kernel = self
