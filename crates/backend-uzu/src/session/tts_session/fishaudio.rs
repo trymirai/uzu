@@ -37,7 +37,6 @@ pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
 struct FishAudioSemanticBridge<B: Backend> {
     embedding_rows_sum: <B::Kernels as Kernels>::EmbeddingRowsSumKernel,
     projection: <B::Kernels as ManualKernels>::MatmulKernel,
-    tensor_copy: <B::Kernels as Kernels>::TensorCopyKernel,
     codebook_embeddings: Allocation<B>,
     codebook_token_indices: Array<B>,
     projection_weights: Option<Allocation<B>>,
@@ -100,14 +99,11 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
             .map_err(unable_to_create_context)?;
         let projection = <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
             .map_err(unable_to_create_context)?;
-        let tensor_copy =
-            <B::Kernels as Kernels>::TensorCopyKernel::new(context, data_type).map_err(unable_to_create_context)?;
         let codebook_token_indices = context.create_array_zeros(&[num_codebooks], DataType::U32, "codebook_token_ids");
 
         Ok(Self {
             embedding_rows_sum,
             projection,
-            tensor_copy,
             codebook_embeddings,
             codebook_token_indices,
             projection_weights: fast_model_projection,
@@ -512,8 +508,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         fast_model_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), Error> {
-        let model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
-
         if let Some(weights) = semantic_bridge.projection_weights.as_ref() {
             if semantic_bridge.fast_model_dim != fast_model_dim || semantic_bridge.slow_model_dim != slow_model_dim {
                 return Err(Error::GenerateFailed);
@@ -539,7 +533,8 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             return Err(Error::UnableToLoadConfig);
         }
 
-        semantic_bridge.tensor_copy.encode(slow_hidden_capture, output_embedding, model_dim_u32, encoder);
+        debug_assert_eq!(slow_hidden_capture.as_buffer_range().1.len(), output_embedding.as_buffer_range().1.len());
+        encoder.encode_copy_allocation(slow_hidden_capture, output_embedding);
         Ok(())
     }
 

@@ -18,7 +18,6 @@ mod rope;
 mod sampling;
 mod short_conv_mixer;
 mod tensor_add_swap;
-mod tensor_copy;
 
 pub use activation::Activation;
 pub use attention::{Attention, AttentionArguments};
@@ -42,7 +41,6 @@ pub use sampling::{Sampling, SamplingArguments};
 pub(crate) use short_conv_mixer::ShortConvArguments;
 pub use short_conv_mixer::ShortConvMixer;
 pub use tensor_add_swap::TensorAddSwap;
-pub use tensor_copy::TensorCopy;
 
 #[derive(Clone)]
 pub struct EncodingParameters {

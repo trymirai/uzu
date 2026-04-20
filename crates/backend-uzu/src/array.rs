@@ -231,6 +231,32 @@ pub fn allocation_as_slice<T: ArrayElement, B: Backend>(allocation: &Allocation<
     }
 }
 
+pub fn allocation_copy_from_slice<B: Backend, T: ArrayElement>(
+    allocation: &Allocation<B>,
+    data: &[T],
+) {
+    let bytes = bytemuck::cast_slice(data);
+    let (buffer, range) = allocation.as_buffer_range();
+    assert!(bytes.len() <= range.len(), "Allocation write exceeds range");
+    let destination =
+        unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len()) };
+    destination.copy_from_slice(bytes);
+}
+
+pub fn allocation_from_slice<B: Backend, T: ArrayElement>(
+    context: &B::Context,
+    data: &[T],
+) -> Allocation<B> {
+    let byte_len = (data.len() * size_of::<T>()).max(1);
+    let allocation = context.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation");
+    allocation_copy_from_slice(&allocation, data);
+    allocation
+}
+
+pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
+    allocation_as_slice::<T, B>(allocation).to_vec()
+}
+
 impl<B: Backend> Clone for Array<B> {
     fn clone(&self) -> Self {
         Self {

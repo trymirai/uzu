@@ -7,10 +7,9 @@ use half::{bf16, f16};
 use num_traits::Float;
 use backend_uzu::{
     ArrayElement, DataType,
-    allocation_as_slice,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Buffer, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -21,7 +20,10 @@ use backend_uzu::{
     },
 };
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{assert::assert_eq_float, helpers::{alloc_allocation_with_data, allocation_to_vec}},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     queries: Box<[T]>,
@@ -34,22 +36,6 @@ struct Input<T: ArrayElement + Float> {
     head_dim: usize,
     scale: f32,
     do_causal: bool,
-}
-
-fn allocation_from_slice<T: ArrayElement, B: Backend>(
-    context: &B::Context,
-    data: &[T],
-) -> Allocation<B> {
-    let allocation = context
-        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let (buffer, range) = allocation.as_buffer_range();
-    let bytes = bytemuck::cast_slice(data);
-    unsafe {
-        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
-    }
-    allocation
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -105,9 +91,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let block = backend_uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
 
-    let queries_allocation = allocation_from_slice(context.as_ref(), &input.queries);
-    let keys_allocation = allocation_from_slice(context.as_ref(), &input.keys);
-    let values_allocation = allocation_from_slice(context.as_ref(), &input.values);
+    let queries_allocation = alloc_allocation_with_data(context.as_ref(), &input.queries);
+    let keys_allocation = alloc_allocation_with_data(context.as_ref(), &input.keys);
+    let values_allocation = alloc_allocation_with_data(context.as_ref(), &input.values);
 
     let output_size = input.suffix_length * input.num_heads * input.head_dim * size_of::<T>();
     let mut output_allocation = context
@@ -140,7 +126,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     block.encode(&context, &mut encoder, args).expect("Failed to encode AttentionGemm");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_as_slice::<T, B>(&output_allocation).to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn get_output_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
@@ -152,7 +138,7 @@ fn get_output_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
     let context = B::Context::new().expect("Failed to create Context");
     let block = backend_uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
 
-    let queries_allocation = allocation_from_slice(context.as_ref(), &input.queries);
+    let queries_allocation = alloc_allocation_with_data(context.as_ref(), &input.queries);
 
     let padded_kv_len = input.num_kv_heads * max_sequence_length * input.head_dim;
     let mut padded_keys = vec![T::zero(); padded_kv_len];
@@ -169,8 +155,8 @@ fn get_output_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
             .copy_from_slice(&input.values[src_start..src_start + source_head_span]);
     }
 
-    let keys_allocation = allocation_from_slice(context.as_ref(), &padded_keys);
-    let values_allocation = allocation_from_slice(context.as_ref(), &padded_values);
+    let keys_allocation = alloc_allocation_with_data(context.as_ref(), &padded_keys);
+    let values_allocation = alloc_allocation_with_data(context.as_ref(), &padded_values);
 
     let output_size = input.suffix_length * input.num_heads * input.head_dim * size_of::<T>();
     let mut output_allocation = context
@@ -203,16 +189,16 @@ fn get_output_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
     block.encode(&context, &mut encoder, args).expect("Failed to encode padded AttentionGemm");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_as_slice::<T, B>(&output_allocation).to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn get_output_with_pooled_scratch_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
     let block = backend_uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
 
-    let queries_allocation = allocation_from_slice(context.as_ref(), &input.queries);
-    let keys_allocation = allocation_from_slice(context.as_ref(), &input.keys);
-    let values_allocation = allocation_from_slice(context.as_ref(), &input.values);
+    let queries_allocation = alloc_allocation_with_data(context.as_ref(), &input.queries);
+    let keys_allocation = alloc_allocation_with_data(context.as_ref(), &input.keys);
+    let values_allocation = alloc_allocation_with_data(context.as_ref(), &input.values);
 
     let output_size = input.suffix_length * input.num_heads * input.head_dim * size_of::<T>();
     let segment_prefix_length = input.sequence_length - input.suffix_length;
@@ -259,7 +245,7 @@ fn get_output_with_pooled_scratch_output<T: ArrayElement + Float, B: Backend>(in
     drop(output_allocation);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_as_slice::<T, B>(&output_copy).to_vec()
+    allocation_to_vec::<B, T>(&output_copy)
 }
 
 fn get_output_with_followup_matmul<T: ArrayElement + Float, B: Backend>(
@@ -274,15 +260,15 @@ where
     let mut matmul =
         <B::Kernels as ManualKernels>::MatmulKernel::new(context.as_ref(), T::data_type()).expect("Failed to create matmul");
 
-    let queries_allocation = allocation_from_slice(context.as_ref(), &input.queries);
-    let keys_allocation = allocation_from_slice(context.as_ref(), &input.keys);
-    let values_allocation = allocation_from_slice(context.as_ref(), &input.values);
+    let queries_allocation = alloc_allocation_with_data(context.as_ref(), &input.queries);
+    let keys_allocation = alloc_allocation_with_data(context.as_ref(), &input.keys);
+    let values_allocation = alloc_allocation_with_data(context.as_ref(), &input.values);
 
     let input_dim = input.num_heads * input.head_dim;
     let weights = (0..output_dim * input_dim)
         .map(|i| T::from((i as f32 * 0.017 + 0.25).cos() * 0.5).unwrap())
         .collect::<Vec<_>>();
-    let weights_allocation = allocation_from_slice::<T, B>(context.as_ref(), &weights);
+    let weights_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &weights);
 
     let attention_output_size = input.suffix_length * input_dim * size_of::<T>();
     let matmul_output_size = input.suffix_length * output_dim * size_of::<T>();
@@ -349,7 +335,7 @@ where
     drop(attention_output);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    allocation_as_slice::<T, B>(&matmul_output).to_vec()
+    allocation_to_vec::<B, T>(&matmul_output)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

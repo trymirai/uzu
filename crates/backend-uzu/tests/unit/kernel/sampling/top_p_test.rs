@@ -1,10 +1,8 @@
 use std::{
     collections::HashSet,
     fmt::{Debug, Display},
-    ptr,
 };
 
-use bytemuck;
 use half::{bf16, f16};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
@@ -12,7 +10,7 @@ use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
+            AllocationType, Backend, Context, Encoder, Kernels,
             kernel::{TopPKernel, sampling::SamplingKernel},
         },
         cpu::Cpu,
@@ -20,24 +18,12 @@ use backend_uzu::{
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
-use crate::{common::helpers::allocation_to_vec, uzu_test};
+use crate::{
+    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    uzu_test,
+};
 
 const TEST_SAMPLING_SEED: u64 = 42;
-
-fn allocation_from_slice<T: ArrayElement, B: Backend>(
-    context: &B::Context,
-    data: &[T],
-) -> Allocation<B> {
-    let allocation = context
-        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let bytes = bytemuck::cast_slice(data);
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len());
-    }
-    allocation
-}
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,
@@ -292,8 +278,8 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
 
     for draw in 0..num_samples {
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
-        let mut logits_allocation = allocation_from_slice::<f32, B>(&context, &logits);
-        let seeds_allocation = allocation_from_slice::<u64, B>(&context, &seeds);
+        let mut logits_allocation = alloc_allocation_with_data::<B, f32>(&context, &logits);
+        let seeds_allocation = alloc_allocation_with_data::<B, u64>(&context, &seeds);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel
@@ -396,8 +382,8 @@ fn test_topp_sampling_statistical_large() {
 
         for draw in 0..NUM_DRAWS {
             let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; BATCH];
-            let mut logits_allocation = allocation_from_slice::<f32, B>(&context, &logits);
-            let seeds_allocation = allocation_from_slice::<u64, B>(&context, &seeds);
+            let mut logits_allocation = alloc_allocation_with_data::<B, f32>(&context, &logits);
+            let seeds_allocation = alloc_allocation_with_data::<B, u64>(&context, &seeds);
 
             let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -470,8 +456,8 @@ fn perf_topp_128k_vocab() {
         }
 
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-        let mut logits_allocation = allocation_from_slice::<f32, B>(&context, &logits);
-        let seeds_allocation = allocation_from_slice::<u64, B>(&context, &seeds);
+        let mut logits_allocation = alloc_allocation_with_data::<B, f32>(&context, &logits);
+        let seeds_allocation = alloc_allocation_with_data::<B, u64>(&context, &seeds);
         let mut output_allocation = context
             .create_allocation(BATCH * std::mem::size_of::<u32>(), AllocationType::Global)
             .expect("Failed to create allocation");

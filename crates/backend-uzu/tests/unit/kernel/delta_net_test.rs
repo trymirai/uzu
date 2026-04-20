@@ -217,13 +217,13 @@ fn test_delta_net_conv_scan() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let in_proj_result = crate::common::helpers::allocation_to_vec::<Metal, f32>(&in_proj_array);
+    let in_proj_result: Vec<f32> = crate::common::helpers::allocation_to_vec(&in_proj_array);
     let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
         scan_outputs[t * conv_dim..(t + 1) * conv_dim]
             .copy_from_slice(&in_proj_result[t * total_proj_dim..t * total_proj_dim + conv_dim]);
     }
-    let scan_state = crate::common::helpers::allocation_to_vec::<Metal, f32>(&state_out_array);
+    let scan_state: Vec<f32> = crate::common::helpers::allocation_to_vec(&state_out_array);
 
     assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
     assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
@@ -387,8 +387,8 @@ fn run_prefill_with_norm_gate(
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (
-        crate::common::helpers::allocation_to_vec::<Metal, f32>(&out_array),
-        crate::common::helpers::allocation_to_vec::<Metal, f32>(&state_array),
+        crate::common::helpers::allocation_to_vec(&out_array),
+        crate::common::helpers::allocation_to_vec(&state_array),
     )
 }
 
@@ -509,10 +509,10 @@ fn test_delta_net_prefill_prep() {
     );
     cpu_enc.end_encoding().submit().wait_until_completed().unwrap();
 
-    let ref_q = crate::common::helpers::allocation_to_vec::<Cpu, f32>(&cpu_q);
-    let ref_k = crate::common::helpers::allocation_to_vec::<Cpu, f32>(&cpu_k);
-    let ref_beta = crate::common::helpers::allocation_to_vec::<Cpu, f32>(&cpu_beta);
-    let ref_decay = crate::common::helpers::allocation_to_vec::<Cpu, f32>(&cpu_decay);
+    let ref_q: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_q);
+    let ref_k: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_k);
+    let ref_beta: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_beta);
+    let ref_decay: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_decay);
 
     // Metal
     let context = <Metal as Backend>::Context::new().expect("context");
@@ -554,10 +554,10 @@ fn test_delta_net_prefill_prep() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_q = crate::common::helpers::allocation_to_vec::<Metal, f32>(&q_norm_array);
-    let gpu_k = crate::common::helpers::allocation_to_vec::<Metal, f32>(&k_norm_array);
-    let gpu_beta = crate::common::helpers::allocation_to_vec::<Metal, f32>(&beta_array);
-    let gpu_decay = crate::common::helpers::allocation_to_vec::<Metal, f32>(&decay_array);
+    let gpu_q: Vec<f32> = crate::common::helpers::allocation_to_vec(&q_norm_array);
+    let gpu_k: Vec<f32> = crate::common::helpers::allocation_to_vec(&k_norm_array);
+    let gpu_beta: Vec<f32> = crate::common::helpers::allocation_to_vec(&beta_array);
+    let gpu_decay: Vec<f32> = crate::common::helpers::allocation_to_vec(&decay_array);
 
     assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
     assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");

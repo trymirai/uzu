@@ -18,7 +18,7 @@ use num_traits::NumCast;
 use crate::{
     ArrayElement, DataType,
     array::{Array, ArrayContextExt, allocation_as_slice},
-    backends::common::{Allocation, Backend, Buffer, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{DecoderArguments, EncodingParameters, Sampling},
@@ -666,7 +666,7 @@ impl<B: Backend> TraceValidator<B> {
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
         let produced_slice = allocation_as_slice::<Precision, B>(produced_allocation).to_vec();
-        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), produced_slice)
+        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), &produced_slice)
             .expect("Failed to reshape allocation");
 
         let (mut expected_data, mut produced_data) = match transform {
@@ -938,7 +938,7 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
         let logits = allocation_as_slice::<Precision, B>(logits).to_vec();
-        let logits = ArrayView::from_shape(IxDyn(shape), logits).expect("invalid logits trace shape");
+        let logits = ArrayView::from_shape(IxDyn(shape), &logits).expect("invalid logits trace shape");
         sampler.sample(logits)
     }
 }

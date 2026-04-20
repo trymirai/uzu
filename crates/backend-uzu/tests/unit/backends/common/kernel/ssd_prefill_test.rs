@@ -1,9 +1,9 @@
 use std::mem::size_of;
 
 use crate::{
-    DataType,
+    DataType, allocation_from_slice, allocation_to_vec,
     backends::common::{
-        Allocation, Backend, Context, Encoder, Kernels,
+        Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dScanKernel,
@@ -15,17 +15,6 @@ use crate::{
 #[macro_use]
 #[path = "../../../../common/mod.rs"]
 mod common;
-
-fn allocation_from_f32_slice<B: Backend>(
-    ctx: &B::Context,
-    data: &[f32],
-) -> Allocation<B> {
-    common::helpers::alloc_allocation_with_data(ctx, data)
-}
-
-fn read_allocation<B: Backend>(allocation: &Allocation<B>) -> Vec<f32> {
-    common::helpers::allocation_to_vec(allocation)
-}
 
 fn ssd_prefill_cpu_reference(
     suffix_len: usize,
@@ -160,16 +149,14 @@ fn run_prefill_kernel_mode<B: Backend>(
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
-    let x_buf = allocation_from_f32_slice(ctx, &fixture.x_data);
-    let dt_buf = allocation_from_f32_slice(ctx, &fixture.dt_data);
-    let b_buf = allocation_from_f32_slice(ctx, &fixture.b_data);
-    let c_buf = allocation_from_f32_slice(ctx, &fixture.c_data);
-
-    let d_buf = allocation_from_f32_slice(ctx, &fixture.d_data);
-
-    let z_buf = allocation_from_f32_slice(ctx, &fixture.z_data);
-    let mut state_buf = allocation_from_f32_slice(ctx, &fixture.state_init);
-    let mut y_buf = allocation_from_f32_slice(ctx, &vec![0f32; fixture.total_x]);
+    let x_buf = allocation_from_slice(ctx, &fixture.x_data);
+    let dt_buf = allocation_from_slice(ctx, &fixture.dt_data);
+    let b_buf = allocation_from_slice(ctx, &fixture.b_data);
+    let c_buf = allocation_from_slice(ctx, &fixture.c_data);
+    let d_buf = allocation_from_slice(ctx, &fixture.d_data);
+    let z_buf = allocation_from_slice(ctx, &fixture.z_data);
+    let mut state_buf = allocation_from_slice(ctx, &fixture.state_init);
+    let mut y_buf = allocation_from_slice(ctx, &vec![0f32; fixture.total_x]);
 
     let args = SSDPrefillArguments {
         x: &x_buf,
@@ -195,8 +182,8 @@ fn run_prefill_kernel_mode<B: Backend>(
     kernel.encode(&mut encoder, args, mode);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = read_allocation::<B>(&y_buf);
-    let state_vec = read_allocation::<B>(&state_buf);
+    let y_vec = allocation_to_vec::<B, f32>(&y_buf);
+    let state_vec = allocation_to_vec::<B, f32>(&state_buf);
     (y_vec, state_vec, None)
 }
 
@@ -219,18 +206,16 @@ fn run_conv_scan_once<B: Backend>(
     let total_state = channels * tap_count;
 
     let mut y_buf = if alias_io {
-        allocation_from_f32_slice(ctx, x_data)
+        allocation_from_slice(ctx, x_data)
     } else {
-        allocation_from_f32_slice(ctx, &vec![0.0f32; total_x])
+        allocation_from_slice(ctx, &vec![0.0f32; total_x])
     };
-    let mut b_out_buf = allocation_from_f32_slice(ctx, &vec![0.0f32; total_x]);
-    let mut c_out_buf = allocation_from_f32_slice(ctx, &vec![0.0f32; total_x]);
-
-    let w_buf = allocation_from_f32_slice(ctx, w_data);
-    let b_buf = allocation_from_f32_slice(ctx, b_data);
-
-    let mut state_buf = allocation_from_f32_slice(ctx, state_init);
-    let scratch_buf = allocation_from_f32_slice::<B>(ctx, &vec![0.0f32; total_state]);
+    let mut b_out_buf = allocation_from_slice(ctx, &vec![0.0f32; total_x]);
+    let mut c_out_buf = allocation_from_slice(ctx, &vec![0.0f32; total_x]);
+    let w_buf = allocation_from_slice(ctx, w_data);
+    let b_buf = allocation_from_slice(ctx, b_data);
+    let mut state_buf = allocation_from_slice(ctx, state_init);
+    let scratch_buf = allocation_from_slice::<B, f32>(ctx, &vec![0.0f32; total_state]);
 
     let padded_len = tap_count + suffix_len;
     let mut padded_host = vec![0.0f32; padded_len * channels];
@@ -244,7 +229,7 @@ fn run_conv_scan_once<B: Backend>(
             padded_host[(tap_count + token) * channels + ch] = x_data[token * channels + ch];
         }
     }
-    let padded_buf = allocation_from_f32_slice(ctx, &padded_host);
+    let padded_buf = allocation_from_slice(ctx, &padded_host);
 
     let mut encoder = Encoder::new(ctx).unwrap();
     kernel.encode(
@@ -282,8 +267,8 @@ fn run_conv_scan_once<B: Backend>(
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = read_allocation::<B>(&y_buf);
-    let state_vec = read_allocation::<B>(&state_buf);
+    let y_vec = allocation_to_vec::<B, f32>(&y_buf);
+    let state_vec = allocation_to_vec::<B, f32>(&state_buf);
     (y_vec, state_vec)
 }
 

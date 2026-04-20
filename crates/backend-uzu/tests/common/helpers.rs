@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use backend_uzu::{
-    ArrayElement, allocation_as_slice,
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
+    ArrayElement, allocation_copy_from_slice, allocation_from_slice,
+    backends::common::{Allocation, AllocationType, Backend, Context},
 };
 
 pub fn alloc_allocation<B: Backend, T>(
@@ -13,25 +13,15 @@ pub fn alloc_allocation<B: Backend, T>(
     context.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation")
 }
 
-pub fn alloc_allocation_with_data<B: Backend, T: bytemuck::NoUninit>(
+pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    let allocation = alloc_allocation::<B, T>(context, data.len());
-    if data.is_empty() {
-        return allocation;
-    }
-
-    let bytes: &[u8] = bytemuck::cast_slice(data);
-    let (buffer, range) = allocation.as_buffer_range();
-    let destination =
-        unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len()) };
-    destination.copy_from_slice(bytes);
-    allocation
+    allocation_from_slice(context, data)
 }
 
 pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
-    allocation_as_slice::<T, B>(allocation).to_vec()
+    backend_uzu::allocation_to_vec(allocation)
 }
 
 pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
@@ -41,6 +31,13 @@ pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
     let mut values = allocation_to_vec::<B, T>(allocation);
     values.truncate(elements_count);
     values
+}
+
+pub fn write_allocation<B: Backend, T: ArrayElement>(
+    allocation: &Allocation<B>,
+    data: &[T],
+) {
+    allocation_copy_from_slice(allocation, data)
 }
 
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {

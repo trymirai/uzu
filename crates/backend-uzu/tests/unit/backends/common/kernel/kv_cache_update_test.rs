@@ -99,17 +99,13 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let key_result = Array::from_shape_vec(
-        (num_heads, seq_len, head_dim),
-        common::helpers::allocation_to_vec::<Metal, f32>(&key_allocation),
-    )
-    .expect("Failed to convert key result to ndarray");
+    let key_values: Vec<f32> = common::helpers::allocation_to_vec(&key_allocation);
+    let key_result = Array::from_shape_vec((num_heads, seq_len, head_dim), key_values)
+        .expect("Failed to convert key result to ndarray");
 
-    let value_result = Array::from_shape_vec(
-        (num_heads, seq_len, head_dim),
-        common::helpers::allocation_to_vec::<Metal, f32>(&value_allocation),
-    )
-    .expect("Failed to convert value result to ndarray");
+    let value_values: Vec<f32> = common::helpers::allocation_to_vec(&value_allocation);
+    let value_result = Array::from_shape_vec((num_heads, seq_len, head_dim), value_values)
+        .expect("Failed to convert value result to ndarray");
 
     println!("Original keys head 0 rows 0,14:");
     println!("Row 0: {:?}", key_data.slice(s![0, 0, ..]));

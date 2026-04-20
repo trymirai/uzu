@@ -1,11 +1,9 @@
 #![cfg(metal_backend)]
 
 use crate::{
-    DataType,
+    DataType, allocation_copy_from_slice, allocation_from_slice, allocation_to_vec,
     backends::{
-        common::{
-            Allocation, AllocationType, Backend, Buffer, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate,
-        },
+        common::{Allocation, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
@@ -56,72 +54,29 @@ fn make_test_layer(
     }
 }
 
-fn allocation_vec(allocation: &Allocation<Metal>) -> Vec<f32> {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-        let bytes = std::slice::from_raw_parts(src, range.len());
-        bytemuck::cast_slice(bytes).to_vec()
-    }
-}
-
-fn allocation_from_slice(
-    context: &<Metal as Backend>::Context,
-    data: &[f32],
-) -> Allocation<Metal> {
-    let allocation = context
-        .create_allocation((data.len() * std::mem::size_of::<f32>()).max(1), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-        std::ptr::copy_nonoverlapping(
-            bytemuck::cast_slice(data).as_ptr(),
-            dst,
-            data.len() * std::mem::size_of::<f32>(),
-        );
-    }
-    allocation
-}
-
 fn overwrite_allocation(
     allocation: &mut Allocation<Metal>,
     updates: &[(usize, f32)],
 ) {
-    let mut data = allocation_vec(allocation);
+    let mut data: Vec<f32> = allocation_to_vec(allocation);
     for (index, value) in updates {
         data[*index] = *value;
     }
-    write_allocation(allocation, &data);
-}
-
-fn write_allocation(
-    allocation: &mut Allocation<Metal>,
-    data: &[f32],
-) {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-        std::ptr::copy_nonoverlapping(
-            bytemuck::cast_slice(data).as_ptr(),
-            dst,
-            data.len() * std::mem::size_of::<f32>(),
-        );
-    }
+    allocation_copy_from_slice(allocation, &data);
 }
 
 fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
-        let len = allocation_vec(&layer.keys).len();
+        let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
-        write_allocation(&mut layer.keys, &data);
+        allocation_copy_from_slice(&layer.keys, &data);
         data
     };
 
     let initial_values = {
-        let len = allocation_vec(&layer.values).len();
+        let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
-        write_allocation(&mut layer.values, &data);
+        allocation_copy_from_slice(&layer.values, &data);
         data
     };
 
@@ -212,10 +167,10 @@ fn run_scenario(
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
-    let actual_keys = allocation_vec(&layer.keys);
+    let actual_keys: Vec<f32> = allocation_to_vec(&layer.keys);
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
-    let actual_values = allocation_vec(&layer.values);
+    let actual_values: Vec<f32> = allocation_to_vec(&layer.values);
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -353,8 +308,8 @@ fn kv_cache_slice_apply_contiguous_window() {
 
     layer.apply_slice(&slice, None);
 
-    let keys_after = allocation_vec(&layer.keys);
-    let values_after = allocation_vec(&layer.values);
+    let keys_after: Vec<f32> = allocation_to_vec(&layer.keys);
+    let values_after: Vec<f32> = allocation_to_vec(&layer.values);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -384,8 +339,8 @@ fn kv_cache_slice_apply_wrap_window() {
 
     layer.apply_slice(&slice, None);
 
-    let keys_after = allocation_vec(&layer.keys);
-    let values_after = allocation_vec(&layer.values);
+    let keys_after: Vec<f32> = allocation_to_vec(&layer.keys);
+    let values_after: Vec<f32> = allocation_to_vec(&layer.values);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }

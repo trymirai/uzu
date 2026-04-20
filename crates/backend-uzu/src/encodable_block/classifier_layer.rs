@@ -6,14 +6,13 @@ use crate::{
     config::TransformerLayerConfig,
     encodable_block::{
         Attention, AttentionArguments, EncodingParameters, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope,
-        TensorAddSwap, TensorCopy,
+        TensorAddSwap,
     },
     forward_pass::state::RopeType,
     parameters::ParameterTree,
 };
 
 pub struct ClassifierLayer<B: Backend> {
-    copy_main_to_shortcut_mixer: TensorCopy<B>,
     pre_attention_norm: Option<Normalization<B>>,
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
@@ -22,7 +21,6 @@ pub struct ClassifierLayer<B: Backend> {
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
     mixer_residual_add: TensorAddSwap<B>,
-    copy_main_to_shortcut_mlp: TensorCopy<B>,
     pre_mlp_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
     post_mlp_norm: Option<Normalization<B>>,
@@ -50,8 +48,6 @@ impl<B: Backend> ClassifierLayer<B> {
         let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
-
-        let copy_main_to_shortcut_mixer = TensorCopy::<B>::new(ctx, intermediate_data_type).unwrap();
 
         let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_attention_norm_config {
             if layer_loader.subtree("pre_mixer_norm").is_ok() {
@@ -123,8 +119,6 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let mixer_residual_add = TensorAddSwap::<B>::new(ctx, intermediate_data_type).unwrap();
 
-        let copy_main_to_shortcut_mlp = TensorCopy::<B>::new(ctx, intermediate_data_type).unwrap();
-
         let pre_mlp_norm = Normalization::new(
             ctx,
             intermediate_data_type,
@@ -172,7 +166,6 @@ impl<B: Backend> ClassifierLayer<B> {
         let mlp_residual_add = TensorAddSwap::<B>::new(ctx, intermediate_data_type).unwrap();
 
         Self {
-            copy_main_to_shortcut_mixer,
             pre_attention_norm,
             qkv_projection,
             qk_norm,
@@ -181,7 +174,6 @@ impl<B: Backend> ClassifierLayer<B> {
             out_projection,
             post_attention_norm,
             mixer_residual_add,
-            copy_main_to_shortcut_mlp,
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
@@ -224,7 +216,8 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy_allocation(&main, &layer_traces.inputs);
         }
 
-        self.copy_main_to_shortcut_mixer.encode(&main, shortcut, layer_len, encoder)?;
+        debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
+        encoder.encode_copy_allocation(&main, shortcut);
 
         let mut main = if let Some(ref pre_attn_norm) = self.pre_attention_norm {
             pre_attn_norm.encode(&main, 0, batch_dim, encoder)?
@@ -293,7 +286,8 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy_allocation(&main, &layer_traces.mlp_inputs);
         }
 
-        self.copy_main_to_shortcut_mlp.encode(&main, shortcut, layer_len, encoder)?;
+        debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
+        encoder.encode_copy_allocation(&main, shortcut);
 
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]

@@ -1,16 +1,14 @@
 use std::{
     fmt::{Debug, Display},
-    ptr,
 };
 
-use bytemuck;
 use half::{bf16, f16};
 use num_traits::Float;
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Buffer, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -20,7 +18,10 @@ use backend_uzu::{
     },
 };
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{assert::assert_eq_float, helpers::{alloc_allocation_with_data, allocation_to_vec}},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -28,21 +29,6 @@ struct Input<T: ArrayElement + Float> {
     m: usize,
     k: usize,
     n: usize,
-}
-
-fn allocation_from_slice<T: ArrayElement, B: Backend>(
-    context: &B::Context,
-    data: &[T],
-) -> Allocation<B> {
-    let allocation = context
-        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let bytes = bytemuck::cast_slice(data);
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len());
-    }
-    allocation
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -73,7 +59,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f
     let n = input.n as u32;
 
     let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let a_allocation = allocation_from_slice::<T, B>(&context, &input.a);
+    let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
     let mut d_allocation = context
         .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
@@ -97,11 +83,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let (buffer, range) = d_allocation.as_buffer_range();
-    let bytes = unsafe {
-        std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
-    };
-    bytemuck::cast_slice(bytes).to_vec()
+    allocation_to_vec::<B, T>(&d_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug + Display>(

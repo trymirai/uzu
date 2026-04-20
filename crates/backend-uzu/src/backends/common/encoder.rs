@@ -75,6 +75,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
                 flags: AccessFlags::copy_write(),
             },
         ]);
+        let dst: &mut B::Buffer = unsafe { std::mem::transmute_copy(&dst) };
         self.command_buffer.encode_copy(src, src_range, dst, dst_range);
     }
 
@@ -98,6 +99,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             range: dst.gpu_address_subrange(range.clone()),
             flags: AccessFlags::copy_write(),
         }]);
+        let dst: &mut B::Buffer = unsafe { std::mem::transmute_copy(&dst) };
         self.command_buffer.encode_fill(dst, range, value);
     }
 
@@ -184,12 +186,12 @@ impl<B: Backend> Pending<B> {
 
 pub struct Completed<B: Backend> {
     command_buffer: <B::CommandBuffer as CommandBuffer>::Completed,
+    #[allow(unused)]
     allocation_pool: AllocationPool<B>,
 }
 
 impl<B: Backend> Completed<B> {
     pub fn gpu_execution_time(&self) -> Duration {
-        let _ = &self.allocation_pool;
         self.command_buffer.gpu_execution_time()
     }
 }

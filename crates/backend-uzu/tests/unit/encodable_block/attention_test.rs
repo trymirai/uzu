@@ -2,15 +2,14 @@
 
 use std::mem::size_of;
 
-use bytemuck;
 use ndarray::{Array4, s};
 use test_tag::tag;
 
 use crate::{
-    DataType,
+    DataType, allocation_from_slice, allocation_to_vec,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Buffer, Context, Encoder, Kernels,
+            Allocation, AllocationType, Backend, Context, Encoder, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
@@ -136,32 +135,6 @@ fn create_test_data(
     let values = Array4::from_shape_fn((batch_size, num_kv_heads, seq_len, head_dim), |_| rng.random_range(-0.5..0.5));
 
     (queries, keys, values)
-}
-
-fn allocation_from_slice(
-    context: &<Metal as Backend>::Context,
-    data: &[f32],
-) -> Allocation<Metal> {
-    let allocation = context
-        .create_allocation(data.len() * size_of::<f32>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let (buffer, range) = allocation.as_buffer_range();
-    let bytes = bytemuck::cast_slice(data);
-    unsafe {
-        let dst = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start);
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
-    }
-    allocation
-}
-
-fn allocation_to_vec(allocation: &Allocation<Metal>) -> Vec<f32> {
-    let (buffer, range) = allocation.as_buffer_range();
-    let byte_len = range.end - range.start;
-    unsafe {
-        let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-        let bytes = std::slice::from_raw_parts(src, byte_len);
-        bytemuck::cast_slice(bytes).to_vec()
-    }
 }
 
 /// Convert ndarray to the allocation layout expected by our kernel.
@@ -301,7 +274,7 @@ fn run_single_pass_attention(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_slice = allocation_to_vec(&output_buffer);
+    let output_slice: Vec<f32> = allocation_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
@@ -354,7 +327,7 @@ fn run_single_pass_attention_with_is_causal(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_slice = allocation_to_vec(&output_buffer);
+    let output_slice: Vec<f32> = allocation_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
@@ -408,7 +381,7 @@ fn run_gemm_attention(
     kernel.encode(context, &mut encoder, args)?;
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output = allocation_to_vec(&output_allocation);
+    let output: Vec<f32> = allocation_to_vec(&output_allocation);
 
     let kernel_output = convert_kernel_output(&output, batch_size, num_heads, seq_len, head_dim);
 
@@ -826,7 +799,7 @@ fn run_two_pass_attention(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let output_slice = allocation_to_vec(&output_buffer);
+    let output_slice: Vec<f32> = allocation_to_vec(&output_buffer);
     let kernel_output = convert_kernel_output(&output_slice, batch_size, num_heads, seq_len, head_dim);
 
     Ok(kernel_output)
@@ -1044,7 +1017,7 @@ fn perf_two_pass_attention() {
     );
 
     // ---- Sanity check ----
-    let output_slice = allocation_to_vec(&output_buffer);
+    let output_slice: Vec<f32> = allocation_to_vec(&output_buffer);
 
     // Check for NaN/Inf
     for &val in output_slice.iter().take(100) {

@@ -209,8 +209,8 @@ fn test_scatter_internal<B: Backend, T: ArrayElement + Float>(
         e,
         k,
     );
-    let cpu_topk_ids = crate::common::helpers::allocation_to_vec::<Cpu, i32>(&topk_ids_cpu);
-    let cpu_topk_probs = crate::common::helpers::allocation_to_vec::<Cpu, T>(&topk_probs_cpu);
+    let cpu_topk_ids: Vec<i32> = crate::common::helpers::allocation_to_vec(&topk_ids_cpu);
+    let cpu_topk_probs: Vec<T> = crate::common::helpers::allocation_to_vec(&topk_probs_cpu);
     let (cpu_ids, _cpu_probs, offsets_cpu) = cpu_expert_buckets(&cpu_topk_ids, &cpu_topk_probs, t, e, k);
     assert_eq!(out_offsets_array, offsets_cpu);
 

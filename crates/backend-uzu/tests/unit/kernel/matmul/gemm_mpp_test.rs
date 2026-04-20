@@ -1,18 +1,16 @@
 #![cfg(metal_backend)]
 
 use std::{
-    ptr,
     rc::Rc,
 };
 
-use bytemuck;
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Buffer, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -24,7 +22,11 @@ use backend_uzu::{
 };
 
 use crate::{
-    common::{assert::assert_eq_float, type_short_name},
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+        type_short_name,
+    },
     uzu_bench, uzu_test,
 };
 
@@ -36,21 +38,6 @@ struct Input {
     input_dim: usize,
     output_dim: usize,
     ab_scale: f32,
-}
-
-fn allocation_from_slice<T: ArrayElement, B: Backend>(
-    context: &B::Context,
-    data: &[T],
-) -> Allocation<B> {
-    let allocation = context
-        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    let bytes = bytemuck::cast_slice(data);
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len());
-    }
-    allocation
 }
 
 fn get_test_data(
@@ -83,9 +70,9 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
     let cpu_context = <Cpu as Backend>::Context::new().expect("CPU context");
 
     let right_array = cpu_context.create_array_from(&[input.output_dim, input.input_dim], &input.right, "");
-    let left_allocation = allocation_from_slice::<bf16, Cpu>(&cpu_context, &input.left);
+    let left_allocation = alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &input.left);
     let mut destination_allocation = if let Some(ref prefill) = input.destination_prefill {
-        allocation_from_slice::<bf16, Cpu>(&cpu_context, prefill)
+        alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, prefill)
     } else {
         cpu_context
             .create_allocation(
@@ -121,11 +108,7 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let (buffer, range) = destination_allocation.as_buffer_range();
-    let bytes = unsafe {
-        std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
-    };
-    bytemuck::cast_slice(bytes).to_vec()
+    allocation_to_vec(&destination_allocation)
 }
 
 fn get_mpp_output(
@@ -134,9 +117,9 @@ fn get_mpp_output(
     input: &Input,
 ) -> Vec<bf16> {
     let right_array = metal_context.create_array_from(&[input.output_dim, input.input_dim], &input.right, "");
-    let left_allocation = allocation_from_slice::<bf16, Metal>(metal_context, &input.left);
+    let left_allocation = alloc_allocation_with_data::<Metal, bf16>(metal_context, &input.left);
     let mut destination_allocation = if let Some(ref prefill) = input.destination_prefill {
-        allocation_from_slice::<bf16, Metal>(metal_context, prefill)
+        alloc_allocation_with_data::<Metal, bf16>(metal_context, prefill)
     } else {
         metal_context
             .create_allocation(
@@ -169,11 +152,7 @@ fn get_mpp_output(
         MatmulDispatchPath::GemmMpp,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let (buffer, range) = destination_allocation.as_buffer_range();
-    let bytes = unsafe {
-        std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
-    };
-    bytemuck::cast_slice(bytes).to_vec()
+    allocation_to_vec(&destination_allocation)
 }
 
 fn create_metal_context_and_matmul_kernel()
