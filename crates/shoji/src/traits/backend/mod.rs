@@ -30,13 +30,27 @@ pub trait BackendInstance: Sized {
     fn load_model(
         &self,
         reference: String,
-    ) -> Result<<Self::Backend as Backend>::LoadedModel, <Self::Backend as Backend>::Error>;
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<<Self::Backend as Backend>::LoadedModel, <Self::Backend as Backend>::Error>>
+                + Send
+                + '_,
+        >,
+    >;
 }
 
 pub trait LoadedModel {
     type Backend: Backend<LoadedModel = Self>;
 
-    fn new_state(&self) -> Result<<Self::Backend as Backend>::LoadedModelState, <Self::Backend as Backend>::Error>;
+    fn new_state(
+        &self
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<<Self::Backend as Backend>::LoadedModelState, <Self::Backend as Backend>::Error>>
+                + Send
+                + '_,
+        >,
+    >;
 
     fn stream<'a>(
         &'a self,

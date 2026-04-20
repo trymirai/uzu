@@ -1,0 +1,10 @@
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    #[error("Backend error: {message}")]
+    Backend {
+        message: String,
+    },
+    #[error("Unsupported model")]
+    UnsupportedModel,
+}

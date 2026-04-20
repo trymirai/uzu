@@ -16,4 +16,7 @@ async fn test_engine() {
         let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
         println!("{:?}, {}, {:?}", registry_identifier, identifier, download_phase);
     }
+
+    let model = engine.model("alibaba:qwen3.5:0.8b:mlx:8").await.unwrap().unwrap();
+    let session = engine.chat(model).await.unwrap();
 }

@@ -25,11 +25,15 @@ macro_rules! erased_backend_family {
                 fn load_model(
                     &self,
                     reference: String,
-                ) -> Result<Box<dyn AnyLoadedModel>, DynError>;
+                ) -> Pin<Box<dyn std::future::Future<Output = Result<Box<dyn AnyLoadedModel>, DynError>> + Send + '_>>;
             }
 
             pub trait AnyLoadedModel: Send + Sync + 'static {
-                fn new_state(&self) -> Result<Box<dyn AnyLoadedModelState>, DynError>;
+                fn new_state(
+                    &self
+                ) -> Pin<
+                    Box<dyn std::future::Future<Output = Result<Box<dyn AnyLoadedModelState>, DynError>> + Send + '_>,
+                >;
 
                 fn stream<'a>(
                     &'a self,
@@ -74,10 +78,14 @@ macro_rules! erased_backend_family {
                 fn load_model(
                     &self,
                     reference: String,
-                ) -> Result<Box<dyn AnyLoadedModel>, DynError> {
-                    backend::BackendInstance::load_model(self, reference)
-                        .map(|m| Box::new(m) as Box<dyn AnyLoadedModel>)
-                        .map_err(|e| Box::new(e) as DynError)
+                ) -> Pin<Box<dyn std::future::Future<Output = Result<Box<dyn AnyLoadedModel>, DynError>> + Send + '_>>
+                {
+                    Box::pin(async move {
+                        backend::BackendInstance::load_model(self, reference)
+                            .await
+                            .map(|m| Box::new(m) as Box<dyn AnyLoadedModel>)
+                            .map_err(|e| Box::new(e) as DynError)
+                    })
                 }
             }
 
@@ -88,10 +96,17 @@ macro_rules! erased_backend_family {
                 <T::Backend as backend::Backend>::LoadedModelState: AnyLoadedModelState,
                 <T::Backend as backend::Backend>::Error: Send + Sync + 'static,
             {
-                fn new_state(&self) -> Result<Box<dyn AnyLoadedModelState>, DynError> {
-                    backend::LoadedModel::new_state(self)
-                        .map(|s| Box::new(s) as Box<dyn AnyLoadedModelState>)
-                        .map_err(|e| Box::new(e) as DynError)
+                fn new_state(
+                    &self
+                ) -> Pin<
+                    Box<dyn std::future::Future<Output = Result<Box<dyn AnyLoadedModelState>, DynError>> + Send + '_>,
+                > {
+                    Box::pin(async move {
+                        backend::LoadedModel::new_state(self)
+                            .await
+                            .map(|s| Box::new(s) as Box<dyn AnyLoadedModelState>)
+                            .map_err(|e| Box::new(e) as DynError)
+                    })
                 }
 
                 fn stream<'a>(
@@ -165,13 +180,13 @@ impl AnyBackend {
         }
     }
 
-    pub fn load_model(
+    pub async fn load_model(
         &self,
         reference: String,
     ) -> Result<AnyLoadedModel, DynError> {
         match self {
-            AnyBackend::Token(instance) => instance.load_model(reference).map(AnyLoadedModel::Token),
-            AnyBackend::Message(instance) => instance.load_model(reference).map(AnyLoadedModel::Message),
+            AnyBackend::Token(instance) => instance.load_model(reference).await.map(AnyLoadedModel::Token),
+            AnyBackend::Message(instance) => instance.load_model(reference).await.map(AnyLoadedModel::Message),
         }
     }
 }
@@ -179,4 +194,27 @@ impl AnyBackend {
 pub enum AnyLoadedModel {
     Token(Box<dyn token::AnyLoadedModel>),
     Message(Box<dyn message::AnyLoadedModel>),
+}
+
+impl AnyLoadedModel {
+    pub async fn new_state(&self) -> Result<AnyLoadedModelState, DynError> {
+        match self {
+            AnyLoadedModel::Token(model) => model.new_state().await.map(AnyLoadedModelState::Token),
+            AnyLoadedModel::Message(model) => model.new_state().await.map(AnyLoadedModelState::Message),
+        }
+    }
+}
+
+pub enum AnyLoadedModelState {
+    Token(Box<dyn token::AnyLoadedModelState>),
+    Message(Box<dyn message::AnyLoadedModelState>),
+}
+
+impl AnyLoadedModelState {
+    pub fn clone_boxed(&self) -> Self {
+        match self {
+            AnyLoadedModelState::Token(state) => AnyLoadedModelState::Token(state.clone_boxed()),
+            AnyLoadedModelState::Message(state) => AnyLoadedModelState::Message(state.clone_boxed()),
+        }
+    }
 }

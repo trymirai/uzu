@@ -2,12 +2,13 @@ mod config;
 mod downloader;
 mod error;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use backend_uzu::inference_backend::{Backend as UzuBackend, BackendInstance as UzuBackendInstance};
 pub use config::Config;
 pub use downloader::Downloader;
 pub use error::Error;
+use nagare::chat::Session as ChatSession;
 use shoji::{
     traits::{Backend, BackendInstance, Registry, backend::erased::AnyBackend},
     types::Model,
@@ -207,7 +208,7 @@ impl Engine {
         let models = self.models().await?;
         for model in models {
             if let Some(model_path) = self.model_path(&model).await {
-                if model_path.to_string_lossy().to_string() == path {
+                if model_path == path {
                     return Ok(Some(model));
                 }
             }
@@ -231,15 +232,17 @@ impl Engine {
     pub async fn model_path(
         &self,
         model: &Model,
-    ) -> Option<PathBuf> {
+    ) -> Option<String> {
         let path = if model.is_local() {
             if let Some(local_external_path) = model.local_external_path() {
-                Some(PathBuf::from(local_external_path))
+                Some(local_external_path.clone())
             } else {
                 let storage = self.storage.lock().await;
                 let state = storage.state(&model.identifier()).await?;
                 match state.phase {
-                    DownloadPhase::Downloaded => storage.config.cache_model_path(model),
+                    DownloadPhase::Downloaded => {
+                        storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
+                    },
                     DownloadPhase::NotDownloaded
                     | DownloadPhase::Downloading
                     | DownloadPhase::Paused
@@ -257,5 +260,21 @@ impl Engine {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
         Ok(())
+    }
+}
+
+impl Engine {
+    pub async fn chat(
+        &self,
+        model: Model,
+    ) -> Result<ChatSession, Error> {
+        let path = self.model_path(&model).await;
+        if let Some(backend_entity) = model.backend_entity() {
+            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::UnsupportedModel)?;
+            let session = ChatSession::new(backend, model, path).await?;
+            Ok(session)
+        } else {
+            return Err(Error::UnsupportedModel);
+        }
     }
 }

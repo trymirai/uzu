@@ -1,4 +1,8 @@
-use std::pin::Pin;
+use std::{
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use futures::TryStream;
 use shoji::traits::{
@@ -7,12 +11,17 @@ use shoji::traits::{
     backend::message::{Input as MessageInput, Output as MessageOutput},
 };
 
-use crate::TOOLCHAIN_VERSION;
+use crate::{
+    TOOLCHAIN_VERSION,
+    session::{ChatSession, config::DecodingConfig},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Unable to load model")]
     UnableToLoad,
+    #[error("Unable to create state")]
+    UnableToCreateState,
     #[error("Stream failed")]
     StreamFailed,
 }
@@ -52,21 +61,59 @@ impl BackendInstanceTrait for BackendInstance {
 
     fn load_model(
         &self,
-        _: String,
-    ) -> Result<<Self::Backend as BackendTrait>::LoadedModel, <Self::Backend as BackendTrait>::Error> {
-        Ok(LoadedModel)
+        reference: String,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        <Self::Backend as BackendTrait>::LoadedModel,
+                        <Self::Backend as BackendTrait>::Error,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            let path = PathBuf::from(&reference);
+            let session = ChatSession::new(path, DecodingConfig::default()).map_err(|_| Error::UnableToLoad)?;
+            Ok(LoadedModel {
+                session: Arc::new(Mutex::new(session)),
+            })
+        })
     }
 }
 
-pub struct LoadedModel;
+pub struct LoadedModel {
+    session: Arc<Mutex<ChatSession>>,
+}
+unsafe impl Send for LoadedModel {}
+unsafe impl Sync for LoadedModel {}
 
 impl LoadedModelTrait for LoadedModel {
     type Backend = Backend;
 
     fn new_state(
         &self
-    ) -> Result<<Self::Backend as BackendTrait>::LoadedModelState, <Self::Backend as BackendTrait>::Error> {
-        Ok(LoadedModelState {})
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        <Self::Backend as BackendTrait>::LoadedModelState,
+                        <Self::Backend as BackendTrait>::Error,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        let reset = self
+            .session
+            .lock()
+            .map_err(|_| Error::UnableToCreateState)
+            .and_then(|mut guard| guard.reset().map_err(|_| Error::UnableToCreateState));
+        Box::pin(async move {
+            reset?;
+            Ok(LoadedModelState)
+        })
     }
 
     fn stream(

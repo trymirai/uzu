@@ -1,3 +1,5 @@
+use nagare::chat::Error as ChatError;
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -15,4 +17,8 @@ pub enum Error {
     Backend {
         message: String,
     },
+    #[error("Unsupported model")]
+    UnsupportedModel,
+    #[error(transparent)]
+    Chat(#[from] ChatError),
 }
