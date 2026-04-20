@@ -429,14 +429,6 @@ impl<B: Backend> ForwardPassState<B> {
             // LLM-specific arrays
             ArrayId::Logits => self.llm_state().logits.clone(),
             ArrayId::TokenSeeds => self.llm_state().token_seeds.clone(),
-            ArrayId::Keys(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_transformer().expect("Expected transformer layer").keys.clone()
-            },
-            ArrayId::Values(layer_index) => {
-                let cache = self.llm_state().cache_layers.borrow();
-                cache.data[layer_index].as_transformer().expect("Expected transformer layer").values.clone()
-            },
             ArrayId::AttentionSinks(layer_index) => {
                 self.shared_buffers.borrow().attention_sinks.as_ref().expect("Attention sinks not initialized")
                     [layer_index]

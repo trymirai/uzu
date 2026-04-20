@@ -180,38 +180,43 @@ impl<B: Backend> Attention<B> {
         let num_heads = queries_array.shape()[0];
         let head_dim = queries_array.shape()[2];
         let num_groups = rotated_keys_array.shape()[0];
-        let max_sequence_length = if state.cache_layers().is_some() {
-            state.array(ArrayId::Keys(self.layer_index)).shape()[1]
-        } else {
-            // For classifiers without KV cache, max_sequence_length is just suffix_length
-            suffix_length
-        };
-
         let is_trie = state.token_subtrie_ranges.is_some();
 
-        let (segment_prefix_length, ring_params) = if let Some(cache_layers) = state.cache_layers() {
-            let projection_step = parameters.projection_step.unwrap_or(0);
-            let cache = cache_layers.borrow();
-            let layer = cache.data[self.layer_index]
-                .as_transformer()
-                .expect("Attention kernel expects transformer layer state");
-            let ring_params = match layer.state {
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    window_length,
-                } => {
-                    let overflow = (ring_length + projection_step).saturating_sub(window_length);
-                    Some(RingParams {
-                        ring_offset: ((ring_offset + overflow) % window_length) as u32,
-                        ring_length: (ring_length + projection_step).min(window_length) as u32,
-                    })
-                },
-                _ => None,
+        let (segment_prefix_length, ring_params, key_cache_array, value_cache_array) =
+            if let Some(cache_layers) = state.cache_layers() {
+                let projection_step = parameters.projection_step.unwrap_or(0);
+                let cache = cache_layers.borrow();
+                let layer = cache.data[self.layer_index]
+                    .as_transformer()
+                    .expect("Attention kernel expects transformer layer state");
+
+                let segment_prefix_length = layer.projected_segment_prefix_length(projection_step);
+                let ring_params = match layer.state {
+                    KVCacheLayerState::Windowed {
+                        ring_offset,
+                        ring_length,
+                        window_length,
+                    } => {
+                        let overflow = (ring_length + projection_step).saturating_sub(window_length);
+                        Some(RingParams {
+                            ring_offset: ((ring_offset + overflow) % window_length) as u32,
+                            ring_length: (ring_length + projection_step).min(window_length) as u32,
+                        })
+                    },
+                    _ => None,
+                };
+                let key_cache_array = layer.keys.clone();
+                let value_cache_array = layer.values.clone();
+
+                (segment_prefix_length, ring_params, Some(key_cache_array), Some(value_cache_array))
+            } else {
+                (0, None, None, None)
             };
-            (layer.projected_segment_prefix_length(projection_step), ring_params)
+
+        let max_sequence_length = if let Some(ref array) = key_cache_array {
+            array.shape()[1]
         } else {
-            (0, None)
+            suffix_length
         };
 
         let is_kv_cache_ring = ring_params.is_some();
@@ -244,11 +249,9 @@ impl<B: Backend> Attention<B> {
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
 
-        let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(self.layer_index)));
         let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
         let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
-        let value_cache_array = has_kv_cache.then(|| state.array(ArrayId::Values(self.layer_index)));
         let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
         let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 

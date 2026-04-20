@@ -20,8 +20,6 @@ pub enum ArrayId {
     MlpHidden,
     SsmInProj,
 
-    Keys(usize),
-    Values(usize),
     SsmConvState(usize),
     SsmState(usize),
     SsmPacked(usize),
