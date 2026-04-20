@@ -17,13 +17,6 @@ pub struct TokenInputs<B: Backend> {
     token_parents: Array<B>,
 }
 
-pub struct LlmDecoderPass<B: Backend> {
-    token_inputs: TokenInputs<B>,
-    batch_dim: usize,
-    sampling_start: usize,
-    sampling_length: usize,
-}
-
 impl<B: Backend> TokenInputs<B> {
     pub fn new_llm(
         context: &B::Context,
@@ -79,6 +72,34 @@ impl<B: Backend> TokenInputs<B> {
 
     pub fn token_subtrie_ranges(&self) -> Option<&Allocation<B>> {
         self.token_subtrie_ranges.as_ref().map(Array::allocation)
+    }
+
+    pub fn decoder_arguments<'a>(
+        &'a self,
+        model_shape: &ModelShape,
+        shared_buffers: &'a SharedBuffers<B>,
+        cache_layers: Option<&'a mut CacheLayers<B>>,
+        batch_dim: usize,
+        sampling_start: usize,
+        sampling_length: usize,
+        #[cfg(feature = "tracing")] trace: Option<&'a ActivationTrace<B>>,
+    ) -> DecoderArguments<'a, B> {
+        DecoderArguments {
+            activation_data_type: model_shape.activation_data_type(),
+            token_ids: self.token_ids(),
+            token_positions: self.token_positions(),
+            token_parents: self.token_parents(),
+            token_subtrie_ranges: self.token_subtrie_ranges(),
+            shared_buffers,
+            cache_layers,
+            batch_dim,
+            sampling_start,
+            sampling_length,
+            rope_max_sequence_length: model_shape.context_length(),
+            rope_dim: model_shape.rope_dim(),
+            #[cfg(feature = "tracing")]
+            trace,
+        }
     }
 
     fn init_token_ids(
@@ -151,67 +172,5 @@ impl<B: Backend> TokenInputs<B> {
         .expect("Invalid token subtrie range shape");
         array.copy_from_view(source);
         array
-    }
-}
-
-impl<B: Backend> LlmDecoderPass<B> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        context: &B::Context,
-        model_shape: &ModelShape,
-        token_ids: &[u64],
-        token_subtrie_ranges: Option<&[[u32; 3]]>,
-        token_positions: &[usize],
-        token_ids_array: Option<Array<B>>,
-        token_positions_array: Option<Array<B>>,
-        batch_dim: usize,
-        sampling_start: usize,
-        sampling_length: usize,
-    ) -> Self {
-        Self {
-            token_inputs: TokenInputs::new_llm(
-                context,
-                model_shape,
-                token_ids,
-                token_subtrie_ranges,
-                token_positions,
-                token_ids_array,
-                token_positions_array,
-                sampling_start,
-                sampling_length,
-            ),
-            batch_dim,
-            sampling_start,
-            sampling_length,
-        }
-    }
-
-    pub fn sampling_length(&self) -> usize {
-        self.sampling_length
-    }
-
-    pub fn decoder_arguments<'a>(
-        &'a self,
-        model_shape: &ModelShape,
-        shared_buffers: &'a SharedBuffers<B>,
-        cache_layers: Option<&'a mut CacheLayers<B>>,
-        #[cfg(feature = "tracing")] trace: Option<&'a ActivationTrace<B>>,
-    ) -> DecoderArguments<'a, B> {
-        DecoderArguments {
-            activation_data_type: model_shape.activation_data_type(),
-            token_ids: self.token_inputs.token_ids(),
-            token_positions: self.token_inputs.token_positions(),
-            token_parents: self.token_inputs.token_parents(),
-            token_subtrie_ranges: self.token_inputs.token_subtrie_ranges(),
-            shared_buffers,
-            cache_layers,
-            batch_dim: self.batch_dim,
-            sampling_start: self.sampling_start,
-            sampling_length: self.sampling_length,
-            rope_max_sequence_length: model_shape.context_length(),
-            rope_dim: model_shape.rope_dim(),
-            #[cfg(feature = "tracing")]
-            trace,
-        }
     }
 }

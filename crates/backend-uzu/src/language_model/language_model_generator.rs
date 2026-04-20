@@ -18,7 +18,7 @@ use crate::{
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{INVALID_POSITION, KVCacheLayerState},
-        token_inputs::LlmDecoderPass,
+        token_inputs::TokenInputs,
     },
     language_model::grammar::CompiledGrammar,
     session::{
@@ -46,14 +46,14 @@ struct Task<'a> {
 
 struct EncodedForwardPass<'encoding, B: Backend> {
     encoder: Encoder<'encoding, B>,
-    pass: LlmDecoderPass<B>,
+    token_inputs: TokenInputs<B>,
     logits: Option<Allocation<B>>,
     sampling_output: Option<Allocation<B>>,
     sampling_inputs: Option<SamplingInputs<B>>,
 }
 
 struct RetainedForwardPass<B: Backend> {
-    pass: LlmDecoderPass<B>,
+    token_inputs: TokenInputs<B>,
     logits: Option<Allocation<B>>,
     sampling_output: Option<Allocation<B>>,
     sampling_inputs: Option<SamplingInputs<B>>,
@@ -498,10 +498,16 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
         }
 
-        let pass = self.build_llm_decoder_pass(task, token_ids_allocation, token_positions_allocation);
+        let batch_dim = task.active_row_count;
+        let sampling_start = task.sampling_start;
+        let sampling_length = task.sampling_length;
+        let token_inputs = self.build_token_inputs(task, token_ids_allocation, token_positions_allocation);
         let mut encoded_forward_pass = Self::encode_forward_pass(
             &self.context,
-            pass,
+            token_inputs,
+            batch_dim,
+            sampling_start,
+            sampling_length,
             false,
             Some(sampling_method),
             &EncodingParameters::new(),
@@ -727,13 +733,16 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let run_start = Instant::now();
         let sample = !task.is_prefilling;
         let is_prefilling = task.is_prefilling;
+        let batch_dim = task.active_row_count;
+        let sampling_start = task.sampling_start;
+        let sampling_length = task.sampling_length;
         let sampling_inputs = sample.then(|| {
             self.create_sampling_inputs(task.sampling_start, task.sampling_length, task.token_seeds, task.token_bitmask)
         });
 
         let is_first_decode = task.token_ids.len() == 1;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
-        let pass = self.build_llm_decoder_pass(task, None, None);
+        let token_inputs = self.build_token_inputs(task, None, None);
 
         if should_capture {
             self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
@@ -741,7 +750,10 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let encoded_forward_pass = Self::encode_forward_pass(
             &self.context,
-            pass,
+            token_inputs,
+            batch_dim,
+            sampling_start,
+            sampling_length,
             is_prefilling,
             sample.then_some(sampling_method),
             &EncodingParameters::new(),
@@ -751,7 +763,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let (
             RetainedForwardPass {
-                pass: _pass,
+                token_inputs: _token_inputs,
                 logits: _logits,
                 sampling_output,
                 sampling_inputs: _sampling_inputs,
@@ -772,7 +784,10 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
     fn encode_forward_pass<'encoding>(
         context: &'encoding LanguageModelGeneratorContext<B>,
-        pass: LlmDecoderPass<B>,
+        token_inputs: TokenInputs<B>,
+        batch_dim: usize,
+        sampling_start: usize,
+        sampling_length: usize,
         is_prefilling: bool,
         sampling_method: Option<SamplingMethod>,
         parameters: &EncodingParameters,
@@ -785,7 +800,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             encoder.encode_wait_for_event(&context.async_buffers.event, counter);
         }
 
-        let sampling_length = pass.sampling_length();
         let mut sampling_output = sampling_method.map(|_| {
             context
                 .context
@@ -795,10 +809,13 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let mut logits = None;
         if is_prefilling {
             let mut cache_layers = context.cache_layers.borrow_mut();
-            let decoder_arguments = pass.decoder_arguments(
+            let decoder_arguments = token_inputs.decoder_arguments(
                 &context.model_shape,
                 context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
+                batch_dim,
+                sampling_start,
+                sampling_length,
                 #[cfg(feature = "tracing")]
                 None,
             );
@@ -816,10 +833,13 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 )
                 .into_allocation();
             let mut cache_layers = context.cache_layers.borrow_mut();
-            let decoder_arguments = pass.decoder_arguments(
+            let decoder_arguments = token_inputs.decoder_arguments(
                 &context.model_shape,
                 context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
+                batch_dim,
+                sampling_start,
+                sampling_length,
                 #[cfg(feature = "tracing")]
                 None,
             );
@@ -847,20 +867,20 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         Ok(EncodedForwardPass {
             encoder,
-            pass,
+            token_inputs,
             logits,
             sampling_output,
             sampling_inputs,
         })
     }
 
-    fn build_llm_decoder_pass(
+    fn build_token_inputs(
         &self,
         task: Task<'_>,
         token_ids_allocation: Option<Array<B>>,
         token_positions_allocation: Option<Array<B>>,
-    ) -> LlmDecoderPass<B> {
-        LlmDecoderPass::new(
+    ) -> TokenInputs<B> {
+        TokenInputs::new_llm(
             self.context.context.as_ref(),
             &self.context.model_shape,
             task.token_ids,
@@ -868,7 +888,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             task.token_positions,
             token_ids_allocation,
             token_positions_allocation,
-            task.active_row_count,
             task.sampling_start,
             task.sampling_length,
         )
@@ -965,7 +984,7 @@ impl<'encoding, B: Backend> EncodedForwardPass<'encoding, B> {
         let pending = self.encoder.end_encoding().submit();
         (
             RetainedForwardPass {
-                pass: self.pass,
+                token_inputs: self.token_inputs,
                 logits: self.logits,
                 sampling_output: self.sampling_output,
                 sampling_inputs: self.sampling_inputs,

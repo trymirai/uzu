@@ -156,16 +156,12 @@ template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(ShortConvTrie)(
     device const T* in_proj,
-    constant const uint& in_proj_offset,
     device const T* w,
     device const T* b OPTIONAL(has_bias),
     device const T* base_state,
     device const int* parents,
-    constant const uint& parents_offset,
     device T* out,
-    constant const uint& out_offset,
     device T* suffix_state,
-    constant const uint& suffix_state_offset,
     constant const uint& suffix_len,
     constant const uint& kernel_size,
     constant const uint& in_proj_stride,
@@ -174,11 +170,6 @@ PUBLIC KERNEL(ShortConvTrie)(
     const bool has_bias SPECIALIZE,
     const uint channel_idx AXIS(model_dim, 256)
 ) {
-  in_proj += size_t(in_proj_offset);
-  parents += size_t(parents_offset / sizeof(int));
-  out += size_t(out_offset);
-  suffix_state += size_t(suffix_state_offset);
-
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
   const device T* w_row = w + channel_idx * kernel_size;
   const uint base_state_offset = channel_idx * state_stride;

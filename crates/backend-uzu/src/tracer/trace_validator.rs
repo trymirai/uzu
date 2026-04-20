@@ -22,7 +22,7 @@ use crate::{
     classifier::Classifier,
     config::ModelMetadata,
     encodable_block::{EncodingParameters, Sampling},
-    forward_pass::{cache_layers::CacheLayers, token_inputs::LlmDecoderPass, traces::ActivationTrace},
+    forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -241,7 +241,7 @@ impl<B: Backend> TraceValidator<B> {
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
         let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
-        let pass = LlmDecoderPass::new(
+        let token_inputs = TokenInputs::new_llm(
             ctx.context.as_ref(),
             &ctx.model_shape,
             &token_ids,
@@ -249,7 +249,6 @@ impl<B: Backend> TraceValidator<B> {
             &token_positions,
             None,
             None,
-            token_ids.len(),
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
         );
@@ -267,10 +266,13 @@ impl<B: Backend> TraceValidator<B> {
             .into_allocation();
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
-            let decoder_arguments = pass.decoder_arguments(
+            let decoder_arguments = token_inputs.decoder_arguments(
                 &ctx.model_shape,
                 ctx.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
+                token_ids.len(),
+                /*sampling_start=*/ 0,
+                /*sampling_length=*/ token_ids.len(),
                 #[cfg(feature = "tracing")]
                 Some(&traces),
             );

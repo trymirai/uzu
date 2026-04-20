@@ -225,23 +225,25 @@ impl<B: Backend> ShortConvMixer<B> {
         let state_stride = kernel_size.saturating_sub(1);
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_offset = sampling_start * in_proj_stride * elem_bytes;
-        let out_offset = sampling_start * self.model_dim * elem_bytes;
-        let suffix_state_offset = sampling_start * self.model_dim * state_stride * elem_bytes;
-        let parents_offset = sampling_start * std::mem::size_of::<i32>();
+        let in_proj_view = in_proj
+            .view_at_offset(sampling_start * in_proj_stride * elem_bytes, trie_len * in_proj_stride * elem_bytes);
+        let parents_view = token_parents
+            .view_at_offset(sampling_start * std::mem::size_of::<i32>(), trie_len * std::mem::size_of::<i32>());
+        let mut out_view =
+            out.view_at_offset(sampling_start * self.model_dim * elem_bytes, trie_len * self.model_dim * elem_bytes);
+        let mut suffix_state_view = layer.suffix_state.view_at_offset(
+            sampling_start * self.model_dim * state_stride * elem_bytes,
+            trie_len * self.model_dim * state_stride * elem_bytes,
+        );
 
         self.short_conv_trie.encode(
-            in_proj,
-            in_proj_offset as u32,
+            &in_proj_view,
             &self.conv_weight,
             self.conv_bias.as_ref(),
             &layer.conv_state,
-            token_parents,
-            parents_offset as u32,
-            out,
-            out_offset as u32,
-            &mut layer.suffix_state,
-            suffix_state_offset as u32,
+            &parents_view,
+            &mut out_view,
+            &mut suffix_state_view,
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
