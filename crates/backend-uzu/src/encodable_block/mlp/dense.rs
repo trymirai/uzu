@@ -37,7 +37,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
     fn encode(
         &self,
         context: &B::Context,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -45,6 +45,6 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         debug_assert_eq!(self.gate.hidden_dim(), self.hidden_dim);
         let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
         self.gate.encode(encoder, &fused_up, &mut hidden, batch_dim as i32)?;
-        self.down.encode(context, &hidden, batch_dim, encoder)
+        self.down.encode(context, &mut hidden, batch_dim, encoder)
     }
 }

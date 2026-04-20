@@ -67,21 +67,17 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
         context: &B::Context,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let (input_buffer, input_range) = input.as_buffer_range();
-        let mut transformed_input = encoder.allocate_scratch(input_range.len())?;
-        let (transformed_buffer, transformed_range) = transformed_input.as_buffer_range();
-        encoder.encode_copy(input_buffer, input_range, transformed_buffer, transformed_range.clone());
         self.input_hadamard_kernel.encode(
-            &mut transformed_input,
+            input,
             &self.input_factors,
             self.input_dimension as u32,
             batch_dim as u32,
             encoder,
         );
-        self.inner_linear.encode(context, &transformed_input, batch_dim, encoder)
+        self.inner_linear.encode(context, input, batch_dim, encoder)
     }
 }

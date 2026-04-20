@@ -62,7 +62,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         config: DeltaNetAttentionConfig,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> Result<Self, DeltaNetMixerError<B>> {
+    ) -> Result<(Self, Option<Allocation<B>>), DeltaNetMixerError<B>> {
         if config.kernel_size < 2 {
             return Err(DeltaNetMixerError::UnsupportedConfiguration(format!(
                 "kernel_size must be >= 2, got {}",
@@ -89,7 +89,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
         let conv_tree = resolve_subtree(&mixer_tree, &["conv", "conv1d"]);
 
-        let in_projection = <dyn Linear<B>>::new(
+        let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &config.in_proj_config,
             model_dim,
             [config.total_proj_dim()],
@@ -138,24 +138,27 @@ impl<B: Backend> DeltaNetMixer<B> {
         let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, data_type)
             .map_err(DeltaNetMixerError::BackendError)?;
 
-        Ok(Self {
-            config,
-            in_projection,
-            out_projection,
-            conv_update,
-            delta_net_update,
-            conv_pack,
-            conv_scan,
-            prefill_prep,
-            delta_net_prefill,
-            norm_gate,
-            conv_weight,
-            conv_bias,
-            a_log,
-            dt_bias,
-            norm_weight,
-            data_type,
-        })
+        Ok((
+            Self {
+                config,
+                in_projection,
+                out_projection,
+                conv_update,
+                delta_net_update,
+                conv_pack,
+                conv_scan,
+                prefill_prep,
+                delta_net_prefill,
+                norm_gate,
+                conv_weight,
+                conv_bias,
+                a_log,
+                dt_bias,
+                norm_weight,
+                data_type,
+            },
+            in_projection_input_hadamard_factors,
+        ))
     }
 
     fn run_conv_update(
@@ -307,7 +310,7 @@ impl<B: Backend> DeltaNetMixer<B> {
     pub(crate) fn encode(
         &self,
         args: DeltaNetArguments<'_, B>,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let DeltaNetArguments {
@@ -353,6 +356,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             );
         }
 
-        self.out_projection.encode(context, &delta_output, active_row_count, encoder)
+        self.out_projection.encode(context, &mut delta_output, active_row_count, encoder)
     }
 }

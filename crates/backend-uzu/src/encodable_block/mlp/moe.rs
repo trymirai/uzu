@@ -197,7 +197,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
         context: &B::Context,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -211,61 +211,6 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let num_blocks = suffix_length.div_ceil(256).max(1);
         let num_tiles = e.div_ceil(512).max(1);
 
-        let mut topk_ids = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], DataType::I32))?;
-        let mut topk_probs = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], self.data_type))?;
-        let mut offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
-        let mut sumk = encoder.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
-        let mut bucketed_ids = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
-        let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
-        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
-        let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
-        let mut y_partial = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
-        let mut hidden = encoder.allocate_scratch(size_for_shape(&[total_rows, self.hidden_dim], DataType::F32))?;
-        let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;
-        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
-        let mut tile_offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
-        let h_blocks = self.hidden_dim.div_ceil(4);
-        let mut tile_map =
-            encoder.allocate_scratch(size_for_shape(&[total_rows * h_blocks.max(1) * 3], DataType::U32))?;
-        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
-        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
-        let scatter_entries = num_blocks * num_tiles * 512;
-        let mut partials = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
-        let mut block_bases = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
-        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[num_blocks * num_tiles], DataType::U32))?;
-        let mut output = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.model_dim], self.data_type))?;
-
-        // Clear internal MoE buffers
-        if suffix_length > 0 && k > 0 {
-            // Clear topk_ids and tok2row buffers
-            let (buffer, range) = topk_ids.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0xFF);
-            }
-            let (buffer, range) = tok2row.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0xFF);
-            }
-
-            // Clear hidden buffer
-            let (buffer, range) = hidden.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0);
-            }
-
-            // Clear y_partial buffer
-            let (buffer, range) = y_partial.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0);
-            }
-
-            // Clear x_perm buffer
-            let (buffer, range) = x_perm.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0);
-            }
-        }
-
         // Use fused Router+TopK kernel for non-quantized routers
         if self.model_dim % 4 != 0 {
             panic!("MoE fused router+topk failed: {} % 4 != 0", self.model_dim);
@@ -277,8 +222,17 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             panic!("MoE fused router+bottomk failed: {k} > 128");
         }
 
+        let mut topk_ids = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], DataType::I32))?;
+        let mut topk_probs = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], self.data_type))?;
+
+        if suffix_length > 0 && k > 0 {
+            let (buffer, range) = topk_ids.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0xFF);
+            }
+        }
+
         if suffix_length > 0 && e > 0 && k > 0 {
-            // Use the fused router+topk kernel
             self.router_topk_kernel.encode(
                 input,
                 &self.router.weights,
@@ -294,6 +248,10 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             );
         }
 
+        let mut offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
+        let mut sumk = encoder.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
+        let scatter_entries = num_blocks * num_tiles * 512;
+        let mut partials = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
         self.counts_offsets_kernel.encode(
             &topk_ids,
             &mut offsets,
@@ -304,6 +262,19 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             k as u32,
             encoder,
         );
+
+        let mut block_bases = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
+        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[num_blocks * num_tiles], DataType::U32))?;
+        let mut bucketed_ids = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
+        let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
+        let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
+
+        if suffix_length > 0 && k > 0 {
+            let (buffer, range) = tok2row.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0xFF);
+            }
+        }
 
         self.scatter_bases_kernel.encode(
             &partials,
@@ -332,6 +303,14 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         );
 
+        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
+        if suffix_length > 0 && k > 0 {
+            let (buffer, range) = x_perm.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0);
+            }
+        }
+
         self.gather_kernels.encode(
             encoder,
             self.data_type,
@@ -354,6 +333,29 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let up_clip_min = self.moe_config.expert_config.up_clipping[0];
         let up_clip_max = self.moe_config.expert_config.up_clipping[1];
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[total_rows, self.hidden_dim], DataType::F32))?;
+        let mut y_partial = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
+
+        if suffix_length > 0 && k > 0 {
+            let (buffer, range) = hidden.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0);
+            }
+
+            let (buffer, range) = y_partial.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0);
+            }
+        }
+
+        let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;
+        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
+        let mut tile_offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
+        let h_blocks = self.hidden_dim.div_ceil(4);
+        let mut tile_map =
+            encoder.allocate_scratch(size_for_shape(&[total_rows * h_blocks.max(1) * 3], DataType::U32))?;
+        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
+        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
 
         if suffix_length == 1 {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
@@ -422,6 +424,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.experts_two_pass_prefill_kernel.encode(encoder, args);
         }
 
+        let mut output = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.model_dim], self.data_type))?;
         self.finalize_kernel.encode(
             &tok2row,
             &topk_probs,

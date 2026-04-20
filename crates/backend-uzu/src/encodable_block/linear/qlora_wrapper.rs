@@ -122,7 +122,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     fn encode(
         &self,
         context: &B::Context,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, <B as Backend>::Error> {

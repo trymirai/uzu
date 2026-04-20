@@ -19,7 +19,7 @@ pub trait Linear<B: Backend> {
     fn encode(
         &self,
         context: &B::Context,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
@@ -31,10 +31,10 @@ pub enum LinearBlockError<B: Backend> {
     QuantizedLinearError(#[from] QuantizedLinearError<B>),
     #[error("FullPrecisionLinear error: {0}")]
     FullPrecisionLinearError(#[from] FullPrecisionLinearError<B>),
-    #[error("RHTLinearWrapper error: {0}")]
-    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
     #[error("QLoRALinearWrapper error: {0}")]
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
+    #[error("RHTLinearWrapper error: {0}")]
+    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
 }
@@ -92,17 +92,14 @@ impl<B: Backend> dyn Linear<B> {
             LinearConfig::RHTLinearWrapper {
                 block_size,
                 inner_config,
-            } => {
-                let block = RHTLinearWrapper::new(
-                    context,
-                    *block_size,
-                    inner_config,
-                    input_dimension,
-                    output_dimension_sum,
-                    parameter_tree,
-                )?;
-                Ok(Box::new(block))
-            },
+            } => Ok(Box::new(RHTLinearWrapper::new(
+                context,
+                *block_size,
+                inner_config,
+                input_dimension,
+                output_dimension_sum,
+                parameter_tree,
+            )?)),
         }
     }
 

@@ -236,7 +236,7 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy_allocation(&main, &layer_traces.pre_attention_norm);
         }
 
-        let mut qkv = self.qkv_projection.encode(context, &main, batch_dim, encoder)?;
+        let mut qkv = self.qkv_projection.encode(context, &mut main, batch_dim, encoder)?;
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(&mut qkv, batch_dim, encoder)?;
         }
@@ -255,7 +255,7 @@ impl<B: Backend> ClassifierLayer<B> {
             rope_dim,
             encoder,
         )?;
-        let attention_output = self.attention.encode(
+        let mut attention_output = self.attention.encode(
             AttentionArguments {
                 context,
                 projection_step: parameters.projection_step.unwrap_or(0),
@@ -273,7 +273,7 @@ impl<B: Backend> ClassifierLayer<B> {
             self.head_dim,
             encoder,
         )?;
-        main = self.out_projection.encode(context, &attention_output, batch_dim, encoder)?;
+        main = self.out_projection.encode(context, &mut attention_output, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             encoder.encode_copy_allocation(&main, &layer_traces.attention);
@@ -301,7 +301,7 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy_allocation(&main, &layer_traces.pre_mlp_norm);
         }
 
-        main = self.mlp.encode(context, &main, batch_dim, encoder)?;
+        main = self.mlp.encode(context, &mut main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             encoder.encode_copy_allocation(&main, &layer_traces.mlp);

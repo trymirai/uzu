@@ -186,7 +186,7 @@ impl<B: Backend> Classifier<B> {
         let logits = self
             .context
             .prediction_head
-            .encode(self.context.context.as_ref(), &pooling, &mut encoder)
+            .encode(self.context.context.as_ref(), pooling, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace {

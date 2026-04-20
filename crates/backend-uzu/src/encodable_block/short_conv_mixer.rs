@@ -287,7 +287,7 @@ impl<B: Backend> ShortConvMixer<B> {
     pub fn encode(
         &self,
         args: ShortConvArguments<'_, B>,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let ShortConvArguments {
@@ -315,6 +315,6 @@ impl<B: Backend> ShortConvMixer<B> {
             active_row_count,
         )?;
 
-        self.out_projection.encode(context, &conv_output, active_row_count, encoder)
+        self.out_projection.encode(context, &mut conv_output, active_row_count, encoder)
     }
 }

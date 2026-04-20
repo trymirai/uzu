@@ -62,7 +62,7 @@ impl<B: Backend> MambaMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> Self {
+    ) -> (Self, Option<Allocation<B>>) {
         if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
             panic!("Layer {} marked as transformer but Mamba mixer config provided", layer_index);
         }
@@ -71,7 +71,7 @@ impl<B: Backend> MambaMixer<B> {
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
 
-        let in_projection = <dyn Linear<B>>::new(
+        let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &mamba_config.in_projection_config,
             model_dim,
             [mamba_config.conv_dim(), mamba_config.inner_dim(), mamba_config.num_heads],
@@ -117,23 +117,26 @@ impl<B: Backend> MambaMixer<B> {
             .expect("Failed to create SSD decode kernel");
         let prefill_mode = resolve_prefill_mode_from_env();
 
-        Self {
-            config: mamba_config,
-            in_projection,
-            out_projection,
-            split_inproj,
-            conv_decode,
-            conv_pack,
-            conv_scan,
-            ssd_prefill,
-            ssd_update,
-            conv_weight,
-            conv_bias,
-            gate_bias,
-            skip_connection_weight,
-            prefill_mode,
-            data_type,
-        }
+        (
+            Self {
+                config: mamba_config,
+                in_projection,
+                out_projection,
+                split_inproj,
+                conv_decode,
+                conv_pack,
+                conv_scan,
+                ssd_prefill,
+                ssd_update,
+                conv_weight,
+                conv_bias,
+                gate_bias,
+                skip_connection_weight,
+                prefill_mode,
+                data_type,
+            },
+            in_projection_input_hadamard_factors,
+        )
     }
 
     fn run_split_inproj(
@@ -327,7 +330,7 @@ impl<B: Backend> MambaMixer<B> {
     pub(crate) fn encode(
         &self,
         args: MambaArguments<'_, B>,
-        input: &Allocation<B>,
+        input: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let MambaArguments {
@@ -374,6 +377,6 @@ impl<B: Backend> MambaMixer<B> {
             self.run_prefill_ssm(layer, &x, &b, &c, &dt, &z, &mut ssm_output, encoder, active_row_count);
         }
 
-        self.out_projection.encode(context, &ssm_output, active_row_count, encoder)
+        self.out_projection.encode(context, &mut ssm_output, active_row_count, encoder)
     }
 }

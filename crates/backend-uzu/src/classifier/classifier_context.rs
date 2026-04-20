@@ -183,7 +183,10 @@ impl<B: Backend> ClassifierContext<B> {
             [model_dim],
             context.as_ref(),
             &prediction_head_dense_tree,
-        );
+        )
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
+        })?;
 
         let prediction_head_activation =
             Activation::<B>::new(&context, prediction_head_data_type, prediction_head_config.activation.clone())
@@ -233,9 +236,7 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
 
         let prediction_head = ClassifierPredictionHead::new(
-            prediction_head_dense.map_err(|e| {
-                Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
-            })?,
+            prediction_head_dense,
             prediction_head_activation,
             prediction_head_norm,
             prediction_head_final_linear,

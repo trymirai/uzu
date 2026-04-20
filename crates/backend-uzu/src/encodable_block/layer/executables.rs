@@ -82,24 +82,50 @@ impl<B: Backend> LayerExecutables<B> {
                 .expect("Failed to create qkv projection");
 
                 let has_gate = attention_config.has_gate || attention_config.gate_projection_config.is_some();
-                let gate_projection = if has_gate {
+                let gate_projection = has_gate.then(|| {
                     let gate_config = attention_config
                         .gate_projection_config
                         .as_ref()
                         .unwrap_or(&attention_config.qkv_projection_config);
-                    Some(
-                        <dyn Linear<B>>::new(
-                            gate_config,
-                            model_dim,
-                            [q_dim],
-                            context,
-                            &decoder_layer_loader.subtree("mixer.gate_projection").unwrap(),
+                    let gate_tree = decoder_layer_loader.subtree("mixer.gate_projection").unwrap();
+                    match (input_hadamard_factors.is_some(), gate_config) {
+                        (
+                            true,
+                            crate::config::LinearConfig::RHTLinearWrapper {
+                                inner_config,
+                                ..
+                            },
+                        ) => {
+                            let output_factors = gate_tree
+                                .leaf("output_factors")
+                                .expect("Failed to get gate projection output_factors")
+                                .read_allocation()
+                                .expect("Failed to read gate projection output_factors");
+                            let inner_tree = gate_tree
+                                .subtree("inner_linear")
+                                .expect("Failed to get gate projection inner_linear subtree");
+                            <dyn Linear<B>>::new_with_output_hadamard(
+                                context,
+                                inner_config,
+                                &inner_tree,
+                                output_factors,
+                                model_dim,
+                                q_dim,
+                            )
+                        },
+                        (
+                            false,
+                            crate::config::LinearConfig::RHTLinearWrapper {
+                                ..
+                            },
                         )
-                        .expect("Failed to create gate projection"),
-                    )
-                } else {
-                    None
-                };
+                        | (true, _) => {
+                            panic!("attention qkv/gate projections must share input hadamard")
+                        },
+                        (false, _) => <dyn Linear<B>>::new(gate_config, model_dim, [q_dim], context, &gate_tree),
+                    }
+                    .expect("Failed to create gate projection")
+                });
 
                 let qk_norm =
                     if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
@@ -156,7 +182,7 @@ impl<B: Backend> LayerExecutables<B> {
                 )
             },
             MixerConfig::Mamba(mamba_config) => {
-                let mixer = MambaMixer::new(
+                let (mixer, input_hadamard_factors) = MambaMixer::new(
                     context,
                     layer_type.clone(),
                     mamba_config.clone(),
@@ -168,7 +194,7 @@ impl<B: Backend> LayerExecutables<B> {
                     MixerExecutables::StateSpace {
                         mixer,
                     },
-                    None,
+                    input_hadamard_factors,
                 )
             },
             MixerConfig::ShortConv(short_conv_config) => {
@@ -188,13 +214,14 @@ impl<B: Backend> LayerExecutables<B> {
                 )
             },
             MixerConfig::DeltaNet(delta_net_config) => {
-                let mixer = DeltaNetMixer::new(context, delta_net_config.clone(), model_dim, decoder_layer_loader)
-                    .expect("Failed to create DeltaNet mixer");
+                let (mixer, input_hadamard_factors) =
+                    DeltaNetMixer::new(context, delta_net_config.clone(), model_dim, decoder_layer_loader)
+                        .expect("Failed to create DeltaNet mixer");
                 (
                     MixerExecutables::DeltaNet {
                         mixer,
                     },
-                    None,
+                    input_hadamard_factors,
                 )
             },
         };
@@ -307,7 +334,7 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         let layer_traces = trace;
 
-        let main = self.pre_attention_norm.encode(&main, 0, batch_dim, Some(shortcut), encoder)?;
+        let mut main = self.pre_attention_norm.encode(&main, 0, batch_dim, Some(shortcut), encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             encoder.encode_copy_allocation(shortcut, &layer_traces.inputs);
@@ -326,9 +353,9 @@ impl<B: Backend> LayerExecutables<B> {
                 num_groups,
                 head_dim,
             } => {
-                let mut qkv = qkv_projection.encode(context, &main, batch_dim, encoder)?;
+                let mut qkv = qkv_projection.encode(context, &mut main, batch_dim, encoder)?;
                 let gate = if let Some(gate_proj) = gate_projection {
-                    Some(gate_proj.encode(context, &main, batch_dim, encoder)?)
+                    Some(gate_proj.encode(context, &mut main, batch_dim, encoder)?)
                 } else {
                     None
                 };
@@ -353,7 +380,7 @@ impl<B: Backend> LayerExecutables<B> {
                 let kv_cache_layer = cache_layer
                     .as_deref_mut()
                     .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
-                let attention_output = attention.encode(
+                let mut attention_output = attention.encode(
                     AttentionArguments {
                         context,
                         projection_step: parameters.projection_step.unwrap_or(0),
@@ -371,7 +398,7 @@ impl<B: Backend> LayerExecutables<B> {
                     *head_dim,
                     encoder,
                 )?;
-                out_projection.encode(context, &attention_output, batch_dim, encoder)?
+                out_projection.encode(context, &mut attention_output, batch_dim, encoder)?
             },
             MixerExecutables::StateSpace {
                 mixer,
@@ -387,7 +414,7 @@ impl<B: Backend> LayerExecutables<B> {
                         active_row_count: batch_dim,
                         layer,
                     },
-                    &main,
+                    &mut main,
                     encoder,
                 )?
             },
@@ -408,7 +435,7 @@ impl<B: Backend> LayerExecutables<B> {
                         token_parents,
                         layer,
                     },
-                    &main,
+                    &mut main,
                     encoder,
                 )?
             },
@@ -426,7 +453,7 @@ impl<B: Backend> LayerExecutables<B> {
                         active_row_count: batch_dim,
                         layer,
                     },
-                    &main,
+                    &mut main,
                     encoder,
                 )?
             },
@@ -451,7 +478,7 @@ impl<B: Backend> LayerExecutables<B> {
             encoder.encode_copy_allocation(&main, &layer_traces.pre_mlp_norm);
         }
 
-        main = self.mlp.encode(context, &main, batch_dim, encoder)?;
+        main = self.mlp.encode(context, &mut main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(ref layer_traces) = layer_traces {
             encoder.encode_copy_allocation(&main, &layer_traces.mlp);
