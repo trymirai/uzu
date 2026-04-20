@@ -4,12 +4,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use futures::TryStream;
+use futures::{Stream, stream};
 use shoji::traits::{
-    Backend as BackendTrait, BackendInstance as BackendInstanceTrait, LoadedModel as LoadedModelTrait,
-    LoadedModelState as LoadedModelStateTrait,
-    backend::message::{Input as MessageInput, Output as MessageOutput},
+    Backend as BackendTrait, Instance as InstanceTrait, State as StateTrait,
+    backend::{
+        Error as BackendError,
+        chat::StreamConfig,
+        chat_token::{self, StreamInput, StreamOutput},
+    },
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     TOOLCHAIN_VERSION,
@@ -26,17 +30,15 @@ pub enum Error {
     StreamFailed,
 }
 
-#[derive(Debug, Copy, Clone)]
 pub struct Backend;
 
-impl BackendTrait for Backend {
-    type Error = Error;
-    type BackendInstance = BackendInstance;
-    type LoadedModel = LoadedModel;
-    type LoadedModelState = LoadedModelState;
-    type StreamInput = MessageInput;
-    type StreamOutput = MessageOutput;
+impl Backend {
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self)
+    }
+}
 
+impl BackendTrait for Backend {
     fn identifier(&self) -> String {
         "uzu".to_string()
     }
@@ -44,105 +46,68 @@ impl BackendTrait for Backend {
     fn version(&self) -> String {
         TOOLCHAIN_VERSION.to_string()
     }
+
+    fn as_chat_via_token_capable(&self) -> Option<&dyn chat_token::Backend> {
+        Some(self)
+    }
 }
 
-pub struct BackendInstance;
-
-impl BackendInstanceTrait for BackendInstance {
-    type Backend = Backend;
-
-    fn backend(&self) -> Self::Backend {
-        Backend
-    }
-
-    fn new() -> Result<Self, <Self::Backend as BackendTrait>::Error> {
-        Ok(Self)
-    }
-
-    fn load_model(
+impl chat_token::Backend for Backend {
+    fn instance(
         &self,
         reference: String,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        <Self::Backend as BackendTrait>::LoadedModel,
-                        <Self::Backend as BackendTrait>::Error,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
+        _config: chat_token::Config,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn chat_token::Instance>, BackendError>> + Send + '_>> {
         Box::pin(async move {
             let path = PathBuf::from(&reference);
-            let session = ChatSession::new(path, DecodingConfig::default()).map_err(|_| Error::UnableToLoad)?;
-            Ok(LoadedModel {
+            let session = ChatSession::new(path, DecodingConfig::default())
+                .map_err(|_| Box::new(Error::UnableToLoad) as BackendError)?;
+            Ok(Box::new(Instance {
                 session: Arc::new(Mutex::new(session)),
-            })
+            }) as Box<dyn chat_token::Instance>)
         })
     }
 }
 
-pub struct LoadedModel {
+pub struct Instance {
     session: Arc<Mutex<ChatSession>>,
 }
-unsafe impl Send for LoadedModel {}
-unsafe impl Sync for LoadedModel {}
+unsafe impl Send for Instance {}
+unsafe impl Sync for Instance {}
 
-impl LoadedModelTrait for LoadedModel {
-    type Backend = Backend;
+#[derive(Debug, Clone)]
+pub struct State;
 
-    fn new_state(
-        &self
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        <Self::Backend as BackendTrait>::LoadedModelState,
-                        <Self::Backend as BackendTrait>::Error,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
+impl StateTrait for State {
+    fn clone_boxed(&self) -> Box<dyn StateTrait> {
+        Box::new(self.clone())
+    }
+}
+
+impl InstanceTrait for Instance {
+    type StreamConfig = StreamConfig;
+    type StreamInput = StreamInput;
+    type StreamOutput = StreamOutput;
+
+    fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn StateTrait>, BackendError>> + Send + '_>> {
         let reset = self
             .session
             .lock()
             .map_err(|_| Error::UnableToCreateState)
             .and_then(|mut guard| guard.reset().map_err(|_| Error::UnableToCreateState));
         Box::pin(async move {
-            reset?;
-            Ok(LoadedModelState)
+            reset.map_err(|error| Box::new(error) as BackendError)?;
+            Ok(Box::new(State) as Box<dyn StateTrait>)
         })
     }
 
-    fn stream(
-        &self,
-        _: &<Self::Backend as BackendTrait>::StreamInput,
-        _: &mut <Self::Backend as BackendTrait>::LoadedModelState,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = impl TryStream<
-                        Ok = <Self::Backend as BackendTrait>::StreamOutput,
-                        Error = <Self::Backend as BackendTrait>::Error,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async move {
-            futures::stream::iter([Err::<
-                <Self::Backend as BackendTrait>::StreamOutput,
-                <Self::Backend as BackendTrait>::Error,
-            >(Error::StreamFailed)])
-        })
+    fn stream<'a>(
+        &'a self,
+        _input: &'a Self::StreamInput,
+        _state: &'a mut dyn StateTrait,
+        _config: Self::StreamConfig,
+        _cancel: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
+        Box::pin(stream::once(async { Err(Box::new(Error::StreamFailed) as BackendError) }))
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct LoadedModelState;
-
-impl LoadedModelStateTrait for LoadedModelState {
-    type Backend = Backend;
 }

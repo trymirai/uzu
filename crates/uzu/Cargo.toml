@@ -51,6 +51,7 @@ wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+backend-remote.workspace = true
 nagare.workspace = true
 download-manager.workspace = true
 serde.workspace = true

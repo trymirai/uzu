@@ -10,3 +10,8 @@ repository.workspace = true
 [dependencies]
 shoji.workspace = true
 openai-api-rs.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+serde.workspace = true

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use backend_remote::openai::Config as BackendConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,5 +115,16 @@ impl Config {
             None,
             None,
         )
+    }
+}
+
+impl From<Config> for BackendConfig {
+    fn from(config: Config) -> Self {
+        Self {
+            identifier: config.identifier,
+            api_endpoint: config.api_endpoint,
+            api_key: config.api_key,
+            headers: config.headers,
+        }
     }
 }

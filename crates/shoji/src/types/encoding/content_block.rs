@@ -5,7 +5,10 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-use crate::types::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput, Value};
+use crate::types::{
+    basic::Value,
+    encoding::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
+};
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use shoji::types::Model;
+use shoji::types::model::Model;
 
 use crate::device::Device;
 

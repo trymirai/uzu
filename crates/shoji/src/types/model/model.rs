@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Accessibility, Entity, EntityType, Quantization, Reference, Specialization};
+use crate::types::model::{Accessibility, Entity, EntityType, Quantization, Reference, Specialization};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

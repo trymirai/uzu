@@ -13,12 +13,10 @@ pub enum Error {
     Storage(#[from] crate::storage::Error),
     #[error(transparent)]
     Registry(#[from] crate::registry::Error),
-    #[error("Backend error: {message}")]
-    Backend {
-        message: String,
-    },
-    #[error("Unsupported model")]
-    UnsupportedModel,
+    #[error("Unable to create backend")]
+    UnableToCreateBackend,
+    #[error("Backend not found")]
+    BackendNotFound,
     #[error(transparent)]
     Chat(#[from] ChatError),
 }

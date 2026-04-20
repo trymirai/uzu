@@ -5,7 +5,7 @@ use std::{fs, future::Future, path::Path, pin::Pin};
 pub use config::Config;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::{Accessibility, Entity, EntityType, Model, Reference, Specialization},
+    types::model::{Accessibility, Entity, EntityType, Model, Reference, Specialization},
 };
 
 use crate::registry::Error;

@@ -506,8 +506,13 @@ dependencies = [
 name = "backend-remote"
 version = "0.1.9"
 dependencies = [
+ "futures",
  "openai-api-rs",
+ "serde",
+ "serde_json",
  "shoji",
+ "thiserror 2.0.18",
+ "tokio-util",
 ]
 
 [[package]]
@@ -563,6 +568,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
+ "tokio-util",
  "walkdir",
  "xgrammar-rs",
  "xxhash-rust",
@@ -3792,6 +3798,7 @@ dependencies = [
 name = "nagare"
 version = "0.1.9"
 dependencies = [
+ "futures",
  "hanashi",
  "indexmap 2.14.0",
  "reqwest 0.13.2",
@@ -3799,6 +3806,7 @@ dependencies = [
  "serde_json",
  "shoji",
  "thiserror 2.0.18",
+ "tokio-util",
 ]
 
 [[package]]
@@ -5991,6 +5999,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio-util",
  "tsify",
  "uniffi",
  "wasm-bindgen",
@@ -6658,6 +6667,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -7267,6 +7277,7 @@ dependencies = [
 name = "uzu"
 version = "0.1.9"
 dependencies = [
+ "backend-remote",
  "backend-uzu",
  "bindings",
  "chrono",

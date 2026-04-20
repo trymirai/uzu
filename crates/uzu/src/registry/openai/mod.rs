@@ -7,7 +7,7 @@ use fancy_regex::Regex;
 use openai_api_rs::v1::api::OpenAIClient;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::{Accessibility, Entity, EntityType, Model, Specialization},
+    types::model::{Accessibility, Entity, EntityType, Model, Specialization},
 };
 
 use crate::registry::Error;

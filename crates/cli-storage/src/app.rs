@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use crossterm::event::KeyCode;
 use futures_util::StreamExt;
 use ratatui::widgets::ListState;
-use shoji::types::Model;
+use shoji::types::model::Model;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use uzu::{engine::Engine, storage::types::DownloadState};
 

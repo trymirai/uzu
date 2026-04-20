@@ -1,74 +1,53 @@
-pub mod erased;
-pub mod message;
-pub mod token;
+pub mod chat;
+pub mod chat_message;
+pub mod chat_token;
+pub mod classification;
+pub mod text_to_speech;
 
-use std::{error::Error, fmt::Debug, pin::Pin};
+use std::pin::Pin;
 
-use futures::TryStream;
-use serde::{Serialize, de::DeserializeOwned};
+use futures::Stream;
+use tokio_util::sync::CancellationToken;
 
-pub trait Backend: Debug + Copy + 'static {
-    type Error: Error;
-    type BackendInstance: BackendInstance<Backend = Self>;
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-    type LoadedModel: LoadedModel<Backend = Self>;
-    type LoadedModelState: LoadedModelState<Backend = Self>;
-
-    type StreamInput: Serialize + DeserializeOwned;
-    type StreamOutput: Serialize + DeserializeOwned;
-
+pub trait Backend: Send + Sync {
     fn identifier(&self) -> String;
     fn version(&self) -> String;
+
+    fn as_chat_via_token_capable(&self) -> Option<&dyn chat_token::Backend> {
+        None
+    }
+
+    fn as_chat_via_message_capable(&self) -> Option<&dyn chat_message::Backend> {
+        None
+    }
+
+    fn as_classification_capable(&self) -> Option<&dyn classification::Backend> {
+        None
+    }
+
+    fn as_text_to_speech_capable(&self) -> Option<&dyn text_to_speech::Backend> {
+        None
+    }
 }
 
-pub trait BackendInstance: Sized {
-    type Backend: Backend<BackendInstance = Self>;
+pub trait Instance: Send + Sync {
+    type StreamConfig;
+    type StreamInput;
+    type StreamOutput;
 
-    fn backend(&self) -> Self::Backend;
-    fn new() -> Result<Self, <Self::Backend as Backend>::Error>;
-
-    fn load_model(
-        &self,
-        reference: String,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<<Self::Backend as Backend>::LoadedModel, <Self::Backend as Backend>::Error>>
-                + Send
-                + '_,
-        >,
-    >;
-}
-
-pub trait LoadedModel {
-    type Backend: Backend<LoadedModel = Self>;
-
-    fn new_state(
-        &self
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<<Self::Backend as Backend>::LoadedModelState, <Self::Backend as Backend>::Error>>
-                + Send
-                + '_,
-        >,
-    >;
+    fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, Error>> + Send + '_>>;
 
     fn stream<'a>(
         &'a self,
-        input: &'a <Self::Backend as Backend>::StreamInput,
-        state: &'a mut <Self::Backend as Backend>::LoadedModelState,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = impl TryStream<
-                        Ok = <Self::Backend as Backend>::StreamOutput,
-                        Error = <Self::Backend as Backend>::Error,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    >;
+        input: &'a Self::StreamInput,
+        state: &'a mut dyn State,
+        config: Self::StreamConfig,
+        cancel: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>>;
 }
 
-pub trait LoadedModelState: Clone {
-    type Backend: Backend<LoadedModelState = Self>;
+pub trait State: Send + Sync + 'static {
+    fn clone_boxed(&self) -> Box<dyn State>;
 }

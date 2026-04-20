@@ -9,7 +9,10 @@ use std::path::PathBuf;
 
 pub use config::Config;
 pub use error::Error;
-use shoji::types::{ContentBlock, Message, Token, TokenId};
+use shoji::types::{
+    basic::{Token, TokenId},
+    encoding::{ContentBlock, Message},
+};
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
 

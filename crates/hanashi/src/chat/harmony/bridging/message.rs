@@ -4,7 +4,10 @@ use openai_harmony::chat::{
     Author as ExternalAuthor, Content as ExternalContent, DeveloperContent as ExternalDeveloperContent,
     Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent, TextContent,
 };
-use shoji::types::{ContentBlock, Message, ReasoningEffort, Role, ToolCall, ToolNamespace, Value};
+use shoji::types::{
+    basic::Value,
+    encoding::{ContentBlock, Message, ReasoningEffort, Role, ToolCall, ToolNamespace},
+};
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
 

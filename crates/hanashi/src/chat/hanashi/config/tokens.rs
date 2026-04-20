@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::TokenId;
+use shoji::types::basic::TokenId;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TokensConfig {

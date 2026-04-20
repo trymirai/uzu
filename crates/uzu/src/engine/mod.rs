@@ -2,16 +2,17 @@ mod config;
 mod downloader;
 mod error;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use backend_uzu::inference_backend::{Backend as UzuBackend, BackendInstance as UzuBackendInstance};
+use backend_remote::openai::Backend as OpenAIBackend;
+use backend_uzu::inference_backend::Backend as UzuBackend;
 pub use config::Config;
 pub use downloader::Downloader;
 pub use error::Error;
 use nagare::chat::Session as ChatSession;
 use shoji::{
-    traits::{Backend, BackendInstance, Registry, backend::erased::AnyBackend},
-    types::Model,
+    traits::{Backend, Registry},
+    types::model::Model,
 };
 use tokio::runtime::Handle;
 use tokio_stream::wrappers::BroadcastStream;
@@ -35,7 +36,7 @@ use crate::{
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
-    backends: HashMap<String, AnyBackend>,
+    backends: HashMap<String, Arc<dyn Backend>>,
 }
 
 impl Engine {
@@ -58,13 +59,9 @@ impl Engine {
         };
 
         {
-            let uzu_backend = UzuBackend;
+            let uzu_backend = UzuBackend::new().map_err(|_| Error::UnableToCreateBackend)?;
             let uzu_backend_identifier = uzu_backend.identifier();
             let uzu_backend_version = uzu_backend.version();
-
-            let uzu_instance = UzuBackendInstance::new().map_err(|error| Error::Backend {
-                message: error.to_string(),
-            })?;
 
             let mirai_registry_config = MiraiRegistryConfig {
                 api_key: config.mirai_api_key,
@@ -77,7 +74,7 @@ impl Engine {
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
-            engine.add_backend(AnyBackend::Message(Box::new(uzu_instance)));
+            engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>);
             engine.add_registry(mirai_registry).await?;
 
             if let Some(lalamo_path) = config.lalamo_path {
@@ -87,46 +84,42 @@ impl Engine {
             }
         }
 
-        let ollama_config = OpenAIConfig::ollama();
-        if is_endpoint_reachable(&ollama_config.api_endpoint).await {
-            let ollama_registry = OpenAIRegistry::new(ollama_config)?;
-            engine.add_registry(Box::new(ollama_registry)).await?;
+        let mut openai_configs: Vec<OpenAIConfig> = vec![];
+        {
+            let ollama_config = OpenAIConfig::ollama();
+            if is_endpoint_reachable(&ollama_config.api_endpoint).await {
+                openai_configs.push(ollama_config);
+            }
         }
-
-        let lmstudio_config = OpenAIConfig::lmstudio();
-        if is_endpoint_reachable(&lmstudio_config.api_endpoint).await {
-            let lmstudio_registry = OpenAIRegistry::new(lmstudio_config)?;
-            engine.add_registry(Box::new(lmstudio_registry)).await?;
+        {
+            let lmstudio_config = OpenAIConfig::lmstudio();
+            if is_endpoint_reachable(&lmstudio_config.api_endpoint).await {
+                openai_configs.push(lmstudio_config);
+            }
         }
-
         if let Some(openai_api_key) = config.openai_api_key {
-            let openai_registry = OpenAIRegistry::new(OpenAIConfig::openai(openai_api_key))?;
-            engine.add_registry(Box::new(openai_registry)).await?;
+            openai_configs.push(OpenAIConfig::openai(openai_api_key));
         }
-
         if let Some(anthropic_api_key) = config.anthropic_api_key {
-            let anthropic_registry = OpenAIRegistry::new(OpenAIConfig::anthropic(anthropic_api_key))?;
-            engine.add_registry(Box::new(anthropic_registry)).await?;
+            openai_configs.push(OpenAIConfig::anthropic(anthropic_api_key));
         }
-
         if let Some(gemini_api_key) = config.gemini_api_key {
-            let gemini_registry = OpenAIRegistry::new(OpenAIConfig::gemini(gemini_api_key))?;
-            engine.add_registry(Box::new(gemini_registry)).await?;
+            openai_configs.push(OpenAIConfig::gemini(gemini_api_key));
         }
-
         if let Some(xai_api_key) = config.xai_api_key {
-            let xai_registry = OpenAIRegistry::new(OpenAIConfig::xai(xai_api_key))?;
-            engine.add_registry(Box::new(xai_registry)).await?;
+            openai_configs.push(OpenAIConfig::xai(xai_api_key));
         }
-
         if let Some(baseten_api_key) = config.baseten_api_key {
-            let baseten_registry = OpenAIRegistry::new(OpenAIConfig::baseten(baseten_api_key))?;
-            engine.add_registry(Box::new(baseten_registry)).await?;
+            openai_configs.push(OpenAIConfig::baseten(baseten_api_key));
         }
-
         if let Some(openrouter_api_key) = config.openrouter_api_key {
-            let openrouter_registry = OpenAIRegistry::new(OpenAIConfig::openrouter(openrouter_api_key))?;
-            engine.add_registry(Box::new(openrouter_registry)).await?;
+            openai_configs.push(OpenAIConfig::openrouter(openrouter_api_key));
+        }
+        for config in openai_configs {
+            let registry = OpenAIRegistry::new(config.clone())?;
+            let backend = OpenAIBackend::new(config.into()).map_err(|_| Error::UnableToCreateBackend)?;
+            engine.add_registry(Box::new(registry)).await?;
+            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>);
         }
 
         Ok(engine)
@@ -156,7 +149,7 @@ impl Engine {
 impl Engine {
     pub fn add_backend(
         &mut self,
-        backend: AnyBackend,
+        backend: Arc<dyn Backend>,
     ) {
         self.backends.insert(backend.identifier(), backend);
     }
@@ -270,11 +263,11 @@ impl Engine {
     ) -> Result<ChatSession, Error> {
         let path = self.model_path(&model).await;
         if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::UnsupportedModel)?;
-            let session = ChatSession::new(backend, model, path).await?;
+            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
+            let session = ChatSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
-            return Err(Error::UnsupportedModel);
+            return Err(Error::BackendNotFound);
         }
     }
 }
