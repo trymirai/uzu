@@ -123,11 +123,12 @@ METAL_FUNC auto gemm_loop(
       const int right_offset =
           transpose_b ? inner_k : inner_k * leading_dimension_b;
 
-      left_tile.load_safe(
-          left_ptr + left_offset, leading_dimension_a, left_limits
-      );
+      left_tile
+          .load_safe(left_ptr + left_offset, leading_dimension_a, left_limits);
       right_tile.load_safe(
-          right_ptr + right_offset, leading_dimension_b, right_limits
+          right_ptr + right_offset,
+          leading_dimension_b,
+          right_limits
       );
 
       tile_matmad(

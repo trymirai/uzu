@@ -23,7 +23,7 @@ using false_type = bool_constant<false>;
 template <int val>
 using Int = integral_constant<int, val>;
 
-#define METAL_INTEGRAL_CONST_BINOP(op, fn)                                       \
+#define METAL_INTEGRAL_CONST_BINOP(op, fn)                                     \
   template <typename T, T tv, typename U, U uv>                                \
   METAL_FUNC constexpr auto fn(                                                \
       integral_constant<T, tv>,                                                \
@@ -41,8 +41,10 @@ METAL_INTEGRAL_CONST_BINOP(/, operator/)
 #undef METAL_INTEGRAL_CONST_BINOP
 
 template <int start, int step, typename F, int... Is>
-METAL_FUNC constexpr void
-const_for_loop_impl(F f, metal::integer_sequence<int, Is...>) {
+METAL_FUNC constexpr void const_for_loop_impl(
+    F f,
+    metal::integer_sequence<int, Is...>
+) {
   (f(Int<start + Is * step>{}), ...);
 }
 
@@ -51,7 +53,8 @@ METAL_FUNC constexpr void const_for_loop(F f) {
   static_assert(step > 0 && start <= stop);
   constexpr int count = (stop - start + step - 1) / step;
   const_for_loop_impl<start, step>(
-      f, metal::make_integer_sequence<int, count>{}
+      f,
+      metal::make_integer_sequence<int, count>{}
   );
 }
 

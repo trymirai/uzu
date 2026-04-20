@@ -154,7 +154,9 @@ struct GemmMppCore {
                   }
 
                   if constexpr (IS_ACCUMULATE) {
-                    MxuTile<T, TILES_M, TILES_N> existing_output(thread_context);
+                    MxuTile<T, TILES_M, TILES_N> existing_output(
+                        thread_context
+                    );
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(
                           output_ptr,
