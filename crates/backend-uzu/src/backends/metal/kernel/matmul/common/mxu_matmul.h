@@ -54,16 +54,6 @@ struct MxuTile {
     return fragment_data[i * TILE_COLS + j];
   }
 
-  template <int i, int j>
-  METAL_FUNC constexpr thread FragmentVectorType& fragment_at() {
-    return fragment_data[i * TILE_COLS + j];
-  }
-
-  template <int i, int j>
-  METAL_FUNC constexpr const thread FragmentVectorType& fragment_at() const {
-    return fragment_data[i * TILE_COLS + j];
-  }
-
   template <bool transpose>
   METAL_FUNC constexpr thread FragmentVectorType& fragment_at(
       const ushort i,
@@ -103,7 +93,7 @@ struct MxuTile {
     const_for_loop<0, TILE_ROWS, 1>([&](auto idx_row) {
       const_for_loop<0, TILE_COLS, 1>([&](auto idx_col) {
         FragmentType::load(
-            fragment_at<idx_row.value, idx_col.value>(),
+            fragment_at(idx_row.value, idx_col.value),
             source,
             leading_dimension,
             Int<1>{},
@@ -122,7 +112,7 @@ struct MxuTile {
     const_for_loop<0, TILE_ROWS, 1>([&](auto idx_row) {
       const_for_loop<0, TILE_COLS, 1>([&](auto idx_col) {
         FragmentType::store(
-            fragment_at<idx_row.value, idx_col.value>(),
+            fragment_at(idx_row.value, idx_col.value),
             destination,
             leading_dimension,
             Int<1>{},
@@ -142,7 +132,7 @@ struct MxuTile {
     const_for_loop<0, TILE_ROWS, 1>([&](auto idx_row) {
       const_for_loop<0, TILE_COLS, 1>([&](auto idx_col) {
         FragmentType::load_safe(
-            fragment_at<idx_row.value, idx_col.value>(),
+            fragment_at(idx_row.value, idx_col.value),
             source,
             leading_dimension,
             Int<1>{},
@@ -164,7 +154,7 @@ struct MxuTile {
     const_for_loop<0, TILE_ROWS, 1>([&](auto idx_row) {
       const_for_loop<0, TILE_COLS, 1>([&](auto idx_col) {
         FragmentType::store_safe(
-            fragment_at<idx_row.value, idx_col.value>(),
+            fragment_at(idx_row.value, idx_col.value),
             destination,
             leading_dimension,
             Int<1>{},
