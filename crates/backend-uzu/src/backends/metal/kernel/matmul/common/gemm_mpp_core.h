@@ -27,8 +27,10 @@ struct GemmMppCore {
   METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
   METAL_CONST ushort BLOCK_K = 256;
 
-  METAL_CONST ushort TILES_M = SIMDGROUP_BLOCK_M / MxuFragment::FRAGMENT_ROWS;
-  METAL_CONST ushort TILES_N = SIMDGROUP_BLOCK_N / MxuFragment::FRAGMENT_COLS;
+  METAL_CONST ushort TILES_M =
+      SIMDGROUP_BLOCK_M / MxuFragmentOps::FRAGMENT_ROWS;
+  METAL_CONST ushort TILES_N =
+      SIMDGROUP_BLOCK_N / MxuFragmentOps::FRAGMENT_COLS;
 
   using AccumulatorType = float;
 
@@ -149,12 +151,12 @@ struct GemmMppCore {
                     METAL_PRAGMA_UNROLL
                     for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
                          i++) {
-                      accumulator_tile.elems()[i] *= AccumulatorType(ab_scale);
+                      accumulator_tile.elements()[i] *= AccumulatorType(ab_scale);
                     }
                   }
 
                   if constexpr (IS_ACCUMULATE) {
-                    MxuTile<T, TILES_M, TILES_N> existing_output(
+                    Fragment<T, TILES_M, TILES_N, MxuFragmentOps> existing_output(
                         thread_context
                     );
                     if constexpr (aligned_m.value && aligned_n.value) {
@@ -172,8 +174,8 @@ struct GemmMppCore {
                     METAL_PRAGMA_UNROLL
                     for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
                          i++) {
-                      accumulator_tile.elems()[i] +=
-                          AccumulatorType(existing_output.elems()[i]);
+                      accumulator_tile.elements()[i] +=
+                          AccumulatorType(existing_output.elements()[i]);
                     }
                   }
 
